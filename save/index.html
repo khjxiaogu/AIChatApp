@@ -127,8 +127,8 @@ font-size:18px!important;
 
 <div style="position:fixed;left:0px;width:max-content;top:60px;bottom:50px;display:flex">
 <div class="Box" style="width:300px;max-width:90%;height:100%;padding:4px;word-break: keep-all;overflow:auto;overflow-y:scroll" id="chats">
-<div style="display:block;width:200px;height:100%">
-<div v-for="(val,index) in list" class="Box" @click="changeChat(val.chatid)" style="cursor:pointer;padding:6px"><span style="text-wrap:nowrap"><b>{{val.app}}</b><a href="#" @click.prevent.stop="removeChat(val.app+':'+val.name,val.chatid);return false;" style="float:right"><i data-feather="trash"></i></a><br />{{val.name}}<br />{{ new Date(parseInt(val.time)).toLocaleString() }}</span></div>
+<div style="display:block;width:300px;height:100%">
+<div v-for="(val,index) in list" class="Box" @click="changeChat(val.chatid)" style="cursor:pointer;padding:6px;"><span style="text-wrap:nowrap"><b>{{val.app}}</b><a href="#" @click.prevent.stop="removeChat(val.app+':'+val.name,val.chatid);return false;" style="float:right"><i data-feather="trash"></i></a><br />{{val.name}}<br />{{ new Date(parseInt(val.time)).toLocaleString() }}</span></div>
 <div class="Box"><table><tr><th>创建会话</th></tr><tr><td><select v-model="selectedApp" id="selectChatApp" style="height: 24px;width: 100px;"><option v-for="(val,index) in applist" :value="val.appid">{{val.name}}</option></select></td></tr><tr><td><a @click.prevent="createApp()"><i data-feather="plus-circle"></i>创建新会话</a></td></tr></table></div>
 </div>
 </div>
@@ -220,9 +220,12 @@ if(waiting)return;
 waiting=1;
 setTimeout(autoResize,10);
 }
+function autoAutoScroll(){
+	if(messages.scrollTop+messages.offsetHeight>=messages.scrollHeight-messages.offsetHeight/6)
+		setTimeout(autoScroll,200);
+}
 function autoResize(){
-if(messages.scrollTop+messages.offsetHeight>=messages.scrollHeight-100)
-	setTimeout(autoScroll,10);
+	autoAutoScroll()
 waiting=0;
 sendmsgbox.style.height="0";
 sendmsgbox.style.height=sendmsgbox.scrollHeight+'px';
@@ -230,7 +233,9 @@ messages.style.bottom=input.offsetHeight+6+'px';
 sendmsgbox.style.maxHeight=input.offsetHeight+3+'px';
 
 }
-setTimeout(autoResize,500);
+setInterval(function(){
+	autoAutoScroll();
+},500);
 function sendAttmpt(e)
 {
 
