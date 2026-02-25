@@ -93,7 +93,7 @@ public abstract class AIApplication {
 		}
 		
 	
-		AIGalgameMain main=new AIGalgameMain("promptfengyi.txt");
+		AIGalgameMain main=new AIGalgameMain("promptfengyi.txt","姚枫怡");
 		// construct initail message
 		if (aistate == null) {
 			dialog.setBackLog("正在生成初始面板...");
@@ -102,7 +102,7 @@ public abstract class AIApplication {
 			main.provideInitial(aistate);
 		}
 	
-		dialog.sarea.setText(main.constructSystem(aistate));
+		dialog.sarea.setText(main.constructSystem(aistate.getState()));
 		//dialog.setBackLog(constructBackLog());
 		dialog.usage.setText(aistate.getUsage());
 		final AIState cstate=aistate;
@@ -111,10 +111,14 @@ public abstract class AIApplication {
 			
 			try {
 				while(true) {
-					String s=main.constructBackLog(cstate);
+					
 					if(main.checkAndUnsetUpdated()) {
+						String s=main.constructBackLog(cstate);
+						if(cstate.isGenerating)
+							s+="\n生成中...";
+						final String fs=s;
 						SwingUtilities.invokeLater(()->{
-							dialog.setBackLog(s);
+							dialog.setBackLog(fs);
 						});
 					}
 					Thread.sleep(100);
@@ -137,7 +141,7 @@ public abstract class AIApplication {
 			try {
 				main.handleSpeech(aistate,ret);
 				saveToJson(aistate,saveData);
-				dialog.sarea.setText(main.constructSystem(aistate));
+				dialog.sarea.setText(main.constructSystem(aistate.getState()));
 				//dialog.setBackLog(constructBackLog());
 				if (aistate != null)
 					dialog.usage.setText(aistate.getUsage());
@@ -154,6 +158,7 @@ public abstract class AIApplication {
 	}
 
 	public void handleSpeech(AIState state, String ret) {
+		state.onGenStart();
 		for (MessageHandler i : handlers) {
 			try {
 				if ((ret=i.apply(state,ret))==null)
@@ -169,16 +174,16 @@ public abstract class AIApplication {
 
 	public RespScheme sendAIRequest(JsonObject req) throws IOException {
 		String tosend = gs.toJson(req);
-		System.out.println(ppgs.toJson(req));
+		//System.out.println(ppgs.toJson(req));
 		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", System.getProperty("deepseektoken"))
 	
 				.post(true).send(tosend).readJson();
-		System.out.println(ppgs.toJson(retjs));
+		//System.out.println(ppgs.toJson(retjs));
 		RespScheme resp = gs.fromJson(retjs, RespScheme.class);
-		System.out.println("=================Reasoner===============");
-		System.out.println(resp.choices.get(0).message.reasoning_content);
+		//System.out.println("=================Reasoner===============");
+		//System.out.println(resp.choices.get(0).message.reasoning_content);
 		System.out.println("=================Usage===============");
 		System.out.println(resp.usage);
 		setUpdated();
@@ -189,9 +194,9 @@ public abstract class AIApplication {
 		req.addProperty("stream", true);
 		req.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		String tosend = gs.toJson(req);
-		System.out.println(ppgs.toJson(req));
+		//System.out.println(ppgs.toJson(req));
 		FilledReadable readable=new FilledReadable();
-		System.out.println("=================Reasoner===============");
+		//System.out.println("=================Reasoner===============");
 		Usage usage=new Usage();
 		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
@@ -199,19 +204,23 @@ public abstract class AIApplication {
 	
 				.post(true).send(tosend).readSSE(exc, (ev,s)->{
 					if(s==null||"[DONE]".equals(s)) {
-						System.out.println();
+						//System.out.println();
 						System.out.println("=================Usage===============");
 						System.out.println(usage);
 						gainUsage.accept(usage);
 						readable.putCh(null);
+						setUpdated();
+						return;
 					}
-					//System.out.println(s);
 					RespScheme scheme=gs.fromJson(s, RespScheme.class);
 					Message delta=scheme.choices.get(0).delta;
-					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty())
-						System.out.print(delta.reasoning_content);
-					if(delta.content!=null&&!delta.content.isEmpty())
+					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
+						//System.out.print(delta.reasoning_content);
+					}
+					if(delta.content!=null&&!delta.content.isEmpty()) {
+						
 						readable.putCh(delta.content);
+					}
 					if(scheme.usage!=null)
 						usage.add(scheme.usage);
 					setUpdated();
@@ -221,7 +230,7 @@ public abstract class AIApplication {
 		return readable;
 	}
 	public abstract String getName();
-	public abstract String constructSystem(AIState state);
+	public abstract String constructSystem(StateIntf state);
 	public abstract String getBrief(AIState state);
 
 }

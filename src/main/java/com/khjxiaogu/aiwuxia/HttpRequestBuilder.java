@@ -125,6 +125,7 @@ public class HttpRequestBuilder {
 					try(Scanner scan=new Scanner(is,StandardCharsets.UTF_8)){
 						while(scan.hasNextLine()) {
 							String resp=scan.nextLine();
+							//System.out.println(resp);
 							if(resp.isEmpty()||resp.startsWith(":"))
 								continue;
 							int idx=resp.indexOf(":");
@@ -134,7 +135,10 @@ public class HttpRequestBuilder {
 	
 							listener.accept(dataEvent, dataElem);
 						}
+					}catch(Throwable err) {
+						err.printStackTrace();
 					}
+					//System.out.println("Connection closed");
 					
 				});
 			}catch(IOException ex){

@@ -50,6 +50,11 @@ public class JsonBuilder {
 			this.add(job.get());
 			return job;
 		}
+		
+		public int getSize() {
+			return jo.size();
+		}
+
 		public JsonArrayBuilder<JsonArrayBuilder<T>> array(){
 			JsonArrayBuilder<JsonArrayBuilder<T>> job= new JsonArrayBuilder<>(this);
 			this.add(job.get());

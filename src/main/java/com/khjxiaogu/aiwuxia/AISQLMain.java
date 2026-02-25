@@ -54,7 +54,7 @@ public class AISQLMain extends AIApplication {
 			if (state.getStage() == GameStage.STARTED) {
 				if ("查看定义".equals(ret)) {
 					state.add(Role.USER, ret, false);
-					state.add(Role.ASSISTANT, constructSystem(state), false);
+					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
 					return null;
 				} else if ("重新生成".equals(ret)) {
 					HistoryItem hi = state.removeLast();
@@ -79,7 +79,7 @@ public class AISQLMain extends AIApplication {
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
-			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state)));
+			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
 			state.getLast().lastState = airet;
 			state.addRow();
 
@@ -177,10 +177,10 @@ public class AISQLMain extends AIApplication {
 			}
 
 			if (isWaiting) {
-				System.out.println("\n=================Content===============");
+				//System.out.println("\n=================Content===============");
 				isWaiting = false;
 			}
-			System.out.println(last);
+			//System.out.println(last);
 			if (status == 0) {
 				if (last.startsWith("==SQL==")) {
 					status = 2;
@@ -198,11 +198,11 @@ public class AISQLMain extends AIApplication {
 		return nstateModified ? oldstate : null;
 	}
 
-	public String constructSystem(AIState state) {
-		if (state == null || state.getState().extras.isEmpty())
+	public String constructSystem(StateIntf state) {
+		if (state == null || state.extras.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("=====定义=====\n");
-		for (String s:state.getState().extras)
+		for (String s:state.extras)
 			sb.append(s).append("\n");
 		return sb.toString();
 

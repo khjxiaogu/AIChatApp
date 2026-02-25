@@ -24,7 +24,6 @@ public class WebSocketAIState extends AIState implements WebsocketEvents {
 	private final ChatServerService parent;
 	private final String chatId;
 	File fn;
-	boolean isGenerating;
 	AIApplication aiapp;
 	public WebSocketAIState(ChatServerService par,String chatid,AIApplication aiapp,File fn, HistoryHolder history, AIData data) {
 		super(history, data);
@@ -33,6 +32,7 @@ public class WebSocketAIState extends AIState implements WebsocketEvents {
 		this.chatId=chatid;
 		this.aiapp=aiapp;
 	}
+
 
 	@Override
 	public void onOpen(Channel conn, FullHttpRequest handshake) {
@@ -50,6 +50,7 @@ public class WebSocketAIState extends AIState implements WebsocketEvents {
 		}else {
 			aiapp.provideInitial(this);
 		}
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).end().toString()));
 
 	}
 
@@ -87,6 +88,11 @@ public class WebSocketAIState extends AIState implements WebsocketEvents {
 		super.postMessage(id, title, message);
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id", id).add("title", title).add("message", message).end().toString()));
 	}
+	@Override
+	public void onGenStart() {
+		super.onGenStart();
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).end().toString()));
+	}
 
 	@Override
 	public void onGenComplete() {
@@ -99,6 +105,9 @@ public class WebSocketAIState extends AIState implements WebsocketEvents {
 			e.printStackTrace();
 		}
 		isGenerating=false;
+		String price=getPrice();
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).add("price",price).end().toString()));
+		parent.setPrice(chatId, price);
 		if(this.conn.isEmpty()) {
 			parent.markRelease(this);
 		}

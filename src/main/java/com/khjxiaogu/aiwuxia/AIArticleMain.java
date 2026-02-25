@@ -45,7 +45,7 @@ public class AIArticleMain extends AIApplication {
 			if (state.getStage() == GameStage.STARTED) {
 				if ("查看大纲".equals(ret)) {
 					state.add(Role.USER, ret, false);
-					state.add(Role.ASSISTANT, constructSystem(state), false);
+					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
 					return null;
 				} else if ("重新生成".equals(ret)) {
 					HistoryItem hi = state.removeLast();
@@ -70,7 +70,7 @@ public class AIArticleMain extends AIApplication {
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
-			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state)));
+			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
 			state.getLast().lastState = airet;
 			state.addRow();
 
@@ -168,32 +168,22 @@ public class AIArticleMain extends AIApplication {
 			}
 
 			if (isWaiting) {
-				System.out.println("\n=================Content===============");
+				//System.out.println("\n=================Content===============");
 				isWaiting = false;
 			}
-			System.out.println(last);
+			//System.out.println(last);
 			if (status == 0) {
 				if (last.startsWith("==大纲==")) {
 					status = 1;
 					state.appendInvisibleLine(Role.ASSISTANT, last);
 				} else if (last.startsWith("==内容==")) {
 					status = 2;
-<<<<<<< Upstream, based on branch 'master' of https://github.com/khjxiaogu/AIChatApp.git
-				} else {
-					state.appendLine(Role.ASSISTANT, last, true);
-				}
-			} else if (status == 1) {
-				if (last.startsWith("==内容==")) {
-					status = 2;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-=======
 				} else {  
 					state.appendLine(Role.ASSISTANT, last, true);
 				}
 			} else if (status == 1) {
 				if (last.startsWith("==内容==")) {
 					status = 2;
->>>>>>> 1fc8a8a another code
 				} else {
 					state.getState().extras.add(last);
 					state.appendInvisibleLine(Role.ASSISTANT, last);
@@ -208,11 +198,11 @@ public class AIArticleMain extends AIApplication {
 		return nstateModified ? oldstate : null;
 	}
 
-	public String constructSystem(AIState state) {
-		if (state == null || state.getState().extras.isEmpty())
+	public String constructSystem(StateIntf state) {
+		if (state == null || state.extras.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("==大纲==\n");
-		for (String s:state.getState().extras)
+		for (String s:state.extras)
 			sb.append(s).append("\n");
 		return sb.toString();
 

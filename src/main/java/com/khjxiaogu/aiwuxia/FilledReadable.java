@@ -1,33 +1,36 @@
 package com.khjxiaogu.aiwuxia;
 
 import java.io.IOException;
+import java.io.Reader;
 import java.nio.CharBuffer;
+import java.util.Arrays;
 
-public class FilledReadable implements Readable {
+public class FilledReadable extends Reader {
 	private StringBuilder internal;
 	private boolean isEnded;
+	private Object lock=new Object();
 	public FilledReadable() {
 		
 	}
 	@Override
 	public int read(CharBuffer cb) throws IOException {
 		//wait for insert
-		try {
-			while(internal==null) {
+		//try {
+			//while(internal==null) {
 				if(isEnded)
 					return -1;
-				if(internal!=null)
-					break;
+				if(internal==null)
+					return 0;
 				
-					Thread.sleep(100);
+			//		Thread.sleep(100);
 				
-			}
-		} catch (InterruptedException e) {
+			//}
+		/*} catch (InterruptedException e) {
 			e.printStackTrace();
-		}
+		}*/
 		char[] ca;
 	
-		synchronized(this) {
+		synchronized(lock) {
 			int len=Math.min(cb.length(), internal.length());
 			if(len>=internal.length()) {
 				ca=internal.toString().toCharArray();
@@ -47,11 +50,26 @@ public class FilledReadable implements Readable {
 			isEnded=true;
 			return;
 		}
-		synchronized(this) {
+		synchronized(lock) {
 			if(internal==null) {
 				internal=new StringBuilder();
 			}
 			internal.append(event);
 		}
+	}
+	@Override
+	public int read(char[] cbuf, int off, int len) throws IOException {
+		CharBuffer cb=CharBuffer.allocate(len);
+		int alen=read(cb);
+		cb.rewind();
+		if(alen>0)
+			for(int i=0;i<alen;i++)
+				cbuf[i+off]=cb.get();
+		//System.out.println(Arrays.toString(Arrays.copyOfRange(cbuf, off, alen+off)));
+		return alen;
+	}
+	@Override
+	public void close() throws IOException {
+		
 	}
 }

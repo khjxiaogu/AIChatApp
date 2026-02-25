@@ -17,14 +17,16 @@ public class AIState implements Serializable, Cloneable {
 	public static class AIData{
 		private static final long serialVersionUID = 629802023373098821L;
 		private StateIntf state=new StateIntf();
-		
+		protected Map<String,String> extraData=new HashMap<>(); 
 		private int row;
 		private GameStage stage = GameStage.INITIALIZE;
 		private Usage usage = new Usage();
 	}
 	protected HistoryHolder history;
 	protected AIData data;
-	protected Map<String,String> extraData=new HashMap<>(); 
+	
+
+	transient boolean isGenerating;
 	public AIData getData() {
 		return data;
 	}
@@ -124,15 +126,23 @@ public class AIState implements Serializable, Cloneable {
 	public void delMessage(int id) {
 		
 	}
-	public void onGenComplete() {}
+	public void onGenComplete() {
+		isGenerating=false;
+	}
 	public void addUsage(Usage usage) {
 		data.usage.add(usage);
 	}
 	public String getUsage() {
 		return data.usage.toString();
 	}
+	public String getPrice() {
+		return data.usage.calculatePrice();
+	}
 	public GameStage getStage() {
 		return data.stage;
+	}
+	public Map<String, String> getExtra() {
+		return data.extraData;
 	}
 	public void setStage(GameStage stage) {
 		data.stage = stage;
@@ -145,5 +155,8 @@ public class AIState implements Serializable, Cloneable {
 	}
 	public StateIntf getState() {
 		return data.state;
+	}
+	public void onGenStart() {
+		isGenerating=true;
 	}
 }

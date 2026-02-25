@@ -1,6 +1,7 @@
 package com.khjxiaogu.aiwuxia.scheme;
 
 import java.io.Serializable;
+import java.text.DecimalFormat;
 
 public class Usage implements Serializable{
 	/**
@@ -29,6 +30,9 @@ public class Usage implements Serializable{
 		prompt_cache_hit_tokens+=another.prompt_cache_hit_tokens;
 		prompt_cache_miss_tokens+=another.prompt_cache_miss_tokens;
 	}
-	
+	public String calculatePrice() {
+		DecimalFormat format=new DecimalFormat("#0.00#");
+		return format.format(((prompt_cache_miss_tokens+completion_tokens)*2+0.2*prompt_cache_hit_tokens)/1000000);
+	}
 
 }

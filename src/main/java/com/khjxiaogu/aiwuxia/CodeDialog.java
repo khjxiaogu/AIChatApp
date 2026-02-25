@@ -67,6 +67,7 @@ public class CodeDialog extends JFrame{
 		// opane.setPreferredSize(new Dimension(200,200));
 		sarea = new JTextArea(46, 40);
 		sarea.setFont(new Font("微软雅黑", Font.BOLD, 12));
+		sarea.setLineWrap(true);
 		JSplitPane s = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
 		s.add(sarea);
 		usage=new JTextArea(4,40);

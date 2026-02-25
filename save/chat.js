@@ -4,11 +4,12 @@ var searchStr = location.toString();
 searchStr = searchStr.substr(searchStr.indexOf("?")+1);
 searchStr=searchStr.replace("#","");
 var searchs = searchStr.split("&");
+var isFirstSelect=false;
 for(var i=0;i<searchs.length;i++){
 	var rq = searchs[i].split("=");
 	pageQueries[rq[0]]=rq[1];
 }
-function autoScroll(){messages.scrollTop=messages.scrollHeight}
+function autoScroll(){messages.scrollTop=messages.scrollHeight;}
 function ChatClient(url){
 	var _this=this;
 	var msgs=new Vue({
@@ -17,6 +18,7 @@ function ChatClient(url){
 		list: [
 		],
 		user:"你",
+		status:0,
 		opened:false
 	  },
 	  computed: {
@@ -29,12 +31,20 @@ function ChatClient(url){
 		 // el.style.opacity = 0
 		  //el.style.translateX="-100%"
 		},
+		regen(){
+			_this.sendMessage('重新生成');
+		},
+		revert(){
+			_this.sendMessage('撤回');
+		},
 		setOpened(b){
 			opened=b;
 			if(b){
 				input.style.display="";
+				status=0;
 			}else{
 				input.style.display="none";
+				status=2;
 			}
 		},
 		enter: function (el, done) {
@@ -61,6 +71,7 @@ function ChatClient(url){
 			msgs.list.push({title: name,msg:msg,id:id});
 		else
 			msgs.list.push({msg:msg,id:id});
+		delayedResize();
 	}
 	function appendMsg(id,msg){
 		for(var i=0;i<msgs.list.length;i++){
@@ -69,6 +80,7 @@ function ChatClient(url){
 				break;
 			}
 		}
+		delayedResize();
 	}
 	function remMsg(id){
 		for(var i=0;i<msgs.list.length;i++){
@@ -159,8 +171,11 @@ function ChatClient(url){
 				
 			}
 			msgs.setOpened(true);
+			autoResize();
+		
 			if(done)
 				done();
+			
 		};
 		wssocket.onclose=function(ev){var rev=ev?ev:event;msgs.setOpened(false);if(rev.reason!="")alert(rev.reason);}
 		wssocket.onerror=function(ev){console.info(ev);msgs.setOpened(false);alert("连接聊天服务器失败！");};
@@ -179,6 +194,10 @@ function ChatClient(url){
 			if(param.remove!=undefined){
 				remMsg(param.remove);
 			}
+			if(param.status!=undefined)
+				msgs.status=param.status;
+			if(param.price!=undefined)
+				console.info(param.price)
 		};
 	}
 	this.open=function(app,id,done){
@@ -207,12 +226,27 @@ function ChatClient(url){
 	  },
 	  methods: {
 		changeChat:function(id){
+			
 			_this.open(appId,id);
+			
+		},
+		removeChat:function(brief,id){
+			if(confirm("确定要删除会话“"+brief+"”吗？")){
+				var xhr=new XMLHttpRequest();
+				xhr.open("GET","remove?uid="+pageQueries.userId+"&cid="+id,true);
+				
+				xhr.onloadend=function(){
+					chats.reloadChats();
+					alert("成功！");
+				};
+				xhr.send();
+			}
+			
 		},
 		createApp:function(){
 			var sel=this.selectedApp;
 			var __this=this;
-			loadJSON("/aichat/createid",function(e){
+			loadJSON("createid",function(e){
 				_this.open(sel,e,__this.reloadChats);
 				console.info(sel);
 				console.info(e);
@@ -220,13 +254,21 @@ function ChatClient(url){
 			});
 		},
 		reloadChats:function(){
-			loadJSON("/aichat/chatlist?uid="+pageQueries.userId,e=>this.list=eval(e));
+			loadJSON("chatlist?uid="+pageQueries.userId,e=>{
+				this.list=eval(e);
+				if(isFirstSelect){
+					for(let it of this.list)
+					if(pageQueries.chatId=it.chatid)
+						_this.open(it.appid,it.chatid);
+				}
+			});
 		}
 	  }
 	});
 	chats.reloadChats()
 	setTimeout(chats.reloadChats,5000);
-	loadJSON("/aichat/applist",e=>chats.applist=eval(e));
+	loadJSON("applist?uid="+pageQueries.userId,e=>chats.applist=eval(e));
+	
 	return this;
 }
 function CompressHead(file,done){

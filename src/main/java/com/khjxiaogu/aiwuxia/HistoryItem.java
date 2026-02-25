@@ -22,7 +22,6 @@ class HistoryItem implements Serializable {
 		this.role = role;
 		this.shouldSend = shouldSend;
 	}
-
 	public HistoryItem(Role role, String content, String fullContent) {
 		super();
 		this.role = role;
