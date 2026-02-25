@@ -83,6 +83,18 @@ class HistoryItem implements Serializable {
 		}
 		this.content.append(content).append("\n");
 	}
+	void append(String content, boolean shouldSend) {
+		if (this.shouldSend) {
+			if (!shouldSend) {
+				createFullContent();
+			} else {
+				if (sendContent != null) {
+					sendContent.append(content);
+				}
+			}
+		}
+		this.content.append(content);
+	}
 	void appendSending(String content) {
 		createFullContent();
 		this.sendContent.append(content);

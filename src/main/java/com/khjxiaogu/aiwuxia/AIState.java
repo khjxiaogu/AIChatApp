@@ -60,6 +60,23 @@ public class AIState implements Serializable, Cloneable {
 			appendMessage(hi.identifier,content+"\n");
 		}
 	}
+	public void appendCh(Role role,String ch,boolean isSendable) {
+		HistoryItem hi=null;
+		if(!history.isEmpty()) {
+			hi=getLast();
+			if(role!=hi.role||(!hi.shouldSend&&isSendable)) {
+				hi=null;
+			}
+		}
+		if(hi==null) {
+			hi=new HistoryItem(history.size(),role,ch,isSendable);
+			history.add(hi);
+			postMessage(hi.identifier,hi.role.getName(),hi.getContent().toString());
+		}else {
+			hi.append(ch, isSendable);
+			appendMessage(hi.identifier,ch);
+		}
+	}
 	public void appendInvisibleLine(Role role,String content) {
 		HistoryItem hi=null;
 		if(!history.isEmpty()) {

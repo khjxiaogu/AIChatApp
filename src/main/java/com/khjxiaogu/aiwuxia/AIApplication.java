@@ -60,7 +60,26 @@ public abstract class AIApplication {
 		je.getAsJsonObject().add("history", ppgs.toJsonTree(aistate.getHistory()));
 		FileUtil.transfer(ppgs.toJson(je), jsonFile);
 	}
+	public String constructBackLog(AIState state) {
+		StringBuilder sb = new StringBuilder("");
+		for (HistoryItem hs : state.getHistory()) {
+			sb.append(hs.role.getName()).append("：").append(hs.getContent())
+				.append("\n");
+		}
 
+		return sb.toString();
+
+	}
+	boolean isUpdated;
+	public boolean checkAndUnsetUpdated() {
+		boolean res=isUpdated;
+		isUpdated=false;
+		return res;
+	}
+	public void setUpdated() {
+		isUpdated=true;
+		
+	}
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
 	
 	
@@ -81,7 +100,6 @@ public abstract class AIApplication {
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
 			aistate = new AIState(new History(),new AIState.AIData());
 			main.provideInitial(aistate);
-			aistate.setStage(GameStage.NAMING);
 		}
 	
 		dialog.sarea.setText(main.constructSystem(aistate));
@@ -94,9 +112,11 @@ public abstract class AIApplication {
 			try {
 				while(true) {
 					String s=main.constructBackLog(cstate);
-					SwingUtilities.invokeLater(()->{
-						dialog.setBackLog(s);
-					});
+					if(main.checkAndUnsetUpdated()) {
+						SwingUtilities.invokeLater(()->{
+							dialog.setBackLog(s);
+						});
+					}
 					Thread.sleep(100);
 				}
 			} catch (InterruptedException e) {
@@ -106,6 +126,7 @@ public abstract class AIApplication {
 		});
 		updateThread.setDaemon(true);
 		updateThread.start();
+		main.setUpdated();
 		while (true) {
 			String ret = null;
 			while (ret == null || ret.isEmpty()) {
@@ -148,7 +169,7 @@ public abstract class AIApplication {
 
 	public RespScheme sendAIRequest(JsonObject req) throws IOException {
 		String tosend = gs.toJson(req);
-		System.out.println(tosend);
+		System.out.println(ppgs.toJson(req));
 		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", System.getProperty("deepseektoken"))
@@ -160,7 +181,7 @@ public abstract class AIApplication {
 		System.out.println(resp.choices.get(0).message.reasoning_content);
 		System.out.println("=================Usage===============");
 		System.out.println(resp.usage);
-	
+		setUpdated();
 		return resp;
 	}
 
@@ -168,7 +189,7 @@ public abstract class AIApplication {
 		req.addProperty("stream", true);
 		req.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		String tosend = gs.toJson(req);
-		System.out.println(tosend);
+		System.out.println(ppgs.toJson(req));
 		FilledReadable readable=new FilledReadable();
 		System.out.println("=================Reasoner===============");
 		Usage usage=new Usage();
@@ -193,6 +214,7 @@ public abstract class AIApplication {
 						readable.putCh(delta.content);
 					if(scheme.usage!=null)
 						usage.add(scheme.usage);
+					setUpdated();
 				});
 	
 	

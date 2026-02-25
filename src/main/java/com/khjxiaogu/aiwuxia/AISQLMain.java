@@ -19,15 +19,13 @@ import com.khjxiaogu.aiwuxia.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.scheme.RespScheme;
 
-public class AIArticleMain extends AIApplication {
-	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
-	Pattern intfPattern = Pattern.compile("【([^面]+)面板】");
+public class AISQLMain extends AIApplication {
 
 	List<String> femalenames;
 	List<String> malenames;
 	{
 		try {
-			system = FileUtil.readString(new File("save", "promptwrite.txt")).replace("\r", "");
+			system = FileUtil.readString(new File("save", "promptsql.txt")).replace("\r", "");
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -40,10 +38,21 @@ public class AIArticleMain extends AIApplication {
 			}
 			return ret;
 		});
+		handlers.add((state, ret) -> {
+
+			
+				if (ret.startsWith("定义")) {
+					state.getState().extras.add(ret.substring(2).trim());
+
+					return null;
+				}
+			
+			return ret;
+		});
 		// check interface
 		handlers.add((state, ret) -> {
 			if (state.getStage() == GameStage.STARTED) {
-				if ("查看大纲".equals(ret)) {
+				if ("查看定义".equals(ret)) {
 					state.add(Role.USER, ret, false);
 					state.add(Role.ASSISTANT, constructSystem(state), false);
 					return null;
@@ -150,7 +159,7 @@ public class AIArticleMain extends AIApplication {
 	}
 
 	public void provideInitial(AIState state) {
-		state.add(Role.ASSISTANT,"请提供写作内容要求",false);
+		state.add(Role.ASSISTANT,"请提供表定义，定义必须开始以“定义”二字",false);
 		state.setStage(GameStage.NAMING);
 	}
 
@@ -173,37 +182,18 @@ public class AIArticleMain extends AIApplication {
 			}
 			System.out.println(last);
 			if (status == 0) {
-				if (last.startsWith("==大纲==")) {
-					status = 1;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-				} else if (last.startsWith("==内容==")) {
-					status = 2;
-<<<<<<< Upstream, based on branch 'master' of https://github.com/khjxiaogu/AIChatApp.git
-				} else {
-					state.appendLine(Role.ASSISTANT, last, true);
-				}
-			} else if (status == 1) {
-				if (last.startsWith("==内容==")) {
+				if (last.startsWith("==SQL==")) {
 					status = 2;
 					state.appendInvisibleLine(Role.ASSISTANT, last);
-=======
 				} else {  
 					state.appendLine(Role.ASSISTANT, last, true);
 				}
-			} else if (status == 1) {
-				if (last.startsWith("==内容==")) {
-					status = 2;
->>>>>>> 1fc8a8a another code
-				} else {
-					state.getState().extras.add(last);
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-				}
-			} else {
+			}  else {
 				state.appendLine(Role.ASSISTANT, last, true);
 			}
 
 		}
-		state.appendLine(Role.ASSISTANT, "\n输入“查看大纲”查看此前的大纲，输入“重新生成”重新生成剧情，输入“撤回”删除上一次对话。", false);
+		state.appendLine(Role.ASSISTANT, "\n输入“重新生成”重新生成，输入“撤回”删除上一次对话。", false);
 
 		return nstateModified ? oldstate : null;
 	}
@@ -211,7 +201,7 @@ public class AIArticleMain extends AIApplication {
 	public String constructSystem(AIState state) {
 		if (state == null || state.getState().extras.isEmpty())
 			return "";
-		StringBuilder sb = new StringBuilder("==大纲==\n");
+		StringBuilder sb = new StringBuilder("=====定义=====\n");
 		for (String s:state.getState().extras)
 			sb.append(s).append("\n");
 		return sb.toString();
@@ -220,7 +210,7 @@ public class AIArticleMain extends AIApplication {
 
 	@Override
 	public String getName() {
-		return "写作";
+		return "sql";
 	}
 
 	@Override

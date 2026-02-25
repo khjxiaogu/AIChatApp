@@ -1,7 +1,10 @@
 package com.khjxiaogu.aiwuxia;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.Reader;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -79,7 +82,9 @@ public class AIWuxiaMain extends AIApplication {
 		});
 		// AI response, always valid
 		handlers.add((state, ret) -> {
+			
 			state.add(Role.USER, ret, true);
+			state.appendInvisibleLine(Role.USER, "\n按上述行动继续，至少写出5条大纲，情景剧本部分按大纲扩写，必须包含所有大纲的要点，内容务必详细详尽，文本优美通顺，至少1500字。");
 			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state)));
 			state.getLast().lastState = airet;
 			state.addRow();
@@ -113,14 +118,13 @@ public class AIWuxiaMain extends AIApplication {
 	public StateIntf sendAndProcessResult(AIState state, JsonObject req) throws IOException {
 		RespScheme resp = sendAIRequest(req);
 		state.addUsage(resp.usage);
-		return precessResponse(new Scanner(resp.choices.get(0).message.content), state);
+		return precessResponse(new StringReader(resp.choices.get(0).message.content), state);
 	}
 
 	public StateIntf sendAndProcessResultStreamed(AIState state, JsonObject req) throws IOException {
-		FilledReadable resp = sendAIStreamedRequest(req, state::addUsage);
-		try (Scanner sc = new Scanner(resp)) {
-			return precessResponse(sc, state);
-		}
+		Reader resp = sendAIStreamedRequest(req, state::addUsage);
+		return precessResponse(resp, state);
+		
 	}
 
 	public class MessageAndRole {
@@ -138,8 +142,8 @@ public class AIWuxiaMain extends AIApplication {
 	public JsonObject constructAIrequest(AIState state, String status) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system).end();
-		if (status != null && !status.isEmpty())
-			b.object().add("role", "system").add("content", status).end();
+		//if (status != null && !status.isEmpty())
+		//	b.object().add("role", "system").add("content", status).end();
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
@@ -160,24 +164,26 @@ public class AIWuxiaMain extends AIApplication {
 				if (i >= 4 && current.role.equals("user"))
 					break;
 			}
+			MessageAndRole user=queue.get(queue.size()-1);
+			user.message=constructStroy(state).append("==用户操作==\n").append(user.message);
 			for (MessageAndRole hs : queue)
 				b.object().add("role", hs.role).add("content", hs.message.toString().trim()).end();
 		}
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("model", "deepseek-chat").add("temperature", 1.3).add("max_tokens", 8192).add("stream", false).end();
+		return b.end().add("model", "deepseek-chat").add("temperature", 1.6).add("frequency_penalty", 0.3).add("max_tokens", 8192).add("stream", false).end();
 
 	}
 
-	public String constructBackLog(AIState state) {
-		StringBuilder sb = new StringBuilder("");
-		for (HistoryItem hs : state.getHistory()) {
-			sb.append(hs.role.getName()).append("：").append(hs.getContent())
-				.append("\n");
-		}
 
-		return sb.toString();
+	public StringBuilder constructStroy(AIState state) {
+		StringBuilder sb = new StringBuilder("==故事大纲==\n");
+		for (String hs : state.getState().extras) {
+			sb.append(hs).append("\n");
+		}
+		
+		return sb;
 
 	}
 
@@ -186,7 +192,7 @@ public class AIWuxiaMain extends AIApplication {
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Scanner scan, AIState state) {
+	public StateIntf precessResponse(Reader scan, AIState state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 
@@ -194,9 +200,11 @@ public class AIWuxiaMain extends AIApplication {
 		StateIntf oldstate = new StateIntf(state.getState());
 		boolean nstateModified = false;
 		boolean isDraft=false;
-		while (scan.hasNextLine()) {
-			String last = scan.nextLine();
+		BufferedReader reader=new BufferedReader(scan);
+		String last;
+		while ((last=reader.readLine())!=null) {
 			if (isWaiting && last.isEmpty()) {
+				System.out.println("\nWaiting");
 				continue;
 			}
 
@@ -213,30 +221,54 @@ public class AIWuxiaMain extends AIApplication {
 			if(isDraft) {
 				if(last.startsWith("==属性面板==")||last.startsWith("==操作==")||last.startsWith("==情景剧本==")) {
 					isDraft=false;
+					//no append because later
 				}else {
+					
 					state.appendInvisibleLine(Role.ASSISTANT, last);
+					state.getState().extras.add(last);
 					continue;
 				}
 			}
 			
-			if (status == 0) {
+			if (status == 0) {//处理主要剧情
 				if (last.startsWith("==属性面板==")) {
 					status = 1;
+					state.appendInvisibleLine(Role.ASSISTANT, last);
 				} else if (last.startsWith("==操作==")) {
 					status = 3;
 					state.appendInvisibleLine(Role.ASSISTANT, last);
 					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
 				} else {
 					state.appendLine(Role.ASSISTANT, last, true);
+					int codePoint=0,codePoint2=0;
+					reader.mark(16);
+					while((codePoint=reader.read())!=-1) {
+						if(codePoint!='=') {
+							reader.mark(16);
+							char[] ch=Character.toChars(codePoint);
+							state.appendCh(Role.ASSISTANT, String.valueOf(ch), isDraft);
+						}else if((codePoint2=reader.read())=='=') {
+							reader.reset();
+						}else {
+							reader.mark(16);
+							char[] ch=Character.toChars(codePoint);
+							state.appendCh(Role.ASSISTANT, String.valueOf(ch), isDraft);
+							if(codePoint2!=-1) {
+								ch=Character.toChars(codePoint2);
+								state.appendCh(Role.ASSISTANT, String.valueOf(ch), isDraft);
+							}
+						}
+					}
 				}
-			} else if (status == 1) {
+			} else if (status == 1) {//处理属性面板
 				if (last.startsWith("==操作==")) {
+					state.appendInvisibleLine(Role.ASSISTANT, buildAttrStr(state));
 					status = 3;
 					state.appendInvisibleLine(Role.ASSISTANT, last);
 					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
-				} else if (last.startsWith("【叙事轨迹】")) {
-					status = 2;
-				} else {
+					
+				}else {
+					//state.appendInvisibleLine(Role.ASSISTANT, last);
 					Matcher m1 = intfPattern.matcher(last);
 					if (m1.find()) {
 						intf = state.getState().intfs.computeIfAbsent(m1.group(1), Interface::new);
@@ -278,17 +310,24 @@ public class AIWuxiaMain extends AIApplication {
 
 		return nstateModified ? oldstate : null;
 	}
-
+	private String buildAttrStr(AIState state) {
+		if (state == null || state.getState().intfs.isEmpty())
+			return "";
+		StringBuilder sb = new StringBuilder("");
+		for (Interface intf : state.getState().intfs.values())
+			sb.append(intf.toString());
+		return sb.toString();
+	}
 	public String constructSystem(AIState state) {
 		if (state == null || state.getState().intfs.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("==属性面板==\n");
 		for (Interface intf : state.getState().intfs.values())
 			sb.append(intf.toString());
-		sb.append("【叙事轨迹】\n");
-		for (Entry<String, String> p : state.getState().perks.entrySet()) {
+		//sb.append("【叙事轨迹】\n");
+		/*for (Entry<String, String> p : state.getState().perks.entrySet()) {
 			sb.append(p.getKey()).append(". ").append(p.getValue()).append("\n");
-		}
+		}*/
 
 		return sb.toString();
 

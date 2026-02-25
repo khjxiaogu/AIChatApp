@@ -42,6 +42,7 @@ public class CodeDialog extends JFrame{
 		
 		area = new JTextArea(2, 80);
 		area.setFont(new Font("微软雅黑", Font.BOLD, 12));
+		area.setLineWrap(true);
 		JScrollPane pane = new JScrollPane(area);
 		JPanel p = new JPanel();
 		p.setLayout(new BorderLayout());
@@ -60,6 +61,7 @@ public class CodeDialog extends JFrame{
 		send.setEnabled(false);
 		// pane.setPreferredSize(new Dimension(200,200));
 		oarea = new JTextArea(46, 80);
+		oarea.setLineWrap(true);
 		oarea.setFont(new Font("微软雅黑", Font.BOLD, 12));
 		opane = new JScrollPane(oarea);
 		// opane.setPreferredSize(new Dimension(200,200));
@@ -136,5 +138,9 @@ public class CodeDialog extends JFrame{
 			return new BufferedReader(new FileReader(chooser.getSelectedFile()));
 		else
 			throw new FileNotFoundException("no file specified");
+	}
+	
+	public String getBackLog() {
+		return oarea.getText();
 	}
 }
