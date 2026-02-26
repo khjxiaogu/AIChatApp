@@ -252,7 +252,10 @@ public class AIGalgameMain extends AIApplication {
 					state.appendInvisibleLine(Role.ASSISTANT, last);
 					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
 				} else {
-					state.appendLine(Role.ASSISTANT, last, true);
+					if(last.startsWith("==情景剧本=="))
+						state.appendInvisibleLine(Role.ASSISTANT, last);
+					else
+						state.appendLine(Role.ASSISTANT, last, true);
 					int codePoint=0,codePoint2=0;
 					reader.mark(16);
 					while((codePoint=reader.read())!=-1) {
