@@ -31,11 +31,11 @@ public class AIGalgameMain extends AIApplication {
 	Pattern intfPattern = Pattern.compile("【([^面]+)面板】");
 	String charaname;
 
-	public AIGalgameMain(String promptName,String charaname) {
+	public AIGalgameMain(File basePath,String promptName,String charaname) {
 		super();
 		this.charaname=charaname;
 		try {
-			system = FileUtil.readString(new File("save", promptName)).replace("\r", "");
+			system = FileUtil.readString(new File(basePath, promptName)).replace("\r", "");
 
 		} catch (IOException e) {
 			e.printStackTrace();

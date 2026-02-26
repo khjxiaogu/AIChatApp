@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIArticleMain;
+import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AIGalgameMain;
 import com.khjxiaogu.aiwuxia.apps.AIWuxiaMain;
 import com.khjxiaogu.aiwuxia.state.History;
@@ -61,11 +62,7 @@ public class AIChatService implements ServiceClass {
 		");";// 创建费用表
 	protected Map<String, WebSocketAISession> uidsockets = new ConcurrentHashMap<>();//用户链接
 	private Map<String, AIApplication> apps = new HashMap<>();//智能体列表
-	{
-		apps.put("wuxia", new AIWuxiaMain());
-		apps.put("article", new AIArticleMain());
-		apps.put("fengyi", new AIGalgameMain("promptfengyi.txt","姚枫怡"));
-	}
+	
 	File parent;
 	File saveData;
 
@@ -89,6 +86,10 @@ public class AIChatService implements ServiceClass {
 		parent = path;
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();
+		apps.put("wuxia", new AIWuxiaMain(path));
+		apps.put("article", new AIArticleMain(path));
+		apps.put("fengyi", new AIGalgameMain(path,"promptfengyi.txt","姚枫怡"));
+		apps.put("fengyitalk", new AICharaTalkMain(path,"fengyitalk","姚枫怡聊天"));
 	}
 
 	public JsonArray getChatApps(String uid) {

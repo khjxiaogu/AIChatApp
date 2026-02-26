@@ -39,17 +39,7 @@ public class AIWuxiaMain extends AIApplication {
 	List<String> femalenames;
 	List<String> malenames;
 	{
-		try {
-			system = FileUtil.readString(new File("save", "promptwuxia.txt")).replace("\r", "");
-
-			malenames = new ArrayList<>(Arrays.asList(FileUtil
-				.readString(new File("save", "name-wuxia-male.txt")).replace("\r", "").split("\n")));
-			femalenames = new ArrayList<>(Arrays.asList(FileUtil
-				.readString(new File("save", "name-wuxia-female.txt")).replace("\r", "").split("\n")));
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
+		
 		// naming
 		handlers.add((state, ret) -> {
 
@@ -101,6 +91,20 @@ public class AIWuxiaMain extends AIApplication {
 
 			return null;
 		});
+	}
+
+	public AIWuxiaMain(File path) {
+		try {
+			system = FileUtil.readString(new File(path, "promptwuxia.txt")).replace("\r", "");
+
+			malenames = new ArrayList<>(Arrays.asList(FileUtil
+				.readString(new File(path, "name-wuxia-male.txt")).replace("\r", "").split("\n")));
+			femalenames = new ArrayList<>(Arrays.asList(FileUtil
+				.readString(new File(path, "name-wuxia-female.txt")).replace("\r", "").split("\n")));
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 	}
 
 	public void provideNames(AISession state) {

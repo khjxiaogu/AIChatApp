@@ -37,12 +37,7 @@ public class AIArticleMain extends AIApplication {
 	List<String> femalenames;
 	List<String> malenames;
 	{
-		try {
-			system = FileUtil.readString(new File("save", "promptwrite.txt")).replace("\r", "");
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
+		
 		// naming
 		handlers.add((state, ret) -> {
 
@@ -87,6 +82,15 @@ public class AIArticleMain extends AIApplication {
 
 			return null;
 		});
+	}
+
+	public AIArticleMain(File path) {
+		try {
+			system = FileUtil.readString(new File(path, "promptwrite.txt")).replace("\r", "");
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 	}
 
 	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
