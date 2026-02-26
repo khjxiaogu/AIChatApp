@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -18,9 +18,19 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
-import com.khjxiaogu.aiwuxia.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.JsonBuilder.JsonObjectBuilder;
-import com.khjxiaogu.aiwuxia.scheme.RespScheme;
+import com.khjxiaogu.aiwuxia.AIApplication;
+import com.khjxiaogu.aiwuxia.AISession;
+import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.Interface;
+import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIWuxiaMain extends AIApplication {
 	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
@@ -93,7 +103,7 @@ public class AIWuxiaMain extends AIApplication {
 		});
 	}
 
-	public void provideNames(AIState state) {
+	public void provideNames(AISession state) {
 		if (state.getStage() == GameStage.NAMING) {
 			state.removeLast();
 			// state.removeLast();
@@ -115,13 +125,13 @@ public class AIWuxiaMain extends AIApplication {
 		state.add(Role.ASSISTANT, inital.toString() + "\n请选择一个姓名，或者输入姓名与性别，或输入“换一批”取得新姓名", "你选额：需要起名建议。==故事大纲==1. 为创建角色提供几个名字。\n==情景剧本==\n==属性面板==\n==操作=="+inital.toString() + "请选择一个姓名。");
 	}
 
-	public StateIntf sendAndProcessResult(AIState state, JsonObject req) throws IOException {
+	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
 		RespScheme resp = sendAIRequest(req);
 		state.addUsage(resp.usage);
 		return precessResponse(new StringReader(resp.choices.get(0).message.content), state);
 	}
 
-	public StateIntf sendAndProcessResultStreamed(AIState state, JsonObject req) throws IOException {
+	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
 		Reader resp = sendAIStreamedRequest(req, state::addUsage);
 		return precessResponse(resp, state);
 		
@@ -139,7 +149,7 @@ public class AIWuxiaMain extends AIApplication {
 
 	}
 
-	public JsonObject constructAIrequest(AIState state, String status) {
+	public JsonObject constructAIrequest(AISession state, String status) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system).end();
 		//if (status != null && !status.isEmpty())
@@ -156,12 +166,12 @@ public class AIWuxiaMain extends AIApplication {
 				if (current.shouldSend) {
 
 					if (i == 0)
-						queue.add(0, new MessageAndRole(current.role.getRoleName(), current.getFullContent()));
+						queue.add(0, new MessageAndRole(current.getRole().getRoleName(), current.getFullContent()));
 					else
-						queue.add(0, new MessageAndRole(current.role.getRoleName(), current.getFullContent()));
+						queue.add(0, new MessageAndRole(current.getRole().getRoleName(), current.getFullContent()));
 					i++;
 				}
-				if (i >= 4 && current.role.equals("user"))
+				if (i >= 4 && current.getRole().equals("user"))
 					break;
 			}
 			MessageAndRole user=queue.get(queue.size()-1);
@@ -177,7 +187,7 @@ public class AIWuxiaMain extends AIApplication {
 	}
 
 
-	public StringBuilder constructStroy(AIState state) {
+	public StringBuilder constructStroy(AISession state) {
 		StringBuilder sb = new StringBuilder("==故事大纲==\n");
 		for (String hs : state.getState().extras) {
 			sb.append(hs).append("\n");
@@ -187,12 +197,12 @@ public class AIWuxiaMain extends AIApplication {
 
 	}
 
-	public void provideInitial(AIState state) {
+	public void provideInitial(AISession state) {
 		provideNames(state);
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Reader scan, AIState state) throws IOException {
+	public StateIntf precessResponse(Reader scan, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 
@@ -343,7 +353,7 @@ public class AIWuxiaMain extends AIApplication {
 
 		return nstateModified ? oldstate : null;
 	}
-	private String buildAttrStr(AIState state) {
+	private String buildAttrStr(AISession state) {
 		if (state == null || state.getState().intfs.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("");
@@ -372,7 +382,7 @@ public class AIWuxiaMain extends AIApplication {
 	}
 
 	@Override 
-	public String getBrief(AIState state) {
+	public String getBrief(AISession state) {
 		if(state.getState().intfs.isEmpty())
 			return null;
 		return state.getState().intfs.values().iterator().next().values.get("姓名");

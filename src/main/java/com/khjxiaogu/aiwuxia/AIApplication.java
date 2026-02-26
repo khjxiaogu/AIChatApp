@@ -22,18 +22,25 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
-import com.khjxiaogu.aiwuxia.scheme.Choice.Message;
-import com.khjxiaogu.aiwuxia.scheme.RespScheme;
-import com.khjxiaogu.aiwuxia.scheme.Usage;
+import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.respscheme.Usage;
+import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
+import com.khjxiaogu.aiwuxia.state.History;
+import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.BlockingReader;
+import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 
 public abstract class AIApplication {
-	static Gson gs = new Gson();
-	static Gson ppgs = new GsonBuilder().setPrettyPrinting().create();
-	static ExecutorService exc=Executors.newCachedThreadPool();
+	protected static Gson gs = new Gson();
+	protected static Gson ppgs = new GsonBuilder().setPrettyPrinting().create();
+	protected static ExecutorService exc=Executors.newCachedThreadPool();
 	protected String system;
 
 	public static interface MessageHandler {
-		public String apply(AIState state,String message) throws Throwable;
+		public String apply(AISession state,String message) throws Throwable;
 	}
 
 	protected List<MessageHandler> handlers = new ArrayList<>();
@@ -47,117 +54,37 @@ public abstract class AIApplication {
 
 
 
-	public static AIState.AIData dataFromJson(File jsonFile) throws JsonSyntaxException, IOException {
-		return gs.fromJson(FileUtil.readString(jsonFile), AIState.AIData.class);
+	public static AISession.AIData dataFromJson(File jsonFile) throws JsonSyntaxException, IOException {
+		return gs.fromJson(FileUtil.readString(jsonFile), AISession.AIData.class);
 	}
 
 	public static History historyFromJson(File jsonFile) throws JsonSyntaxException, IOException {
 		return gs.fromJson(JsonParser.parseString(FileUtil.readString(jsonFile)).getAsJsonObject().get("history").getAsJsonObject(), History.class);
 	}
 
-	public static void saveToJson(AIState aistate, File jsonFile) throws IOException {
+	public static void saveToJson(AISession aistate, File jsonFile) throws IOException {
 		JsonElement je=ppgs.toJsonTree(aistate.getData());
 		je.getAsJsonObject().add("history", ppgs.toJsonTree(aistate.getHistory()));
 		FileUtil.transfer(ppgs.toJson(je), jsonFile);
 	}
-	public String constructBackLog(AIState state) {
+	public String constructBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
 		for (HistoryItem hs : state.getHistory()) {
-			sb.append(hs.role.getName()).append("：").append(hs.getContent())
+			sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContent())
 				.append("\n");
 		}
 
 		return sb.toString();
 
 	}
-	boolean isUpdated;
-	public boolean checkAndUnsetUpdated() {
-		boolean res=isUpdated;
-		isUpdated=false;
-		return res;
-	}
-	public void setUpdated() {
-		isUpdated=true;
-		
-	}
-	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-	
-	
-		CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
-		File saveData = new File("save/saveData","savefengyi.json");
-		AIState aistate=null;
-		if (saveData.exists()) {
-			aistate=new AIState(
-				historyFromJson(saveData),
-				dataFromJson(saveData));
-		}
-		
-	
-		AIGalgameMain main=new AIGalgameMain("promptfengyi.txt","姚枫怡");
-		// construct initail message
-		if (aistate == null) {
-			dialog.setBackLog("正在生成初始面板...");
-			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AIState(new History(),new AIState.AIData());
-			main.provideInitial(aistate);
-		}
-	
-		dialog.sarea.setText(main.constructSystem(aistate.getState()));
-		//dialog.setBackLog(constructBackLog());
-		dialog.usage.setText(aistate.getUsage());
-		final AIState cstate=aistate;
-		Thread updateThread=new Thread(()->{
-			
-			
-			try {
-				while(true) {
-					
-					if(main.checkAndUnsetUpdated()) {
-						String s=main.constructBackLog(cstate);
-						if(cstate.isGenerating)
-							s+="\n生成中...";
-						final String fs=s;
-						SwingUtilities.invokeLater(()->{
-							dialog.setBackLog(fs);
-						});
-					}
-					Thread.sleep(100);
-				}
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-		});
-		updateThread.setDaemon(true);
-		updateThread.start();
-		main.setUpdated();
-		while (true) {
-			String ret = null;
-			while (ret == null || ret.isEmpty()) {
-				ret = dialog.showDialog();
-			}
-			
-			
-			try {
-				main.handleSpeech(aistate,ret);
-				saveToJson(aistate,saveData);
-				dialog.sarea.setText(main.constructSystem(aistate.getState()));
-				//dialog.setBackLog(constructBackLog());
-				if (aistate != null)
-					dialog.usage.setText(aistate.getUsage());
-			} catch (Throwable t) {
-				t.printStackTrace();
-	
-			}
-	
-		}
-	}
+
+
 
 	public AIApplication() {
 		super();
 	}
 
-	public void handleSpeech(AIState state, String ret) {
+	public void handleSpeech(AISession state, String ret) {
 		state.onGenStart();
 		for (MessageHandler i : handlers) {
 			try {
@@ -170,14 +97,14 @@ public abstract class AIApplication {
 		state.onGenComplete();
 	}
 
-	public abstract void provideInitial(AIState state);
+	public abstract void provideInitial(AISession state);
 
 	public RespScheme sendAIRequest(JsonObject req) throws IOException {
 		String tosend = gs.toJson(req);
 		//System.out.println(ppgs.toJson(req));
 		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
-				.header("Authorization", System.getProperty("deepseektoken"))
+				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
 	
 				.post(true).send(tosend).readJson();
 		//System.out.println(ppgs.toJson(retjs));
@@ -186,16 +113,15 @@ public abstract class AIApplication {
 		//System.out.println(resp.choices.get(0).message.reasoning_content);
 		System.out.println("=================Usage===============");
 		System.out.println(resp.usage);
-		setUpdated();
 		return resp;
 	}
 
-	public FilledReadable sendAIStreamedRequest(JsonObject req, Consumer<Usage> gainUsage) throws IOException {
+	public BlockingReader sendAIStreamedRequest(JsonObject req, Consumer<Usage> gainUsage) throws IOException {
 		req.addProperty("stream", true);
 		req.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		String tosend = gs.toJson(req);
 		//System.out.println(ppgs.toJson(req));
-		FilledReadable readable=new FilledReadable();
+		BlockingReader readable=new BlockingReader();
 		//System.out.println("=================Reasoner===============");
 		Usage usage=new Usage();
 		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
@@ -209,7 +135,6 @@ public abstract class AIApplication {
 						System.out.println(usage);
 						gainUsage.accept(usage);
 						readable.putCh(null);
-						setUpdated();
 						return;
 					}
 					RespScheme scheme=gs.fromJson(s, RespScheme.class);
@@ -223,14 +148,16 @@ public abstract class AIApplication {
 					}
 					if(scheme.usage!=null)
 						usage.add(scheme.usage);
-					setUpdated();
 				});
 	
 	
 		return readable;
 	}
+	public String getRoleName(AISession state,Role role) {
+		return role.getName();
+	}
 	public abstract String getName();
 	public abstract String constructSystem(StateIntf state);
-	public abstract String getBrief(AIState state);
+	public abstract String getBrief(AISession state);
 
 }

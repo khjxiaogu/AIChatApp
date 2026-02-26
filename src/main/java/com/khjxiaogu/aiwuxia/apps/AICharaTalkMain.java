@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -7,24 +7,38 @@ import java.io.Reader;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
-import com.khjxiaogu.aiwuxia.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.JsonBuilder.JsonObjectBuilder;
-import com.khjxiaogu.aiwuxia.scheme.RespScheme;
+import com.khjxiaogu.aiwuxia.AIApplication;
+import com.khjxiaogu.aiwuxia.AISession;
+import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.Interface;
+import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.BlockingReader;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
-public class AIGalgameMain extends AIApplication {
+public class AICharaTalkMain extends AIApplication {
 	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
 	Pattern intfPattern = Pattern.compile("【([^面]+)面板】");
 	String charaname;
-
-	public AIGalgameMain(String promptName,String charaname) {
+	String summary;
+	public AICharaTalkMain(File basePath,String modelFolder,String charaname) {
 		super();
 		this.charaname=charaname;
 		try {
-			system = FileUtil.readString(new File("save", promptName)).replace("\r", "");
+			File model=new File(basePath,modelFolder);
+			system = FileUtil.readString(new File(model, "prompt.txt")).replace("\r", "");
+			summary = FileUtil.readString(new File(model, "summary.txt")).replace("\r", "");
 
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -45,7 +59,8 @@ public class AIGalgameMain extends AIApplication {
 					state.getExtra().put("name", ret);
 					state.add(Role.USER, ret, false);
 					state.setStage(GameStage.STARTED);
-					return "开始游戏";
+					state.add(Role.ASSISTANT, "已输入姓名为"+ret+"，可以开始对话了！", false);
+					return null;
 				}
 				return null;
 			}
@@ -86,7 +101,17 @@ public class AIGalgameMain extends AIApplication {
 	}
 
 
-	public void provideNames(AIState state) {
+	@Override
+	public String getRoleName(AISession state,Role role) {
+		switch(role) {
+		case USER:String brief=getBrief(state);return brief==null?"我":brief ;
+		case ASSISTANT:return charaname;
+		default:return role.getName();
+		}
+	}
+
+
+	public void provideNames(AISession state) {
 		if (state.getStage() == GameStage.NAMING) {
 			state.removeLast();
 			// state.removeLast();
@@ -95,14 +120,15 @@ public class AIGalgameMain extends AIApplication {
 
 	}
 
-	public StateIntf sendAndProcessResult(AIState state, JsonObject req) throws IOException {
+	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
 		RespScheme resp = sendAIRequest(req);
 		state.addUsage(resp.usage);
 		return precessResponse(new StringReader(resp.choices.get(0).message.content), state);
 	}
 
-	public StateIntf sendAndProcessResultStreamed(AIState state, JsonObject req) throws IOException {
-		FilledReadable resp = sendAIStreamedRequest(req, state::addUsage);
+	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
+		//System.out.println(AIApplication.ppgs.toJson(req));
+		BlockingReader resp = sendAIStreamedRequest(req, state::addUsage);
 		
 		return precessResponse(resp, state);
 		
@@ -120,9 +146,9 @@ public class AIGalgameMain extends AIApplication {
 
 	}
 	public String constructNameState(String name){
-		return "主角姓名为"+name+"，你需要用该名称称呼主角。";
+		return "用户是主角，姓名为"+name+"。";
 	}
-	public JsonObject constructAIrequest(AIState state) {
+	public JsonObject constructAIrequest(AISession state) throws IOException {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system+constructNameState(state.getExtra().get("name"))).end();
 
@@ -135,34 +161,42 @@ public class AIGalgameMain extends AIApplication {
 			int len=0;
 			for(HistoryItem hi:history) {//calculate total dialog rows
 				if(hi.shouldSend) {
-					if(hi.role==Role.ASSISTANT) {
+					if(hi.getRole()==Role.ASSISTANT) {
 						i++;
 					}
 					len+=hi.getFullContent().length();
 				}
 			}
-			
-			if(len>=140000) {//more than 140000 text:about 100k context,remove until 60000
+			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
 				HistoryItem lasthi=null;
+				StringBuilder summery=new StringBuilder();
+				List<HistoryItem> his=new ArrayList<>();
 				for(HistoryItem hi:history) {//calculate total dialog rows
 					if(hi.shouldSend) {
 						len-=hi.getFullContent().length();
-						hi.shouldSend=false;
-						if(len<=60000&&hi.role==Role.ASSISTANT) {
+						
+						if(hi.getRole()!=Role.SYSTEM) {
+							summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getFullContent()).append("\n");
+						}
+						his.add(hi);
+						if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
 							lasthi=hi;
 							break;
 						}
 					}
 				}
-				if(lasthi!=null)
-				history.add(0, new HistoryItem(Role.SYSTEM,constructSystem(lasthi.lastState),true));
+				history.add(0, new HistoryItem(Role.SYSTEM,makeSummaryrequest(state,summery.toString()),true));
+				his.forEach(t->t.shouldSend=false);
 			}
 			int size=history.size();
+			int diff=0;
 			for(int j=0;j<size;j++) {
 				HistoryItem hi=history.get(j);
 				if (hi.shouldSend) {
-					
-					b.object().add("role", hi.role.getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+					diff++;
+					b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+					/*if(diff%30==0)
+						b.object().add("role", "system").add("content", system).end();*/
 				}
 			}
 				
@@ -170,27 +204,59 @@ public class AIGalgameMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("model", "deepseek-chat").add("temperature", 1.3).add("max_tokens", 8192).add("stream", false).end();
+		return b.end().add("model", "deepseek-chat").add("temperature", 1.3).add("max_tokens", 500).add("stream", false).end();
 
 	}
+	public JsonObject constructSummaryrequest(AISession state,String summary) {
+		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
+			.add("role", "system").add("content", this.summary).end();
 
-	public String constructBackLog(AIState state) {
+		// if (status != null&&!status.isEmpty())
+		b.object().add("role",Role.USER.getRoleName()).add("content", "=== 对话块 ===\n"+summary.trim()).end();
+
+
+		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
+		// true);
+		return b.end().add("model", "deepseek-reasoner").add("temperature", 1.0).add("max_tokens", 8192).add("stream", false).end();
+
+	}
+	public String makeSummaryrequest(AISession state,String summary) throws IOException {
+		
+			RespScheme resp=super.sendAIRequest(constructSummaryrequest(state,summary));
+			state.addUsage(resp.usage);
+			
+			System.out.println(resp.choices.get(0).message.reasoning_content);
+			return resp.choices.get(0).message.content;
+		
+
+	}
+	public String constructBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
 		for (HistoryItem hs : state.getHistory()) {
-			sb.append(hs.role.getName()).append("：").append(hs.getContent())
+			sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContent())
 				.append("\n");
 		}
 
 		return sb.toString();
 
 	}
+	public String constructSummaryBackLog(AISession state) {
+		StringBuilder sb = new StringBuilder("");
+		for (HistoryItem hs : state.getHistory()) {
+			if(hs.shouldSend)
+				sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getFullContent()).append("\n");
+		}
 
-	public void provideInitial(AIState state) {
+		return sb.toString();
+
+	}
+
+	public void provideInitial(AISession state) {
 		state.add(Role.ASSISTANT, "请输入姓名", false);
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Reader scan, AIState state) throws IOException {
+	public StateIntf precessResponse(Reader scan, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 
@@ -215,33 +281,16 @@ public class AIGalgameMain extends AIApplication {
 				//System.out.println("\n=================Content===============");
 				isWaiting = false;
 			}
-			if(last.startsWith("==故事大纲==")) {
-				state.appendInvisibleLine(Role.ASSISTANT, last);
-				isDraft=true;
-				continue;
-			}
-			if(isDraft) {
-				if(last.startsWith("==属性面板==")||last.startsWith("==操作==")||last.startsWith("==情景剧本==")) {
-					isDraft=false;
-					//no append because later
-				}else {
-					
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-					state.getState().extras.add(last);
-					continue;
-				}
-			}
 			
 			if (status == 0) {//处理主要剧情
-				if (last.startsWith("==属性面板==")) {
-					status = 1;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-				} else if (last.startsWith("==操作==")) {
+				if (last.startsWith("==场景==")) {
 					status = 3;
 					state.appendInvisibleLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
 				} else {
-					state.appendLine(Role.ASSISTANT, last, true);
+					if(last.startsWith("==对话=="))
+						state.appendInvisibleLine(Role.ASSISTANT, last);
+					else
+						state.appendLine(Role.ASSISTANT, last, true);
 					int codePoint=0,codePoint2=0;
 					reader.mark(16);
 					while((codePoint=reader.read())!=-1) {
@@ -263,69 +312,24 @@ public class AIGalgameMain extends AIApplication {
 						}
 					}
 				}
-			} else if (status == 1) {//处理属性面板
-				if (last.startsWith("==操作==")) {
-					state.appendInvisibleLine(Role.ASSISTANT, buildAttrStr(state));
-					status = 3;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
-					
-				}else {
-					//state.appendInvisibleLine(Role.ASSISTANT, last);
-					Matcher m1 = intfPattern.matcher(last);
-					if (m1.find()) {
-						intf = state.getState().intfs.computeIfAbsent(m1.group(1), Interface::new);
-						continue;
-					}
-					if (intf == null)
-						continue;
-					Matcher m2 = sxPattern.matcher(last);
-					int index = 0;
-					while (m2.find(index)) {
-						intf.values.put(m2.group(1), m2.group(2));
-						index = m2.end();
-					}
-					nstateModified = true;
+			} else if (status == 3) {
+				state.appendInvisibleLine(Role.ASSISTANT, last);
+				if(last.contains("=")) {
+					String[] lasts=last.split("=");
+					state.getState().perks.put(lasts[0], lasts[1]);
 				}
-			} else if (status == 2) {
-				if (last.startsWith("==操作==")) {
-					status = 3;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
-				} else {
-					int pos = last.indexOf('.');
-					if (pos > 0) {
-						String cont = last.substring(pos + 1).trim();
-						String num = last.substring(0, pos).trim();
-						if (cont.startsWith("【删除】"))
-							state.getState().perks.remove(num);
-						else
-							state.getState().perks.put(num, cont);
-						nstateModified = true;
-					}
-				}
-			} else {
-				state.appendLine(Role.ASSISTANT, last, true);
 			}
 
 		}
 
 		return nstateModified ? oldstate : null;
 	}
-	private String buildAttrStr(AIState state) {
-		if (state == null || state.getState().intfs.isEmpty())
-			return "";
-		StringBuilder sb = new StringBuilder("");
-		for (Interface intf : state.getState().intfs.values())
-			sb.append(intf.toString());
-		return sb.toString();
-	}
 	public String constructSystem(StateIntf state) {
-		if (state == null || state.intfs.isEmpty())
+		if (state == null || state.perks.isEmpty())
 			return "";
-		StringBuilder sb = new StringBuilder("==属性面板==\n");
-		for (Interface intf : state.intfs.values())
-			sb.append(intf.toString());
+		StringBuilder sb = new StringBuilder("==场景==\n");
+		for (Entry<String, String> intf : state.perks.entrySet())
+			sb.append(intf.getKey()).append("=").append(intf.getValue()).append("\n");
 		//sb.append("【叙事轨迹】\n");
 		/*for (Entry<String, String> p : state.getState().perks.entrySet()) {
 			sb.append(p.getKey()).append(". ").append(p.getValue()).append("\n");
@@ -341,9 +345,9 @@ public class AIGalgameMain extends AIApplication {
 	}
 
 	@Override
-	public String getBrief(AIState state) {
-		if(state.getState().intfs.isEmpty())
+	public String getBrief(AISession state) {
+		if(state.getExtra().isEmpty())
 			return null;
-		return state.getState().intfs.values().iterator().next().values.get("姓名");
+		return state.getExtra().get("name");
 	}
 }

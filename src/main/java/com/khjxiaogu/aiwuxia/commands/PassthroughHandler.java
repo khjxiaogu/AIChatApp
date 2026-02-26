@@ -1,6 +1,8 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.commands;
 
 import java.util.Scanner;
+
+import com.khjxiaogu.aiwuxia.AISession;
 
 public class PassthroughHandler implements AIResponseHandler{
 	public static PassthroughHandler INSTANCE;
@@ -8,11 +10,11 @@ public class PassthroughHandler implements AIResponseHandler{
 
 	}
 	@Override
-	public void init(String secName, AIState state) {
+	public void init(String secName, AISession state) {
 		
 	}
 	@Override
-	public void handle(AIState state, int ch) {
+	public void handle(AISession state, int ch) {
 		state.appendLine(null, null, false);
 	}
 

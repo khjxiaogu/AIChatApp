@@ -16,6 +16,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonSyntaxException;
+import com.khjxiaogu.aiwuxia.apps.AIArticleMain;
+import com.khjxiaogu.aiwuxia.apps.AIGalgameMain;
+import com.khjxiaogu.aiwuxia.apps.AIWuxiaMain;
+import com.khjxiaogu.aiwuxia.state.History;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
 import com.khjxiaogu.webserver.annotations.HttpMethod;
@@ -28,7 +34,7 @@ import com.khjxiaogu.webserver.web.lowlayer.Response;
 import com.khjxiaogu.webserver.wrappers.ResultDTO;
 import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
 
-public class ChatServerService implements ServiceClass {
+public class AIChatService implements ServiceClass {
 	public Connection getDatabase() {
 		return database;
 	}
@@ -53,7 +59,7 @@ public class ChatServerService implements ServiceClass {
 		"price TEXT, " + // 价格字符串
 		"time    BIGINT(32) " + // 时间ms
 		");";// 创建费用表
-	protected Map<String, WebSocketAIState> uidsockets = new ConcurrentHashMap<>();
+	protected Map<String, WebSocketAISession> uidsockets = new ConcurrentHashMap<>();//用户链接
 	private Map<String, AIApplication> apps = new HashMap<>();//智能体列表
 	{
 		apps.put("wuxia", new AIWuxiaMain());
@@ -63,7 +69,7 @@ public class ChatServerService implements ServiceClass {
 	File parent;
 	File saveData;
 
-	public ChatServerService(File path) throws SQLException, ClassNotFoundException {
+	public AIChatService(File path) throws SQLException, ClassNotFoundException {
 		try {
 			Class.forName("org.sqlite.JDBC");
 		} catch (ClassNotFoundException e) {
@@ -73,9 +79,9 @@ public class ChatServerService implements ServiceClass {
 		logger.info("正在链接SQLITE信息数据库...");
 		try {
 			database = DriverManager.getConnection("jdbc:sqlite:" + new File(path, "messages.db"));
-			database.createStatement().execute(ChatServerService.createMsg);
-			database.createStatement().execute(ChatServerService.createPerm);
-			database.createStatement().execute(ChatServerService.createPrice);
+			database.createStatement().execute(AIChatService.createMsg);
+			database.createStatement().execute(AIChatService.createPerm);
+			database.createStatement().execute(AIChatService.createPrice);
 		} catch (SQLException e) {
 			logger.severe("信息数据库初始化失败！");
 			throw e;
@@ -273,7 +279,7 @@ public class ChatServerService implements ServiceClass {
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
 		}
-		WebSocketAIState state = uidsockets.get(cid);
+		WebSocketAISession state = uidsockets.get(cid);
 		if (state == null) {
 			AIApplication appx = apps.get(app);
 			if (appx == null||!isChatAllow(uid,app)) {
@@ -284,7 +290,7 @@ public class ChatServerService implements ServiceClass {
 
 			if (data.exists())
 				try {
-					state = new WebSocketAIState(this, cid, appx, data, AIWuxiaMain.historyFromJson(data), AIWuxiaMain.dataFromJson(data));
+					state = new WebSocketAISession(this, cid, appx, data, AIWuxiaMain.historyFromJson(data), AIWuxiaMain.dataFromJson(data));
 					logger.info("AI " + cid + " Loaded");
 				} catch (JsonSyntaxException | IOException e) {
 					e.printStackTrace();
@@ -314,7 +320,7 @@ public class ChatServerService implements ServiceClass {
 					}
 					
 				}
-				state = new WebSocketAIState(this, cid, appx, data, new History(), new AIState.AIData());
+				state = new WebSocketAISession(this, cid, appx, data, new History(), new AISession.AIData());
 				logger.info("AI " + cid + " Created");
 			}
 		}
@@ -323,7 +329,7 @@ public class ChatServerService implements ServiceClass {
 		
 	}
 
-	public void markRelease(WebSocketAIState state) {
+	public void markRelease(WebSocketAISession state) {
 		uidsockets.remove(state.getChatId());
 	}
 

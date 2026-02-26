@@ -10,9 +10,9 @@ import java.util.Date;
 import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 import com.khjxiaogu.webserver.loging.LogStream;
 
-public class AIWuxiaServer {
+public class AIServerMain {
 
-	public AIWuxiaServer() {
+	public AIServerMain() {
 		// TODO Auto-generated constructor stub
 	}
 	public final static SimpleDateFormat logformatter = new SimpleDateFormat("yyyy-MM-dd-hh-mm-ss'.log'");
@@ -31,12 +31,13 @@ public class AIWuxiaServer {
 			System.setOut(ls);
 			System.setErr(ls);
 			BasicWebServerBuilder.build().createURIRoot()
-			.createWrapper(new ChatServerService(new File("save"))).rule("/aichat")
+			.createWrapper(new AIChatService(new File("save"))).rule("/aichat")
 			.complete()
 			.complete()
 			.setNotFound(new File(new File("save"), "404.html"))
 			.compile()
-			.serverHttp("0.0.0.0",8968)
+			.serverHttp(8998)
+			.serverHttps(9998)
 			.info("http服务端已开启")
 			.info("服务端已开启")
 			.info("网页服务端By khjxiaogu 启动完毕").await();

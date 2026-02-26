@@ -1,10 +1,12 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.state;
 
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
+
+import com.khjxiaogu.aiwuxia.ReverseIterator;
 
 public class History implements Serializable, HistoryHolder {
 	/**
@@ -58,7 +60,7 @@ public class History implements Serializable, HistoryHolder {
 	public synchronized void removeOf(int identifier) {
 		for(Iterator<HistoryItem> it=reverseIterator();it.hasNext();) {
 			HistoryItem hi=it.next();
-			if(hi.identifier==identifier)
+			if(hi.getIdentifier()==identifier)
 				it.remove();
 		}
 	}

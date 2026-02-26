@@ -1,33 +1,24 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.utils;
 
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.CharBuffer;
 import java.util.Arrays;
 
-public class FilledReadable extends Reader {
+public class BlockingReader extends Reader {
 	private StringBuilder internal;
 	private boolean isEnded;
 	private Object lock=new Object();
-	public FilledReadable() {
+	public BlockingReader() {
 		
 	}
 	@Override
 	public int read(CharBuffer cb) throws IOException {
-		//wait for insert
-		//try {
-			//while(internal==null) {
-				if(isEnded)
-					return -1;
-				if(internal==null)
-					return 0;
-				
-			//		Thread.sleep(100);
-				
-			//}
-		/*} catch (InterruptedException e) {
-			e.printStackTrace();
-		}*/
+
+		if(isEnded)
+			return -1;
+		if(internal==null)
+			return 0;
 		char[] ca;
 	
 		synchronized(lock) {

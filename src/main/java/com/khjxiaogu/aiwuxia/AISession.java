@@ -4,9 +4,13 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.khjxiaogu.aiwuxia.scheme.Usage;
+import com.khjxiaogu.aiwuxia.respscheme.Usage;
+import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.StateIntf;
 
-public class AIState implements Serializable, Cloneable {
+public class AISession implements Serializable, Cloneable {
 	/**
 	 * 
 	 */
@@ -30,7 +34,7 @@ public class AIState implements Serializable, Cloneable {
 	public AIData getData() {
 		return data;
 	}
-	public AIState(HistoryHolder history, AIData data) {
+	public AISession(HistoryHolder history, AIData data) {
 		super();
 		this.history = history;
 		this.data = data;
@@ -49,48 +53,48 @@ public class AIState implements Serializable, Cloneable {
 		HistoryItem hi=null;
 		if(!history.isEmpty()) {
 			hi=getLast();
-			if(role!=hi.role||(!hi.shouldSend&&isSendable)) {
+			if(role!=hi.getRole()||(!hi.shouldSend&&isSendable)) {
 				hi=null;
 			}
 		}
 		if(hi==null) {
 			hi=new HistoryItem(history.size(),role,content+"\n",isSendable);
 			history.add(hi);
-			postMessage(hi.identifier,hi.role.getName(),hi.getContent().toString());
+			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.appendLine(content, isSendable);
-			appendMessage(hi.identifier,content+"\n");
+			appendMessage(hi.getIdentifier(),content+"\n");
 		}
 	}
 	public void appendCh(Role role,String ch,boolean isSendable) {
 		HistoryItem hi=null;
 		if(!history.isEmpty()) {
 			hi=getLast();
-			if(role!=hi.role||(!hi.shouldSend&&isSendable)) {
+			if(role!=hi.getRole()||(!hi.shouldSend&&isSendable)) {
 				hi=null;
 			}
 		}
 		if(hi==null) {
 			hi=new HistoryItem(history.size(),role,ch,isSendable);
 			history.add(hi);
-			postMessage(hi.identifier,hi.role.getName(),hi.getContent().toString());
+			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.append(ch, isSendable);
-			appendMessage(hi.identifier,ch);
+			appendMessage(hi.getIdentifier(),ch);
 		}
 	}
 	public void appendInvisibleLine(Role role,String content) {
 		HistoryItem hi=null;
 		if(!history.isEmpty()) {
 			hi=getLast();
-			if(role!=hi.role||(!hi.shouldSend)) {
+			if(role!=hi.getRole()||(!hi.shouldSend)) {
 				hi=null;
 			}
 		}
 		if(hi==null) {
 			hi=new HistoryItem(history.size(),role,"",content+"\n");
 			history.add(hi);
-			postMessage(hi.identifier,hi.role.getName(),hi.getContent().toString());
+			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.appendSending(content+"\n");
 		}
@@ -98,12 +102,12 @@ public class AIState implements Serializable, Cloneable {
 	public void add(Role role,String content,boolean isSendable) {
 		HistoryItem hi=new HistoryItem(history.size(),role,content,isSendable);
 		history.add(hi);
-		postMessage(hi.identifier,hi.role.getName(),hi.getContent().toString());
+		postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 	}
 	public void add(Role role,String content,String sendContent) {
 		HistoryItem hi=new HistoryItem(history.size(),role,content,sendContent);
 		history.add(hi);
-		postMessage(hi.identifier,hi.role.getName(),hi.getContent().toString());
+		postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 	}
 	public void removeOf(int num) {
 		history.removeOf(num);
@@ -111,22 +115,33 @@ public class AIState implements Serializable, Cloneable {
 	}
 	public HistoryItem removeLast() {
 		HistoryItem removed= history.remove(history.size()-1);
-		delMessage(removed.identifier);
+		delMessage(removed.getIdentifier());
 		return removed;
 	}
 	public HistoryItem getLast() {
 		return history.get(history.size()-1);
 	}
-	public void postMessage(int id,String title,String message) {
-		
+	public void postMessage(int id,Role role,String message) {
+		setUpdated();
 	}
 	public void appendMessage(int id,String title) {
-		
+		setUpdated();
 	}
 	public void delMessage(int id) {
+		setUpdated();
+	}
+	boolean isUpdated;
+	public boolean checkAndUnsetUpdated() {
+		boolean res=isUpdated;
+		isUpdated=false;
+		return res;
+	}
+	public void setUpdated() {
+		isUpdated=true;
 		
 	}
 	public void onGenComplete() {
+		setUpdated();
 		isGenerating=false;
 	}
 	public void addUsage(Usage usage) {

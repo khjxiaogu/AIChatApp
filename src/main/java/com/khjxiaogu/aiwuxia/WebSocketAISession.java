@@ -6,6 +6,10 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
 import io.netty.channel.Channel;
@@ -15,17 +19,17 @@ import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.util.concurrent.UnorderedThreadPoolEventExecutor;
 
-public class WebSocketAIState extends AIState implements WebsocketEvents {
+public class WebSocketAISession extends AISession implements WebsocketEvents {
 	/**
 	 * 
 	 */
 	private static final long serialVersionUID = -3405324710746609198L;
 	ChannelGroup conn=new DefaultChannelGroup(new UnorderedThreadPoolEventExecutor(2));
-	private final ChatServerService parent;
+	private final AIChatService parent;
 	private final String chatId;
 	File fn;
 	AIApplication aiapp;
-	public WebSocketAIState(ChatServerService par,String chatid,AIApplication aiapp,File fn, HistoryHolder history, AIData data) {
+	public WebSocketAISession(AIChatService par,String chatid,AIApplication aiapp,File fn, HistoryHolder history, AIData data) {
 		super(history, data);
 		this.fn = fn;
 		this.parent=par;
@@ -46,7 +50,7 @@ public class WebSocketAIState extends AIState implements WebsocketEvents {
 				if (i >= 10) break;
 			}
 			for (HistoryItem hi : his)
-				postMessage(hi.identifier, hi.role.getName(), hi.getContent().toString());
+				postMessage(hi.getIdentifier(), hi.getRole(), hi.getContent().toString());
 		}else {
 			aiapp.provideInitial(this);
 		}
@@ -84,9 +88,9 @@ public class WebSocketAIState extends AIState implements WebsocketEvents {
 	}
 
 	@Override
-	public void postMessage(int id, String title, String message) {
-		super.postMessage(id, title, message);
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id", id).add("title", title).add("message", message).end().toString()));
+	public void postMessage(int id, Role role, String message) {
+		super.postMessage(id, role, message);
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id", id).add("title", aiapp.getRoleName(this, role)).add("message", message).end().toString()));
 	}
 	@Override
 	public void onGenStart() {

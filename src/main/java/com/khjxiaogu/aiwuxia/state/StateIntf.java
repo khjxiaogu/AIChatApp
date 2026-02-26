@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.state;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -6,10 +6,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-class StateIntf implements Serializable{
-	Map<String, Interface> intfs = new LinkedHashMap<>();
-	Map<String, String> perks = new LinkedHashMap<>();
-	List<String> extras=new ArrayList<>();
+public class StateIntf implements Serializable{
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 846642562841460630L;
+	public Map<String, Interface> intfs = new LinkedHashMap<>();
+	public Map<String, String> perks = new LinkedHashMap<>();
+	public List<String> extras=new ArrayList<>();
 	public StateIntf(StateIntf last) {
 		super();
 		this.intfs.putAll(last.intfs);;

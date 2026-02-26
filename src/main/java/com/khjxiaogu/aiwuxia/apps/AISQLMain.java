@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.File;
 import java.io.IOException;
@@ -15,9 +15,20 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
-import com.khjxiaogu.aiwuxia.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.JsonBuilder.JsonObjectBuilder;
-import com.khjxiaogu.aiwuxia.scheme.RespScheme;
+import com.khjxiaogu.aiwuxia.AIApplication;
+import com.khjxiaogu.aiwuxia.AISession;
+import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.Interface;
+import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.BlockingReader;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AISQLMain extends AIApplication {
 
@@ -87,14 +98,14 @@ public class AISQLMain extends AIApplication {
 		});
 	}
 
-	public StateIntf sendAndProcessResult(AIState state, JsonObject req) throws IOException {
+	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
 		RespScheme resp = sendAIRequest(req);
 		state.addUsage(resp.usage);
 		return precessResponse(new Scanner(resp.choices.get(0).message.content), state);
 	}
 
-	public StateIntf sendAndProcessResultStreamed(AIState state, JsonObject req) throws IOException {
-		FilledReadable resp = sendAIStreamedRequest(req, state::addUsage);
+	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
+		BlockingReader resp = sendAIStreamedRequest(req, state::addUsage);
 		try (Scanner sc = new Scanner(resp)) {
 			return precessResponse(sc, state);
 		}
@@ -112,7 +123,7 @@ public class AISQLMain extends AIApplication {
 
 	}
 
-	public JsonObject constructAIrequest(AIState state, String status) {
+	public JsonObject constructAIrequest(AISession state, String status) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system).end();
 		if (status != null && !status.isEmpty())
@@ -129,12 +140,12 @@ public class AISQLMain extends AIApplication {
 				if (current.shouldSend) {
 
 					if (i == 0)
-						queue.add(0, new MessageAndRole(current.role.getRoleName(), current.getFullContent()));
+						queue.add(0, new MessageAndRole(current.getRole().getRoleName(), current.getFullContent()));
 					else
-						queue.add(0, new MessageAndRole(current.role.getRoleName(), current.getFullContent()));
+						queue.add(0, new MessageAndRole(current.getRole().getRoleName(), current.getFullContent()));
 					i++;
 				}
-				if (i >= 4 && current.role.equals("user"))
+				if (i >= 4 && current.getRole().equals("user"))
 					break;
 			}
 			for (MessageAndRole hs : queue)
@@ -147,10 +158,10 @@ public class AISQLMain extends AIApplication {
 
 	}
 
-	public String constructBackLog(AIState state) {
+	public String constructBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
 		for (HistoryItem hs : state.getHistory()) {
-			sb.append(hs.role.getName()).append("：").append(hs.getContent())
+			sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContent())
 				.append("\n");
 		}
 
@@ -158,12 +169,12 @@ public class AISQLMain extends AIApplication {
 
 	}
 
-	public void provideInitial(AIState state) {
+	public void provideInitial(AISession state) {
 		state.add(Role.ASSISTANT,"请提供表定义，定义必须开始以“定义”二字",false);
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Scanner scan, AIState state) {
+	public StateIntf precessResponse(Scanner scan, AISession state) {
 		boolean isWaiting = true;
 		int status = 0;
 
@@ -214,7 +225,7 @@ public class AISQLMain extends AIApplication {
 	}
 
 	@Override
-	public String getBrief(AIState state) {
+	public String getBrief(AISession state) {
 		if(state.getHistory().size()<2)return null;
 		CharSequence content=state.getHistory().get(1).getContent();
 		return content.subSequence(1, Math.min(10, content.length())).toString();

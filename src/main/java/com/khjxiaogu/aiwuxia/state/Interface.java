@@ -1,17 +1,17 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.state;
 
 import java.io.Serializable;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 
-class Interface implements Serializable {
+public class Interface implements Serializable {
 	/**
 	 * 
 	 */
 	private static final long serialVersionUID = -7540278636736725189L;
-	Map<String, String> values = new LinkedHashMap<>();
-	String name;
+	public Map<String, String> values = new LinkedHashMap<>();
+	public String name;
 
 	public Interface(String name) {
 		super();

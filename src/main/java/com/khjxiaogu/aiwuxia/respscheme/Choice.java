@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.scheme;
+package com.khjxiaogu.aiwuxia.respscheme;
 
 public class Choice{
 	public static class Message{

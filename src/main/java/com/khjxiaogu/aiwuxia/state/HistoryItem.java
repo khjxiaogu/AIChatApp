@@ -1,8 +1,10 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.state;
 
 import java.io.Serializable;
 
-class HistoryItem implements Serializable {
+import com.khjxiaogu.aiwuxia.Role;
+
+public class HistoryItem implements Serializable {
 	/**
 	 * 
 	 */
@@ -12,8 +14,8 @@ class HistoryItem implements Serializable {
 	private StringBuilder content;
 	private StringBuilder sendContent;
 	private StringBuilder reasonContent;
-	boolean shouldSend;
-	StateIntf lastState;
+	public boolean shouldSend;
+	public StateIntf lastState;
 
 	public HistoryItem(Role role, String content, boolean shouldSend) {
 		super();
@@ -47,30 +49,30 @@ class HistoryItem implements Serializable {
 		this.shouldSend = shouldSend;
 	}
 
-	CharSequence getFullContent() {
+	public CharSequence getFullContent() {
 		if (sendContent != null)
 			return sendContent;
 		return content;
 	}
 
-	CharSequence getContent() {
+	public CharSequence getContent() {
 		return content;
 	}
 
-	boolean hasFullContent() {
+	public boolean hasFullContent() {
 		return this.sendContent != null;
 	}
 
-	void createFullContent() {
+	public void createFullContent() {
 		if (sendContent == null)
 			this.sendContent = new StringBuilder(content);
 	}
-	StringBuilder createReasonContent() {
+	public StringBuilder createReasonContent() {
 		if (reasonContent == null)
 			this.reasonContent = new StringBuilder();
 		return reasonContent;
 	}
-	void appendLine(String content, boolean shouldSend) {
+	public void appendLine(String content, boolean shouldSend) {
 		if (this.shouldSend) {
 			if (!shouldSend) {
 				createFullContent();
@@ -82,7 +84,7 @@ class HistoryItem implements Serializable {
 		}
 		this.content.append(content).append("\n");
 	}
-	void append(String content, boolean shouldSend) {
+	public void append(String content, boolean shouldSend) {
 		if (this.shouldSend) {
 			if (!shouldSend) {
 				createFullContent();
@@ -94,12 +96,12 @@ class HistoryItem implements Serializable {
 		}
 		this.content.append(content);
 	}
-	void appendSending(String content) {
+	public void appendSending(String content) {
 		createFullContent();
 		this.sendContent.append(content);
 	}
 
-	void setFullContent(String fullContent) {
+	public void setFullContent(String fullContent) {
 		if (fullContent == null)
 			this.sendContent = null;
 		else
@@ -108,7 +110,13 @@ class HistoryItem implements Serializable {
 
 	@Override
 	public String toString() {
-		return "HistoryItem [role=" + role + ", fullContent=" + getFullContent() + "]";
+		return "HistoryItem [role=" + getRole() + ", fullContent=" + getFullContent() + "]";
+	}
+	public Role getRole() {
+		return role;
+	}
+	public int getIdentifier() {
+		return identifier;
 	}
 
 }
