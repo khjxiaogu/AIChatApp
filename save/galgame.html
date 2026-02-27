@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI智能对话</title>
+    <!-- Vue 2 CDN -->
+	<script src="https://res.khjxiaogu.com/feather.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.11"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;  /* 禁止页面滚动，所有图层固定 */
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            background-color: #000;
+        }
+
+        /* 所有图层容器共用固定定位，并设置默认层级 */
+        .layer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;          /* 全屏高度 */
+            pointer-events: none;    /* 让下层可点击，但内部需要交互的元素覆盖此设置 */
+        }
+
+        /* 允许内部元素接收事件 */
+        .layer > * {
+            pointer-events: auto;
+        }
+
+        /* ---------- 背景图层 (z-0) ---------- */
+        .bg-layer {
+            z-index: 0;
+        }
+        .bg-layer .bg-image {
+            width: 100%;
+            height: 100vh;
+            object-fit: cover;       /* 图片覆盖全屏，高度贴合屏幕，居中裁剪 */
+            object-position: center;
+            display: block;
+        }
+
+        /* ---------- 前景图层 (z-1) ---------- */
+        .fg-layer {
+            z-index: 1;
+        }
+        .fg-layer .fg-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+        }
+
+        /* 正图层：全屏绝对定位，图片居中裁剪 */
+        .front-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;    /* 水平居中 */
+            align-items: center;        /* 垂直居中（图片高度已撑满，此项不影响） */
+            overflow: hidden;           /* 裁剪超出部分 */
+        }
+        .front-layer img {
+            height: 100%;
+            width: auto;                /* 宽度按原始比例缩放 */
+            display: block;
+            flex-shrink: 0;             /* 防止 flex 压缩 */
+        }
+
+        /* 侧图层：绝对定位，右侧定位，高度全屏*/
+        .side-layer {
+            position: absolute;
+            top: 0;
+            right: 0;
+            height: 100vh;
+            width: 50%;              /* 宽屏：屏幕右1/3 */
+            display: flex;
+            justify-content: flex-end;   /* 水平靠右 */
+            align-items: center;         /* 垂直居中 */
+            overflow: hidden;            /* 裁剪超出部分 */
+            transition: width 0.2s;
+        }
+        .side-layer img {
+            height: 100%;
+            width: auto;
+            display: block;
+            flex-shrink: 0;
+        }
+
+        /* 窄屏 (max-width: 768px) 侧图层宽度变为 66.67%，即露出图片约2/3 (图片在容器内居中，视觉上右侧对齐，左侧约1/3超出屏幕左侧不可见，等价于图片自身露出约2/3) */
+        @media (max-width: 768px) {
+            .side-layer {
+                width: 60%;
+                justify-content: flex-start;
+                /* 右侧贴边，左侧伸出屏幕外，但容器隐藏溢出？  body overflow hidden 已隐藏溢出部分，完美实现“靠右但露出2/3” */
+            }
+        }
+
+        /* ---------- 对话框图层 (z-2) 半透明 ---------- */
+        /* ===== 对话框图层 (z-2) 半透明，固定高度百分比 ===== */
+		.dialog-layer {
+			top: auto; /* 取消 top 设置 */
+		    z-index: 2;
+		    position: fixed;
+		    left: 0;
+		    width: 100%;
+		    height: 20vh;                 /* 宽屏默认20%视口高度 */
+		    min-height: 200px;             /* 保证至少显示两条消息 */
+		    background-color: rgba(20, 20, 30, 0.75);
+		    backdrop-filter: blur(3px);
+		    display: flex;
+		    flex-direction: column;
+		    padding: 16px 20px 10px 20px;
+		    color: white;
+		    box-shadow: 0 -2px 10px rgba(0,0,0,0.3);
+		    pointer-events: auto;
+		}
+
+		/* 宽屏：按钮在右侧（行布局） */
+		@media (min-width: 769px) {
+		    .dialog-layer {
+		        flex-direction: row;
+		    }
+			.dialog-sidebar {
+		        width: 140px;               /* 固定宽度工具栏 */
+		        display: flex;
+		        flex-direction: column;
+		        padding-left: 12px;
+		        margin-left: 12px;
+		    }
+		    .typing-area {
+		        margin-top: auto;           /* 将提示推到底部 */
+		        text-align: left;
+		        margin-bottom: 16px;        /* 与按钮组间距 */
+				
+				bottom: 0px;
+				position: absolute;
+				right: 174px;
+		    }
+		    .button-group {
+		        display: flex;
+		        flex-direction: column;
+		        gap: 8px;
+		    }
+		    .messages-container {
+		        flex: 1;              /* 消息区域占满剩余宽度 */
+		        margin-right: 12px;    /* 与工具栏间距 */
+		        margin-bottom: 0;      /* 移除底部边距 */
+		    }
+		    .toolbar {
+		        width: 120px;          /* 固定宽度工具栏 */
+		        display: flex;
+		        flex-direction: column;
+		        justify-content: flex-end; /* 按钮靠底部，正在输入在上方 */
+		        padding-left: 12px;
+		        gap: 16px;
+		    }
+		}
+
+		/* 窄屏：按钮在底部（默认 column 布局） */
+		@media (max-width: 768px) {
+		    .toolbar {
+		        display: flex;
+		        flex-direction: row;
+		        align-items: center;
+		        justify-content: space-between;
+		        padding-top: 10px;
+		        margin-top: 8px;
+		    }
+			.dialog-layer {
+                height: 30vh;
+            }
+		    .typing-indicator {
+		        font-size: 0.9rem;
+		        margin-right: 8px;
+		    }
+			.dialog-sidebar {
+			    display: flex;
+			    flex-direction: column;
+			    padding-top: 12px;
+			    margin-top: 12px;
+			}
+			.typing-area {
+			    text-align: left;
+			    margin-bottom: 10px;        /* 与按钮组间距 */
+			}
+			.button-group {
+			    display: flex;
+			    gap: 12px;
+			    justify-content: flex-end;  /* 按钮组右对齐，可根据需求调整 */
+			}
+		}
+
+		/* 按钮样式微调 */
+		.toolbar-btn {
+		    background: rgba(255,255,255,0.15);
+		    padding: 8px 12px;
+		    font-size: 0.9rem;
+		}
+
+
+        /* 消息区域滚动 */
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 15px;
+            padding-right: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* 自定义滚动条 */
+        .messages-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        .messages-container::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+        }
+        .messages-container::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.4);
+            border-radius: 8px;
+        }
+
+        .message-bubble {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 10px 16px;
+            border-radius: 20px 20px 20px 4px;
+            max-width: 80%;
+            word-break: break-word;
+            align-self: flex-start;
+            backdrop-filter: blur(2px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .message-bubble.own {
+            align-self: flex-end;
+            background: rgba(0, 153, 255, 0.4);
+            border-radius: 20px 20px 4px 20px;
+        }
+
+        /* 对话框底部按钮区域 */
+        .dialog-footer {
+            display: flex;
+            justify-content: flex-end;
+            border-top: 1px solid rgba(255,255,255,0.2);
+            padding-top: 12px;
+        }
+
+        .btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 10px 22px;
+            border-radius: 40px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: 0.2s;
+            font-size: 1rem;
+            backdrop-filter: blur(4px);
+        }
+        .btn:hover {
+            background: rgba(255,255,255,0.35);
+        }
+        .btn-primary {
+            background: #2a7fff;
+            border-color: #5c9aff;
+        }
+        .btn-primary:hover {
+            background: #1e6ae0;
+        }
+
+        /* ---------- 历史记录图层 (z-3) 半透明，默认隐藏 ---------- */
+        .history-layer {
+            z-index: 3;
+            background-color: rgba(10, 10, 20, 0.82);
+            backdrop-filter: blur(5px);
+            top: 0;
+            left: 0;
+            right: 0;
+            width: auto;
+            height: auto;
+            pointer-events: auto;
+            padding: 24px;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;          /* 历史内容也可滚动 */
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+            padding-bottom: 12px;
+        }
+
+        .history-content {
+            flex: 1;
+            background: rgba(0,0,0,0.3);
+            border-radius: 24px;
+            padding: 24px;
+            font-size: 1.1rem;
+            line-height: 1.6;
+        }
+
+        .history-content ul {
+            margin-left: 20px;
+        }
+
+        .close-history {
+            background: rgba(255,255,255,0.15);
+            border: none;
+            color: white;
+            font-size: 1.3rem;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.2s;
+        }
+        .close-history:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+
+ 
+        /* ===== 底部输入栏 (固定，最高层级 z-10) 使用多行 textarea ===== */
+        .bottom-input-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            min-height: 40px;            /* 允许随内容增高 */
+            background-color: #111;
+            border-top: 1px solid #333;
+            display: flex;
+            align-items: flex-end;        /* 底部对齐，使按钮与输入框底部对齐 */
+            padding: 10px 20px;
+            gap: 12px;
+            z-index: 10;
+            box-shadow: 0 -4px 12px rgba(0,0,0,0.5);
+        }
+
+        /* 自动增高文本框 */
+        .auto-textarea {
+            flex: 1;
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 24px;
+            padding: 6px 18px;
+            color: white;
+            font-size: 1rem;
+            line-height: 1.5;
+            outline: none;
+            resize: none;                /* 禁用手动调整 */
+            overflow: hidden;             /* 隐藏滚动条，高度自动 */
+            max-height: 150px;            /* 限制最大高度，防止过高 */
+            transition: border 0.2s;
+            font-family: inherit;
+        }
+        .auto-textarea:focus {
+            border-color: #2a7fff;
+            background: #1e1e1e;
+        }
+
+        .bottom-input-bar .send-btn {
+            background: #2a7fff;
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 0 32px;
+            height: 36px;
+            border-radius: 40px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: 0.2s;
+            letter-spacing: 0.5px;
+			position: relative;
+        }
+        .bottom-input-bar .send-btn:hover {
+            background: #0f5fd9;
+        }
+
+
+
+		/* 点动画（可复用之前的） */
+		.typing-area .dot {
+		    animation: blink 1.4s infinite;
+		    animation-fill-mode: both;
+		    margin-left: 2px;
+		}
+		.typing-area .dot:nth-child(2) { animation-delay: 0.2s; }
+		.typing-area .dot:nth-child(3) { animation-delay: 0.4s; }
+		@keyframes blink {
+		    0% { opacity: 0.2; }
+		    20% { opacity: 1; }
+		    100% { opacity: 0.2; }
+		}
+        /* 辅助隐藏类 */
+        .hidden {
+            display: none !important;
+        }
+
+        /* 确保图片容器无额外间隙 */
+        img {
+            vertical-align: bottom;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- 背景图层 v-show="prepared" -->
+        <div class="layer bg-layer">
+            <img :src="bgurl" alt="背景" class="bg-image" v-if="bgurl">
+        </div>
+
+        <!-- 前景图层 (正图 + 侧图) -->
+        <div class="layer fg-layer">
+            <div class="fg-container">
+                <!-- 正图层 (全幅) -->
+                <div class="front-layer">
+                    <img :src="flurl" alt="人物" v-if="flurl">
+                </div>
+                <!-- 侧图层 (右偏移，响应式宽度) -->
+                <div class="side-layer">
+                    <img :src="fsurl" alt="人物" v-if="fsurl">
+                </div>
+            </div>
+        </div>
+
+        <!-- 对话框图层 (v-if 控制显示/隐藏，与历史互斥) -->
+		<!-- 对话框图层 - 使用flex布局，宽屏时按钮在右侧，窄屏时按钮在底部 -->
+		<div class="layer dialog-layer" :style="{ bottom: inputBarHeight + 'px' }" v-if="!showHistory">
+		    <!-- 消息区域（始终占据剩余空间） -->
+		    <div class="messages-container" ref="msgContainer">
+		        <div v-for="(msg, idx) in recentMessages"  :key="idx" >【{{ msg.title }}】「<span v-html="msg.text"></span>」</div>
+		    </div>
+
+		    <!-- 宽屏时：提示区 + 按钮组 并排（右侧工具栏） -->
+		    <!-- 窄屏时：提示区在上，按钮组在下（底部工具栏） -->
+		    <div class="dialog-sidebar">
+		        <!-- 提示区：对方正在输入 -->
+		        <div class="typing-area" v-if="typing">
+		            <span class="typing-text">生成中</span>
+		            <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+		        </div>
+
+		        <!-- 按钮组 -->
+		        <div class="button-group">
+		            <button class="btn toolbar-btn" @click="openHistory"><i data-feather="file-text"></i> 历史</button>
+		            <button class="btn toolbar-btn" @click="refreshMessages"  v-show="prepared&&!typing"><i data-feather="refresh-ccw"></i> 重生成</button>
+		            <button class="btn toolbar-btn" @click="undoLastOwn"  v-show="prepared&&!typing"><i data-feather="x"></i> 撤回</button>
+		        </div>
+		    </div>
+		</div>
+
+        <!-- 历史记录图层 (默认隐藏，全屏覆盖) -->
+        <div class="layer history-layer" v-if="showHistory"  :style="{ bottom: inputBarHeight + 'px' }">
+            <div class="history-header">
+                <h2><i data-feather="file-text"></i> 历史记录</h2>
+                <button class="close-history" @click="closeHistory"><i data-feather="x"></i></button>
+            </div>
+            <div class="history-content">
+               
+                <div v-for="(msg, idx) in recentMessages" :key="'hist-'+idx">
+                    【{{ msg.title }}】「<span v-html="msg.text"></span>」
+                </div>
+                
+            </div>
+        </div>
+
+        <!-- 底部固定输入框和发送按钮 (最高层级) -->
+        <div class="bottom-input-bar" ref="bottomBar" v-show="prepared">
+            <textarea 
+                ref="messageInput"
+                class="auto-textarea" 
+                placeholder="输入消息..." 
+                v-model="newMessage"
+				
+                @input="adjustTextareaHeight"
+                @keydown.enter.exact.prevent="sendUserMessage" 
+                rows="1"></textarea>
+            <button class="send-btn" @click="sendUserMessage">发送</button>
+        </div>
+    </div>
+
+    <script>
+		var pageQueries={};
+		var searchStr = location.toString();
+		searchStr = searchStr.substr(searchStr.indexOf("?")+1);
+		searchStr=searchStr.replace("#","");
+		var searchs = searchStr.split("&");
+		var isFirstSelect=false;
+		for(var i=0;i<searchs.length;i++){
+			var rq = searchs[i].split("=");
+			pageQueries[rq[0]]=rq[1];
+		}
+		feather.replace();
+		new Vue({
+		         el: '#app',
+		         data: {
+		             messages: [
+		                 { text: '欢迎使用多图层示例', isOwn: false },
+		                 { text: '前景有正图和侧图', isOwn: false },
+		                 { text: '侧图在宽屏右1/3，窄屏露2/3', isOwn: true },
+		                 { text: '背景图片灰度山水', isOwn: false },
+		                 { text: '试试发送新消息', isOwn: true },
+		             ],
+		             newMessage: '',
+		             showHistory: false,
+					 typing: false, 
+		             inputBarHeight: 70,  // 初始值，与 CSS min-height 一致
+					 wssocket: undefined,
+					 prepared: false,
+					 isSideLoading: false,
+					 isFrontLoading:false,
+					 isBackLoading:false,
+					 fsurl:'',
+					 bgurl:'',
+					 flurl:'',
+					 appId:'',
+					 chatId:'',
+					 url:'/aichat',
+		         },
+				 computed: {
+				     recentMessages() {
+				         return this.messages.slice(-3);  // 取最后3条
+				     }
+				 },
+		         methods: {
+					speak(sent){
+						if(sent=="")return;
+						//messagepool.push(sent);
+						this.wssocket.send(sent);
+					},
+					setSideImage(newSrc) {
+					    // 如果新地址与当前相同且图片已加载
+					    if (newSrc === this.fsurl && !this.isSideLoading) {
+					        return;
+					    }
+						if (newSrc == ''){
+							this.fsurl = ''
+							return;
+						}
+					    // 设置加载状态
+					    // 创建一个新Image对象预加载图片
+					    const img = new Image();
+					    img.onload = () => {
+					        this.isSideLoading = false;
+							this.fsurl = newSrc;
+					    };
+					    img.onerror = (err) => {
+					        this.isSideLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+					    // 开始加载（设置src会触发请求）
+						this.isSideLoading = true;
+					    img.src = newSrc;
+					},
+					setFrontImage(newSrc) {
+					    // 如果新地址与当前相同且图片已加载
+					    if (newSrc === this.flurl && !this.isFrontLoading) {
+					        return;
+					    }
+						if (newSrc == ''){
+							this.flurl = ''
+							return;
+						}
+					    // 设置加载状态
+					    // 创建一个新Image对象预加载图片
+					    const img = new Image();
+					    img.onload = () => {
+					        this.isFrontLoading = false;
+							this.flurl = newSrc;
+					    };
+					    img.onerror = (err) => {
+					        this.isFrontLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+					    // 开始加载（设置src会触发请求）
+						this.isFrontLoading = true;
+					    img.src = newSrc;
+					},
+					setBackImage(newSrc) {
+					    // 如果新地址与当前相同且图片已加载
+					    if (newSrc === this.bgurl && !this.isBackLoading) {
+					        return;
+					    }
+						if (newSrc == ''){
+							this.bgurl = ''
+							return;
+						}
+					    // 设置加载状态
+					    
+					    // 创建一个新Image对象预加载图片
+					    const img = new Image();
+					    img.onload = () => {
+					        this.isBackLoading = false;
+							this.bgurl = newSrc;
+					    };
+					    img.onerror = (err) => {
+					        this.isBackLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+					    // 开始加载（设置src会触发请求）
+						this.isBackLoading = true;
+					    img.src = newSrc;
+					},
+					open(done){
+						this.wssocket=new WebSocket((location.protocol=="http:"?"ws:":"wss:")+"//"+document.location.host+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId);
+						this.wssocket.onopen=function(){
+							prepared=true;
+							window.onbeforeunload = function() {
+							    this.wssocket.onclose = function () {}; // disable onclose handler first
+							    this.wssocket.close();
+							};
+							this.wssocket.onerror=function(ev){
+								this.wssocket.onerror=function(){};
+								console.info(ev);
+								setTimeout(open,500);
+								prepared=false;
+								
+							}
+							if(done)
+								done();
+							
+						};
+						this.wssocket.onclose=function(ev){var rev=ev?ev:event;prepared=false;if(rev.reason!="")alert(rev.reason);}
+						this.wssocket.onerror=function(ev){console.info(ev);prepared=false;alert("连接聊天服务器失败！");};
+						this.wssocket.onmessage = function(ev) {
+							var rev=ev?ev:event;
+							var param=eval("("+rev.data+")");
+							if(param.message!=undefined)
+								this.addMessage(param.id,param.title,param.message.replace(/\n/gi,"<br />"));
+							if(param.messages!=undefined)
+								for(var i=0;i<param.messages.length;i++){
+									this.addMessage(param.messages[i].id,param.messages[i].title,param.messages[i].message.replace(/\n/gi,"<br />"));
+								}
+							if(param.delta!=undefined){
+								this.appendMsg(param.id,param.delta.replace(/\n/gi,"<br />"));
+							}
+							if(param.remove!=undefined){
+								this.removeMessage(param.remove);
+							}
+							if(param.status!=undefined)
+								typing=(param.status=='1');
+							if(param.scene!=undefined){
+								let scene_data='';
+								if(param.scene_data){
+									scene_data=param.scene_data;
+								}
+								if(param.scene=='front')
+									this.setFrontImage(scene_data)
+								if(param.scene=='side')
+									this.setSideImage(scene_data)
+								if(param.scene=='back')
+									this.setBackImage(scene_data)
+								
+							}
+								
+							if(param.price!=undefined)
+								console.info(param.price)
+						};
+					},
+					openApp(app,id,done){
+						if(this.wssocket){
+							this.wssocket.onclose=function(){};
+							this.wssocket.close();
+							}
+						this.chatId=id;
+						this.appId=app;
+						this.messages.splice(0,this.messages.length);
+						open(done);
+					},
+					// ...原有方法
+					refreshMessages() {
+					    // 重置为初始消息（示例）
+					    this.sendMessage('重新生成');
+					    // 可同时重置输入框等
+					},
+					undoLastOwn() {
+					    // 查找最后一个自己发送的消息并删除
+					    this.sendMessage('撤回')
+					},
+					// 可以添加一个方法来切换typing状态，或由其他事件触发
+					toggleTyping() {
+					    this.typing = !this.typing;
+					},
+		             // 调整 textarea 高度，并更新底部输入栏的整体高度
+		             adjustTextareaHeight() {
+		                 this.$nextTick(() => {
+		                     const textarea = this.$refs.messageInput;
+		                     if (!textarea) return;
+		                     // 重置高度，再设置为 scrollHeight
+		                     textarea.style.height = 'auto';
+		                     textarea.style.height = textarea.scrollHeight + 'px';
+
+		                     // 获取整个底部栏的高度并更新 data
+		                     const bottomBar = this.$refs.bottomBar;
+		                     if (bottomBar) {
+		                         this.inputBarHeight = bottomBar.offsetHeight;
+		                     }
+		                 });
+		             },
+		             // 发送消息
+		             addMessage(id,title,text) {
+		                 this.messages.push({ text: text, title: title, id: id });
+		                 // 重置 textarea 高度并更新底部栏高度
+		                 this.$nextTick(() => {
+		                     const textarea = this.$refs.messageInput;
+		                     if (textarea) {
+		                         textarea.style.height = 'auto';
+		                         textarea.style.height = textarea.scrollHeight + 'px';
+		                     }
+		                     const bottomBar = this.$refs.bottomBar;
+		                     if (bottomBar) {
+		                         this.inputBarHeight = bottomBar.offsetHeight;
+		                     }
+		                     // 滚动消息容器到底部
+		                     const container = this.$refs.msgContainer;
+		                     if (container) container.scrollTop = container.scrollHeight;
+		                 });
+		             },
+					 removeMessage(id){
+						for(var i=0;i<this.messages.length;i++){
+							if(this.messages[i].id==id){
+								this.messages.splice(i,1);
+								break;
+							}
+						}
+					 },
+					 sendMessage(content){
+						this.wssocket.send(content);
+					 },
+					 sendUserMessage(content){
+						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.yping){
+							if(this.newMessage!='')
+	 							this.sendMessage(this.newMessage);
+							this.newMessage='';
+						}
+	 				 },
+		             openHistory() {
+		                 this.showHistory = true;
+		             },
+		             closeHistory() {
+		                 this.showHistory = false;
+		             }
+		         },
+		         watch: {
+		             messages: {
+		                 handler() {
+		                     this.$nextTick(() => {
+		                         const container = this.$refs.msgContainer;
+		                         if (container) container.scrollTop = container.scrollHeight;
+		                     });
+		                 },
+		                 deep: true
+		             }
+		         },
+		         mounted() {
+		             // 初始化：滚动消息到底部，计算输入栏高度
+		             this.$nextTick(() => {
+		                 const container = this.$refs.msgContainer;
+		                 if (container) container.scrollTop = container.scrollHeight;
+		                 this.adjustTextareaHeight();
+		             });
+		         }
+		     });
+    </script>
+
+    <!-- 说明：底部输入框始终可见，且z-index最高。对话框和历史图层都预留了bottom:70px空间，不会被遮挡 -->
+</body>
+</html>

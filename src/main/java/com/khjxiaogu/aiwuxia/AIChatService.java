@@ -10,7 +10,6 @@ import java.sql.SQLException;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -42,7 +41,6 @@ public class AIChatService implements ServiceClass {
 
 	protected Connection database;
 	public final SimpleLogger logger = new SimpleLogger("聊天");
-	private final static int timeout = 1000 * 60 * 2;
 	private final static String createMsg = "CREATE TABLE IF NOT EXISTS chats (" + "uid     TEXT(40)   NOT NULL, " + // 用户ID
 		"brief TEXT, " + // 对话简述
 		"app TEXT NOT NULL, " + // 智能体名称
@@ -86,12 +84,14 @@ public class AIChatService implements ServiceClass {
 		parent = path;
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();
-		apps.put("wuxia", new AIWuxiaMain(path));
-		apps.put("article", new AIArticleMain(path));
-		apps.put("fengyi", new AIGalgameMain(path,"promptfengyi.txt","姚枫怡"));
-		apps.put("fengyitalk", new AICharaTalkMain(path,"fengyitalk","姚枫怡聊天"));
+		reload();
 	}
-
+	public void reload() {
+		apps.put("wuxia", new AIWuxiaMain(parent));
+		apps.put("article", new AIArticleMain(parent));
+		apps.put("fengyi", new AIGalgameMain(parent,"promptfengyi.txt","枫怡DLC"));
+		apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡聊天"));
+	}
 	public JsonArray getChatApps(String uid) {
 		JsonArray ja = new JsonArray();
 		try (PreparedStatement ps = database.prepareStatement("SELECT app FROM permission WHERE uid = ? and state='1'")) {
@@ -188,14 +188,35 @@ public class AIChatService implements ServiceClass {
 	public ResultDTO apps(@Query("uid") String uid) {
 		return new ResultDTO(200, getChatApps(uid));
 	}
-
+	@HttpMethod("GET")
+	@HttpPath("/resource")
+	public void resource(Request req,Response rep) {
+		String path1=req.getCurrentPath();
+		path1=path1.substring(1,path1.indexOf("/",1));
+		req.SkipPathOnce();
+		AIApplication app=apps.get(path1);
+		if(app!=null) {
+			File fn=app.getResource(req.getCurrentPath());
+			if(fn!=null&&fn.exists()) {
+				rep.write(200, fn);
+				return;
+			}
+		}
+		rep.write(404);
+	}
 	@HttpMethod("GET")
 	@HttpPath("/chat.js")
 	@Adapter
 	public ResultDTO chatjs() throws IOException {
 		return new ResultDTO(200, FileUtil.readString(new File(parent, "chat.js")));
 	}
-
+	@HttpMethod("GET")
+	@HttpPath("/reload")
+	@Adapter
+	public ResultDTO reld() throws IOException {
+		reload();
+		return new ResultDTO(200, "reload succeed!");
+	}
 	@HttpMethod("GET")
 	@HttpPath("/robots.txt")
 	@Adapter
@@ -215,6 +236,12 @@ public class AIChatService implements ServiceClass {
 	@Adapter
 	public ResultDTO indexHtm() throws IOException {
 		return new ResultDTO(200, FileUtil.readString(new File(parent, "index.html")));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/aigal")
+	@Adapter
+	public ResultDTO aigal() throws IOException {
+		return new ResultDTO(200, FileUtil.readString(new File(parent, "galgame.html")));
 	}
 	@HttpMethod("GET")
 	@HttpPath("/remove")

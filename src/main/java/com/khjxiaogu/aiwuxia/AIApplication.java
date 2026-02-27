@@ -4,17 +4,12 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map.Entry;
-import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
-
-import javax.swing.SwingUtilities;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -32,13 +27,14 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 public abstract class AIApplication {
 	protected static Gson gs = new Gson();
 	protected static Gson ppgs = new GsonBuilder().setPrettyPrinting().create();
 	protected static ExecutorService exc=Executors.newCachedThreadPool();
 	protected String system;
-
+	protected SimpleLogger logger=new SimpleLogger("AI智能");
 	public static interface MessageHandler {
 		public String apply(AISession state,String message) throws Throwable;
 	}
@@ -101,7 +97,7 @@ public abstract class AIApplication {
 
 	public RespScheme sendAIRequest(JsonObject req) throws IOException {
 		String tosend = gs.toJson(req);
-		//System.out.println(ppgs.toJson(req));
+		logger.info(ppgs.toJson(req));
 		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
@@ -109,8 +105,10 @@ public abstract class AIApplication {
 				.post(true).send(tosend).readJson();
 		//System.out.println(ppgs.toJson(retjs));
 		RespScheme resp = gs.fromJson(retjs, RespScheme.class);
-		//System.out.println("=================Reasoner===============");
-		//System.out.println(resp.choices.get(0).message.reasoning_content);
+		if(resp.choices.get(0).message.reasoning_content!=null) {
+			logger.info("=================Reasoner===============");
+			logger.info(resp.choices.get(0).message.reasoning_content);
+		}
 		System.out.println("=================Usage===============");
 		System.out.println(resp.usage);
 		return resp;
@@ -120,10 +118,11 @@ public abstract class AIApplication {
 		req.addProperty("stream", true);
 		req.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		String tosend = gs.toJson(req);
-		//System.out.println(ppgs.toJson(req));
+		logger.info(ppgs.toJson(req));
 		BlockingReader readable=new BlockingReader();
-		//System.out.println("=================Reasoner===============");
+		
 		Usage usage=new Usage();
+		AtomicBoolean hasReasoner=new AtomicBoolean();
 		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
@@ -131,8 +130,8 @@ public abstract class AIApplication {
 				.post(true).send(tosend).readSSE(exc, (ev,s)->{
 					if(s==null||"[DONE]".equals(s)) {
 						//System.out.println();
-						System.out.println("=================Usage===============");
-						System.out.println(usage);
+						logger.info("=================Usage===============");
+						logger.info(usage);
 						gainUsage.accept(usage);
 						readable.putCh(null);
 						return;
@@ -140,7 +139,10 @@ public abstract class AIApplication {
 					RespScheme scheme=gs.fromJson(s, RespScheme.class);
 					Message delta=scheme.choices.get(0).delta;
 					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-						//System.out.print(delta.reasoning_content);
+						if(!hasReasoner.getAndSet(true)) {
+							logger.info("=================Reasoner===============");
+						}
+						System.out.print(delta.reasoning_content);
 					}
 					if(delta.content!=null&&!delta.content.isEmpty()) {
 						
@@ -159,5 +161,7 @@ public abstract class AIApplication {
 	public abstract String getName();
 	public abstract String constructSystem(StateIntf state);
 	public abstract String getBrief(AISession state);
-
+	public File getResource(String path) {
+		return null;
+	};
 }

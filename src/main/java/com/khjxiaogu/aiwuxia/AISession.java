@@ -19,7 +19,6 @@ public class AISession implements Serializable, Cloneable {
 	 * 
 	 */
 	public static class AIData{
-		private static final long serialVersionUID = 629802023373098821L;
 		private StateIntf state=new StateIntf();
 		protected Map<String,String> extraData=new HashMap<>(); 
 		private int row;
@@ -144,6 +143,9 @@ public class AISession implements Serializable, Cloneable {
 		setUpdated();
 		isGenerating=false;
 	}
+	public void setScene(String type,String value) {
+		
+	}
 	public void addUsage(Usage usage) {
 		data.usage.add(usage);
 	}
@@ -167,6 +169,9 @@ public class AISession implements Serializable, Cloneable {
 	}
 	public void minRow() {
 		data.row--;
+	}
+	public int getRow() {
+		return data.row;
 	}
 	public StateIntf getState() {
 		return data.state;

@@ -1,0 +1,1442 @@
+{
+  "predicates": [],
+  "selectors": [
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "街道"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "春",
+                "夏"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//街道///jiedaohun.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//街道///jiedaoye.jpg"
+            }
+          ],
+          "scene": "bgimage//街道//jiedaori.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "秋"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//街道///jiedaoqiuri.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//街道///jiedaoqiuye.jpg"
+            }
+          ],
+          "scene": "bgimage//街道//jiedaoqiuri.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "冬"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//街道///jiedaoqiuri.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//街道///jiedaoye2.jpg"
+            }
+          ],
+          "scene": "bgimage//街道//jiedaoqiuri.jpg"
+        }
+      ]
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "主角卧室"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//主角卧室//nanzhuwoshihun.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//主角卧室//nanzhuwoshiye.jpg"
+        }
+      ],
+      "scene": "bgimage//主角卧室/nanzhuwoshiri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "十字路口"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "季节",
+                  "values": [
+                    "冬"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//十字路口///lukouye7.jpg"
+            }
+          ],
+          "scene": "bgimage//十字路口//lukouye.jpg"
+        }
+      ],
+      "scene": "bgimage//十字路口/lukouri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "姚枫茜卧室"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//姚枫茜卧室//fengxiwoshihun.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//姚枫茜卧室//fengxiwoshiye.jpg"
+        }
+      ],
+      "scene": "bgimage//姚枫茜卧室/fengxiwoshiri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "姚枫怡卧室"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage///姚枫茜卧室/fengxiwoshihun.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage///姚枫怡卧室/fengyiwoshiye.jpg"
+        }
+      ],
+      "scene": "bgimage//姚枫茜卧室/fengxiwoshiri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "姚枫怡家门"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "上午",
+                "下午"
+              ]
+            },
+            {
+              "key": "季节",
+              "values": [
+                "冬"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//姚枫怡家门//fengxijiawairixue.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//姚枫怡家门//fengxijiawaihun.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//姚枫怡家门//fengxijiawaiye1.jpg"
+        }
+      ],
+      "scene": "bgimage//姚枫怡家门/fengxijiawairi.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "学校大门"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "春",
+                "夏"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校大门///xiaomenkouhun1.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校大门///xuexiaomenkouye1.jpg"
+            }
+          ],
+          "scene": "bgimage//学校大门//xiaomenkouri1.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "秋"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校大门///xiaomenkouqiuhun.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校大门///xiaomenkouqiuye.jpg"
+            }
+          ],
+          "scene": "bgimage//学校大门//xiaomenkouqiuri1.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "冬"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校大门///xiaomenkouqiuhun.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校大门///xiaomenkouqiuye.jpg"
+            }
+          ],
+          "scene": "bgimage//学校大门//xiaomenkouri6.jpg"
+        }
+      ]
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "学校食堂"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校食堂//shitanghun.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校食堂//shitanghun.jpg"
+        }
+      ],
+      "scene": "bgimage//学校食堂/shitangri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "学校庭院"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "春",
+                "夏"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校庭院///tingyuanhun.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校庭院///tingyuanye.jpg"
+            }
+          ],
+          "scene": "bgimage//学校庭院//tingyuanri.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "秋"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校庭院///tingyuanqiuhun.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校庭院///tingyuanye.jpg"
+            }
+          ],
+          "scene": "bgimage//学校庭院//tingyuanqiuri.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "冬"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校庭院///tingyuanqiuhun.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//学校庭院///tingyuanye.jpg"
+            }
+          ],
+          "scene": "bgimage//学校庭院//tingyuanqiuri.jpg"
+        }
+      ]
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "学校图书馆"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校图书馆//tushuguanri.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校图书馆//tushuguanri.jpg"
+        }
+      ],
+      "scene": "bgimage//学校图书馆/tushuguanri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "学校礼堂"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "bgimage//学校礼堂/litang1.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "文科教室"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//文科教室//jiaoshihun.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//文科教室//jiaoshiye.jpg"
+        }
+      ],
+      "scene": "bgimage//文科教室/jiaoshiri5.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "理科教室"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//理科教室//jiaoshihun1.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//理科教室//jiaoshiye2.jpg"
+        }
+      ],
+      "scene": "bgimage//理科教室/jiaoshiri2.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "学校社团室"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校社团室//huodongshihun1.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校社团室//huodongshihun1.jpg"
+        }
+      ],
+      "scene": "bgimage//学校社团室/huodongshiri1.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "学校楼道左"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校楼道左//zoulanghun2.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校楼道左//zoulangye4.jpg"
+        }
+      ],
+      "scene": "bgimage//学校楼道左/zoulangri4.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "学校楼道右"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校楼道右//zoulanghun3.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//学校楼道右//zoulangye3.jpg"
+        }
+      ],
+      "scene": "bgimage//学校楼道右/zoulangri3.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "沙滩"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//沙滩//haitanri.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//沙滩//haitanye1.jpg"
+        }
+      ],
+      "scene": "bgimage//沙滩/haitanri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "商业街"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "季节",
+                  "values": [
+                    "冬"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//商业街///shangyejieye2.jpg"
+            }
+          ],
+          "scene": "bgimage//商业街//shangyejieye1.jpg"
+        }
+      ],
+      "scene": "bgimage//商业街/shangyejieri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "云游时空馆外"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//云游时空馆外//shikongguanwaihun1.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "季节",
+                  "values": [
+                    "冬"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//云游时空馆外///shikongguanwaiye1.jpg"
+            }
+          ],
+          "scene": "bgimage//云游时空馆外//shikongguanwaiye.jpg"
+        }
+      ],
+      "scene": "bgimage//云游时空馆外/shikongguanwairi.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "云游时空馆内"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//云游时空馆内//shikongguanneiye.jpg"
+        }
+      ],
+      "scene": "bgimage//云游时空馆内/shikongguanneiri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "快餐厅"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//快餐厅//kuaicandianri.jpg"
+        }
+      ],
+      "scene": "bgimage//快餐厅/kuaicandianri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "服装店"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏",
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "季节",
+                  "values": [
+                    "冬"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//服装店///fuzhuangdian2.jpg"
+            }
+          ],
+          "scene": "bgimage//服装店//fuzhuangdian1.jpg"
+        }
+      ],
+      "scene": "bgimage//服装店/fuzhuangdian.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "枫音山路"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "秋"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏",
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//枫音山路///fenglinqiuhun.jpg"
+            }
+          ],
+          "scene": "bgimage//枫音山路//fenglinqiuri.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//枫音山路//fenglinhun.jpg"
+        }
+      ],
+      "scene": "bgimage//枫音山路/fenglinri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "枫音山顶"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "春",
+                "夏",
+                "冬"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "上午",
+                    "下午"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//枫音山顶///dashijieri.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//枫音山顶///dashijiehun.jpg"
+            }
+          ]
+        },
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "秋"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "上午",
+                    "下午"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//枫音山顶///dashijieqiuri.jpg"
+            },
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//枫音山顶///dashijieqiuhun.jpg"
+            }
+          ]
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//枫音山顶//dashijieye.jpg"
+        }
+      ]
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "海边道路"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//海边道路//haibianluhun.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "季节",
+                  "values": [
+                    "冬"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//海边道路///haibianluye4.jpg"
+            }
+          ],
+          "scene": "bgimage//海边道路//haibianluye.jpg"
+        }
+      ],
+      "scene": "bgimage//海边道路/haibianluri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "公园喷泉"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "季节",
+                  "values": [
+                    "冬"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//公园喷泉///gongyuanye2.jpg"
+            }
+          ],
+          "scene": "bgimage//公园喷泉//gongyuanye.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "上午",
+                "下午",
+                "黄昏"
+              ]
+            },
+            {
+              "key": "季节",
+              "values": [
+                "秋"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//公园喷泉//gongyuanqiuri1.jpg"
+        }
+      ],
+      "scene": "bgimage//公园喷泉/gongyuanri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "公园湖畔"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "秋",
+                "冬"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "黄昏",
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "bgimage//公园湖畔///gongyuan2qiuhun.jpg"
+            }
+          ],
+          "scene": "bgimage//公园湖畔//gongyuan2qiuri.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏",
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//公园湖畔//gongyuan2hun.jpg"
+        }
+      ],
+      "scene": "bgimage//公园湖畔/gongyuan2ri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "医院走廊"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏",
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//医院走廊//yiyuanzoulangye.jpg"
+        }
+      ],
+      "scene": "bgimage//医院走廊/yiyuanzoulangri.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "医院病房"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "黄昏"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//医院病房//bingfanghun1.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "bgimage//医院病房//bingfangye1.jpg"
+        }
+      ],
+      "scene": "bgimage//医院病房/bingfangri1.jpg"
+    }
+  ]
+}

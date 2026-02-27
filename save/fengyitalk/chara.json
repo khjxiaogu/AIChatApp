@@ -1,0 +1,137 @@
+{
+  "predicates": [],
+  "selectors": [
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "严肃"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1putong4.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "哀伤"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1aishang2.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "大笑"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1xiao2.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "哭"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1ku15.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "脸红"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1haixiu5.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "阴暗"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1jingkong7.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "惊恐"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1jingkong7.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "震惊"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1kuazhang5.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "生气"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1shengqi6.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "无神"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1wushen7a.png"
+    },
+    {
+      "predicates": [
+        {
+          "key": "表情",
+          "values": [
+            "微笑"
+          ]
+        }
+      ],
+      "selectors": [],
+      "scene": "fgimage//yfy1xiao1.png"
+    }
+  ]
+}

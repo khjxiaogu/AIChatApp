@@ -1,7 +1,5 @@
 package com.khjxiaogu.aiwuxia.commands;
 
-import java.util.Scanner;
-
 import com.khjxiaogu.aiwuxia.AISession;
 
 public class PassthroughHandler implements AIResponseHandler{

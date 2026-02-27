@@ -97,6 +97,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		super.onGenStart();
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).end().toString()));
 	}
+	public void setScene(String type,String value) {
+
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("scene", type).add("scene_data", value).end().toString()));
+	}
 
 	@Override
 	public void onGenComplete() {
