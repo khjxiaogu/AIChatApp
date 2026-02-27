@@ -59,6 +59,10 @@ public abstract class SceneBuilder<T,O extends SceneBuilder<T,O>> {
 		pathPrefix+=path+"/";
 		return (O) this;
 	}
+	public O setPrefix(String path) {
+		pathPrefix=path;
+		return (O) this;
+	}
 	public T end() {
 		return parent;
 	}
@@ -91,19 +95,19 @@ public abstract class SceneBuilder<T,O extends SceneBuilder<T,O>> {
 	public abstract SceneBuilder<O,?> withAlt();
 	public <N extends SceneBuilder<O,N>> N withAlt(N pb) {
 		scene.selectors.add(pb.scene);
-		pb.addPrefix(pathPrefix);
+		pb.setPrefix(pathPrefix);
 		return (N)pb;
 	}
 	public O withAlt(String fn,String name,String value) {
-		withAlt().withPredicate(name, value).addPrefix(pathPrefix).withScene(fn).end();
+		withAlt().withPredicate(name, value).setPrefix(pathPrefix).withScene(fn).end();
 		return (O) this;
 	}
 	public O withAlt(String fn,String name,String... value) {
-		withAlt().withPredicate(name, value).addPrefix(pathPrefix).withScene(fn).end();
+		withAlt().withPredicate(name, value).setPrefix(pathPrefix).withScene(fn).end();
 		return (O) this;
 	}
 	public O withAlt(String fn,String name,List<String> value) {
-		withAlt().withPredicate(name, value).addPrefix(pathPrefix).withScene(fn).end();
+		withAlt().withPredicate(name, value).setPrefix(pathPrefix).withScene(fn).end();
 		return (O) this;
 	}
 	public SceneSelector build() {

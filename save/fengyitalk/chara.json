@@ -11,7 +11,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1putong4.png"
+      "scene": "fgimage/yfy1putong4.png"
     },
     {
       "predicates": [
@@ -23,7 +23,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1aishang2.png"
+      "scene": "fgimage/yfy1aishang2.png"
     },
     {
       "predicates": [
@@ -35,7 +35,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1xiao2.png"
+      "scene": "fgimage/yfy1xiao2.png"
     },
     {
       "predicates": [
@@ -47,7 +47,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1ku15.png"
+      "scene": "fgimage/yfy1ku15.png"
     },
     {
       "predicates": [
@@ -59,7 +59,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1haixiu5.png"
+      "scene": "fgimage/yfy1haixiu5.png"
     },
     {
       "predicates": [
@@ -71,7 +71,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1jingkong7.png"
+      "scene": "fgimage/yfy1jingkong7.png"
     },
     {
       "predicates": [
@@ -83,7 +83,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1jingkong7.png"
+      "scene": "fgimage/yfy1jingkong7.png"
     },
     {
       "predicates": [
@@ -95,7 +95,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1kuazhang5.png"
+      "scene": "fgimage/yfy1kuazhang5.png"
     },
     {
       "predicates": [
@@ -107,7 +107,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1shengqi6.png"
+      "scene": "fgimage/yfy1shengqi6.png"
     },
     {
       "predicates": [
@@ -119,7 +119,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1wushen7a.png"
+      "scene": "fgimage/yfy1wushen7a.png"
     },
     {
       "predicates": [
@@ -131,7 +131,7 @@
         }
       ],
       "selectors": [],
-      "scene": "fgimage//yfy1xiao1.png"
+      "scene": "fgimage/yfy1xiao1.png"
     }
   ]
 }

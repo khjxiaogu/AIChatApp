@@ -3,7 +3,9 @@ package com.khjxiaogu.aiwuxia;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.gson.GsonBuilder;
@@ -243,6 +245,11 @@ public class SceneGenerator {
 			.withAlt().time().sunset().end().withScene("bingfanghun1.jpg").end()
 			.withAlt().time().evening().end().withScene("bingfangye1.jpg").end().end().end()
 		.end();
+		Map<String,String> vals=new HashMap<>();
+		vals.put("地点", "公园湖畔");
+		vals.put("季节", "春");
+		vals.put("时间", "下午");
+		System.out.println(back.build().getSceneData(vals));
 		checkSave(savePath,"back",back.build());
 	}
 	public static void checkSave(File fn,String type,SceneSelector selector) throws IOException {
