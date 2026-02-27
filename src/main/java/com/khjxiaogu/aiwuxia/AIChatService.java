@@ -339,8 +339,8 @@ public class AIChatService implements ServiceClass {
 					}
 					if(!isCreate&&trial.contains(app)) {//公测，允许创建一个
 						try (PreparedStatement ps2 = database.prepareStatement("SELECT chatid FROM chats WHERE app = ? and uid = ?")) {
-							ps.setString(1, app);
-							ps.setString(2, uid);
+							ps2.setString(1, app);
+							ps2.setString(2, uid);
 							try(ResultSet rs2 = ps2.executeQuery()){
 								if(!rs2.next()) {
 									isCreate=true;
