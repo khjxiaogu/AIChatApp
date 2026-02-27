@@ -109,8 +109,8 @@ public abstract class AIApplication {
 			logger.info("=================Reasoner===============");
 			logger.info(resp.choices.get(0).message.reasoning_content);
 		}
-		System.out.println("=================Usage===============");
-		System.out.println(resp.usage);
+		logger.info("=================Usage===============");
+		logger.info(resp.usage);
 		return resp;
 	}
 
@@ -163,5 +163,12 @@ public abstract class AIApplication {
 	public abstract String getBrief(AISession state);
 	public File getResource(String path) {
 		return null;
+	}
+
+
+
+	public void prepareScene(AISession state) {
+
+		
 	};
 }

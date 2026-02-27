@@ -14,6 +14,7 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.AIApplication;
 import com.khjxiaogu.aiwuxia.AISession;
 import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.GameStage;
@@ -38,7 +39,6 @@ public class AICharaTalkMain extends AIApplication {
 
 	@Override
 	public File getResource(String path) {
-		
 		return new File(basePath,path);
 		
 	}
@@ -47,9 +47,10 @@ public class AICharaTalkMain extends AIApplication {
 	public AICharaTalkMain(File basePath,String modelFolder,String charaname) {
 		super();
 		this.charaname=charaname;
-		this.basePath=basePath;
+		
 		try {
 			File model=new File(basePath,modelFolder);
+			this.basePath=model;
 			system = FileUtil.readString(new File(model, "prompt.txt")).replace("\r", "");
 			summary = FileUtil.readString(new File(model, "summary.txt")).replace("\r", "");
 			if(new File(model,"chara.json").exists()) {
@@ -226,7 +227,7 @@ public class AICharaTalkMain extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		//头几次用思维链版本构建格式
-		return b.end().add("model",i<=2?"deepseek-reasoner":"deepseek-chat").add("temperature", 1.3).add("max_tokens", 500).add("stream", false).end();
+		return b.end().add("model",i<=10?"deepseek-reasoner":"deepseek-chat").add("temperature", 1.3).add("max_tokens", 500).add("stream", false).end();
 
 	}
 	public JsonObject constructSummaryrequest(AISession state,String summary) {
@@ -363,9 +364,37 @@ public class AICharaTalkMain extends AIApplication {
 			state.setScene("back", "");
 		state.getExtra().put("chara",chara);
 		state.getExtra().put("back",bg);
-		state.appendLine(Role.ASSISTANT, sb.toString(), false);
+		state.appendLine(Role.ASSISTANT, sb.toString().trim(), false);
 		return nstateModified ? oldstate : null;
 	}
+	public void prepareScene(AISession state) {
+		String chara=state.getExtra().get("chara");
+		String bg=state.getExtra().get("back");
+		String pos=state.getState().perks.get("位置");
+		if(chara!=null) {
+			switch(pos) {
+			case "前":
+				state.setScene("front", chara);
+				state.setScene("side", "");
+				break;
+			case "侧":
+				state.setScene("front", "");
+				state.setScene("side", chara);
+				break;
+			default:
+				state.setScene("front", "");
+				state.setScene("side", "");
+				break;
+			}
+		}else {
+			state.setScene("front", "");
+			state.setScene("side", "");
+		}
+		if(bg!=null)
+			state.setScene("back", bg);
+		else
+			state.setScene("back", "");
+	};
 	public String constructSystem(StateIntf state) {
 		if (state == null || state.perks.isEmpty())
 			return "";

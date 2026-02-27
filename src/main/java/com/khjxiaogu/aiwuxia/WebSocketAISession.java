@@ -54,6 +54,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		}else {
 			aiapp.provideInitial(this);
 		}
+		aiapp.prepareScene(this);
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).end().toString()));
 
 	}

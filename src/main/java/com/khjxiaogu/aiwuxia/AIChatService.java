@@ -90,7 +90,7 @@ public class AIChatService implements ServiceClass {
 		apps.put("wuxia", new AIWuxiaMain(parent));
 		apps.put("article", new AIArticleMain(parent));
 		apps.put("fengyi", new AIGalgameMain(parent,"promptfengyi.txt","枫怡DLC"));
-		apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡聊天"));
+		apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
 	}
 	public JsonArray getChatApps(String uid) {
 		JsonArray ja = new JsonArray();
@@ -196,7 +196,7 @@ public class AIChatService implements ServiceClass {
 		req.SkipPathOnce();
 		AIApplication app=apps.get(path1);
 		if(app!=null) {
-			File fn=app.getResource(req.getCurrentPath());
+			File fn=app.getResource(req.getCurrentPath().substring(1));
 			if(fn!=null&&fn.exists()) {
 				rep.write(200, fn);
 				return;
