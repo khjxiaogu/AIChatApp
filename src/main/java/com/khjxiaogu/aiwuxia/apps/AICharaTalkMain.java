@@ -21,6 +21,7 @@ import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.Interface;
+import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -88,28 +89,7 @@ public class AICharaTalkMain extends AIApplication {
 			return ret;
 		});
 		// check interface
-		handlers.add((state, ret) -> {
-			if (state.getStage() == GameStage.STARTED) {
-				if ("重新生成".equals(ret)) {
-					HistoryItem hi = state.removeLast();
-					HistoryItem userhi = state.removeLast();
-					state.minRow();
-					if (hi.lastState != null) {
-						state.getState().set(hi.lastState);
-					}
-					return userhi.getContent().toString();
-				} else if ("撤回".equals(ret)) {
-					HistoryItem hi = state.removeLast();
-					HistoryItem userhi = state.removeLast();
-					state.minRow();
-					if (hi.lastState != null) {
-						state.getState().set(hi.lastState);
-					}
-					return null;
-				}
-			}
-			return ret;
-		});
+		handlers.add(revertAndRegen);
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
@@ -149,9 +129,21 @@ public class AICharaTalkMain extends AIApplication {
 
 	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
-		BlockingReader resp = sendAIStreamedRequest(req, state::addUsage);
-		
-		return precessResponse(resp, state);
+		BlockingReader resp=null;
+		int i=0;
+		while(i<5) {//最多尝试5次，否则认为是提示词问题
+			try {
+				resp = sendAIStreamedRequest(req, state::addUsage);
+				return precessResponse(resp, state);
+			}catch(RegenerateNeededException ex) {
+				state.getState().set(ex.oldState);
+				i++;
+			}
+		}
+		if(state.getLast().getRole()==Role.USER)
+			state.removeLast();
+		state.minRow();
+		return state.getLast().lastState;
 		
 	}
 
@@ -209,6 +201,7 @@ public class AICharaTalkMain extends AIApplication {
 				}
 				history.add(0, new HistoryItem(Role.SYSTEM,makeSummaryrequest(state,summery.toString()),true));
 				his.forEach(t->t.shouldSend=false);
+				state.minRows(his.size());
 			}
 			int size=history.size();
 			int diff=0;
@@ -284,10 +277,10 @@ public class AICharaTalkMain extends AIApplication {
 		int status = 0;
 
 		StateIntf oldstate = new StateIntf(state.getState());
-		boolean nstateModified = false;
 		BufferedReader reader=new BufferedReader(scan);
 		String last;
-		StringBuilder sb=new StringBuilder();
+		StringBuilder sendContent=new StringBuilder();
+		StringBuilder content=new StringBuilder();
 		String oldchara=state.getExtra().get("chara");
 		String oldbg=state.getExtra().get("back");
 		if(back!=null)
@@ -295,37 +288,39 @@ public class AICharaTalkMain extends AIApplication {
 		while (true) {
 			last=reader.readLine();
 			if(last==null) {
-				//System.out.println("\nEOF Read");
 				break;
 			}
 			if (isWaiting && last.isEmpty()) {
-				//System.out.println("\nWaiting");
 				continue;
 			}
-
 			if (isWaiting) {
-				//System.out.println("\n=================Content===============");
 				isWaiting = false;
 			}
-			
+			sendContent.append(last).append("\n");
 			if (status == 0) {//处理主要剧情
+				if(last.startsWith("==对话==")) {
+					status=1;
+				}else//对话部分错误，督促AI重新生成一份
+					throw new RegenerateNeededException(oldstate);
+				
+
+			}else if(status==1) {
 				if (last.startsWith("==场景==")) {
 					status = 3;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
 				} else {
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-					if(!last.startsWith("==对话=="))
-						sb.append(last).append("\n");
+					content.append(last).append("\n");
 				}
+				
 			} else if (status == 3) {
-				state.appendInvisibleLine(Role.ASSISTANT, last);
 				if(last.contains("=")) {
 					String[] lasts=last.split("=");
-					state.getState().perks.put(lasts[0], lasts[1]);
+					state.getState().perks.put(lasts[0].trim(), lasts[1].trim());
 					
 				}
 			}
-
+		}
+		if(status!=3) {//没有场景部分，督促AI重新生成一份
+			throw new RegenerateNeededException(oldstate);
 		}
 		String pos=state.getState().perks.get("位置");
 		String chara=null;
@@ -364,8 +359,8 @@ public class AICharaTalkMain extends AIApplication {
 			state.setScene("back", "");
 		state.getExtra().put("chara",chara);
 		state.getExtra().put("back",bg);
-		state.appendLine(Role.ASSISTANT, sb.toString().trim(), false);
-		return nstateModified ? oldstate : null;
+		state.add(Role.ASSISTANT, content.toString().trim(), sendContent.toString().trim());
+		return oldstate;
 	}
 	public void prepareScene(AISession state) {
 		String chara=state.getExtra().get("chara");

@@ -2,12 +2,14 @@ package com.khjxiaogu.aiwuxia;
 
 import java.io.Serializable;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.MessageItem;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
 
 public class AISession implements Serializable, Cloneable {
@@ -22,6 +24,7 @@ public class AISession implements Serializable, Cloneable {
 		private StateIntf state=new StateIntf();
 		protected Map<String,String> extraData=new HashMap<>(); 
 		private int row;
+		private int minRow=0;
 		private GameStage stage = GameStage.INITIALIZE;
 		private Usage usage = new Usage();
 	}
@@ -57,7 +60,7 @@ public class AISession implements Serializable, Cloneable {
 			}
 		}
 		if(hi==null) {
-			hi=new HistoryItem(history.size(),role,content+"\n",isSendable);
+			hi=new HistoryItem(history.newUniqueId(),role,content+"\n",isSendable);
 			history.add(hi);
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
@@ -74,7 +77,7 @@ public class AISession implements Serializable, Cloneable {
 			}
 		}
 		if(hi==null) {
-			hi=new HistoryItem(history.size(),role,ch,isSendable);
+			hi=new HistoryItem(history.newUniqueId(),role,ch,isSendable);
 			history.add(hi);
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
@@ -91,7 +94,7 @@ public class AISession implements Serializable, Cloneable {
 			}
 		}
 		if(hi==null) {
-			hi=new HistoryItem(history.size(),role,"",content+"\n");
+			hi=new HistoryItem(history.newUniqueId(),role,"",content+"\n");
 			history.add(hi);
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
@@ -99,12 +102,12 @@ public class AISession implements Serializable, Cloneable {
 		}
 	}
 	public void add(Role role,String content,boolean isSendable) {
-		HistoryItem hi=new HistoryItem(history.size(),role,content,isSendable);
+		HistoryItem hi=new HistoryItem(history.newUniqueId(),role,content,isSendable);
 		history.add(hi);
 		postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 	}
 	public void add(Role role,String content,String sendContent) {
-		HistoryItem hi=new HistoryItem(history.size(),role,content,sendContent);
+		HistoryItem hi=new HistoryItem(history.newUniqueId(),role,content,sendContent);
 		history.add(hi);
 		postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 	}
@@ -170,6 +173,12 @@ public class AISession implements Serializable, Cloneable {
 	public void minRow() {
 		data.row--;
 	}
+	public int getMinRow() {
+		return data.minRow;
+	}
+	public void setMinRow(int minRow) {
+		data.minRow=minRow;
+	}
 	public int getRow() {
 		return data.row;
 	}
@@ -178,5 +187,11 @@ public class AISession implements Serializable, Cloneable {
 	}
 	public void onGenStart() {
 		isGenerating=true;
+	}
+	public void postMessages(List<MessageItem> items) {
+		setUpdated();
+	}
+	public void minRows(int size) {
+		data.row-=size;
 	}
 }

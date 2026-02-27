@@ -4,134 +4,290 @@
     {
       "predicates": [
         {
-          "key": "表情",
+          "key": "服装",
           "values": [
-            "严肃"
+            "校服"
           ]
         }
       ],
-      "selectors": [],
-      "scene": "fgimage/yfy1putong4.png"
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "严肃"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1putong4.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "哀伤"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1aishang2.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "大笑"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1xiao2.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "哭"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1ku15.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "脸红"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1haixiu5.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "阴暗"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1heihua2.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "惊恐"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1jingkong7.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "震惊"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1kuazhang5.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "生气"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1shengqi6.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "无神"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1wushen7a.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "微笑"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy1xiao1.png"
+        }
+      ]
     },
     {
       "predicates": [
         {
-          "key": "表情",
+          "key": "服装",
           "values": [
-            "哀伤"
+            "校服"
           ]
         }
       ],
-      "selectors": [],
-      "scene": "fgimage/yfy1aishang2.png"
-    },
-    {
-      "predicates": [
+      "selectors": [
         {
-          "key": "表情",
-          "values": [
-            "大笑"
-          ]
-        }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1xiao2.png"
-    },
-    {
-      "predicates": [
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "严肃"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3putong1.png"
+        },
         {
-          "key": "表情",
-          "values": [
-            "哭"
-          ]
-        }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1ku15.png"
-    },
-    {
-      "predicates": [
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "哀伤"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3aishang2.png"
+        },
         {
-          "key": "表情",
-          "values": [
-            "脸红"
-          ]
-        }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1haixiu5.png"
-    },
-    {
-      "predicates": [
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "大笑"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3xiao2.png"
+        },
         {
-          "key": "表情",
-          "values": [
-            "阴暗"
-          ]
-        }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1jingkong7.png"
-    },
-    {
-      "predicates": [
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "哭"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3ku7.png"
+        },
         {
-          "key": "表情",
-          "values": [
-            "惊恐"
-          ]
-        }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1jingkong7.png"
-    },
-    {
-      "predicates": [
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "脸红"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3haixiu5.png"
+        },
         {
-          "key": "表情",
-          "values": [
-            "震惊"
-          ]
-        }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1kuazhang5.png"
-    },
-    {
-      "predicates": [
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "阴暗"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3shengqi1.png"
+        },
         {
-          "key": "表情",
-          "values": [
-            "生气"
-          ]
-        }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1shengqi6.png"
-    },
-    {
-      "predicates": [
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "惊恐"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3jingkong7.png"
+        },
         {
-          "key": "表情",
-          "values": [
-            "无神"
-          ]
-        }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1wushen7a.png"
-    },
-    {
-      "predicates": [
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "震惊"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3kuazhang3.png"
+        },
         {
-          "key": "表情",
-          "values": [
-            "微笑"
-          ]
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "生气"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3shengqi3.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "无神"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy4putong5.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "微笑"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "fgimage/yfy3xiao1.png"
         }
-      ],
-      "selectors": [],
-      "scene": "fgimage/yfy1xiao1.png"
+      ]
     }
   ]
 }

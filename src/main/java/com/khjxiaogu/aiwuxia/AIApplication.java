@@ -20,6 +20,7 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
+import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.History;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
@@ -48,7 +49,44 @@ public abstract class AIApplication {
 		return ret;
 	}
 
-
+	protected MessageHandler revertAndRegen=(state, ret) -> {
+		if (state.getStage() == GameStage.STARTED) {
+			if ("重新生成".equals(ret)) {
+				HistoryItem last=state.getLast();
+				if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
+					HistoryItem hi = state.removeLast();
+					if(last.getRole()==Role.ASSISTANT) {
+						HistoryItem userhi = state.removeLast();
+						state.minRow();
+						if (hi.lastState != null) {
+							state.getState().set(hi.lastState);
+						}
+						return userhi.getContent().toString();
+					}
+					return hi.getContent().toString();
+					
+				}
+				return null;
+			} else if ("撤回".equals(ret)) {
+				if(state.getRow()>state.getMinRow()) {
+					HistoryItem last=state.getLast();
+					if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
+						
+						HistoryItem hi = state.removeLast();
+						if(last.getRole()==Role.ASSISTANT) {
+							HistoryItem userhi = state.removeLast();
+							state.minRow();
+							if (hi.lastState != null) {
+								state.getState().set(hi.lastState);
+							}
+						}
+					}
+				}
+				return null;
+			}
+		}
+		return ret;
+	};
 
 	public static AISession.AIData dataFromJson(File jsonFile) throws JsonSyntaxException, IOException {
 		return gs.fromJson(FileUtil.readString(jsonFile), AISession.AIData.class);

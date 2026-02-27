@@ -6,10 +6,16 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.MessageItem;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
 import io.netty.channel.Channel;
@@ -40,17 +46,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 
 	@Override
 	public void onOpen(Channel conn, FullHttpRequest handshake) {
-		int i = 0;
+		
 		this.conn.add(conn);
 		if(super.getStage()!=GameStage.INITIALIZE) {
-			List<HistoryItem> his = new ArrayList<>();
-			for (Iterator<HistoryItem> it = history.reverseIterator(); it.hasNext();) {
-				his.add(0, it.next());
-				i++;
-				if (i >= 10) break;
-			}
-			for (HistoryItem hi : his)
-				postMessage(hi.getIdentifier(), hi.getRole(), hi.getContent().toString());
+			requireMoreMessages();
 		}else {
 			aiapp.provideInitial(this);
 		}
@@ -58,7 +57,17 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).end().toString()));
 
 	}
-
+	public void requireMoreMessages() {
+		int i = 0;
+		List<MessageItem> his = new ArrayList<>();
+		for (Iterator<HistoryItem> it = history.reverseIterator(); it.hasNext();) {
+			HistoryItem hisitem=it.next();
+			his.add(0, new MessageItem(hisitem.getIdentifier(),hisitem.getRole(),hisitem.getContent().toString()));
+			i++;
+			if (i >= 20) break;
+		}
+		postMessages(his);
+	}
 	@Override
 	public void onClose(Channel conn) {
 		this.conn.remove(conn);
@@ -69,12 +78,17 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 
 	@Override
 	public void onMessage(Channel conn, String message) {
-		if(isGenerating) {
-			conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id",-1).add("title", "").add("message", "内容生成中，请稍后再试。").end().toString()));
-			return;
+		JsonObject jo=JsonParser.parseString(message).getAsJsonObject();
+		if(jo.has("message")) {
+			if(isGenerating) {
+				conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id",-1).add("title", "").add("message", "内容生成中，请稍后再试。").end().toString()));
+				return;
+			}
+			isGenerating=true;
+			aiapp.handleSpeech(this, jo.get("message").getAsString());
+		}else if(jo.has("requestBackLog")) {
+			requireMoreMessages();
 		}
-		isGenerating=true;
-		aiapp.handleSpeech(this, message);
 	}
 
 	@Override
@@ -92,6 +106,15 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public void postMessage(int id, Role role, String message) {
 		super.postMessage(id, role, message);
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id", id).add("title", aiapp.getRoleName(this, role)).add("message", message).end().toString()));
+	}
+	@Override
+	public void postMessages(List<MessageItem> items) {
+		super.postMessages(items);
+		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> ja=JsonBuilder.object().array("messages");
+		for(MessageItem i:items) {
+			ja.object().add("id", i.id).add("title", aiapp.getRoleName(this, i.role)).add("message", i.message);
+		}
+		conn.writeAndFlush(new TextWebSocketFrame(ja.end().end().toString()));
 	}
 	@Override
 	public void onGenStart() {

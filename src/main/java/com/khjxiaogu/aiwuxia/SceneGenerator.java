@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.google.gson.GsonBuilder;
 import com.khjxiaogu.aiwuxia.scene.AICharaSceneBuilder;
 import com.khjxiaogu.aiwuxia.scene.Endable;
+import com.khjxiaogu.aiwuxia.scene.SceneBuilder.SimplePredicateBuilder;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
@@ -29,17 +30,33 @@ public class SceneGenerator {
 		*/
 		File savePath=new File("save/fengyitalk/");
 		AICharaSceneBuilder<Endable> chara=AICharaSceneBuilder.builder().addPrefix("fgimage");
-		chara.withAlt().emote().withValue("严肃").end().withScene("yfy1putong4.png");
-		chara.withAlt().emote().withValue("哀伤").end().withScene("yfy1aishang2.png");
-		chara.withAlt().emote().withValue("大笑").end().withScene("yfy1xiao2.png");
-		chara.withAlt().emote().withValue("哭" ).end().withScene("yfy1ku15.png");
-		chara.withAlt().emote().withValue("脸红").end().withScene("yfy1haixiu5.png");
-		chara.withAlt().emote().withValue("阴暗").end().withScene("yfy1jingkong7.png");//notimpl
-		chara.withAlt().emote().withValue("惊恐").end().withScene("yfy1jingkong7.png");
-		chara.withAlt().emote().withValue("震惊").end().withScene("yfy1kuazhang5.png");
-		chara.withAlt().emote().withValue("生气").end().withScene("yfy1shengqi6.png");
-		chara.withAlt().emote().withValue("无神").end().withScene("yfy1wushen7a.png");
-		chara.withAlt().emote().withValue("微笑").end().withScene("yfy1xiao1.png");
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> school=chara.withAlt().cloth().withValue("校服").end();
+		school.withAlt().emote().withValue("严肃").end().withScene("yfy1putong4.png").end();
+		school.withAlt().emote().withValue("哀伤").end().withScene("yfy1aishang2.png").end();
+		school.withAlt().emote().withValue("大笑").end().withScene("yfy1xiao2.png").end();
+		school.withAlt().emote().withValue("哭" ).end().withScene("yfy1ku15.png").end();
+		school.withAlt().emote().withValue("脸红").end().withScene("yfy1haixiu5.png").end();
+		school.withAlt().emote().withValue("阴暗").end().withScene("yfy1heihua2.png").end();
+		school.withAlt().emote().withValue("惊恐").end().withScene("yfy1jingkong7.png").end();
+		school.withAlt().emote().withValue("震惊").end().withScene("yfy1kuazhang5.png").end();
+		school.withAlt().emote().withValue("生气").end().withScene("yfy1shengqi6.png").end();
+		school.withAlt().emote().withValue("无神").end().withScene("yfy1wushen7a.png").end();
+		school.withAlt().emote().withValue("微笑").end().withScene("yfy1xiao1.png").end();
+		school.end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> norm=chara.withAlt().cloth().withValue("校服").end();
+		norm.withAlt().emote().withValue("严肃").end().withScene("yfy3putong1.png").end();
+		norm.withAlt().emote().withValue("哀伤").end().withScene("yfy3aishang2.png").end();
+		norm.withAlt().emote().withValue("大笑").end().withScene("yfy3xiao2.png").end();
+		norm.withAlt().emote().withValue("哭" ).end().withScene("yfy3ku7.png").end();
+		norm.withAlt().emote().withValue("脸红").end().withScene("yfy3haixiu5.png").end();
+		norm.withAlt().emote().withValue("阴暗").end().withScene("yfy3shengqi1.png").end();
+		norm.withAlt().emote().withValue("惊恐").end().withScene("yfy3jingkong7.png").end();
+		norm.withAlt().emote().withValue("震惊").end().withScene("yfy3kuazhang3.png").end();
+		norm.withAlt().emote().withValue("生气").end().withScene("yfy3shengqi3.png").end();
+		norm.withAlt().emote().withValue("无神").end().withScene("yfy4putong5.png").end();
+		norm.withAlt().emote().withValue("微笑").end().withScene("yfy3xiao1.png").end();
+		norm.end();
 		checkSave(savePath,"chara",chara.build());
 		
 		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("bgimage");

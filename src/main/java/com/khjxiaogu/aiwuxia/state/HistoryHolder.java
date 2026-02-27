@@ -23,7 +23,8 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 
 
 	int size();
-
+	
+	int newUniqueId();
 	void removeOf(int identifier);
 
 	String toString();

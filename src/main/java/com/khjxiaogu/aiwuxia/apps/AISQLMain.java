@@ -60,26 +60,11 @@ public class AISQLMain extends AIApplication {
 					state.add(Role.USER, ret, false);
 					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
 					return null;
-				} else if ("重新生成".equals(ret)) {
-					HistoryItem hi = state.removeLast();
-					HistoryItem userhi = state.removeLast();
-					state.minRow();
-					if (hi.lastState != null) {
-						state.getState().set(hi.lastState);
-					}
-					return userhi.getContent().toString();
-				} else if ("撤回".equals(ret)) {
-					HistoryItem hi = state.removeLast();
-					HistoryItem userhi = state.removeLast();
-					state.minRow();
-					if (hi.lastState != null) {
-						state.getState().set(hi.lastState);
-					}
-					return null;
 				}
 			}
 			return ret;
 		});
+		handlers.add(revertAndRegen);
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);

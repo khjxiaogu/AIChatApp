@@ -9,7 +9,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -60,7 +63,7 @@ public class AIChatService implements ServiceClass {
 		");";// 创建费用表
 	protected Map<String, WebSocketAISession> uidsockets = new ConcurrentHashMap<>();//用户链接
 	private Map<String, AIApplication> apps = new HashMap<>();//智能体列表
-	
+	private Set<String> trial=new HashSet<>();//公测智能体，只允许创建一个实例
 	File parent;
 	File saveData;
 
@@ -87,10 +90,13 @@ public class AIChatService implements ServiceClass {
 		reload();
 	}
 	public void reload() {
+		apps.clear();
 		apps.put("wuxia", new AIWuxiaMain(parent));
 		apps.put("article", new AIArticleMain(parent));
 		apps.put("fengyi", new AIGalgameMain(parent,"promptfengyi.txt","枫怡DLC"));
 		apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
+		trial.clear();
+		trial.add("fengyitalk");
 	}
 	public JsonArray getChatApps(String uid) {
 		JsonArray ja = new JsonArray();
@@ -144,7 +150,26 @@ public class AIChatService implements ServiceClass {
 		}
 		return new JsonArray();
 	}
+	public JsonArray findChat(String uid,String app) {
+		try (PreparedStatement ps = database.prepareStatement("SELECT chatid,brief,time,app FROM chats WHERE uid = ? and app = ?")) {
 
+			ps.setString(1, uid);
+			ps.setString(2, app);
+			ResultSet rs = ps.executeQuery();
+			JsonArray ja = new JsonArray();
+			while (rs.next()) {
+				String appid=rs.getString(4);
+				AIApplication ent=apps.get(appid);
+				if(ent!=null)
+					ja.add(JsonBuilder.object().add("chatid", rs.getString(1)).add("appid", appid).add("app", ent.getName()).add("time", rs.getString(3)).add("name", rs.getString(2)==null?"新对话":rs.getString(2)).end());
+			}
+			return ja;
+		} catch (SQLException e) {
+			// TODO Auto-generated catch block
+			getLogger().printStackTrace(e);
+		}
+		return new JsonArray();
+	}
 	public String getAvailableId() {
 		while (true) {
 			String id = UUID.randomUUID().toString().replaceAll("-", "");
@@ -175,6 +200,13 @@ public class AIChatService implements ServiceClass {
 	@Adapter
 	public ResultDTO chats(@Query("uid") String uid) {
 		return new ResultDTO(200, getChatListUser(uid));
+	}
+
+	@HttpMethod("GET")
+	@HttpPath("/querychat")
+	@Adapter
+	public ResultDTO findChats(@Query("uid") String uid,@Query("appid")String app) {
+		return new ResultDTO(200, findChat(uid,app));
 	}
 	@HttpMethod("GET")
 	@HttpPath("/createid")
@@ -208,7 +240,7 @@ public class AIChatService implements ServiceClass {
 	@HttpPath("/chat.js")
 	@Adapter
 	public ResultDTO chatjs() throws IOException {
-		return new ResultDTO(200, FileUtil.readString(new File(parent, "chat.js")));
+		return new ResultDTO(200, new File(parent, "chat.js"));
 	}
 	@HttpMethod("GET")
 	@HttpPath("/reload")
@@ -221,27 +253,27 @@ public class AIChatService implements ServiceClass {
 	@HttpPath("/robots.txt")
 	@Adapter
 	public ResultDTO robots() throws IOException {
-		return new ResultDTO(200, FileUtil.readString(new File(parent, "robots.txt")));
+		return new ResultDTO(200, new File(parent, "robots.txt"));
 	}
 
 	@HttpMethod("GET")
 	@HttpPath("/feather.min.js")
 	@Adapter
 	public ResultDTO featherjs() throws IOException {
-		return new ResultDTO(200, FileUtil.readString(new File(parent, "feather.min.js")));
+		return new ResultDTO(200, new File(parent, "feather.min.js"));
 	}
 
 	@HttpMethod("GET")
 	@HttpPath("/index")
 	@Adapter
 	public ResultDTO indexHtm() throws IOException {
-		return new ResultDTO(200, FileUtil.readString(new File(parent, "index.html")));
+		return new ResultDTO(200, new File(parent, "index.html"));
 	}
 	@HttpMethod("GET")
 	@HttpPath("/aigal")
 	@Adapter
 	public ResultDTO aigal() throws IOException {
-		return new ResultDTO(200, FileUtil.readString(new File(parent, "galgame.html")));
+		return new ResultDTO(200, new File(parent, "galgame.html"));
 	}
 	@HttpMethod("GET")
 	@HttpPath("/remove")
@@ -286,23 +318,47 @@ public class AIChatService implements ServiceClass {
 		String app = req.getQuery().get("app");
 		String uid = req.getQuery().get("userId");
 		boolean isCreate=false;
+		String attribute="";
 		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ?")) {
 
 			// ps.setString(1, uid);
 			ps.setString(1, cid);
-			ResultSet rs = ps.executeQuery();
-			if (rs.next()) {
-				//System.out.println(1);
-				if (!rs.getString(1).equals(uid)) {
-					res.write(401, "Unauthorized");
-					return;
+			try(ResultSet rs = ps.executeQuery()){
+				if (rs.next()) {
+					//System.out.println(1);
+					if (!rs.getString(1).equals(uid)) {
+						res.write(401, "Unauthorized");
+						return;
+					}
+					app=rs.getString(2);
+				} else {
+					//System.out.println(0);
+					
+					if(isChatAllow(uid,app)){
+						isCreate=true;
+					}
+					if(!isCreate&&trial.contains(app)) {//公测，允许创建一个
+						try (PreparedStatement ps2 = database.prepareStatement("SELECT chatid FROM chats WHERE app = ? and uid = ?")) {
+							ps.setString(1, app);
+							ps.setString(2, uid);
+							try(ResultSet rs2 = ps2.executeQuery()){
+								if(!rs2.next()) {
+									isCreate=true;
+									attribute="hide";
+								}
+							}
+						}
+					}
+					if(!isCreate) {
+						res.write(400, "App does not exist");
+						return;
+					}
+					
+						
+					
+					
+					
 				}
-				app=rs.getString(2);
-			} else {
-				//System.out.println(0);
-				
-					isCreate=true;
-				
 			}
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
@@ -310,7 +366,7 @@ public class AIChatService implements ServiceClass {
 		WebSocketAISession state = uidsockets.get(cid);
 		if (state == null) {
 			AIApplication appx = apps.get(app);
-			if (appx == null||!isChatAllow(uid,app)) {
+			if (appx == null) {
 				res.write(400, "App does not exist");
 				return;
 			}
@@ -327,12 +383,13 @@ public class AIChatService implements ServiceClass {
 			if (state == null) {
 				if(isCreate) {
 					long time=new Date().getTime();
-					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time) VALUES(?,?,?,?)")) {
+					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,attribute) VALUES(?,?,?,?,?)")) {
 
 						ps2.setString(1, uid);
 						ps2.setString(2, cid);
 						ps2.setString(3, app);
 						ps2.setLong(4, time);
+						ps2.setString(5, attribute);
 						ps2.executeUpdate();
 					} catch (SQLException e) {
 						e.printStackTrace();

@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.khjxiaogu.aiwuxia.ReverseIterator;
 
@@ -14,7 +15,7 @@ public class History implements Serializable, HistoryHolder {
 	 */
 	private static final long serialVersionUID = 8307578868037728518L;
 	List<HistoryItem> history = new ArrayList<>();
-
+	AtomicInteger idgenerator=new AtomicInteger();
 	@Override
 	public HistoryItem get(int num) {
 		return history.get(num);
@@ -36,7 +37,7 @@ public class History implements Serializable, HistoryHolder {
 	}
 
 	@Override
-	public void clear() {
+	public synchronized void clear() {
 		history.clear();
 	}
 
@@ -85,6 +86,21 @@ public class History implements Serializable, HistoryHolder {
 	@Override
 	public Iterator<HistoryItem> reverseIterator() {
 		return new ReverseIterator<>(history);
+	}
+
+	@Override
+	public int newUniqueId() {
+		int num=idgenerator.incrementAndGet();
+		if(num<history.size()) {
+			num=history.size();
+			idgenerator.set(num);
+		}
+		
+		return num;
+	}
+
+	public History() {
+		super();
 	}
 
 }
