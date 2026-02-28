@@ -50,8 +50,9 @@ public class AICharaTalkMain extends AIApplication {
 		this.charaname=charaname;
 		
 		try {
+			this.basePath=basePath;
 			File model=new File(basePath,modelFolder);
-			this.basePath=model;
+			
 			system = FileUtil.readString(new File(model, "prompt.txt")).replace("\r", "");
 			summary = FileUtil.readString(new File(model, "summary.txt")).replace("\r", "");
 			if(new File(model,"chara.json").exists()) {

@@ -29,7 +29,7 @@ public class SceneGenerator {
 		星期=一（一/二/三/四/五/六/日）
 		*/
 		File savePath=new File("save/fengyitalk/");
-		AICharaSceneBuilder<Endable> chara=AICharaSceneBuilder.builder().addPrefix("fgimage");
+		AICharaSceneBuilder<Endable> chara=AICharaSceneBuilder.builder().addPrefix("truelovecm/fgimage/yfy");
 		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> school=chara.withAlt().cloth().withValue("校服").end();
 		school.withAlt().emote().withValue("严肃").end().withScene("yfy1putong4.png").end();
 		school.withAlt().emote().withValue("哀伤").end().withScene("yfy1aishang2.png").end();
@@ -59,7 +59,7 @@ public class SceneGenerator {
 		norm.end();
 		checkSave(savePath,"chara",chara.build());
 		
-		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("bgimage");
+		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("truelovecm/bgimage");
 
 		back.withAlt().addPrefix("街道").location().withValue("街道").end()
 		.withAlt().season().green().end().withScene("jiedaori.jpg")
