@@ -10,13 +10,14 @@ import java.sql.SQLException;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIArticleMain;
 import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
@@ -31,6 +32,7 @@ import com.khjxiaogu.webserver.annotations.HttpMethod;
 import com.khjxiaogu.webserver.annotations.HttpPath;
 import com.khjxiaogu.webserver.annotations.Query;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
+import com.khjxiaogu.webserver.web.FilePageService;
 import com.khjxiaogu.webserver.web.ServiceClass;
 import com.khjxiaogu.webserver.web.lowlayer.Request;
 import com.khjxiaogu.webserver.web.lowlayer.Response;
@@ -66,6 +68,7 @@ public class AIChatService implements ServiceClass {
 	private Set<String> trial=new HashSet<>();//公测智能体，只允许创建一个实例
 	File parent;
 	File saveData;
+	private FilePageService serv;
 
 	public AIChatService(File path) throws SQLException, ClassNotFoundException {
 		try {
@@ -87,6 +90,7 @@ public class AIChatService implements ServiceClass {
 		parent = path;
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();
+		serv=new FilePageService(new File(parent,"resource"));
 		reload();
 	}
 	public void reload() {
@@ -94,7 +98,29 @@ public class AIChatService implements ServiceClass {
 		apps.put("wuxia", new AIWuxiaMain(parent));
 		apps.put("article", new AIArticleMain(parent));
 		apps.put("fengyi", new AIGalgameMain(parent,"promptfengyi.txt","枫怡DLC"));
-		apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
+		//apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
+		for(File fn:parent.listFiles(File::isDirectory)) {
+			try {
+				if(fn.getName().endsWith("talk")) {
+					String name=fn.getName();
+					File metaFile=new File(fn,"meta.json");
+					if(metaFile.exists()) {
+						JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
+						if(meta.has("name")&&(!meta.has("enabled")||meta.get("enabled").getAsBoolean())) {
+							getLogger().info("正在加载AI："+name);
+							apps.put(name, new AICharaTalkMain(parent,name,meta.get("name").getAsString()));
+							getLogger().info("AI加载成功："+name);
+						}else {
+							getLogger().info("忽视AI："+name+" 出于配置原因");
+						}
+					}else {
+						getLogger().info("忽视AI："+name+" 由于找不到元数据");
+					}
+				}
+			} catch (Exception e) {
+				getLogger().error(e);
+			}
+		}
 		trial.clear();
 		trial.add("fengyitalk");
 	}
@@ -223,18 +249,7 @@ public class AIChatService implements ServiceClass {
 	@HttpMethod("GET")
 	@HttpPath("/resource")
 	public void resource(Request req,Response rep) {
-		String path1=req.getCurrentPath();
-		path1=path1.substring(1,path1.indexOf("/",1));
-		req.SkipPathOnce();
-		AIApplication app=apps.get(path1);
-		if(app!=null) {
-			File fn=app.getResource(req.getCurrentPath().substring(1));
-			if(fn!=null&&fn.exists()) {
-				rep.write(200, fn);
-				return;
-			}
-		}
-		rep.write(404);
+		serv.call(req, rep);
 	}
 	@HttpMethod("GET")
 	@HttpPath("/chat.js")
@@ -243,7 +258,7 @@ public class AIChatService implements ServiceClass {
 		return new ResultDTO(200, new File(parent, "chat.js"));
 	}
 	@HttpMethod("GET")
-	@HttpPath("/reload")
+	@HttpPath("/doadminreload")
 	@Adapter
 	public ResultDTO reld() throws IOException {
 		reload();

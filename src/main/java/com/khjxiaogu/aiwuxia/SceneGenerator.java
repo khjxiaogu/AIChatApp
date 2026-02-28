@@ -11,7 +11,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.google.gson.GsonBuilder;
 import com.khjxiaogu.aiwuxia.scene.AICharaSceneBuilder;
 import com.khjxiaogu.aiwuxia.scene.Endable;
-import com.khjxiaogu.aiwuxia.scene.SceneBuilder.SimplePredicateBuilder;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
@@ -28,7 +27,7 @@ public class SceneGenerator {
 		位置=前（前/侧/后/远程通话/不在身边）
 		星期=一（一/二/三/四/五/六/日）
 		*/
-		File savePath=new File("save/fengyitalk/");
+		File savePath=new File("save");
 		AICharaSceneBuilder<Endable> chara=AICharaSceneBuilder.builder().addPrefix("truelovecm/fgimage/yfy");
 		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> school=chara.withAlt().cloth().withValue("校服").end();
 		school.withAlt().emote().withValue("严肃").end().withScene("yfy1putong4.png").end();
@@ -57,7 +56,7 @@ public class SceneGenerator {
 		norm.withAlt().emote().withValue("无神").end().withScene("yfy4putong5.png").end();
 		norm.withAlt().emote().withValue("微笑").end().withScene("yfy3xiao1.png").end();
 		norm.end();
-		checkSave(savePath,"chara",chara.build());
+		checkSave(savePath,"fengyitalk","chara",chara.build());
 		
 		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("truelovecm/bgimage");
 
@@ -267,10 +266,10 @@ public class SceneGenerator {
 		vals.put("季节", "春");
 		vals.put("时间", "下午");
 		System.out.println(back.build().getSceneData(vals));
-		checkSave(savePath,"back",back.build());
+		checkSave(savePath,"fengyitalk","back",back.build());
 	}
-	public static void checkSave(File fn,String type,SceneSelector selector) throws IOException {
-		File save=new File(fn,type+".json");
+	public static void checkSave(File fn,String ai,String type,SceneSelector selector) throws IOException {
+		File save=new File(fn,ai+"/"+type+".json");
 		List<File> files=new ArrayList<>();
 		visit(selector,files,fn);
 		AtomicBoolean err=new AtomicBoolean();
@@ -287,7 +286,7 @@ public class SceneGenerator {
 	}
 	public static void visit(SceneSelector selector,List<File> visited,File basePath) {
 		if(selector.scene!=null) {
-			visited.add(new File(basePath,selector.scene));
+			visited.add(new File(basePath,"resource/"+selector.scene));
 		}
 		for(SceneSelector sel:selector.selectors) {
 			visit(sel,visited,basePath);

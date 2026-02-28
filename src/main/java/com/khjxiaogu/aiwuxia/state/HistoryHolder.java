@@ -1,7 +1,6 @@
 package com.khjxiaogu.aiwuxia.state;
 
 import java.util.Iterator;
-import java.util.ListIterator;
 
 public interface HistoryHolder extends Iterable<HistoryItem> {
 

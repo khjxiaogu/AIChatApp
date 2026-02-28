@@ -21,7 +21,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1putong4.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1putong4.png"
         },
         {
           "predicates": [
@@ -33,7 +33,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1aishang2.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1aishang2.png"
         },
         {
           "predicates": [
@@ -45,7 +45,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1xiao2.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1xiao2.png"
         },
         {
           "predicates": [
@@ -57,7 +57,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1ku15.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1ku15.png"
         },
         {
           "predicates": [
@@ -69,7 +69,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1haixiu5.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1haixiu5.png"
         },
         {
           "predicates": [
@@ -81,7 +81,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1heihua2.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1heihua2.png"
         },
         {
           "predicates": [
@@ -93,7 +93,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1jingkong7.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1jingkong7.png"
         },
         {
           "predicates": [
@@ -105,7 +105,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1kuazhang5.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1kuazhang5.png"
         },
         {
           "predicates": [
@@ -117,7 +117,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1shengqi6.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1shengqi6.png"
         },
         {
           "predicates": [
@@ -129,7 +129,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1wushen7a.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1wushen7a.png"
         },
         {
           "predicates": [
@@ -141,7 +141,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy1xiao1.png"
+          "scene": "truelovecm/fgimage/yfy/yfy1xiao1.png"
         }
       ]
     },
@@ -165,7 +165,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3putong1.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3putong1.png"
         },
         {
           "predicates": [
@@ -177,7 +177,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3aishang2.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3aishang2.png"
         },
         {
           "predicates": [
@@ -189,7 +189,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3xiao2.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3xiao2.png"
         },
         {
           "predicates": [
@@ -201,7 +201,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3ku7.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3ku7.png"
         },
         {
           "predicates": [
@@ -213,7 +213,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3haixiu5.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3haixiu5.png"
         },
         {
           "predicates": [
@@ -225,7 +225,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3shengqi1.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3shengqi1.png"
         },
         {
           "predicates": [
@@ -237,7 +237,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3jingkong7.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3jingkong7.png"
         },
         {
           "predicates": [
@@ -249,7 +249,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3kuazhang3.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3kuazhang3.png"
         },
         {
           "predicates": [
@@ -261,7 +261,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3shengqi3.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3shengqi3.png"
         },
         {
           "predicates": [
@@ -273,7 +273,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy4putong5.png"
+          "scene": "truelovecm/fgimage/yfy/yfy4putong5.png"
         },
         {
           "predicates": [
@@ -285,7 +285,7 @@
             }
           ],
           "selectors": [],
-          "scene": "fgimage/yfy3xiao1.png"
+          "scene": "truelovecm/fgimage/yfy/yfy3xiao1.png"
         }
       ]
     }

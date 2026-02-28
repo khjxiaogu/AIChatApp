@@ -32,7 +32,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/街道/jiedaohun.jpg"
+              "scene": "truelovecm/bgimage/街道/jiedaohun.jpg"
             },
             {
               "predicates": [
@@ -44,10 +44,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/街道/jiedaoye.jpg"
+              "scene": "truelovecm/bgimage/街道/jiedaoye.jpg"
             }
           ],
-          "scene": "bgimage/街道/jiedaori.jpg"
+          "scene": "truelovecm/bgimage/街道/jiedaori.jpg"
         },
         {
           "predicates": [
@@ -69,7 +69,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/街道/jiedaoqiuri.jpg"
+              "scene": "truelovecm/bgimage/街道/jiedaoqiuri.jpg"
             },
             {
               "predicates": [
@@ -81,10 +81,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/街道/jiedaoqiuye.jpg"
+              "scene": "truelovecm/bgimage/街道/jiedaoqiuye.jpg"
             }
           ],
-          "scene": "bgimage/街道/jiedaoqiuri.jpg"
+          "scene": "truelovecm/bgimage/街道/jiedaoqiuri.jpg"
         },
         {
           "predicates": [
@@ -106,7 +106,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/街道/jiedaoqiuri.jpg"
+              "scene": "truelovecm/bgimage/街道/jiedaoqiuri.jpg"
             },
             {
               "predicates": [
@@ -118,10 +118,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/街道/jiedaoye2.jpg"
+              "scene": "truelovecm/bgimage/街道/jiedaoye2.jpg"
             }
           ],
-          "scene": "bgimage/街道/jiedaoqiuri.jpg"
+          "scene": "truelovecm/bgimage/街道/jiedaoqiuri.jpg"
         }
       ]
     },
@@ -145,7 +145,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/主角卧室/nanzhuwoshihun.jpg"
+          "scene": "truelovecm/bgimage/主角卧室/nanzhuwoshihun.jpg"
         },
         {
           "predicates": [
@@ -157,10 +157,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/主角卧室/nanzhuwoshiye.jpg"
+          "scene": "truelovecm/bgimage/主角卧室/nanzhuwoshiye.jpg"
         }
       ],
-      "scene": "bgimage/主角卧室/nanzhuwoshiri.jpg"
+      "scene": "truelovecm/bgimage/主角卧室/nanzhuwoshiri.jpg"
     },
     {
       "predicates": [
@@ -192,13 +192,13 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/十字路口/lukouye7.jpg"
+              "scene": "truelovecm/bgimage/十字路口/lukouye7.jpg"
             }
           ],
-          "scene": "bgimage/十字路口/lukouye.jpg"
+          "scene": "truelovecm/bgimage/十字路口/lukouye.jpg"
         }
       ],
-      "scene": "bgimage/十字路口/lukouri.jpg"
+      "scene": "truelovecm/bgimage/十字路口/lukouri.jpg"
     },
     {
       "predicates": [
@@ -220,7 +220,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/姚枫茜卧室/fengxiwoshihun.jpg"
+          "scene": "truelovecm/bgimage/姚枫茜卧室/fengxiwoshihun.jpg"
         },
         {
           "predicates": [
@@ -232,10 +232,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/姚枫茜卧室/fengxiwoshiye.jpg"
+          "scene": "truelovecm/bgimage/姚枫茜卧室/fengxiwoshiye.jpg"
         }
       ],
-      "scene": "bgimage/姚枫茜卧室/fengxiwoshiri.jpg"
+      "scene": "truelovecm/bgimage/姚枫茜卧室/fengxiwoshiri.jpg"
     },
     {
       "predicates": [
@@ -257,7 +257,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/姚枫茜卧室/fengxiwoshihun.jpg"
+          "scene": "truelovecm/bgimage/姚枫茜卧室/fengxiwoshihun.jpg"
         },
         {
           "predicates": [
@@ -269,10 +269,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/姚枫怡卧室/fengyiwoshiye.jpg"
+          "scene": "truelovecm/bgimage/姚枫怡卧室/fengyiwoshiye.jpg"
         }
       ],
-      "scene": "bgimage/姚枫茜卧室/fengxiwoshiri.jpg"
+      "scene": "truelovecm/bgimage/姚枫茜卧室/fengxiwoshiri.jpg"
     },
     {
       "predicates": [
@@ -301,7 +301,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/姚枫怡家门/fengxijiawairixue.jpg"
+          "scene": "truelovecm/bgimage/姚枫怡家门/fengxijiawairixue.jpg"
         },
         {
           "predicates": [
@@ -313,7 +313,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/姚枫怡家门/fengxijiawaihun.jpg"
+          "scene": "truelovecm/bgimage/姚枫怡家门/fengxijiawaihun.jpg"
         },
         {
           "predicates": [
@@ -325,10 +325,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/姚枫怡家门/fengxijiawaiye1.jpg"
+          "scene": "truelovecm/bgimage/姚枫怡家门/fengxijiawaiye1.jpg"
         }
       ],
-      "scene": "bgimage/姚枫怡家门/fengxijiawairi.jpg"
+      "scene": "truelovecm/bgimage/姚枫怡家门/fengxijiawairi.jpg"
     },
     {
       "predicates": [
@@ -361,7 +361,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校大门/xiaomenkouhun1.jpg"
+              "scene": "truelovecm/bgimage/学校大门/xiaomenkouhun1.jpg"
             },
             {
               "predicates": [
@@ -373,10 +373,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校大门/xuexiaomenkouye1.jpg"
+              "scene": "truelovecm/bgimage/学校大门/xuexiaomenkouye1.jpg"
             }
           ],
-          "scene": "bgimage/学校大门/xiaomenkouri1.jpg"
+          "scene": "truelovecm/bgimage/学校大门/xiaomenkouri1.jpg"
         },
         {
           "predicates": [
@@ -398,7 +398,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校大门/xiaomenkouqiuhun.jpg"
+              "scene": "truelovecm/bgimage/学校大门/xiaomenkouqiuhun.jpg"
             },
             {
               "predicates": [
@@ -410,10 +410,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校大门/xiaomenkouqiuye.jpg"
+              "scene": "truelovecm/bgimage/学校大门/xiaomenkouqiuye.jpg"
             }
           ],
-          "scene": "bgimage/学校大门/xiaomenkouqiuri1.jpg"
+          "scene": "truelovecm/bgimage/学校大门/xiaomenkouqiuri1.jpg"
         },
         {
           "predicates": [
@@ -435,7 +435,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校大门/xiaomenkouqiuhun.jpg"
+              "scene": "truelovecm/bgimage/学校大门/xiaomenkouqiuhun.jpg"
             },
             {
               "predicates": [
@@ -447,10 +447,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校大门/xiaomenkouqiuye.jpg"
+              "scene": "truelovecm/bgimage/学校大门/xiaomenkouqiuye.jpg"
             }
           ],
-          "scene": "bgimage/学校大门/xiaomenkouri6.jpg"
+          "scene": "truelovecm/bgimage/学校大门/xiaomenkouri6.jpg"
         }
       ]
     },
@@ -474,7 +474,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校食堂/shitanghun.jpg"
+          "scene": "truelovecm/bgimage/学校食堂/shitanghun.jpg"
         },
         {
           "predicates": [
@@ -486,10 +486,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校食堂/shitanghun.jpg"
+          "scene": "truelovecm/bgimage/学校食堂/shitanghun.jpg"
         }
       ],
-      "scene": "bgimage/学校食堂/shitangri.jpg"
+      "scene": "truelovecm/bgimage/学校食堂/shitangri.jpg"
     },
     {
       "predicates": [
@@ -522,7 +522,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校庭院/tingyuanhun.jpg"
+              "scene": "truelovecm/bgimage/学校庭院/tingyuanhun.jpg"
             },
             {
               "predicates": [
@@ -534,10 +534,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校庭院/tingyuanye.jpg"
+              "scene": "truelovecm/bgimage/学校庭院/tingyuanye.jpg"
             }
           ],
-          "scene": "bgimage/学校庭院/tingyuanri.jpg"
+          "scene": "truelovecm/bgimage/学校庭院/tingyuanri.jpg"
         },
         {
           "predicates": [
@@ -559,7 +559,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校庭院/tingyuanqiuhun.jpg"
+              "scene": "truelovecm/bgimage/学校庭院/tingyuanqiuhun.jpg"
             },
             {
               "predicates": [
@@ -571,10 +571,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校庭院/tingyuanye.jpg"
+              "scene": "truelovecm/bgimage/学校庭院/tingyuanye.jpg"
             }
           ],
-          "scene": "bgimage/学校庭院/tingyuanqiuri.jpg"
+          "scene": "truelovecm/bgimage/学校庭院/tingyuanqiuri.jpg"
         },
         {
           "predicates": [
@@ -596,7 +596,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校庭院/tingyuanqiuhun.jpg"
+              "scene": "truelovecm/bgimage/学校庭院/tingyuanqiuhun.jpg"
             },
             {
               "predicates": [
@@ -608,10 +608,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/学校庭院/tingyuanye.jpg"
+              "scene": "truelovecm/bgimage/学校庭院/tingyuanye.jpg"
             }
           ],
-          "scene": "bgimage/学校庭院/tingyuanqiuri.jpg"
+          "scene": "truelovecm/bgimage/学校庭院/tingyuanqiuri.jpg"
         }
       ]
     },
@@ -635,7 +635,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校图书馆/tushuguanri.jpg"
+          "scene": "truelovecm/bgimage/学校图书馆/tushuguanri.jpg"
         },
         {
           "predicates": [
@@ -647,10 +647,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校图书馆/tushuguanri.jpg"
+          "scene": "truelovecm/bgimage/学校图书馆/tushuguanri.jpg"
         }
       ],
-      "scene": "bgimage/学校图书馆/tushuguanri.jpg"
+      "scene": "truelovecm/bgimage/学校图书馆/tushuguanri.jpg"
     },
     {
       "predicates": [
@@ -662,7 +662,7 @@
         }
       ],
       "selectors": [],
-      "scene": "bgimage/学校礼堂/litang1.jpg"
+      "scene": "truelovecm/bgimage/学校礼堂/litang1.jpg"
     },
     {
       "predicates": [
@@ -684,7 +684,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/文科教室/jiaoshihun.jpg"
+          "scene": "truelovecm/bgimage/文科教室/jiaoshihun.jpg"
         },
         {
           "predicates": [
@@ -696,10 +696,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/文科教室/jiaoshiye.jpg"
+          "scene": "truelovecm/bgimage/文科教室/jiaoshiye.jpg"
         }
       ],
-      "scene": "bgimage/文科教室/jiaoshiri5.jpg"
+      "scene": "truelovecm/bgimage/文科教室/jiaoshiri5.jpg"
     },
     {
       "predicates": [
@@ -721,7 +721,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/理科教室/jiaoshihun1.jpg"
+          "scene": "truelovecm/bgimage/理科教室/jiaoshihun1.jpg"
         },
         {
           "predicates": [
@@ -733,10 +733,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/理科教室/jiaoshiye2.jpg"
+          "scene": "truelovecm/bgimage/理科教室/jiaoshiye2.jpg"
         }
       ],
-      "scene": "bgimage/理科教室/jiaoshiri2.jpg"
+      "scene": "truelovecm/bgimage/理科教室/jiaoshiri2.jpg"
     },
     {
       "predicates": [
@@ -758,7 +758,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校社团室/huodongshihun1.jpg"
+          "scene": "truelovecm/bgimage/学校社团室/huodongshihun1.jpg"
         },
         {
           "predicates": [
@@ -770,10 +770,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校社团室/huodongshihun1.jpg"
+          "scene": "truelovecm/bgimage/学校社团室/huodongshihun1.jpg"
         }
       ],
-      "scene": "bgimage/学校社团室/huodongshiri1.jpg"
+      "scene": "truelovecm/bgimage/学校社团室/huodongshiri1.jpg"
     },
     {
       "predicates": [
@@ -795,7 +795,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校楼道左/zoulanghun2.jpg"
+          "scene": "truelovecm/bgimage/学校楼道左/zoulanghun2.jpg"
         },
         {
           "predicates": [
@@ -807,10 +807,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校楼道左/zoulangye4.jpg"
+          "scene": "truelovecm/bgimage/学校楼道左/zoulangye4.jpg"
         }
       ],
-      "scene": "bgimage/学校楼道左/zoulangri4.jpg"
+      "scene": "truelovecm/bgimage/学校楼道左/zoulangri4.jpg"
     },
     {
       "predicates": [
@@ -832,7 +832,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校楼道右/zoulanghun3.jpg"
+          "scene": "truelovecm/bgimage/学校楼道右/zoulanghun3.jpg"
         },
         {
           "predicates": [
@@ -844,10 +844,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/学校楼道右/zoulangye3.jpg"
+          "scene": "truelovecm/bgimage/学校楼道右/zoulangye3.jpg"
         }
       ],
-      "scene": "bgimage/学校楼道右/zoulangri3.jpg"
+      "scene": "truelovecm/bgimage/学校楼道右/zoulangri3.jpg"
     },
     {
       "predicates": [
@@ -869,7 +869,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/沙滩/haitanri.jpg"
+          "scene": "truelovecm/bgimage/沙滩/haitanri.jpg"
         },
         {
           "predicates": [
@@ -881,10 +881,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/沙滩/haitanye1.jpg"
+          "scene": "truelovecm/bgimage/沙滩/haitanye1.jpg"
         }
       ],
-      "scene": "bgimage/沙滩/haitanri.jpg"
+      "scene": "truelovecm/bgimage/沙滩/haitanri.jpg"
     },
     {
       "predicates": [
@@ -916,13 +916,13 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/商业街/shangyejieye2.jpg"
+              "scene": "truelovecm/bgimage/商业街/shangyejieye2.jpg"
             }
           ],
-          "scene": "bgimage/商业街/shangyejieye1.jpg"
+          "scene": "truelovecm/bgimage/商业街/shangyejieye1.jpg"
         }
       ],
-      "scene": "bgimage/商业街/shangyejieri.jpg"
+      "scene": "truelovecm/bgimage/商业街/shangyejieri.jpg"
     },
     {
       "predicates": [
@@ -944,7 +944,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/云游时空馆外/shikongguanwaihun1.jpg"
+          "scene": "truelovecm/bgimage/云游时空馆外/shikongguanwaihun1.jpg"
         },
         {
           "predicates": [
@@ -966,13 +966,13 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/云游时空馆外/shikongguanwaiye1.jpg"
+              "scene": "truelovecm/bgimage/云游时空馆外/shikongguanwaiye1.jpg"
             }
           ],
-          "scene": "bgimage/云游时空馆外/shikongguanwaiye.jpg"
+          "scene": "truelovecm/bgimage/云游时空馆外/shikongguanwaiye.jpg"
         }
       ],
-      "scene": "bgimage/云游时空馆外/shikongguanwairi.jpg"
+      "scene": "truelovecm/bgimage/云游时空馆外/shikongguanwairi.jpg"
     },
     {
       "predicates": [
@@ -994,10 +994,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/云游时空馆内/shikongguanneiye.jpg"
+          "scene": "truelovecm/bgimage/云游时空馆内/shikongguanneiye.jpg"
         }
       ],
-      "scene": "bgimage/云游时空馆内/shikongguanneiri.jpg"
+      "scene": "truelovecm/bgimage/云游时空馆内/shikongguanneiri.jpg"
     },
     {
       "predicates": [
@@ -1019,10 +1019,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/快餐厅/kuaicandianri.jpg"
+          "scene": "truelovecm/bgimage/快餐厅/kuaicandianri.jpg"
         }
       ],
-      "scene": "bgimage/快餐厅/kuaicandianri.jpg"
+      "scene": "truelovecm/bgimage/快餐厅/kuaicandianri.jpg"
     },
     {
       "predicates": [
@@ -1055,13 +1055,13 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/服装店/fuzhuangdian2.jpg"
+              "scene": "truelovecm/bgimage/服装店/fuzhuangdian2.jpg"
             }
           ],
-          "scene": "bgimage/服装店/fuzhuangdian1.jpg"
+          "scene": "truelovecm/bgimage/服装店/fuzhuangdian1.jpg"
         }
       ],
-      "scene": "bgimage/服装店/fuzhuangdian.jpg"
+      "scene": "truelovecm/bgimage/服装店/fuzhuangdian.jpg"
     },
     {
       "predicates": [
@@ -1094,10 +1094,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/枫音山路/fenglinqiuhun.jpg"
+              "scene": "truelovecm/bgimage/枫音山路/fenglinqiuhun.jpg"
             }
           ],
-          "scene": "bgimage/枫音山路/fenglinqiuri.jpg"
+          "scene": "truelovecm/bgimage/枫音山路/fenglinqiuri.jpg"
         },
         {
           "predicates": [
@@ -1109,10 +1109,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/枫音山路/fenglinhun.jpg"
+          "scene": "truelovecm/bgimage/枫音山路/fenglinhun.jpg"
         }
       ],
-      "scene": "bgimage/枫音山路/fenglinri.jpg"
+      "scene": "truelovecm/bgimage/枫音山路/fenglinri.jpg"
     },
     {
       "predicates": [
@@ -1147,7 +1147,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/枫音山顶/dashijieri.jpg"
+              "scene": "truelovecm/bgimage/枫音山顶/dashijieri.jpg"
             },
             {
               "predicates": [
@@ -1159,7 +1159,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/枫音山顶/dashijiehun.jpg"
+              "scene": "truelovecm/bgimage/枫音山顶/dashijiehun.jpg"
             }
           ]
         },
@@ -1184,7 +1184,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/枫音山顶/dashijieqiuri.jpg"
+              "scene": "truelovecm/bgimage/枫音山顶/dashijieqiuri.jpg"
             },
             {
               "predicates": [
@@ -1196,7 +1196,7 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/枫音山顶/dashijieqiuhun.jpg"
+              "scene": "truelovecm/bgimage/枫音山顶/dashijieqiuhun.jpg"
             }
           ]
         },
@@ -1210,7 +1210,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/枫音山顶/dashijieye.jpg"
+          "scene": "truelovecm/bgimage/枫音山顶/dashijieye.jpg"
         }
       ]
     },
@@ -1234,7 +1234,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/海边道路/haibianluhun.jpg"
+          "scene": "truelovecm/bgimage/海边道路/haibianluhun.jpg"
         },
         {
           "predicates": [
@@ -1256,13 +1256,13 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/海边道路/haibianluye4.jpg"
+              "scene": "truelovecm/bgimage/海边道路/haibianluye4.jpg"
             }
           ],
-          "scene": "bgimage/海边道路/haibianluye.jpg"
+          "scene": "truelovecm/bgimage/海边道路/haibianluye.jpg"
         }
       ],
-      "scene": "bgimage/海边道路/haibianluri.jpg"
+      "scene": "truelovecm/bgimage/海边道路/haibianluri.jpg"
     },
     {
       "predicates": [
@@ -1294,10 +1294,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/公园喷泉/gongyuanye2.jpg"
+              "scene": "truelovecm/bgimage/公园喷泉/gongyuanye2.jpg"
             }
           ],
-          "scene": "bgimage/公园喷泉/gongyuanye.jpg"
+          "scene": "truelovecm/bgimage/公园喷泉/gongyuanye.jpg"
         },
         {
           "predicates": [
@@ -1317,10 +1317,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/公园喷泉/gongyuanqiuri1.jpg"
+          "scene": "truelovecm/bgimage/公园喷泉/gongyuanqiuri1.jpg"
         }
       ],
-      "scene": "bgimage/公园喷泉/gongyuanri.jpg"
+      "scene": "truelovecm/bgimage/公园喷泉/gongyuanri.jpg"
     },
     {
       "predicates": [
@@ -1354,10 +1354,10 @@
                 }
               ],
               "selectors": [],
-              "scene": "bgimage/公园湖畔/gongyuan2qiuhun.jpg"
+              "scene": "truelovecm/bgimage/公园湖畔/gongyuan2qiuhun.jpg"
             }
           ],
-          "scene": "bgimage/公园湖畔/gongyuan2qiuri.jpg"
+          "scene": "truelovecm/bgimage/公园湖畔/gongyuan2qiuri.jpg"
         },
         {
           "predicates": [
@@ -1370,10 +1370,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/公园湖畔/gongyuan2hun.jpg"
+          "scene": "truelovecm/bgimage/公园湖畔/gongyuan2hun.jpg"
         }
       ],
-      "scene": "bgimage/公园湖畔/gongyuan2ri.jpg"
+      "scene": "truelovecm/bgimage/公园湖畔/gongyuan2ri.jpg"
     },
     {
       "predicates": [
@@ -1396,10 +1396,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/医院走廊/yiyuanzoulangye.jpg"
+          "scene": "truelovecm/bgimage/医院走廊/yiyuanzoulangye.jpg"
         }
       ],
-      "scene": "bgimage/医院走廊/yiyuanzoulangri.jpg"
+      "scene": "truelovecm/bgimage/医院走廊/yiyuanzoulangri.jpg"
     },
     {
       "predicates": [
@@ -1421,7 +1421,7 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/医院病房/bingfanghun1.jpg"
+          "scene": "truelovecm/bgimage/医院病房/bingfanghun1.jpg"
         },
         {
           "predicates": [
@@ -1433,10 +1433,10 @@
             }
           ],
           "selectors": [],
-          "scene": "bgimage/医院病房/bingfangye1.jpg"
+          "scene": "truelovecm/bgimage/医院病房/bingfangye1.jpg"
         }
       ],
-      "scene": "bgimage/医院病房/bingfangri1.jpg"
+      "scene": "truelovecm/bgimage/医院病房/bingfangri1.jpg"
     }
   ]
 }

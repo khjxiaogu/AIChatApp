@@ -149,7 +149,6 @@ public class FileUtil {
 		huc2.setDoOutput(true);
 		huc2.setDoInput(true);
 		huc2.connect();
-		long ctl=huc2.getContentLengthLong();
 		if(huc2.getResponseCode()==200)
 			return huc2;
 		throw new IOException("HTTP"+huc2.getResponseCode()+" "+huc2.getResponseMessage()+" got while fetching "+url);

@@ -20,6 +20,7 @@ public class JsonBuilder {
 		private JsonArrayBuilder(T par) {
 			parent=par;
 		}
+		@SuppressWarnings("unchecked")
 		public T end() {
 			if(parent==null)
 				return (T) jo;
@@ -74,6 +75,7 @@ public class JsonBuilder {
 			parent=par;
 		}
 		
+		@SuppressWarnings("unchecked")
 		public T end() {
 			if(parent==null)
 				return (T) jo;

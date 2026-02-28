@@ -10,6 +10,7 @@ import java.io.FileReader;
 import java.io.Reader;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+
 import javax.swing.JButton;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
@@ -89,7 +90,7 @@ public class CodeDialog extends JFrame{
 		setMinimumSize(getSize());
 		setLocationRelativeTo(null);
 		this.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-		this.show();
+		this.setVisible(true);
 		
 	}
 

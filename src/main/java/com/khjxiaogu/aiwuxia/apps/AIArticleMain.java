@@ -2,8 +2,6 @@ package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Scanner;
 import java.util.regex.Pattern;
@@ -16,7 +14,6 @@ import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.Interface;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -107,24 +104,14 @@ public class AIArticleMain extends AIApplication {
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			Iterator<HistoryItem> it = history.reverseIterator();
-			List<MessageAndRole> queue = new ArrayList<>();
-			int i = 0;
-			while (it.hasNext()) {
-				HistoryItem current = it.next();
-				if (current.shouldSend) {
-
-					if (i == 0)
-						queue.add(0, new MessageAndRole(current.getRole().getRoleName(), current.getFullContent()));
-					else
-						queue.add(0, new MessageAndRole(current.getRole().getRoleName(), current.getFullContent()));
-					i++;
+			int size=history.size();
+			for(int j=0;j<size;j++) {
+				HistoryItem hi=history.get(j);
+				if (hi.shouldSend) {
+					
+					b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
 				}
-				if (i >= 4 && current.getRole().equals("user"))
-					break;
 			}
-			for (MessageAndRole hs : queue)
-				b.object().add("role", hs.role).add("content", hs.message.toString().trim()).end();
 		}
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
@@ -153,7 +140,6 @@ public class AIArticleMain extends AIApplication {
 		boolean isWaiting = true;
 		int status = 0;
 
-		Interface intf = null;
 		StateIntf oldstate = new StateIntf(state.getState());
 		boolean nstateModified = false;
 		while (scan.hasNextLine()) {

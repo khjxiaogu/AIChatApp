@@ -5,8 +5,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -120,14 +118,9 @@ public class AIGalgameMain extends AIApplication {
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			List<MessageAndRole> queue = new ArrayList<>();
-			int i = 0;
 			int len=0;
 			for(HistoryItem hi:history) {//calculate total dialog rows
 				if(hi.shouldSend) {
-					if(hi.getRole()==Role.ASSISTANT) {
-						i++;
-					}
 					len+=hi.getFullContent().length();
 				}
 			}

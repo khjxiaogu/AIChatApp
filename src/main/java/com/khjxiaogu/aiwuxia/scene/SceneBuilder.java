@@ -1,10 +1,11 @@
 package com.khjxiaogu.aiwuxia.scene;
 
 import java.util.ArrayList;
+
 import java.util.List;
 
 import com.khjxiaogu.aiwuxia.scene.SceneSelector.Predicate;
-
+@SuppressWarnings("unchecked")
 public abstract class SceneBuilder<T,O extends SceneBuilder<T,O>> {
 
 	public static class PredicateBuilder<T,O extends PredicateBuilder<T,O>>{
@@ -55,6 +56,7 @@ public abstract class SceneBuilder<T,O extends SceneBuilder<T,O>> {
 	public SceneBuilder(T par) {
 		this.parent=par;
 	}
+	
 	public O addPrefix(String path) {
 		pathPrefix+=path+"/";
 		return (O) this;

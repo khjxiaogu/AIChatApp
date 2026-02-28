@@ -7,7 +7,6 @@ import java.io.Reader;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Random;
@@ -145,26 +144,37 @@ public class AIWuxiaMain extends AIApplication {
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			Iterator<HistoryItem> it = history.reverseIterator();
-			List<MessageAndRole> queue = new ArrayList<>();
-			int i = 0;
-			while (it.hasNext()) {
-				HistoryItem current = it.next();
-				if (current.shouldSend) {
-
-					if (i == 0)
-						queue.add(0, new MessageAndRole(current.getRole().getRoleName(), current.getFullContent()));
-					else
-						queue.add(0, new MessageAndRole(current.getRole().getRoleName(), current.getFullContent()));
-					i++;
+			int len=0;
+			for(HistoryItem hi:history) {//calculate total dialog rows
+				if(hi.shouldSend) {
+					len+=hi.getFullContent().length();
 				}
-				if (i >= 4 && current.getRole().equals("user"))
-					break;
 			}
-			MessageAndRole user=queue.get(queue.size()-1);
-			user.message=constructStroy(state).append("==用户操作==\n").append(user.message);
-			for (MessageAndRole hs : queue)
-				b.object().add("role", hs.role).add("content", hs.message.toString().trim()).end();
+			
+			if(len>=140000) {//more than 140000 text:about 100k context,remove until 60000
+				HistoryItem lasthi=null;
+				for(HistoryItem hi:history) {//calculate total dialog rows
+					if(hi.shouldSend) {
+						len-=hi.getFullContent().length();
+						hi.shouldSend=false;
+						if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
+							lasthi=hi;
+							break;
+						}
+					}
+				}
+				if(lasthi!=null)
+				history.add(0, new HistoryItem(Role.SYSTEM,constructSystem(lasthi.lastState),true));
+			}
+			int size=history.size();
+			for(int j=0;j<size;j++) {
+				HistoryItem hi=history.get(j);
+				if (hi.shouldSend) {
+					
+					b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				}
+			}
+				
 		}
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",

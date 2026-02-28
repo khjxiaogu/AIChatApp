@@ -14,17 +14,14 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.AIApplication;
 import com.khjxiaogu.aiwuxia.AISession;
 import com.khjxiaogu.aiwuxia.Role;
-import com.khjxiaogu.aiwuxia.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.Interface;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.BlockingReader;
-import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -34,15 +31,11 @@ public class AICharaTalkMain extends AIApplication {
 	Pattern intfPattern = Pattern.compile("【([^面]+)面板】");
 	String charaname;
 	String summary;
+	String prelogue="";
 	SceneSelector back;
 	SceneSelector character;
 	File basePath;
 
-	@Override
-	public File getResource(String path) {
-		return new File(basePath,path);
-		
-	}
 
 
 	public AICharaTalkMain(File basePath,String modelFolder,String charaname) {
@@ -53,14 +46,19 @@ public class AICharaTalkMain extends AIApplication {
 			this.basePath=basePath;
 			File model=new File(basePath,modelFolder);
 			
-			system = FileUtil.readString(new File(model, "prompt.txt")).replace("\r", "");
-			summary = FileUtil.readString(new File(model, "summary.txt")).replace("\r", "");
+			String role = readFile(new File(model, "role.txt"));
+			String charaset=readFile(new File(model, "charaset.txt"));
+			String rules=readFile(new File(model, "rules.txt"));
+			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
+			summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
+			prelogue = readFile(new File(model, "prelogue.txt"));
+			
 			if(new File(model,"chara.json").exists()) {
-				character=gs.fromJson(FileUtil.readString(new File(model,"chara.json")), SceneSelector.class);
+				character=gs.fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
 				
 			}
 			if(new File(model,"back.json").exists()) {
-				back=gs.fromJson(FileUtil.readString(new File(model,"back.json")), SceneSelector.class);
+				back=gs.fromJson(readFile(new File(model,"back.json")), SceneSelector.class);
 				
 			}
 		} catch (IOException e) {
@@ -82,7 +80,7 @@ public class AICharaTalkMain extends AIApplication {
 					state.getExtra().put("name", ret);
 					state.add(Role.USER, ret, false);
 					state.setStage(GameStage.STARTED);
-					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！", false);
+					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
 					return null;
 				}
 				return null;
@@ -171,7 +169,6 @@ public class AICharaTalkMain extends AIApplication {
 		HistoryHolder history = state.getHistory();
 		int i = 0;
 		if (history != null && !history.isEmpty()) {
-			List<MessageAndRole> queue = new ArrayList<>();
 			
 			int len=0;
 			for(HistoryItem hi:history) {//calculate total dialog rows
@@ -183,7 +180,6 @@ public class AICharaTalkMain extends AIApplication {
 				}
 			}
 			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
-				HistoryItem lasthi=null;
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				for(HistoryItem hi:history) {//calculate total dialog rows
@@ -195,7 +191,6 @@ public class AICharaTalkMain extends AIApplication {
 						}
 						his.add(hi);
 						if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
-							lasthi=hi;
 							break;
 						}
 					}
@@ -205,11 +200,9 @@ public class AICharaTalkMain extends AIApplication {
 				state.minRows(his.size());
 			}
 			int size=history.size();
-			int diff=0;
 			for(int j=0;j<size;j++) {
 				HistoryItem hi=history.get(j);
 				if (hi.shouldSend) {
-					diff++;
 					b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
 					/*if(diff%30==0)
 						b.object().add("role", "system").add("content", system).end();*/

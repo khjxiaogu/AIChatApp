@@ -17,15 +17,15 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
+import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
-import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.History;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
-import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.BlockingReader;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -48,7 +48,9 @@ public abstract class AIApplication {
 		it.remove();
 		return ret;
 	}
-
+	public static String readFile(File f) throws IOException {
+		return FileUtil.readString(f).replace("\r", "");
+	}
 	protected MessageHandler revertAndRegen=(state, ret) -> {
 		if (state.getStage() == GameStage.STARTED) {
 			if ("重新生成".equals(ret)) {
@@ -74,7 +76,7 @@ public abstract class AIApplication {
 						
 						HistoryItem hi = state.removeLast();
 						if(last.getRole()==Role.ASSISTANT) {
-							HistoryItem userhi = state.removeLast();
+							state.removeLast();
 							state.minRow();
 							if (hi.lastState != null) {
 								state.getState().set(hi.lastState);
@@ -199,9 +201,7 @@ public abstract class AIApplication {
 	public abstract String getName();
 	public abstract String constructSystem(StateIntf state);
 	public abstract String getBrief(AISession state);
-	public File getResource(String path) {
-		return null;
-	}
+
 
 
 

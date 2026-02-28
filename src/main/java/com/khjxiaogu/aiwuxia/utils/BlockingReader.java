@@ -3,7 +3,6 @@ package com.khjxiaogu.aiwuxia.utils;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.CharBuffer;
-import java.util.Arrays;
 
 public class BlockingReader extends Reader {
 	private StringBuilder internal;
