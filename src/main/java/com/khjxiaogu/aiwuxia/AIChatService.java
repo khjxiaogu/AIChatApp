@@ -95,6 +95,7 @@ public class AIChatService implements ServiceClass {
 	}
 	public void reload() {
 		apps.clear();
+		trial.clear();
 		apps.put("wuxia", new AIWuxiaMain(parent));
 		apps.put("article", new AIArticleMain(parent));
 		apps.put("fengyi", new AIGalgameMain(parent,"promptfengyi.txt","枫怡DLC"));
@@ -110,6 +111,8 @@ public class AIChatService implements ServiceClass {
 							getLogger().info("正在加载AI："+name);
 							apps.put(name, new AICharaTalkMain(parent,name,meta.get("name").getAsString()));
 							getLogger().info("AI加载成功："+name);
+							if(meta.has("trial")&&meta.get("trial").getAsBoolean())
+								trial.add(name);
 						}else {
 							getLogger().info("忽视AI："+name+" 出于配置原因");
 						}
@@ -121,8 +124,8 @@ public class AIChatService implements ServiceClass {
 				getLogger().error(e);
 			}
 		}
-		trial.clear();
-		trial.add("fengyitalk");
+		//trial.clear();
+		//trial.add("fengyitalk");
 	}
 	public JsonArray getChatApps(String uid) {
 		JsonArray ja = new JsonArray();

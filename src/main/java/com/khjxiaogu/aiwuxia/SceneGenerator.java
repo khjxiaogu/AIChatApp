@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.google.gson.GsonBuilder;
 import com.khjxiaogu.aiwuxia.scene.AICharaSceneBuilder;
 import com.khjxiaogu.aiwuxia.scene.Endable;
+import com.khjxiaogu.aiwuxia.scene.SceneBuilder.SimplePredicateBuilder;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
@@ -22,14 +23,84 @@ public class SceneGenerator {
 		地点=主角卧室
 		时间=上午（上午/下午/黄昏/夜晚）
 		季节=春（春/夏/秋/冬）
-		表情=微笑（严肃/哀伤/大笑/哭/脸红/阴暗/惊恐/震惊/生气/无神/微笑）
-		服装=校服（常服/校服）
+		表情=微笑（严肃/哀伤/大笑/哭/脸红/惊恐/生气/愤怒/微笑/得意）
+		服装=校服（常服/校服/睡衣/演出服）
 		位置=前（前/侧/后/远程通话/不在身边）
 		星期=一（一/二/三/四/五/六/日）
 		*/
-		File savePath=new File("save");
-		AICharaSceneBuilder<Endable> chara=AICharaSceneBuilder.builder().addPrefix("truelovecm/fgimage/yfy");
+		
+		//fengxi
+		File savePath=new File("save/");
+		AICharaSceneBuilder<Endable> chara=AICharaSceneBuilder.builder().addPrefix("truelovecm/fgimage/yfx");
 		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> school=chara.withAlt().cloth().withValue("校服").end();
+		school.withAlt().emote().withValue("严肃").end().withScene("yfx1putong5.png").end();
+		school.withAlt().emote().withValue("哀伤").end().withScene("yfx1aishang2.png").end();
+		school.withAlt().emote().withValue("大笑").end().withScene("yfx2xiao12.png").end();
+		school.withAlt().emote().withValue("哭" ).end().withScene("yfx2ku6.png").end();
+		school.withAlt().emote().withValue("脸红").end().withScene("yfx1haixiu6.png").end();
+		school.withAlt().emote().withValue("惊恐").end().withScene("yfx1jingkong8.png").end();
+		school.withAlt().emote().withValue("生气").end().withScene("yfx1shengqi5.png").end();
+		school.withAlt().emote().withValue("愤怒").end().withScene("yfx1shengqi4.png").end();
+		school.withAlt().emote().withValue("微笑").end().withScene("yfx1xiao1.png").end();
+		school.withAlt().emote().withValue("得意").end().withScene("yfx1xiao28.png").end();
+		school.end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> norm=chara.withAlt().cloth().withValue("常服").end().season().green().end();
+		norm.withAlt().emote().withValue("严肃").end().withScene("yfx3putong5.png").end();
+		norm.withAlt().emote().withValue("哀伤").end().withScene("yfx3aishang2.png").end();
+		norm.withAlt().emote().withValue("大笑").end().withScene("yfx4xiao12.png").end();
+		norm.withAlt().emote().withValue("哭" ).end().withScene("yfx4ku17.png").end();
+		norm.withAlt().emote().withValue("脸红").end().withScene("yfx4haixiu3.png").end();
+		norm.withAlt().emote().withValue("惊恐").end().withScene("yfx4jingkong8.png").end();
+		norm.withAlt().emote().withValue("生气").end().withScene("yfx3shengqi5.png").end();
+		norm.withAlt().emote().withValue("愤怒").end().withScene("yfx3shengqi4.png").end();
+		norm.withAlt().emote().withValue("微笑").end().withScene("yfx4xiao1.png").end();
+		norm.withAlt().emote().withValue("得意").end().withScene("yfx4xiao26.png").end();
+		norm.end();
+		
+		norm=chara.withAlt().cloth().withValue("常服").end().season().autumn().winter().end();
+		norm.withAlt().emote().withValue("严肃").end().withScene("yfx10shengqi1.png").end();
+		norm.withAlt().emote().withValue("哀伤").end().withScene("yfx9aishang2.png").end();
+		norm.withAlt().emote().withValue("大笑").end().withScene("yfx10xiao12.png").end();
+		norm.withAlt().emote().withValue("哭" ).end().withScene("yfx10ku2.png").end();
+		norm.withAlt().emote().withValue("脸红").end().withScene("yfx10haixiu9.png").end();
+		norm.withAlt().emote().withValue("惊恐").end().withScene("yfx10jingkong7.png").end();
+		norm.withAlt().emote().withValue("生气").end().withScene("yfx9shengqi1.png").end();
+		norm.withAlt().emote().withValue("愤怒").end().withScene("yfx9shengqi3.png").end();
+		norm.withAlt().emote().withValue("微笑").end().withScene("yfx10xiao13.png").end();
+		norm.withAlt().emote().withValue("得意").end().withScene("yfx10xiao26.png").end();
+		norm.end();
+		
+		norm=chara.withAlt().cloth().withValue("睡衣").end();
+		norm.withAlt().emote().withValue("严肃").end().withScene("yfx7putong2.png").end();
+		norm.withAlt().emote().withValue("哀伤").end().withScene("yfx7aishang2.png").end();
+		norm.withAlt().emote().withValue("大笑").end().withScene("yfx7xiao11.png").end();
+		norm.withAlt().emote().withValue("哭" ).end().withScene("yfx7ku16.png").end();
+		norm.withAlt().emote().withValue("脸红").end().withScene("yfx7haixiu3.png").end();
+		norm.withAlt().emote().withValue("惊恐").end().withScene("yfx7jingkong7.png").end();
+		norm.withAlt().emote().withValue("生气").end().withScene("yfx7shengqi4.png").end();
+		norm.withAlt().emote().withValue("愤怒").end().withScene("yfx7shengqi2.png").end();
+		norm.withAlt().emote().withValue("微笑").end().withScene("yfx7xiao1.png").end();
+		norm.withAlt().emote().withValue("得意").end().withScene("yfx7xiao26.png").end();
+		norm.end();
+		
+		norm=chara.withAlt().cloth().withValue("演出服").end();
+		norm.withAlt().emote().withValue("严肃").end().withScene("yfx8putong1.png").end();
+		norm.withAlt().emote().withValue("哀伤").end().withScene("yfx8aishang2.png").end();
+		norm.withAlt().emote().withValue("大笑").end().withScene("yfx8xiao36.png").end();
+		norm.withAlt().emote().withValue("哭" ).end().withScene("yfx8ku2.png").end();
+		norm.withAlt().emote().withValue("脸红").end().withScene("yfx8haixiu3.png").end();
+		norm.withAlt().emote().withValue("惊恐").end().withScene("yfx8jingkong8.png").end();
+		norm.withAlt().emote().withValue("生气").end().withScene("yfx8shengqi1.png").end();
+		norm.withAlt().emote().withValue("愤怒").end().withScene("yfx8shengqi3.png").end();
+		norm.withAlt().emote().withValue("微笑").end().withScene("yfx8xiao7.png").end();
+		norm.withAlt().emote().withValue("得意").end().withScene("yfx8xiao26.png").end();
+		norm.end();
+		checkSave(savePath,"fengxi","chara",chara.build());
+		
+		//fengyi
+		chara=AICharaSceneBuilder.builder().addPrefix("truelovecm/fgimage/yfy");
+		school=chara.withAlt().cloth().withValue("校服").end();
 		school.withAlt().emote().withValue("严肃").end().withScene("yfy1putong4.png").end();
 		school.withAlt().emote().withValue("哀伤").end().withScene("yfy1aishang2.png").end();
 		school.withAlt().emote().withValue("大笑").end().withScene("yfy1xiao2.png").end();
@@ -43,7 +114,7 @@ public class SceneGenerator {
 		school.withAlt().emote().withValue("微笑").end().withScene("yfy1xiao1.png").end();
 		school.end();
 		
-		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> norm=chara.withAlt().cloth().withValue("校服").end();
+		norm=chara.withAlt().cloth().withValue("常服").end();
 		norm.withAlt().emote().withValue("严肃").end().withScene("yfy3putong1.png").end();
 		norm.withAlt().emote().withValue("哀伤").end().withScene("yfy3aishang2.png").end();
 		norm.withAlt().emote().withValue("大笑").end().withScene("yfy3xiao2.png").end();
@@ -56,7 +127,7 @@ public class SceneGenerator {
 		norm.withAlt().emote().withValue("无神").end().withScene("yfy4putong5.png").end();
 		norm.withAlt().emote().withValue("微笑").end().withScene("yfy3xiao1.png").end();
 		norm.end();
-		checkSave(savePath,"fengyitalk","chara",chara.build());
+		checkSave(savePath,"fengyi","chara",chara.build());
 		
 		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("truelovecm/bgimage");
 
@@ -266,12 +337,12 @@ public class SceneGenerator {
 		vals.put("季节", "春");
 		vals.put("时间", "下午");
 		System.out.println(back.build().getSceneData(vals));
-		checkSave(savePath,"fengyitalk","back",back.build());
+		checkSave(savePath,"fengyi","back",back.build());
 	}
 	public static void checkSave(File fn,String ai,String type,SceneSelector selector) throws IOException {
-		File save=new File(fn,ai+"/"+type+".json");
+		File save=new File(fn,ai+"talk/"+type+".json");
 		List<File> files=new ArrayList<>();
-		visit(selector,files,fn);
+		visit(selector,files,new File(fn,"resource"));
 		AtomicBoolean err=new AtomicBoolean();
 		files.forEach(t->{
 			if(!t.exists()) {
@@ -286,7 +357,7 @@ public class SceneGenerator {
 	}
 	public static void visit(SceneSelector selector,List<File> visited,File basePath) {
 		if(selector.scene!=null) {
-			visited.add(new File(basePath,"resource/"+selector.scene));
+			visited.add(new File(basePath,selector.scene));
 		}
 		for(SceneSelector sel:selector.selectors) {
 			visit(sel,visited,basePath);
