@@ -16,6 +16,7 @@ public class HistoryItem implements Serializable {
 	private StringBuilder reasonContent;
 	public boolean shouldSend;
 	public StateIntf lastState;
+	public String audioId;
 
 	public HistoryItem(Role role, String content, boolean shouldSend) {
 		super();
@@ -109,6 +110,9 @@ public class HistoryItem implements Serializable {
 	}
 	public void appendReasoner(String fullContent) {
 		createReasonContent().append(fullContent);
+	}
+	public void setAudio(String id) {
+		audioId=id;
 	}
 	@Override
 	public String toString() {

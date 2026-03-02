@@ -27,19 +27,21 @@ public class AISession implements Serializable, Cloneable {
 		private int minRow=0;
 		private GameStage stage = GameStage.INITIALIZE;
 		private Usage usage = new Usage();
+		private boolean isAudioSession=false;
 	}
 	protected HistoryHolder history;
 	protected AIData data;
-	
-
+	protected StringBuilder currentReasoner=null;
+	public final String user;
 	transient boolean isGenerating;
 	public AIData getData() {
 		return data;
 	}
-	public AISession(HistoryHolder history, AIData data) {
+	public AISession(String user,HistoryHolder historym, AIData data) {
 		super();
-		this.history = history;
+		this.history = historym;
 		this.data = data;
+		this.user=user;
 	}
 	@Override
 	protected Object clone() throws CloneNotSupportedException {
@@ -49,7 +51,10 @@ public class AISession implements Serializable, Cloneable {
 		return history;
 	}
 	public void appendReasoning(String content) {
-		getLast().createReasonContent().append(content);
+		if(currentReasoner==null)
+			currentReasoner=new StringBuilder();
+		currentReasoner.append(content);
+		this.setUpdated();
 	}
 	public void appendLine(Role role,String content,boolean isSendable) {
 		HistoryItem hi=null;
@@ -62,6 +67,8 @@ public class AISession implements Serializable, Cloneable {
 		if(hi==null) {
 			hi=new HistoryItem(history.newUniqueId(),role,content+"\n",isSendable);
 			history.add(hi);
+			if(currentReasoner!=null&&role==Role.ASSISTANT)
+				hi.appendReasoner(currentReasoner.toString());
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.appendLine(content, isSendable);
@@ -79,6 +86,8 @@ public class AISession implements Serializable, Cloneable {
 		if(hi==null) {
 			hi=new HistoryItem(history.newUniqueId(),role,ch,isSendable);
 			history.add(hi);
+			if(currentReasoner!=null&&role==Role.ASSISTANT)
+				hi.appendReasoner(currentReasoner.toString());
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.append(ch, isSendable);
@@ -96,6 +105,8 @@ public class AISession implements Serializable, Cloneable {
 		if(hi==null) {
 			hi=new HistoryItem(history.newUniqueId(),role,"",content+"\n");
 			history.add(hi);
+			if(currentReasoner!=null&&role==Role.ASSISTANT)
+				hi.appendReasoner(currentReasoner.toString());
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.appendSending(content+"\n");
@@ -104,11 +115,15 @@ public class AISession implements Serializable, Cloneable {
 	public void add(Role role,String content,boolean isSendable) {
 		HistoryItem hi=new HistoryItem(history.newUniqueId(),role,content,isSendable);
 		history.add(hi);
+		if(currentReasoner!=null&&role==Role.ASSISTANT)
+			hi.appendReasoner(currentReasoner.toString());
 		postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 	}
 	public void add(Role role,String content,String sendContent) {
 		HistoryItem hi=new HistoryItem(history.newUniqueId(),role,content,sendContent);
 		history.add(hi);
+		if(currentReasoner!=null&&role==Role.ASSISTANT)
+			hi.appendReasoner(currentReasoner.toString());
 		postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 	}
 	public void removeOf(int num) {
@@ -188,15 +203,25 @@ public class AISession implements Serializable, Cloneable {
 	public void onGenStart() {
 		isGenerating=true;
 	}
-	public void postMessages(List<MessageItem> items) {
+	public void postMessages(List<HistoryItem> items) {
 		setUpdated();
 	}
 	public void minRows(int size) {
 		data.row-=size;
 	}
+	public boolean isAudioSession() {
+		return data.isAudioSession;
+	}
 	public String getReasoningContent() {
+		if(currentReasoner!=null)
+			return currentReasoner.toString();
 		if(!history.isEmpty()&&getLast().getRole()==Role.ASSISTANT)
 			return getLast().getReasoningContent();
 		return "";
+	}
+	public void postAudioComplete(int id, String audioId) {
+	}
+	public void appendVoiceToken(int length) {
+		data.usage.appendVoiceTokens(length);
 	}
 }

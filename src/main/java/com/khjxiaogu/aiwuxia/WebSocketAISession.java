@@ -34,8 +34,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	private final String chatId;
 	File fn;
 	AIApplication aiapp;
-	public WebSocketAISession(AIChatService par,String chatid,AIApplication aiapp,File fn, HistoryHolder history, AIData data) {
-		super(history, data);
+	boolean isClientAudioEnabled=false;
+	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,File fn, HistoryHolder history, AIData data) {
+		super(uid,history, data);
 		this.fn = fn;
 		this.parent=par;
 		this.chatId=chatid;
@@ -53,15 +54,16 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			aiapp.provideInitial(this);
 		}
 		aiapp.prepareScene(this);
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).end().toString()));
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).add("price", this.getPrice()).add("isVoiceUsable",super.isAudioSession()).end().toString()));
 
 	}
+	
 	public void requireMoreMessages() {
 		int i = 0;
-		List<MessageItem> his = new ArrayList<>();
+		List<HistoryItem> his = new ArrayList<>();
 		for (Iterator<HistoryItem> it = history.reverseIterator(); it.hasNext();) {
 			HistoryItem hisitem=it.next();
-			his.add(0, new MessageItem(hisitem.getIdentifier(),hisitem.getRole(),hisitem.getContent().toString()));
+			his.add(0, hisitem);
 			i++;
 			if (i >= 20) break;
 		}
@@ -87,6 +89,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			aiapp.handleSpeech(this, jo.get("message").getAsString());
 		}else if(jo.has("requestBackLog")) {
 			requireMoreMessages();
+		}else if(jo.has("voiceEnabled")) {
+			this.isClientAudioEnabled=jo.get("voiceEnabled").getAsBoolean();
 		}
 	}
 
@@ -106,12 +110,20 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		super.postMessage(id, role, message);
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id", id).add("title", aiapp.getRoleName(this, role)).add("message", message).end().toString()));
 	}
+
 	@Override
-	public void postMessages(List<MessageItem> items) {
+	public void postAudioComplete(int id,String audioId) {
+		super.postAudioComplete(id, audioId);
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id", id).add("audioId", audioId).end().toString()));
+	}
+	@Override
+	public void postMessages(List<HistoryItem> items) {
 		super.postMessages(items);
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> ja=JsonBuilder.object().array("messages");
-		for(MessageItem i:items) {
-			ja.object().add("id", i.id).add("title", aiapp.getRoleName(this, i.role)).add("message", i.message);
+		for(HistoryItem i:items) {
+			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object().add("id", i.getIdentifier()).add("title", aiapp.getRoleName(this, i.getRole())).add("message", i.getContent().toString());
+			if(i.audioId!=null)
+				ix.add("audioId", i.audioId);
 		}
 		conn.writeAndFlush(new TextWebSocketFrame(ja.end().end().toString()));
 	}
@@ -143,7 +155,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			parent.markRelease(this);
 		}
 	}
-
+	public boolean isAudioSession() {
+		return isClientAudioEnabled&&super.isAudioSession();
+	}
 	public String getChatId() {
 		return chatId;
 	}

@@ -68,8 +68,8 @@ public class AIChatService implements ServiceClass {
 	private Set<String> trial=new HashSet<>();//公测智能体，只允许创建一个实例
 	File parent;
 	File saveData;
-	private FilePageService serv;
-
+	private FilePageService resource;
+	private FilePageService voice;
 	public AIChatService(File path) throws SQLException, ClassNotFoundException {
 		try {
 			Class.forName("org.sqlite.JDBC");
@@ -90,7 +90,8 @@ public class AIChatService implements ServiceClass {
 		parent = path;
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();
-		serv=new FilePageService(new File(parent,"resource"));
+		resource=new FilePageService(new File(parent,"resource"));
+		voice=new FilePageService(new File(parent,"voice"));
 		reload();
 	}
 	public void reload() {
@@ -252,7 +253,12 @@ public class AIChatService implements ServiceClass {
 	@HttpMethod("GET")
 	@HttpPath("/resource")
 	public void resource(Request req,Response rep) {
-		serv.call(req, rep);
+		resource.call(req, rep);
+	}
+	@HttpMethod("GET")
+	@HttpPath("/voice")
+	public void voice(Request req,Response rep) {
+		voice.call(req, rep);
 	}
 	@HttpMethod("GET")
 	@HttpPath("/chat.js")
@@ -392,7 +398,7 @@ public class AIChatService implements ServiceClass {
 
 			if (data.exists())
 				try {
-					state = new WebSocketAISession(this, cid, appx, data, AIWuxiaMain.historyFromJson(data), AIWuxiaMain.dataFromJson(data));
+					state = new WebSocketAISession(this, uid,cid, appx, data, AIWuxiaMain.historyFromJson(data), AIWuxiaMain.dataFromJson(data));
 					logger.info("AI " + cid + " Loaded");
 				} catch (JsonSyntaxException | IOException e) {
 					e.printStackTrace();
@@ -423,7 +429,7 @@ public class AIChatService implements ServiceClass {
 					}
 					
 				}
-				state = new WebSocketAISession(this, cid, appx, data, new History(), new AISession.AIData());
+				state = new WebSocketAISession(this,uid,cid, appx, data, new History(), new AISession.AIData());
 				logger.info("AI " + cid + " Created");
 			}
 		}

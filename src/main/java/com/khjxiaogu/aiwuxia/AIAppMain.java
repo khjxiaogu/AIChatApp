@@ -20,7 +20,7 @@ public class AIAppMain {
 	}
 
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-		String name="haiyintalk";
+		String name="fengxitalk";
 		int idx=0;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
@@ -34,7 +34,7 @@ public class AIAppMain {
 		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
 		AISession aistate = null;
 		if (saveData.exists()) {
-			aistate = new AISession(
+			aistate = new AppAISession("appuser",
 				AIApplication.historyFromJson(saveData),
 				AIApplication.dataFromJson(saveData));
 		}
@@ -47,7 +47,7 @@ public class AIAppMain {
 		if (aistate == null) {
 			acw.setBackLog("正在生成初始面板...","");
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AISession(new History(), new AISession.AIData());
+			aistate = new AppAISession("appuser",new History(), new AISession.AIData());
 			main.provideInitial(aistate);
 		}
 		

@@ -12,6 +12,7 @@ public class Usage implements Serializable{
 	public int prompt_tokens;
 	public int prompt_cache_hit_tokens;
 	public int prompt_cache_miss_tokens;
+	public int voice_tokens;
 	@Override
 	public String toString() {
 		return "返回token " + completion_tokens + "\n发送token " + prompt_tokens
@@ -23,11 +24,14 @@ public class Usage implements Serializable{
 		prompt_tokens+=another.prompt_tokens;
 		prompt_cache_hit_tokens+=another.prompt_cache_hit_tokens;
 		prompt_cache_miss_tokens+=another.prompt_cache_miss_tokens;
+		voice_tokens+=another.voice_tokens;
 	}
-
+	public void appendVoiceTokens(int num) {
+		voice_tokens+=num;
+	}
 	public String calculatePrice() {
 		DecimalFormat format=new DecimalFormat("#0.00###");
-		return format.format(((prompt_cache_miss_tokens+completion_tokens)*2+0.2*prompt_cache_hit_tokens)/1000000d);
+		return format.format(((prompt_cache_miss_tokens+completion_tokens)*2+0.2*prompt_cache_hit_tokens)/1000000d+(voice_tokens/10000*3));
 	}
 
 }

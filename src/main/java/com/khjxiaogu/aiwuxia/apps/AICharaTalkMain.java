@@ -2,9 +2,15 @@ package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.Map.Entry;
 import java.util.regex.Pattern;
 
@@ -12,6 +18,7 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.AIApplication;
 import com.khjxiaogu.aiwuxia.AISession;
 import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.VolcanoApi;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.AIOutput;
@@ -32,8 +39,9 @@ public class AICharaTalkMain extends AIApplication {
 	String prelogue="";
 	SceneSelector back;
 	SceneSelector character;
+	Map<String,String> replacements;
 	File basePath;
-
+	String volcappid;
 
 
 	public AICharaTalkMain(File basePath,String modelFolder,String charaname) {
@@ -50,7 +58,10 @@ public class AICharaTalkMain extends AIApplication {
 			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
 			summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
 			prelogue = readFile(new File(model, "prelogue.txt"));
-			
+			File adrp=new File(model, "replacements.json");
+			volcappid = readFile(new File(model,"volcappid.txt"));
+			if(adrp.exists())
+			replacements = gs.fromJson(readFile(adrp), Map.class);
 			if(new File(model,"chara.json").exists()) {
 				character=gs.fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
 				
@@ -85,8 +96,28 @@ public class AICharaTalkMain extends AIApplication {
 			}
 			return ret;
 		});
+		
 		// check interface
 		handlers.add(revertAndRegen);
+		handlers.add((state, ret) -> {
+			if (state.getStage() == GameStage.STARTED) {
+				if ("重读".equals(ret)) {
+					HistoryItem last=state.getLast();
+					if(last.getRole()==Role.ASSISTANT) {
+						if(last.audioId==null) {
+							String audioId=UUID.randomUUID().toString();
+							CompletableFuture<Boolean> cf=this.generateVoice(state, last.getContent().toString(), audioId);
+							if(cf.get()) {
+								last.audioId=audioId;
+								state.postAudioComplete(last.getIdentifier(),audioId);
+							}
+						}
+					}
+					return null;
+				}
+			}
+			return ret;
+		});
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
@@ -275,6 +306,8 @@ public class AICharaTalkMain extends AIApplication {
 		StringBuilder content=new StringBuilder();
 		String oldchara=state.getExtra().get("chara");
 		String oldbg=state.getExtra().get("back");
+		String audioId=null;
+		CompletableFuture<Boolean> cf=null;
 		handleReasonerContent(resp,state);
 		if(back!=null)
 		oldbg=back.getSceneData(state.getState().perks);
@@ -300,12 +333,20 @@ public class AICharaTalkMain extends AIApplication {
 			}else if(status==1) {
 				if (last.startsWith("==场景==")) {
 					status = 3;
+					if(state.isAudioSession()&&audioId==null) {
+						audioId=UUID.randomUUID().toString();
+						this.generateVoice(state, content.toString(), audioId);
+						
+					}
 				} else {
 					content.append(last).append("\n");
 				}
 				
 			} else if (status == 3) {
+				
+					
 				if(last.contains("=")) {
+					
 					String[] lasts=last.split("=");
 					state.getState().perks.put(lasts[0].trim(), lasts[1].trim());
 					
@@ -353,8 +394,46 @@ public class AICharaTalkMain extends AIApplication {
 		state.getExtra().put("chara",chara);
 		state.getExtra().put("back",bg);
 		state.add(Role.ASSISTANT, content.toString().trim(), sendContent.toString().trim());
+		
+		if(cf!=null) {
+			try {
+				if(cf.get()) {
+					state.getLast().audioId=audioId;	
+					state.postAudioComplete(state.getLast().getIdentifier(), audioId);
+				}
+			} catch (InterruptedException | ExecutionException e) {
+				e.printStackTrace();
+			}
+		}
 		return oldstate;
 	}
+	public CompletableFuture<Boolean> generateVoice(AISession state,String orgText,String audioId){
+		
+		//
+		if(replacements!=null)
+			for(Entry<String, String> ent:replacements.entrySet()) {
+				orgText=orgText.replaceAll(ent.getKey(), ent.getValue());
+			}
+		final String faudioId=audioId;
+		final String ftext=orgText;
+		return CompletableFuture.supplyAsync
+		(()->{
+			try {
+				state.appendVoiceToken(ftext.length());
+				byte[] data=VolcanoApi.getAudioData(volcappid,state.user, ftext, faudioId);
+				File aud=new File(basePath,"voice");
+				aud.mkdirs();
+				try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
+					fos.write(data);
+				};
+				return true;
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+			return false;
+		});
+	}
+	
 	public void prepareScene(AISession state) {
 		String chara=state.getExtra().get("chara");
 		String bg=state.getExtra().get("back");
