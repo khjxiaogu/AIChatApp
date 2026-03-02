@@ -35,11 +35,10 @@ public class BlockingReader extends Reader {
 		cb.put(ca);
 		return ca.length;
 	}
+	public void setEnded() {
+		isEnded=true;
+	}
 	public void putCh(String event) {
-		if(event==null) {
-			isEnded=true;
-			return;
-		}
 		synchronized(lock) {
 			if(internal==null) {
 				internal=new StringBuilder();
@@ -60,6 +59,9 @@ public class BlockingReader extends Reader {
 	}
 	@Override
 	public void close() throws IOException {
-		
+		isEnded=true;
+	}
+	public boolean isEnded() {
+		return isEnded;
 	}
 }

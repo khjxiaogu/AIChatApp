@@ -32,6 +32,7 @@ public class CodeDialog extends JFrame{
 	JTextArea oarea;
 	JTextArea sarea;
 	JTextArea usage;
+	JTextArea rsarea;
 	JScrollPane opane;
 	JButton send;
 	boolean status=true;
@@ -57,21 +58,29 @@ public class CodeDialog extends JFrame{
 		});;
 		send.setEnabled(false);
 		// pane.setPreferredSize(new Dimension(200,200));
-		oarea = new JTextArea(46, 80);
+		oarea = new JTextArea(40, 50);
 		oarea.setLineWrap(true);
-		oarea.setFont(new Font("微软雅黑", Font.BOLD, 12));
+		oarea.setFont(new Font("微软雅黑", Font.BOLD, 16));
 		opane = new JScrollPane(oarea);
 		// opane.setPreferredSize(new Dimension(200,200));
-		sarea = new JTextArea(45, 40);
-		sarea.setFont(new Font("微软雅黑", Font.BOLD, 12));
+		JSplitPane srs = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+		sarea = new JTextArea(15, 40);
+		sarea.setFont(new Font("微软雅黑", Font.BOLD, 14));
 		sarea.setLineWrap(true);
+		srs.add(sarea);
+		rsarea = new JTextArea(20, 40);
+		rsarea.setFont(new Font("微软雅黑", Font.BOLD, 14));
+		rsarea.setLineWrap(true);
+		srs.add(rsarea);
+		srs.setResizeWeight(0);
+		srs.setDividerLocation(0.7);
 		JSplitPane s = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-		s.add(sarea);
+		s.add(srs);
 		usage=new JTextArea(5,40);
 		usage.setEditable(false);
 		usage.setVisible(true);
 		s.setResizeWeight(1.0);
-		s.setDividerLocation(0.7);
+		s.setDividerLocation(0.8);
 		s.add(usage);
 		vpane=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
 		vpane.setResizeWeight(1.0);
@@ -95,8 +104,10 @@ public class CodeDialog extends JFrame{
 	}
 
 	//ScheduledExecutorService exec=Executors.newScheduledThreadPool(1);
-	public void setBackLog(String text) {
+	public void setBackLog(String text,String reasoner) {
 		oarea.setText(text);
+		if(reasoner!=null)
+		rsarea.setText(reasoner);
 		//oarea.setCaretPosition(text.length());
 		SwingUtilities.invokeLater(()->{
 			JScrollBar scb=opane.getVerticalScrollBar();
@@ -108,8 +119,8 @@ public class CodeDialog extends JFrame{
 		}, 100, TimeUnit.MILLISECONDS);
 		*/
 	}
-	public void append(String text) {
-		setBackLog(oarea.getText()+text);
+	public void append(String text,String reasoner) {
+		setBackLog(oarea.getText()+text,rsarea.getText()+reasoner);
 	}
 	protected String showDialog() throws InterruptedException, ExecutionException {
 		status=false;

@@ -107,7 +107,9 @@ public class HistoryItem implements Serializable {
 		else
 			this.sendContent = new StringBuilder(fullContent);
 	}
-
+	public void appendReasoner(String fullContent) {
+		createReasonContent().append(fullContent);
+	}
 	@Override
 	public String toString() {
 		return "HistoryItem [role=" + getRole() + ", fullContent=" + getFullContent() + "]";
@@ -117,6 +119,11 @@ public class HistoryItem implements Serializable {
 	}
 	public int getIdentifier() {
 		return identifier;
+	}
+	public String getReasoningContent() {
+		if(reasonContent==null)
+			return "";
+		return reasonContent.toString();
 	}
 
 }

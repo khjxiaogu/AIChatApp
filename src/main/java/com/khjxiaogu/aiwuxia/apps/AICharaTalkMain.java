@@ -3,8 +3,6 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.Reader;
-import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map.Entry;
@@ -16,12 +14,12 @@ import com.khjxiaogu.aiwuxia.AISession;
 import com.khjxiaogu.aiwuxia.Role;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
+import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
-import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -123,12 +121,12 @@ public class AICharaTalkMain extends AIApplication {
 	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
 		RespScheme resp = sendAIRequest(req);
 		state.addUsage(resp.usage);
-		return precessResponse(new StringReader(resp.choices.get(0).message.content), state);
+		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
 	}
 
 	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
-		BlockingReader resp=null;
+		AIOutput resp=null;
 		int i=0;
 		while(i<5) {//最多尝试5次，否则认为是提示词问题
 			try {
@@ -266,17 +264,18 @@ public class AICharaTalkMain extends AIApplication {
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Reader scan, AISession state) throws IOException {
+	public StateIntf precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
-
+		
 		StateIntf oldstate = new StateIntf(state.getState());
-		BufferedReader reader=new BufferedReader(scan);
+		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		StringBuilder sendContent=new StringBuilder();
 		StringBuilder content=new StringBuilder();
 		String oldchara=state.getExtra().get("chara");
 		String oldbg=state.getExtra().get("back");
+		handleReasonerContent(resp,state);
 		if(back!=null)
 		oldbg=back.getSceneData(state.getState().perks);
 		while (true) {

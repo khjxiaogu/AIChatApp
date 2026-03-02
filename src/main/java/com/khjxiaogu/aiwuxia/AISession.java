@@ -194,4 +194,9 @@ public class AISession implements Serializable, Cloneable {
 	public void minRows(int size) {
 		data.row-=size;
 	}
+	public String getReasoningContent() {
+		if(!history.isEmpty()&&getLast().getRole()==Role.ASSISTANT)
+			return getLast().getReasoningContent();
+		return "";
+	}
 }

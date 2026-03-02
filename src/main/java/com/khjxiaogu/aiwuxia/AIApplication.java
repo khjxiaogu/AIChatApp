@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -8,7 +9,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import com.google.gson.Gson;
@@ -20,11 +20,12 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
+import com.khjxiaogu.aiwuxia.state.AIOutput;
+import com.khjxiaogu.aiwuxia.state.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.History;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
-import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -153,43 +154,45 @@ public abstract class AIApplication {
 		logger.info(resp.usage);
 		return resp;
 	}
-
-	public BlockingReader sendAIStreamedRequest(JsonObject req, Consumer<Usage> gainUsage) throws IOException {
+	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
+		BufferedReader br=new BufferedReader(output.getReasoner());
+		int read;
+		while((read=br.read())!=-1)
+			state.appendReasoning(String.valueOf(Character.toChars(read)));
+	}
+	public AIOutput sendAIStreamedRequest(JsonObject req, Consumer<Usage> gainUsage) throws IOException {
 		req.addProperty("stream", true);
 		req.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		String tosend = gs.toJson(req);
 		logger.info(ppgs.toJson(req));
-		BlockingReader readable=new BlockingReader();
-		
+		StreamedAIOutput readable=new StreamedAIOutput();
 		Usage usage=new Usage();
-		AtomicBoolean hasReasoner=new AtomicBoolean();
 		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
 	
 				.post(true).send(tosend).readSSE(exc, (ev,s)->{
 					if(s==null||"[DONE]".equals(s)) {
-						//System.out.println();
+						System.out.println();
 						logger.info("=================Usage===============");
 						logger.info(usage);
 						gainUsage.accept(usage);
-						readable.putCh(null);
+						readable.endContent();
 						return;
 					}
+					
 					RespScheme scheme=gs.fromJson(s, RespScheme.class);
 					Message delta=scheme.choices.get(0).delta;
 					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-						if(!hasReasoner.getAndSet(true)) {
-							logger.info("=================Reasoner===============");
-						}
-						System.out.print(delta.reasoning_content);
+						readable.putReasoner(delta.reasoning_content);
 					}
 					if(delta.content!=null&&!delta.content.isEmpty()) {
 						
-						readable.putCh(delta.content);
+						readable.putContent(delta.content);
 					}
 					if(scheme.usage!=null)
 						usage.add(scheme.usage);
+					
 				});
 	
 	

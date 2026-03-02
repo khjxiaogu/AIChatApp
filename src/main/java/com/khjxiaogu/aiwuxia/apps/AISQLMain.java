@@ -10,11 +10,11 @@ import com.khjxiaogu.aiwuxia.AIApplication;
 import com.khjxiaogu.aiwuxia.AISession;
 import com.khjxiaogu.aiwuxia.Role;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
-import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -76,14 +76,12 @@ public class AISQLMain extends AIApplication {
 	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
 		RespScheme resp = sendAIRequest(req);
 		state.addUsage(resp.usage);
-		return precessResponse(new Scanner(resp.choices.get(0).message.content), state);
+		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
 	}
 
 	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		BlockingReader resp = sendAIStreamedRequest(req, state::addUsage);
-		try (Scanner sc = new Scanner(resp)) {
-			return precessResponse(sc, state);
-		}
+		AIOutput resp = sendAIStreamedRequest(req, state::addUsage);
+		return precessResponse(resp, state);
 	}
 
 	public class MessageAndRole {
@@ -139,38 +137,41 @@ public class AISQLMain extends AIApplication {
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Scanner scan, AISession state) {
+	public StateIntf precessResponse(AIOutput op, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
-
-		StateIntf oldstate = new StateIntf(state.getState());
-		boolean nstateModified = false;
-		while (scan.hasNextLine()) {
-			String last = scan.nextLine();
-			if (isWaiting && last.isEmpty()) {
-				continue;
-			}
-
-			if (isWaiting) {
-				//System.out.println("\n=================Content===============");
-				isWaiting = false;
-			}
-			//System.out.println(last);
-			if (status == 0) {
-				if (last.startsWith("==SQL==")) {
-					status = 2;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
-				} else {  
+		
+		try(Scanner scan=new Scanner(op.getContent())){
+			StateIntf oldstate = new StateIntf(state.getState());
+			handleReasonerContent(op,state);
+			boolean nstateModified = false;
+			while (scan.hasNextLine()) {
+				String last = scan.nextLine();
+				if (isWaiting && last.isEmpty()) {
+					continue;
+				}
+	
+				if (isWaiting) {
+					//System.out.println("\n=================Content===============");
+					isWaiting = false;
+				}
+				//System.out.println(last);
+				if (status == 0) {
+					if (last.startsWith("==SQL==")) {
+						status = 2;
+						state.appendInvisibleLine(Role.ASSISTANT, last);
+					} else {  
+						state.appendLine(Role.ASSISTANT, last, true);
+					}
+				}  else {
 					state.appendLine(Role.ASSISTANT, last, true);
 				}
-			}  else {
-				state.appendLine(Role.ASSISTANT, last, true);
+	
 			}
-
+			state.appendLine(Role.ASSISTANT, "\n输入“重新生成”重新生成，输入“撤回”删除上一次对话。", false);
+	
+			return nstateModified ? oldstate : null;
 		}
-		state.appendLine(Role.ASSISTANT, "\n输入“重新生成”重新生成，输入“撤回”删除上一次对话。", false);
-
-		return nstateModified ? oldstate : null;
 	}
 
 	public String constructSystem(StateIntf state) {

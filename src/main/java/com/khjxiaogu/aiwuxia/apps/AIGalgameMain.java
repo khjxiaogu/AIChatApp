@@ -3,8 +3,6 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.Reader;
-import java.io.StringReader;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -13,12 +11,12 @@ import com.khjxiaogu.aiwuxia.AIApplication;
 import com.khjxiaogu.aiwuxia.AISession;
 import com.khjxiaogu.aiwuxia.Role;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.Interface;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
-import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -86,11 +84,11 @@ public class AIGalgameMain extends AIApplication {
 	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
 		RespScheme resp = sendAIRequest(req);
 		state.addUsage(resp.usage);
-		return precessResponse(new StringReader(resp.choices.get(0).message.content), state);
+		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
 	}
 
 	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		BlockingReader resp = sendAIStreamedRequest(req, state::addUsage);
+		AIOutput resp = sendAIStreamedRequest(req, state::addUsage);
 		
 		return precessResponse(resp, state);
 		
@@ -173,7 +171,7 @@ public class AIGalgameMain extends AIApplication {
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Reader scan, AISession state) throws IOException {
+	public StateIntf precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 
@@ -181,7 +179,9 @@ public class AIGalgameMain extends AIApplication {
 		StateIntf oldstate = new StateIntf(state.getState());
 		boolean nstateModified = false;
 		boolean isDraft=false;
-		BufferedReader reader=new BufferedReader(scan);
+
+		handleReasonerContent(resp,state);
+		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		while (true) {
 			last=reader.readLine();

@@ -5,9 +5,13 @@ import java.io.IOException;
 import java.util.concurrent.ExecutionException;
 
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.state.History;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 public class AIAppMain {
 
@@ -16,28 +20,40 @@ public class AIAppMain {
 	}
 
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-
-		CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
-		File saveData = new File("save/saveData", "savefengyi2.json");
+		String name="haiyintalk";
+		int idx=0;
+		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
+		try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+		AIChatWindow acw=new AIChatWindow();
+		acw.setVisible(true);
+		File dataFolder=new File("save");
+		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
 		AISession aistate = null;
 		if (saveData.exists()) {
 			aistate = new AISession(
 				AIApplication.historyFromJson(saveData),
 				AIApplication.dataFromJson(saveData));
 		}
-
-		AICharaTalkMain main = new AICharaTalkMain(new File("save"),"fengyitalk", "姚枫怡");
+		File modelFolder=new File(dataFolder,name);
+		File metaFile=new File(modelFolder,"meta.json");
+		JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
+		
+		AICharaTalkMain main = new AICharaTalkMain(dataFolder,name,meta.get("name").getAsString());
 		// construct initail message
 		if (aistate == null) {
-			dialog.setBackLog("正在生成初始面板...");
+			acw.setBackLog("正在生成初始面板...","");
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
 			aistate = new AISession(new History(), new AISession.AIData());
 			main.provideInitial(aistate);
 		}
 		
-		dialog.sarea.setText(main.constructSystem(aistate.getState()));
+		acw.setStatus(main.constructSystem(aistate.getState()));
 		// dialog.setBackLog(constructBackLog());
-		dialog.usage.setText(aistate.getUsage());
+		acw.setUsage(aistate.getUsage());
 		final AISession cstate = aistate;
 		
 		Thread updateThread = new Thread(() -> {
@@ -50,8 +66,13 @@ public class AIAppMain {
 						if (cstate.isGenerating)
 							s += "\n生成中...";
 						final String fs = s;
+						String rs="";
+						if(cstate.getReasoningContent()!=null) {
+							rs=cstate.getReasoningContent();
+						}
+						final String rfs=rs;
 						SwingUtilities.invokeLater(() -> {
-							dialog.setBackLog(fs);
+							acw.setBackLog(fs,rfs);
 						});
 					}
 					Thread.sleep(100);
@@ -68,16 +89,16 @@ public class AIAppMain {
 		while (true) {
 			String ret = null;
 			while (ret == null || ret.isEmpty()) {
-				ret = dialog.showDialog();
+				ret = acw.showDialog();
 			}
 
 			try {
 				main.handleSpeech(aistate, ret);
 				AIApplication.saveToJson(aistate, saveData);
-				dialog.sarea.setText(main.constructSystem(aistate.getState()));
+				acw.setStatus(main.constructSystem(aistate.getState()));
 				// dialog.setBackLog(constructBackLog());
 				if (aistate != null)
-					dialog.usage.setText(aistate.getUsage());
+					acw.setUsage(aistate.getUsage());
 			} catch (Throwable t) {
 				t.printStackTrace();
 

@@ -11,11 +11,11 @@ import com.khjxiaogu.aiwuxia.AIApplication;
 import com.khjxiaogu.aiwuxia.AISession;
 import com.khjxiaogu.aiwuxia.Role;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
-import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -77,8 +77,8 @@ public class AIArticleMain extends AIApplication {
 	}
 
 	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		BlockingReader resp = sendAIStreamedRequest(req, state::addUsage);
-		try (Scanner sc = new Scanner(resp)) {
+		AIOutput resp = sendAIStreamedRequest(req, state::addUsage);
+		try (Scanner sc = new Scanner(resp.getContent())) {
 			return precessResponse(sc, state);
 		}
 	}

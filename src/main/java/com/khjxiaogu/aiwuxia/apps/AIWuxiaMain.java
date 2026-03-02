@@ -19,6 +19,7 @@ import com.khjxiaogu.aiwuxia.AIApplication;
 import com.khjxiaogu.aiwuxia.AISession;
 import com.khjxiaogu.aiwuxia.Role;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
@@ -114,11 +115,11 @@ public class AIWuxiaMain extends AIApplication {
 	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
 		RespScheme resp = sendAIRequest(req);
 		state.addUsage(resp.usage);
-		return precessResponse(new StringReader(resp.choices.get(0).message.content), state);
+		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
 	}
 
 	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		Reader resp = sendAIStreamedRequest(req, state::addUsage);
+		AIOutput resp = sendAIStreamedRequest(req, state::addUsage);
 		return precessResponse(resp, state);
 		
 	}
@@ -199,15 +200,16 @@ public class AIWuxiaMain extends AIApplication {
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Reader scan, AISession state) throws IOException {
+	public StateIntf precessResponse(AIOutput op, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
-
+		
 		Interface intf = null;
 		StateIntf oldstate = new StateIntf(state.getState());
 		boolean nstateModified = false;
 		boolean isDraft=false;
-		BufferedReader reader=new BufferedReader(scan);
+		BufferedReader reader=new BufferedReader(op.getContent());
+		handleReasonerContent(op,state);
 		String last;
 		while ((last=reader.readLine())!=null) {
 			if (isWaiting && last.isEmpty()) {
