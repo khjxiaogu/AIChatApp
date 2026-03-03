@@ -243,7 +243,7 @@ public class AICharaTalkMain extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		//头几次用思维链版本构建格式
-		return b.end().add("model",i<=10?"deepseek-reasoner":"deepseek-chat").add("temperature", 1.3).add("max_tokens", 500).add("stream", false).end();
+		return b.end().add("model",/*i<=10?*/"deepseek-reasoner"/*:"deepseek-chat"*/).add("temperature", 1.3).add("max_tokens", 500).add("stream", false).end();
 
 	}
 	public JsonObject constructSummaryrequest(AISession state,String summary) {

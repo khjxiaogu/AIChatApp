@@ -157,6 +157,7 @@ public abstract class AIApplication {
 	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
 		BufferedReader br=new BufferedReader(output.getReasoner());
 		int read;
+		state.resetReasoner();
 		while((read=br.read())!=-1)
 			state.appendReasoning(String.valueOf(Character.toChars(read)));
 	}

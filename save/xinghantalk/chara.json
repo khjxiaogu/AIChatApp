@@ -1,0 +1,293 @@
+{
+  "predicates": [],
+  "selectors": [
+    {
+      "predicates": [
+        {
+          "key": "服装",
+          "values": [
+            "校服"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "严肃"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1putong4.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "哀伤"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1aishang2.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "大笑"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1xiao2.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "哭"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1ku15.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "脸红"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1haixiu5.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "阴暗"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1heihua2.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "惊恐"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1jingkong7.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "震惊"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1kuazhang5.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "生气"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1shengqi6.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "无神"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1wushen7a.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "微笑"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy1xiao1.png"
+        }
+      ]
+    },
+    {
+      "predicates": [
+        {
+          "key": "服装",
+          "values": [
+            "常服"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "严肃"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3putong1.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "哀伤"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3aishang2.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "大笑"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3xiao2.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "哭"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3ku7.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "脸红"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3haixiu5.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "阴暗"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3shengqi1.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "惊恐"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3jingkong7.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "震惊"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3kuazhang3.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "生气"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3shengqi3.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "无神"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy4putong5.png"
+        },
+        {
+          "predicates": [
+            {
+              "key": "表情",
+              "values": [
+                "微笑"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/fgimage/yfy/yfy3xiao1.png"
+        }
+      ]
+    }
+  ]
+}

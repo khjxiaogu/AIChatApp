@@ -56,6 +56,9 @@ public class AISession implements Serializable, Cloneable {
 		currentReasoner.append(content);
 		this.setUpdated();
 	}
+	public void resetReasoner() {
+		currentReasoner=null;
+	}
 	public void appendLine(Role role,String content,boolean isSendable) {
 		HistoryItem hi=null;
 		if(!history.isEmpty()) {
@@ -67,8 +70,10 @@ public class AISession implements Serializable, Cloneable {
 		if(hi==null) {
 			hi=new HistoryItem(history.newUniqueId(),role,content+"\n",isSendable);
 			history.add(hi);
-			if(currentReasoner!=null&&role==Role.ASSISTANT)
+			if(currentReasoner!=null&&role==Role.ASSISTANT) {
 				hi.appendReasoner(currentReasoner.toString());
+				currentReasoner=null;
+			}
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.appendLine(content, isSendable);
@@ -86,8 +91,10 @@ public class AISession implements Serializable, Cloneable {
 		if(hi==null) {
 			hi=new HistoryItem(history.newUniqueId(),role,ch,isSendable);
 			history.add(hi);
-			if(currentReasoner!=null&&role==Role.ASSISTANT)
+			if(currentReasoner!=null&&role==Role.ASSISTANT) {
 				hi.appendReasoner(currentReasoner.toString());
+				currentReasoner=null;
+			}
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.append(ch, isSendable);
@@ -105,8 +112,10 @@ public class AISession implements Serializable, Cloneable {
 		if(hi==null) {
 			hi=new HistoryItem(history.newUniqueId(),role,"",content+"\n");
 			history.add(hi);
-			if(currentReasoner!=null&&role==Role.ASSISTANT)
+			if(currentReasoner!=null&&role==Role.ASSISTANT) {
 				hi.appendReasoner(currentReasoner.toString());
+				currentReasoner=null;
+			}
 			postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 		}else {
 			hi.appendSending(content+"\n");
@@ -122,8 +131,10 @@ public class AISession implements Serializable, Cloneable {
 	public void add(Role role,String content,String sendContent) {
 		HistoryItem hi=new HistoryItem(history.newUniqueId(),role,content,sendContent);
 		history.add(hi);
-		if(currentReasoner!=null&&role==Role.ASSISTANT)
+		if(currentReasoner!=null&&role==Role.ASSISTANT) {
 			hi.appendReasoner(currentReasoner.toString());
+			currentReasoner=null;
+		}
 		postMessage(hi.getIdentifier(),hi.getRole(),hi.getContent().toString());
 	}
 	public void removeOf(int num) {
