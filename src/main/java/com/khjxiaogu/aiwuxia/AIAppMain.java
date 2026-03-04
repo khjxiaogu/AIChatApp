@@ -10,6 +10,7 @@ import javax.swing.UIManager;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
+import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
 import com.khjxiaogu.aiwuxia.state.History;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
@@ -20,7 +21,7 @@ public class AIAppMain {
 	}
 
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-		String name="xinghantalk";
+		String name="xinghantrpg";
 		int idx=0;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
@@ -42,7 +43,8 @@ public class AIAppMain {
 		File metaFile=new File(modelFolder,"meta.json");
 		JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 		
-		AICharaTalkMain main = new AICharaTalkMain(dataFolder,name,meta.get("name").getAsString());
+		AITRPGSceneMain main = new AITRPGSceneMain(dataFolder,name,meta.get("name").getAsString());
+		System.out.println(main.system);
 		// construct initail message
 		if (aistate == null) {
 			acw.setBackLog("正在生成初始面板...","");
