@@ -129,6 +129,34 @@ public class SceneGenerator {
 		norm.end();
 		checkSave(savePath,"fengyi","chara",chara.build());
 		
+		//haiyin //////惊恐//
+		chara=AICharaSceneBuilder.builder().addPrefix("truelovecm/fgimage/thy");
+		school=chara.withAlt().cloth().withValue("校服").end();
+		school.withAlt().emote().withValue("哀伤").end().withScene("thy1aishang2.png").end();
+		school.withAlt().emote().withValue("脸红").end().withScene("thy1haixiu3bu.png").end();
+		school.withAlt().emote().withValue("惊恐").end().withScene("thy1jingkong12.png").end();
+		school.withAlt().emote().withValue("哭泣").end().withScene("thy1ku3.png").end();
+		school.withAlt().emote().withValue("灼灼").end().withScene("thy1kuazhang1.png").end();
+		school.withAlt().emote().withValue("冷漠").end().withScene("thy1putong1.png").end();
+		school.withAlt().emote().withValue("愤怒").end().withScene("thy1shengqi5.png").end();
+		school.withAlt().emote().withValue("微笑").end().withScene("thy1xiao1.png").end();
+		school.withAlt().emote().withValue("大笑").end().withScene("thy1xiao4.png").end();
+		school.withAlt().emote().withValue("戏谑").end().withScene("thy1xiao27.png").end();
+		school.end();
+		
+		norm=chara.withAlt().cloth().withValue("汉服").end();
+		school.withAlt().emote().withValue("哀伤").end().withScene("thy3aishang2.png").end();
+		school.withAlt().emote().withValue("脸红").end().withScene("thy3haixiu3bu.png").end();
+		school.withAlt().emote().withValue("惊恐").end().withScene("thy3jingkong16.png").end();
+		school.withAlt().emote().withValue("哭泣").end().withScene("thy3ku2.png").end();
+		school.withAlt().emote().withValue("灼灼").end().withScene("thy3kuazhang4.png").end();
+		school.withAlt().emote().withValue("冷漠").end().withScene("thy3aishang1.png").end();
+		school.withAlt().emote().withValue("愤怒").end().withScene("thy3shengqi4.png").end();
+		school.withAlt().emote().withValue("微笑").end().withScene("thy3xiao1.png").end();
+		school.withAlt().emote().withValue("大笑").end().withScene("thy3xiao4.png").end();
+		school.withAlt().emote().withValue("戏谑").end().withScene("thy3xiao27.png").end();
+		norm.end();
+		checkSave(savePath,"haiyin","chara",chara.build());
 		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("truelovecm/bgimage");
 
 		back.withAlt().addPrefix("街道").location().withValue("街道").end()
@@ -331,6 +359,14 @@ public class SceneGenerator {
 		.withScene("bingfangri1.jpg")
 			.withAlt().time().sunset().end().withScene("bingfanghun1.jpg").end()
 			.withAlt().time().evening().end().withScene("bingfangye1.jpg").end().end().end()
+		.end();
+		
+		back.withAlt().addPrefix("海音家").location().withValue("唐海音家").end()
+		.withScene("haiyinjiari2.jpg")
+			.withAlt().season().winter().end()
+				.withScene("haiyinjiari3.jpg")
+				.withAlt().time().evening().end().withScene("haiyinjiaye3.jpg").end().end()
+			.withAlt().time().evening().end().withScene("haiyinjiaye2.jpg").end().end().end()
 		.end();
 		Map<String,String> vals=new HashMap<>();
 		vals.put("地点", "公园湖畔");

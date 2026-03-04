@@ -58,8 +58,11 @@ public class AICharaTalkMain extends AIApplication {
 			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
 			summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
 			prelogue = readFile(new File(model, "prelogue.txt"));
+			
+			File voiceFile=new File(model,"volcappid.txt");
+			if(voiceFile.exists())
+				volcappid = readFile(voiceFile);
 			File adrp=new File(model, "replacements.json");
-			volcappid = readFile(new File(model,"volcappid.txt"));
 			if(adrp.exists())
 			replacements = gs.fromJson(readFile(adrp), Map.class);
 			if(new File(model,"chara.json").exists()) {

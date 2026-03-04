@@ -1437,6 +1437,56 @@
         }
       ],
       "scene": "truelovecm/bgimage/医院病房/bingfangri1.jpg"
+    },
+    {
+      "predicates": [
+        {
+          "key": "地点",
+          "values": [
+            "唐海音家"
+          ]
+        }
+      ],
+      "selectors": [
+        {
+          "predicates": [
+            {
+              "key": "季节",
+              "values": [
+                "冬"
+              ]
+            }
+          ],
+          "selectors": [
+            {
+              "predicates": [
+                {
+                  "key": "时间",
+                  "values": [
+                    "夜晚"
+                  ]
+                }
+              ],
+              "selectors": [],
+              "scene": "truelovecm/bgimage/海音家/haiyinjiaye3.jpg"
+            }
+          ],
+          "scene": "truelovecm/bgimage/海音家/haiyinjiari3.jpg"
+        },
+        {
+          "predicates": [
+            {
+              "key": "时间",
+              "values": [
+                "夜晚"
+              ]
+            }
+          ],
+          "selectors": [],
+          "scene": "truelovecm/bgimage/海音家/haiyinjiaye2.jpg"
+        }
+      ],
+      "scene": "truelovecm/bgimage/海音家/haiyinjiari2.jpg"
     }
   ]
 }
