@@ -20,7 +20,7 @@ public class AIAppMain {
 	}
 
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-		String name="haiyintalk";
+		String name="xinghantalk";
 		int idx=0;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
