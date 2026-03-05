@@ -18,6 +18,192 @@ public class SceneGenerator {
 
 	public static void main(String[] args) throws IOException {
 		// TODO Auto-generated method stub
+		buildTLCM();
+		buildCFS();
+	}
+	public static void buildCFS() throws IOException {
+		//哀伤///严肃//笑/生气
+		//
+		File savePath=new File("save/");
+		AICharaSceneBuilder<Endable> chara=AICharaSceneBuilder.builder().addPrefix("conspiracyfs/fgimage");
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> ghf=chara.withAlt().withName("归海枫").addPrefix("ghf");
+		ghf.withAlt().emote().withValue("哀伤").end().withScene("ghfaishang3.png").end();
+		ghf.withAlt().emote().withValue("震惊").end().withScene("ghfaishang1.png").end();
+		ghf.withAlt().emote().withValue("哭").end().withScene("ghfaishang3.png").end();
+		ghf.withAlt().emote().withValue("惊恐").end().withScene("ghfaishang1.png").end();
+		ghf.withAlt().emote().withValue("严肃").end().withScene("ghfputong1.png").end();
+		ghf.withAlt().emote().withValue("生气").end().withScene("ghfshengqi2.png").end();
+		ghf.withAlt().emote().withValue("笑").end().withScene("ghfxiao1.png").end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> hyz=chara.withAlt().withName("贺云舟").addPrefix("hyz");
+		hyz.withAlt().emote().withValue("哀伤").end().withScene("hyzaishang2.png").end();
+		hyz.withAlt().emote().withValue("震惊").end().withScene("hyzchijing3.png").end();
+		hyz.withAlt().emote().withValue("哭").end().withScene("hyzku1.png").end();
+		hyz.withAlt().emote().withValue("惊恐").end().withScene("hyzjingkong29.png").end();
+		hyz.withAlt().emote().withValue("严肃").end().withScene("hyzputong2.png").end();
+		hyz.withAlt().emote().withValue("生气").end().withScene("hyzshengqi3.png").end();
+		hyz.withAlt().emote().withValue("笑").end().withScene("hyzxiao1.png").end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> qly=chara.withAlt().withName("祁连遥").addPrefix("qly");
+		qly.withAlt().emote().withValue("哀伤").end().withScene("qlyaishang1.png").end();
+		qly.withAlt().emote().withValue("震惊").end().withScene("qlychijing8.png").end();
+		qly.withAlt().emote().withValue("哭").end().withScene("qlyaishang1.png").end();
+		qly.withAlt().emote().withValue("惊恐").end().withScene("qlychijing8.png").end();
+		qly.withAlt().emote().withValue("严肃").end().withScene("qlyputong2.png").end();
+		qly.withAlt().emote().withValue("生气").end().withScene("qlykuazhang1.png").end();
+		qly.withAlt().emote().withValue("笑").end().withScene("qlyxiao1.png").end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> rxy=chara.withAlt().withName("苒雪忆").addPrefix("rxy");
+		rxy.withAlt().emote().withValue("哀伤").end().withScene("rxyaishang1.png").end();
+		rxy.withAlt().emote().withValue("震惊").end().withScene("rxykongju22.png").end();
+		rxy.withAlt().emote().withValue("哭").end().withScene("rxyku2.png").end();
+		rxy.withAlt().emote().withValue("惊恐").end().withScene("rxykongju22.png").end();
+		rxy.withAlt().emote().withValue("严肃").end().withScene("rxyputong2.png").end();
+		rxy.withAlt().emote().withValue("生气").end().withScene("rxyshengqi15.png").end();
+		rxy.withAlt().emote().withValue("笑").end().withScene("rxyxiao1.png").end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> tl=chara.withAlt().withName("童玲").addPrefix("tl");
+		tl.withAlt().emote().withValue("哀伤").end().withScene("tlaishang1.png").end();
+		tl.withAlt().emote().withValue("震惊").end().withScene("tlputong5.png").end();
+		tl.withAlt().emote().withValue("哭").end().withScene("tlaishang1.png").end();
+		tl.withAlt().emote().withValue("惊恐").end().withScene("tlputong5.png").end();
+		tl.withAlt().emote().withValue("严肃").end().withScene("tlputong1.png").end();
+		tl.withAlt().emote().withValue("生气").end().withScene("tlshengqi1.png").end();
+		tl.withAlt().emote().withValue("笑").end().withScene("tlxiao3.png").end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> wxh=chara.withAlt().withName("汪星涵").addPrefix("wxh");
+		wxh.withAlt().emote().withValue("哀伤").end().withScene("wxhaishang1.png").end();
+		wxh.withAlt().emote().withValue("震惊").end().withScene("wxhkuazhang3.png").end();
+		wxh.withAlt().emote().withValue("哭").end().withScene("wxhku2.png").end();
+		wxh.withAlt().emote().withValue("惊恐").end().withScene("wxhkongju12.png").end();
+		wxh.withAlt().emote().withValue("严肃").end().withScene("wxhputong5.png").end();
+		wxh.withAlt().emote().withValue("生气").end().withScene("wxhshengqi2.png").end();
+		wxh.withAlt().emote().withValue("笑").end().withScene("wxhxiao2.png").end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> yyq=chara.withAlt().withName("扬雨晴").addPrefix("yyq");
+		yyq.withAlt().emote().withValue("哀伤").end().withScene("yyqaishang2.png").end();
+		yyq.withAlt().emote().withValue("震惊").end().withScene("yyqchijing5.png").end();
+		yyq.withAlt().emote().withValue("哭").end().withScene("yyqku6.png").end();
+		yyq.withAlt().emote().withValue("惊恐").end().withScene("yyqkongju3.png").end();
+		yyq.withAlt().emote().withValue("严肃").end().withScene("yyqputong2.png").end();
+		yyq.withAlt().emote().withValue("生气").end().withScene("yyqkuazhang1.png").end();
+		yyq.withAlt().emote().withValue("笑").end().withScene("yyqxiao1.png").end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> zfj=chara.withAlt().withName("周方谨").addPrefix("zfj");
+		zfj.withAlt().emote().withValue("哀伤").end().withScene("zfjaishang4.png").end();
+		zfj.withAlt().emote().withValue("震惊").end().withScene("zfjkongju2.png").end();
+		zfj.withAlt().emote().withValue("哭").end().withScene("zfjaishang4.png").end();
+		zfj.withAlt().emote().withValue("惊恐").end().withScene("zfjkongju2.png").end();
+		zfj.withAlt().emote().withValue("严肃").end().withScene("zfjputong1.png").end();
+		zfj.withAlt().emote().withValue("生气").end().withScene("zfjshengqi4.png").end();
+		zfj.withAlt().emote().withValue("笑").end().withScene("zfjxiao1.png").end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> zsy=chara.withAlt().withName("赵书宇").addPrefix("zsy");
+		zsy.withAlt().emote().withValue("哀伤").end().withScene("zsyaishang2.png").end();
+		zsy.withAlt().emote().withValue("震惊").end().withScene("zsychijing2.png").end();
+		zsy.withAlt().emote().withValue("哭").end().withScene("zsyaishang2.png").end();
+		zsy.withAlt().emote().withValue("惊恐").end().withScene("zsykongju1.png").end();
+		zsy.withAlt().emote().withValue("严肃").end().withScene("zsyputong2.png").end();
+		zsy.withAlt().emote().withValue("生气").end().withScene("zsyteshu4.png").end();
+		zsy.withAlt().emote().withValue("笑").end().withScene("zsyxiao1.png").end();
+		
+		
+		checkSave(savePath,"xinghantrpg","chara",chara.build());
+		
+		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("conspiracyfs/bgimage");
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> cur;
+		cur=back.withAlt().addPrefix("操场").location().withValue("操场").end();
+		cur.withScene("caochangri.jpg");
+		cur.withAlt().time().sunset().end().withScene("caochanghun.jpg").end();
+		cur.withAlt().time().evening().end().withScene("caochangye.jpg").end();
+		cur.end();
+		cur=back.withAlt().addPrefix("活动室").location().withValue("活动室").end();
+		cur.withScene("huodongshiri.jpg");
+		cur.withAlt().time().sunset().end().withScene("huodongshihun.jpg").end();
+		cur.withAlt().time().evening().end().withScene("huodongshiye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("教室").location().withValue("教室").end();
+		cur.withScene("jiaoshiri.jpg");
+		cur.withAlt().time().sunset().end().withScene("jiaoshihun.jpg").end();
+		cur.withAlt().time().evening().end().withScene("jiaoshiye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("校门内").location().withValue("校门内").end();
+		cur.withScene("menkouri.jpg");
+		cur.withAlt().time().sunset().end().withScene("menkouhun.jpg").end();
+		cur.withAlt().time().evening().end().withScene("menkouye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("秘密地点").location().withValue("秘密地点").end();
+		cur.withScene("mimididianhun.jpg");
+		cur.withAlt().time().sunset().end().withScene("mimididianhun.jpg").end();
+		cur.withAlt().time().evening().end().withScene("mimididianye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("食堂").location().withValue("食堂").end();
+		cur.withScene("shitangri.jpg");
+		cur.withAlt().time().sunset().end().withScene("shitanghun.jpg").end();
+		cur.withAlt().time().evening().end().withScene("shitangye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("外界").location().withValue("外界").end();
+		cur.withScene("shijieri.jpg");
+		cur.withAlt().time().sunset().end().withScene("shijieye1.jpg").end();
+		cur.withAlt().time().evening().end().withScene("shijieye1.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("庭院").location().withValue("庭院").end();
+		cur.withScene("shuichiri1.jpg");
+		cur.withAlt().time().sunset().end().withScene("shuichiye1.jpg").end();
+		cur.withAlt().time().evening().end().withScene("shuichiye1.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("校门外").location().withValue("校门外").end();
+		cur.withScene("xiaomenri1.jpg");
+		cur.withAlt().time().sunset().end().withScene("xiaomenye.jpg").end();
+		cur.withAlt().time().evening().end().withScene("xiaomenye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("小屋").location().withValue("小屋").end();
+		cur.withScene("xiaowu.jpg");
+		cur.withAlt().time().sunset().end().withScene("xiaowu.jpg").end();
+		cur.withAlt().time().evening().end().withScene("xiaowu.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("悬崖").location().withValue("悬崖").end();
+		cur.withScene("xuanyari.jpg");
+		cur.withAlt().time().sunset().end().withScene("xuanyaye.jpg").end();
+		cur.withAlt().time().evening().end().withScene("xuanyaye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("树林").location().withValue("树林").end();
+		cur.withScene("yewairi.jpg");
+		cur.withAlt().time().sunset().end().withScene("yewaiye1.jpg").end();
+		cur.withAlt().time().evening().end().withScene("yewaiye1.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("中庭").location().withValue("中庭").end();
+		cur.withScene("zhongtingri.jpg");
+		cur.withAlt().time().sunset().end().withScene("zhongtinghun.jpg").end();
+		cur.withAlt().time().evening().end().withScene("zhongtingye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("走廊").location().withValue("走廊").end();
+		cur.withScene("zoulangerlouri.jpg");
+		cur.withAlt().time().sunset().end().withScene("zoulangerlouhun.jpg").end();
+		cur.withAlt().time().evening().end().withScene("zoulangerlouye.jpg").end();
+		cur.end();
+
+		cur=back.withAlt().addPrefix("宿舍").location().withValue("宿舍").end();
+		cur.withScene("susheri.jpg");
+		cur.withAlt().time().sunset().end().withScene("susheye.jpg").end();
+		cur.withAlt().time().evening().end().withScene("susheye.jpg").end();
+		cur.end();
+		
+		checkSave(savePath,"xinghantrpg","back",back.build());
+	}
+	public static void buildTLCM() throws IOException {
 		/*
 		地点=主角卧室
 		时间=上午（上午/下午/黄昏/夜晚）
@@ -95,7 +281,7 @@ public class SceneGenerator {
 		norm.withAlt().emote().withValue("微笑").end().withScene("yfx8xiao7.png").end();
 		norm.withAlt().emote().withValue("得意").end().withScene("yfx8xiao26.png").end();
 		norm.end();
-		checkSave(savePath,"fengxi","chara",chara.build());
+		checkSave(savePath,"fengxitalk","chara",chara.build());
 		
 		//fengyi
 		chara=AICharaSceneBuilder.builder().addPrefix("truelovecm/fgimage/yfy");
@@ -126,7 +312,7 @@ public class SceneGenerator {
 		norm.withAlt().emote().withValue("无神").end().withScene("yfy4putong5.png").end();
 		norm.withAlt().emote().withValue("微笑").end().withScene("yfy3xiao1.png").end();
 		norm.end();
-		checkSave(savePath,"fengyi","chara",chara.build());
+		checkSave(savePath,"fengyitalk","chara",chara.build());
 		
 		//haiyin //////惊恐//
 		chara=AICharaSceneBuilder.builder().addPrefix("truelovecm/fgimage/thy");
@@ -155,7 +341,7 @@ public class SceneGenerator {
 		school.withAlt().emote().withValue("大笑").end().withScene("thy3xiao4.png").end();
 		school.withAlt().emote().withValue("戏谑").end().withScene("thy3xiao27.png").end();
 		norm.end();
-		checkSave(savePath,"haiyin","chara",chara.build());
+		checkSave(savePath,"haiyintalk","chara",chara.build());
 		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("truelovecm/bgimage");
 
 		back.withAlt().addPrefix("街道").location().withValue("街道").end()
@@ -372,10 +558,12 @@ public class SceneGenerator {
 		vals.put("季节", "春");
 		vals.put("时间", "下午");
 		System.out.println(back.build().getSceneData(vals));
-		checkSave(savePath,"fengyi","back",back.build());
+		checkSave(savePath,"fengyitalk","back",back.build());
+		checkSave(savePath,"fengxitalk","back",back.build());
+		checkSave(savePath,"haiyintalk","back",back.build());
 	}
 	public static void checkSave(File fn,String ai,String type,SceneSelector selector) throws IOException {
-		File save=new File(fn,ai+"talk/"+type+".json");
+		File save=new File(fn,ai+"/"+type+".json");
 		List<File> files=new ArrayList<>();
 		visit(selector,files,new File(fn,"resource"));
 		AtomicBoolean err=new AtomicBoolean();

@@ -81,8 +81,17 @@ public class AICharaSceneBuilder<T> extends SceneBuilder<T,AICharaSceneBuilder<T
 	public  SimplePredicateBuilder<AICharaSceneBuilder<T>> location(){
 		return super.withPredicate("地点");
 	}
+	public  AICharaSceneBuilder<T> withLocation(String name){
+		return super.withPredicate("地点").withValue(name).end();
+	}
+	public  AICharaSceneBuilder<T> withName(String name){
+		return super.withPredicate("姓名").withValue(name).end();
+	}
 	public SimplePredicateBuilder<AICharaSceneBuilder<T>> emote(){
 		return super.withPredicate("表情");
+	}
+	public  AICharaSceneBuilder<T> withCloth(String name){
+		return super.withPredicate("服装").withValue(name).end();
 	}
 	public SimplePredicateBuilder<AICharaSceneBuilder<T>> cloth(){
 		return super.withPredicate("服装");

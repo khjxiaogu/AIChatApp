@@ -115,7 +115,6 @@ public class AIChatService implements ServiceClass {
 							apps.put(name, new AICharaTalkMain(parent,name,meta.get("name").getAsString()));
 							isSucceed=true;
 						}else if(fn.getName().endsWith("trpg")) {
-							getLogger().info("正在加载AI："+name);
 							apps.put(name, new AITRPGSceneMain(parent,name,meta.get("name").getAsString()));
 							isSucceed=true;
 						}
@@ -302,7 +301,13 @@ public class AIChatService implements ServiceClass {
 	@HttpPath("/index")
 	@Adapter
 	public ResultDTO indexHtm() throws IOException {
-		return new ResultDTO(200, new File(parent, "index.html"));
+		return new ResultDTO(200, new File(parent, "aiindex.html"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/aichat")
+	@Adapter
+	public ResultDTO chat() throws IOException {
+		return new ResultDTO(200, new File(parent, "chat.html"));
 	}
 	@HttpMethod("GET")
 	@HttpPath("/aigal")

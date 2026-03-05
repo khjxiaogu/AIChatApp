@@ -429,25 +429,10 @@ public class AITRPGSceneMain extends AIApplication {
 	public void prepareScene(AISession state) {
 		String chara=state.getExtra().get("chara");
 		String bg=state.getExtra().get("back");
-		String pos=state.getState().perks.get("位置");
 		if(chara!=null) {
-			switch(pos) {
-			case "前":
-				state.setScene("front", chara);
-				state.setScene("side", "");
-				break;
-			case "侧":
-				state.setScene("front", "");
-				state.setScene("side", chara);
-				break;
-			default:
-				state.setScene("front", "");
-				state.setScene("side", "");
-				break;
-			}
+			state.setScene("front", chara);
 		}else {
 			state.setScene("front", "");
-			state.setScene("side", "");
 		}
 		if(bg!=null)
 			state.setScene("back", bg);

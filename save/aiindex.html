@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI智能体主页</title>
+  <!-- 引入 Vue 2 (完整版，支持 template) -->
+    <script src="//www.khjxiaogu.com/vue.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #f4f6f9;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      padding: 20px;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .menu-page {
+      max-width: 1100px;
+      width: 100%;
+      background-color: white;
+      border-radius: 28px;
+      box-shadow: 0 20px 35px -8px rgba(0, 0, 0, 0.15);
+      padding: 30px 25px;
+    }
+    h2.page-title {
+      font-weight: 500;
+      font-size: 28px;
+      letter-spacing: 0.5px;
+      color: #1e293b;
+      margin: 0 0 12px 8px;
+      border-left: 6px solid #f97316;
+      padding-left: 20px;
+    }
+    .category {
+      position: relative;
+      border: 2px dashed #d1d5db;
+      border-radius: 24px;
+      background: white;
+      margin-top: 38px;
+      padding: 32px 20px 20px 20px;
+      transition: border-color 0.2s;
+    }
+    .category:first-of-type {
+      margin-top: 0;
+    }
+    .category-title {
+      position: absolute;
+      top: -16px;
+      left: 24px;
+      background-color: white;
+      padding: 0 14px;
+      font-weight: 600;
+      font-size: 1.3rem;
+      color: #2d3c4b;
+      letter-spacing: 0.3px;
+      border-radius: 40px;
+      border: 2px dashed #d1d5db;
+      line-height: 1.4;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+    }
+    .menu-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 120px);
+      justify-content: center;
+      gap: 22px 18px;
+    }
+    .menu-item {
+      width: 120px;
+      height: 120px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      border-radius: 20px;
+      box-shadow: 0 8px 18px -8px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0,0,0,0.01) inset;
+      transition: transform 0.15s, box-shadow 0.2s;
+      cursor: default;
+      padding: 8px 0;
+    }
+    .menu-item:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 18px 25px -12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0,0,0,0.02) inset;
+    }
+    .menu-item img {
+      width: 80px;
+      height: 80px;
+      display: block;
+      object-fit: contain;
+      border-radius: 16px;
+      margin-bottom: 4px;
+      background: #f8fafc;
+      padding: 6px;
+    }
+
+    .menu-item .item-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: #1e293b;
+      max-width: 104px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+      line-height: 1.5;
+      background: white;
+      padding: 0 4px;
+      border-radius: 30px;
+    }
+	.menu-item .item-label {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      white-space: normal;
+      word-break: break-word;
+    } 
+    .category:last-child {
+      margin-bottom: 0;
+    }
+    .category + .category {
+      margin-top: 42px;
+    }
+	
+	
+    /* ---------- 新增模态框样式 ---------- */
+    .modal-mask {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(3px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      transition: opacity 0.2s;
+    }
+
+    .modal-container {
+      width: 90%;
+      background: white;
+      border-radius: 32px;
+      box-shadow: 0 30px 50px rgba(0, 0, 0, 0.3);
+      padding: 30px 28px;
+      text-align: center;
+    }
+
+    .modal-title {
+      font-size: 26px;
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #f1f5f9;
+      padding-bottom: 15px;
+    }
+
+    .modal-content {
+      background: #f8fafc;
+      border-radius: 20px;
+      padding: 18px 16px;
+      margin: 18px 0 28px;
+      max-height: 70vh;
+      overflow-y: auto;
+      text-align: left;
+      font-size: 15px;
+      color: #334155;
+      line-height: 1.6;
+      border: 1px solid #e2e8f0;
+    }
+
+    .modal-content p {
+      margin: 10px 0;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+    }
+
+    .modal-btn {
+      flex: 1;
+      padding: 14px 10px;
+      border: none;
+      border-radius: 40px;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+
+    .modal-btn.agree {
+      background: #f97316;
+      color: white;
+    }
+
+    .modal-btn.agree:hover {
+      background: #ea580c;
+      transform: scale(1.02);
+    }
+
+    .modal-btn.reject {
+      background: #e2e8f0;
+      color: #1e293b;
+    }
+
+    .modal-btn.reject:hover {
+      background: #cbd5e1;
+    }
+
+    /* 当模态框显示时，禁止背景滚动 */
+    body.modal-open {
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 模板将完全由 Vue 的 template 选项渲染，此处只作为挂载点 -->
+  </div>
+
+  <script>
+
+
+    // Vue 实例
+    new Vue({
+      el: '#app',
+      template: `
+        <div class="menu-page">
+          <div v-if="showAgreementModal" class="modal-mask">
+            <div class="modal-container">
+              <div class="modal-title">用户协议</div>
+              <div class="modal-content">
+                <p><strong>欢迎使用Khj AI智能体服务</strong></p>
+                <p>请您仔细阅读以下条款：</p>
+                <p>
+一、 服务内容
+<br />服务概述：本页面是一款基于人工智能技术的对话生成与辅助工具。我们利用算法模型，根据您输入的指令或内容（“输入信息”），生成相应的文本、代码、图像等内容（“生成内容”）。
+<br />服务形式：您可以通过网页端等终端使用本服务。具体服务形态以我们实际提供的为准。
+<br />服务更新与变更：我们致力于不断优化服务，因此可能根据实际情况（如功能迭代、法律法规变化、技术调整等）对服务内容进行增加、删除、修改或中断，不再另行对用户逐一通知。
+</p><p>
+二、 用户账号与注册
+<br />账号资格：您确认，在您开始注册程序使用本服务前，您应当具备中华人民共和国法律规定的与您行为相适应的民事行为能力。若您不具备前述主体资格，则您及您的监护人应承担因此导致的一切后果。
+<br />账号安全：您的账号由您自行妥善保管，包括但不限于不向任何人透露账号密码。您应对使用该账号及密码所进行的一切操作负全部责任。如发现任何未经授权使用您账号的情况，应立即通知我们。
+</p><p>
+三、 用户行为规范
+<br />禁止滥用服务：您不得利用本服务从事任何侵害平台或他人权益的行为，包括但不限于：
+<br />通过技术手段批量、自动化访问或破坏本服务；
+<br />对本软件进行反向工程、反编译、试图获取源代码；
+<br />利用本服务生成、传播垃圾信息或进行任何形式的广告推销；
+<br />利用本服务干扰、破坏其他用户的正常使用；
+<br />试图绕过任何限制或安全措施访问本服务。
+<br />违规处理：如果我们发现或收到他人举报您违反本协议约定，我们有权视行为情节，采取包括但不限于暂停、终止向您提供服务，限制、冻结或注销您的账号，并依法向网信、工信、公安等监管部门报告。
+</p><p>
+四、 知识产权
+<br />侵权投诉通知：如果您是权利人，认为本平台上的任何AI智能体或相关内容侵犯了您的合法权益（包括但不限于著作权、商标权、肖像权、名誉权等），您有权向我们发送书面通知，要求我们采取删除、屏蔽、断开链接等必要措施。
+<br />通知形式：通知应为书面形式，可以通过电子邮件提交。
+<br />通知内容：根据相关法律法规，您的通知应包含以下材料：
+<br />权利人的身份证明：清晰的身份证扫描件（个人）或营业执照扫描件（单位）。
+<br />权利证明：您对所投诉内容拥有合法权利的权属证明，如著作权登记证书、商标注册证、首次公开发表证明等。
+<br />侵权内容定位信息：提供足以准确定位侵权AI能体的信息，例如该智能体的名称、ID、页面链接地址等。
+<br />初步侵权证明材料：说明 alleged 侵权事实以及侵权理由。
+<br />权利人的联系方式：包括姓名、联系电话、电子邮箱及有效的邮寄地址。
+<br />保证声明：请签署以下声明：“我本人/本单位为本通知的真实性负全部法律责任。我确认，若本通知内容不完全属实，我将承担由此产生的一切法律后果。”
+<br />通知的受理与处理：我们收到您的完整通知后，将依法进行形式审查。经审查合格的，我们将及时采取必要措施（包括但不限于删除侵权智能体），并依法将您的通知转送给该智能体的上传者。若上传者提交了不侵权的反通知，我们也会将该反通知转送给您，并可能在合理期限内恢复被删除的内容。
+<br />恶意通知责任：权利人应当对其通知的真实性负责。我们保留就因恶意虚假通知而造成的任何损失（包括但不限于因错误删除内容给智能体上传者造成的损失）向您追究法律责任的权利。
+<br />输入内容知识产权：您通过本服务输入、上传的所有内容（“输入信息”），其知识产权归您所有或您已获得合法授权。您承诺并保证，您对输入信息拥有完整的、无争议的权利，不会侵犯任何第三方的合法权益（如著作权、肖像权、隐私权等）。因您的输入内容侵权导致的纠纷，由您自行承担全部法律责任。
+<br />生成内容知识产权：
+<br />权利归属：在不违反法律法规强制性规定的前提下，我们将对本服务为您自动生成的内容（“生成内容”）的财产性权利（包括但不著作权财产权）免费授予您，供您自用或合法合规的商业使用。但您理解并同意，生成内容由算法自动生成，可能不具有独创性，且全球范围内的知识产权法律对于AI生成物的保护存在差异，平台不保证生成内容在任何法域下均能获得完全的知识产权保护。
+<br />使用限制：您不得以任何方式将生成内容进行确权或申请知识产权登记。您对生成内容的使用，必须遵守法律法规，不得侵害他人名誉权、隐私权、著作权等，不得用于诽谤、欺诈等非法目的。
+<br />平台权利：尽管有上述约定，为了提升服务质量，我们有权对您与AI的对话记录（包含输入信息和生成内容）进行匿名化处理，用于算法模型的训练与优化。此项处理会去除所有可识别您个人身份的信息。
+</p><p>
+五、 责任限制与免责声明
+<br />AI服务的不确定性：本服务基于人工智能模型生成内容。鉴于技术的局限性，生成内容可能存在不准确、不完整、过时或带有偏见的情况。我们不对生成内容的准确性、可靠性、适用性及完整性作任何明示或暗示的保证。您应对生成内容进行独立判断和核实，并自行承担依赖或使用生成内容所产生的风险。
+<br />服务可用性：我们将尽商业上的合理努力保障服务的稳定运行，但无法保证服务毫无中断或无错误。因不可抗力、网络故障、系统维护、第三方原因等导致的服务中断或数据丢失，我们不承担法律责任。
+</p><p>
+六、 协议的变更与终止
+<br />协议变更：我们有权根据国家法律法规变化及服务运营需要，不时修改本协议。本协议变更后，如您继续使用本服务，即视为您已接受修改后的协议。
+<br />协议终止：在您违反本协议约定，或存在其他严重损害我们或他人利益的情况下，我们有权不经通知而单方终止向您提供服务，并删除您的账号及相关信息。
+</p><p>
+七、 法律适用与争议解决
+<br />本协议的订立、执行、解释及争议解决均适用中华人民共和国法律（仅为本协议之目的，不包括香港特别行政区、澳门特别行政区和台湾地区法律）。
+<br />因本协议引起的或与本协议有关的任何争议，双方应友好协商解决；协商不成的，任何一方均有权将争议提交至【填写公司注册地】有管辖权的人民法院诉讼解决。
+</p><p>
+八、 其他
+<br />本协议所有条款的标题仅为阅读方便，不具实际含义，不能作为解释协议的依据。
+<br />如果本协议中的任何条款因任何原因被判定为完全或部分无效或不具有执行力，不影响其余条款的效力和执行力。
+<br />如果您对本协议或本服务有任何疑问，请通过以下方式联系我们：khjxiaogu@qq.com。
+</p>
+				</pre>
+                <p style="margin-top:12px;">点击“同意”代表您已阅读并接受全部条款。</p>
+              </div>
+              <div class="modal-actions">
+                <button class="modal-btn reject" @click="reject">拒绝</button>
+                <button class="modal-btn agree" @click="agree">同意</button>
+              </div>
+            </div>
+          </div>
+          <h2 class="page-title">AI智能体列表</h2>
+          <div v-for="(category, catIndex) in categories" :key="catIndex" class="category">
+            <div class="category-title">{{ category.name }}</div>
+            <div class="menu-grid">
+              <div v-for="(item, itemIndex) in category.items" :key="catIndex + '-' + itemIndex" class="menu-item">
+                <a :href="item.url">
+                <img :src="item.icon" :alt="item.name + '图标'" loading="lazy">
+                <span class="item-label">{{ item.name }}</span>
+				</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+      data: {
+	    showAgreementModal: !localStorage.getItem('userAgreedAIAgentAgreements'),
+        categories: [
+          {
+            name: '真恋~寄语枫秋',
+            items: [
+              { name: '姚枫茜',icon:'/emoji/inmaple/fx/fxq02.jpg',url:'/aichat/aigal?chara=fengxi' },
+              { name: '姚枫怡',icon:'/emoji/inmaple/fy/fyq01.jpg',url:'/aichat/aigal?chara=fengyi' },
+              { name: '唐海音',icon:'/emoji/inmaple/hy/hyq15.jpg',url:'/aichat/aigal?chara=haiyin' }
+            ]
+          },
+		  {
+            name: '通用智能',
+            items: [
+              { name: '通用智能',icon:'/piclib/feather/user.svg',url:'/aichat' }
+            ]
+          }
+        ]
+      },
+	  watch: {
+        showAgreementModal(val) {
+          if (val) {
+            document.body.classList.add('modal-open');
+          } else {
+            document.body.classList.remove('modal-open');
+          }
+        }
+      },
+      methods: {
+	  // 同意协议：关闭弹窗
+        agree() {
+          this.showAgreementModal = false;
+		  localStorage.setItem('userAgreedAIAgentAgreements', 'true');
+        },
+        // 拒绝协议：退出页面（跳转到空白页）
+        reject() {
+          // 尝试关闭窗口（仅对脚本打开的窗口有效），否则跳转到空白页
+          window.location.href = 'about:blank';
+
+          // 或者使用 window.close()，但可能被浏览器阻止
+        }
+      },
+      // 添加 mounted 钩子，可选：禁止背景滚动（当弹窗开启时）
+      mounted() {
+        // 初始时若弹窗显示，给body添加类防止滚动（通过watch更优雅，简单处理）
+        if (this.showAgreementModal) {
+          document.body.classList.add('modal-open');
+        }
+      }
+    })
+  </script>
+</body>
+</html>
