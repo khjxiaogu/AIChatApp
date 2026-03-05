@@ -23,9 +23,10 @@ import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
-import com.khjxiaogu.aiwuxia.state.History;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.utils.ClientTruncatedException;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -58,11 +59,11 @@ public abstract class AIApplication {
 				HistoryItem last=state.getLast();
 				if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
 					HistoryItem hi = state.removeLast();
-					if(last.getRole()==Role.ASSISTANT) {
+					if(hi.getRole()==Role.ASSISTANT) {
 						HistoryItem userhi = state.removeLast();
 						state.minRow();
-						if (hi.lastState != null) {
-							state.getState().set(hi.lastState);
+						if (hi.getLastState() != null) {
+							state.getState().set(hi.getLastState());
 						}
 						return userhi.getContent().toString();
 					}
@@ -79,8 +80,8 @@ public abstract class AIApplication {
 						if(last.getRole()==Role.ASSISTANT) {
 							state.removeLast();
 							state.minRow();
-							if (hi.lastState != null) {
-								state.getState().set(hi.lastState);
+							if (hi.getLastState() != null) {
+								state.getState().set(hi.getLastState());
 							}
 						}
 					}
@@ -95,8 +96,8 @@ public abstract class AIApplication {
 		return gs.fromJson(FileUtil.readString(jsonFile), AISession.AIData.class);
 	}
 
-	public static History historyFromJson(File jsonFile) throws JsonSyntaxException, IOException {
-		return gs.fromJson(JsonParser.parseString(FileUtil.readString(jsonFile)).getAsJsonObject().get("history").getAsJsonObject(), History.class);
+	public static MemoryHistory historyFromJson(File jsonFile) throws JsonSyntaxException, IOException {
+		return gs.fromJson(JsonParser.parseString(FileUtil.readString(jsonFile)).getAsJsonObject().get("history").getAsJsonObject(), MemoryHistory.class);
 	}
 
 	public static void saveToJson(AISession aistate, File jsonFile) throws IOException {
@@ -181,7 +182,8 @@ public abstract class AIApplication {
 						readable.endContent();
 						return;
 					}
-					
+					//if(readable.isEnded())
+					//	throw new ClientTruncatedException();
 					RespScheme scheme=gs.fromJson(s, RespScheme.class);
 					Message delta=scheme.choices.get(0).delta;
 					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {

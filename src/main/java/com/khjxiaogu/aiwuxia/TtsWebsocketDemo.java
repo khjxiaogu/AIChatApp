@@ -12,7 +12,6 @@ import java.math.BigInteger;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -20,7 +19,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.Clip;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
@@ -99,7 +97,8 @@ public class TtsWebsocketDemo {
             }
         }
 
-        @Override
+        @SuppressWarnings("unused")
+		@Override
         public void onMessage(ByteBuffer bytes) {
             int protocolVersion = (bytes.get(0) & 0xff) >> 4;
             int headerSize = bytes.get(0) & 0x0f;
@@ -180,13 +179,12 @@ public class TtsWebsocketDemo {
     }
 
     public static class TtsException extends RuntimeException {
-        private final int code;
-        private final String message;
-
+        /**
+		 * 
+		 */
+		private static final long serialVersionUID = 1L;
         public TtsException(int code, String message) {
             super("code=" + code + ", message=" + message);
-            this.code = code;
-            this.message = message;
         }
     }
 }

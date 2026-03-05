@@ -5,13 +5,13 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.Map.Entry;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
@@ -107,11 +107,11 @@ public class AICharaTalkMain extends AIApplication {
 				if ("重读".equals(ret)) {
 					HistoryItem last=state.getLast();
 					if(last.getRole()==Role.ASSISTANT) {
-						if(last.audioId==null) {
+						if(last.getAudioId()==null) {
 							String audioId=UUID.randomUUID().toString();
 							CompletableFuture<Boolean> cf=this.generateVoice(state, last.getContent().toString(), audioId);
 							if(cf.get()) {
-								last.audioId=audioId;
+								last.setAudioId(audioId);
 								state.postAudioComplete(last.getIdentifier(),audioId);
 							}
 						}
@@ -125,7 +125,7 @@ public class AICharaTalkMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
 			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
-			state.getLast().lastState = airet;
+			state.getLast().setLastState(airet);
 			state.addRow();
 
 			return null;
@@ -174,7 +174,7 @@ public class AICharaTalkMain extends AIApplication {
 		if(state.getLast().getRole()==Role.USER)
 			state.removeLast();
 		state.minRow();
-		return state.getLast().lastState;
+		return state.getLast().getLastState();
 		
 	}
 
@@ -203,42 +203,43 @@ public class AICharaTalkMain extends AIApplication {
 		if (history != null && !history.isEmpty()) {
 			
 			int len=0;
-			for(HistoryItem hi:history) {//calculate total dialog rows
-				if(hi.shouldSend) {
-					if(hi.getRole()==Role.ASSISTANT) {
-						i++;
-					}
-					len+=hi.getFullContent().length();
+			Iterator<HistoryItem> it=history.sendableIterator();
+			while(it.hasNext()) {
+				HistoryItem hi=it.next();
+				if(hi.getRole()==Role.ASSISTANT) {
+					i++;
 				}
+				len+=hi.getFullContent().length();
+				
 			}
 			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
-				for(HistoryItem hi:history) {//calculate total dialog rows
-					if(hi.shouldSend) {
-						len-=hi.getFullContent().length();
-						
-						if(hi.getRole()!=Role.SYSTEM) {
-							summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getFullContent()).append("\n");
-						}
-						his.add(hi);
-						if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
-							break;
-						}
+				it=history.sendableIterator();
+				while(it.hasNext()) {//calculate total dialog rows
+					HistoryItem hi=it.next();
+					len-=hi.getFullContent().length();
+					
+					if(hi.getRole()!=Role.SYSTEM) {
+						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getFullContent()).append("\n");
 					}
+					his.add(hi);
+					if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
+						break;
+					}
+					
 				}
-				history.add(0, new HistoryItem(Role.SYSTEM,makeSummaryrequest(state,summery.toString()),true));
-				his.forEach(t->t.shouldSend=false);
+				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
+				his.forEach(t->t.setSendable(false));
 				state.minRows(his.size());
 			}
-			int size=history.size();
-			for(int j=0;j<size;j++) {
-				HistoryItem hi=history.get(j);
-				if (hi.shouldSend) {
-					b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
-					/*if(diff%30==0)
-						b.object().add("role", "system").add("content", system).end();*/
-				}
+			if(state.getExtra().containsKey("lastSummary")) {
+				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
+			}
+			it=history.sendableIterator();
+			while(it.hasNext()) {
+				HistoryItem hi=it.next();
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
 			}
 				
 		}
@@ -252,7 +253,9 @@ public class AICharaTalkMain extends AIApplication {
 	public JsonObject constructSummaryrequest(AISession state,String summary) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", this.summary).end();
-
+		if(state.getExtra().containsKey("lastSummary")) {
+			b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
+		}
 		// if (status != null&&!status.isEmpty())
 		b.object().add("role",Role.USER.getRoleName()).add("content", "=== 对话块 ===\n"+summary.trim()).end();
 
@@ -284,8 +287,12 @@ public class AICharaTalkMain extends AIApplication {
 	}
 	public String constructSummaryBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
-		for (HistoryItem hs : state.getHistory()) {
-			if(hs.shouldSend)
+		Iterator<HistoryItem> it=state.getHistory().sendableIterator();
+		if(state.getExtra().containsKey("lastSummary")) {
+			sb.append( state.getExtra().get("lastSummary"));
+		}
+		while(it.hasNext()) {
+			HistoryItem hs=it.next();
 				sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getFullContent()).append("\n");
 		}
 
@@ -401,7 +408,7 @@ public class AICharaTalkMain extends AIApplication {
 		if(cf!=null) {
 			try {
 				if(cf.get()) {
-					state.getLast().audioId=audioId;	
+					state.getLast().setAudioId(audioId);	
 					state.postAudioComplete(state.getLast().getIdentifier(), audioId);
 				}
 			} catch (InterruptedException | ExecutionException e) {

@@ -9,9 +9,8 @@ import javax.swing.UIManager;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
-import com.khjxiaogu.aiwuxia.state.History;
+import com.khjxiaogu.aiwuxia.state.MemoryHistory;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 public class AIAppMain {
@@ -44,12 +43,11 @@ public class AIAppMain {
 		JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 		
 		AITRPGSceneMain main = new AITRPGSceneMain(dataFolder,name,meta.get("name").getAsString());
-		System.out.println(main.system);
 		// construct initail message
 		if (aistate == null) {
 			acw.setBackLog("正在生成初始面板...","");
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AppAISession("appuser",new History(), new AISession.AIData());
+			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.AIData());
 			main.provideInitial(aistate);
 		}
 		

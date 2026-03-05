@@ -11,7 +11,6 @@ import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.MessageItem;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -25,10 +24,7 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.util.concurrent.UnorderedThreadPoolEventExecutor;
 
 public class WebSocketAISession extends AISession implements WebsocketEvents {
-	/**
-	 * 
-	 */
-	private static final long serialVersionUID = -3405324710746609198L;
+
 	ChannelGroup conn=new DefaultChannelGroup(new UnorderedThreadPoolEventExecutor(2));
 	private final AIChatService parent;
 	private final String chatId;
@@ -122,8 +118,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> ja=JsonBuilder.object().array("messages");
 		for(HistoryItem i:items) {
 			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object().add("id", i.getIdentifier()).add("title", aiapp.getRoleName(this, i.getRole())).add("message", i.getContent().toString());
-			if(i.audioId!=null)
-				ix.add("audioId", i.audioId);
+			if(i.getAudioId()!=null)
+				ix.add("audioId", i.getAudioId());
 		}
 		conn.writeAndFlush(new TextWebSocketFrame(ja.end().end().toString()));
 	}

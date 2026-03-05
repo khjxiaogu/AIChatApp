@@ -2,19 +2,18 @@ package com.khjxiaogu.aiwuxia.state;
 
 import java.util.Iterator;
 
-public interface HistoryHolder extends Iterable<HistoryItem> {
+import com.khjxiaogu.aiwuxia.Role;
 
-	HistoryItem get(int num);
+public interface HistoryHolder extends Iterable<HistoryItem> {
 
 	boolean isEmpty();
 
 	Iterator<HistoryItem> iterator();
 
-	boolean add(HistoryItem e);
+	HistoryItem add(Role role, String content, String fullContent,boolean isSendable);
 
 	void clear();
 
-	void add(int index, HistoryItem element);
 
 	HistoryItem remove(int index);
 
@@ -23,9 +22,16 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 
 	int size();
 	
-	int newUniqueId();
 	void removeOf(int identifier);
 
 	String toString();
+	HistoryMemoryItem peekLast();
+	Iterator<HistoryItem> sendableIterator();
 
+	default HistoryItem add(Role role, String content, boolean isSendable) {
+		return add(role,content,null,isSendable);
+	};
+	default HistoryItem add(Role role, String content, String fullContent) {
+		return add(role,content,fullContent,true);
+	};
 }

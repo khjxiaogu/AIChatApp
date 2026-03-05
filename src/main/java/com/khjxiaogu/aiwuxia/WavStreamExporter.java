@@ -221,27 +221,4 @@ public class WavStreamExporter implements Closeable {
         }
     }
 
- 
-    // 辅助方法：生成一个简单的WAV头部（PCM格式），dataSize暂时未知
-    private static byte[] createMockWavHeader(int sampleRate, int bitsPerSample, int channels, int dataSize) {
-        int byteRate = sampleRate * channels * bitsPerSample / 8;
-        short blockAlign = (short) (channels * bitsPerSample / 8);
-        int fileSize = 36 + dataSize;
-
-        ByteBuffer buffer = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
-        buffer.put("RIFF".getBytes());
-        buffer.putInt(fileSize - 8);
-        buffer.put("WAVE".getBytes());
-        buffer.put("fmt ".getBytes());
-        buffer.putInt(16);
-        buffer.putShort((short) 1); // PCM
-        buffer.putShort((short) channels);
-        buffer.putInt(sampleRate);
-        buffer.putInt(byteRate);
-        buffer.putShort(blockAlign);
-        buffer.putShort((short) bitsPerSample);
-        buffer.put("data".getBytes());
-        buffer.putInt(dataSize);
-        return buffer.array();
-    }
 }

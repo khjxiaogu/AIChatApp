@@ -2,6 +2,7 @@ package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Scanner;
 import java.util.regex.Pattern;
@@ -54,7 +55,7 @@ public class AIArticleMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
 			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
-			state.getLast().lastState = airet;
+			state.getLast().setLastState(airet);
 			state.addRow();
 
 			return null;
@@ -104,13 +105,11 @@ public class AIArticleMain extends AIApplication {
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			int size=history.size();
-			for(int j=0;j<size;j++) {
-				HistoryItem hi=history.get(j);
-				if (hi.shouldSend) {
-					
-					b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
-				}
+			Iterator<HistoryItem> it=history.sendableIterator();
+			while(it.hasNext()) {
+				HistoryItem hi=it.next();
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				
 			}
 		}
 
@@ -197,7 +196,7 @@ public class AIArticleMain extends AIApplication {
 	@Override
 	public String getBrief(AISession state) {
 		if(state.getHistory().size()<2)return null;
-		CharSequence content=state.getHistory().get(1).getContent();
+		CharSequence content=state.getState().extras.get(0);
 		return content.subSequence(1, Math.min(10, content.length())).toString();
 	}
 }

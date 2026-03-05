@@ -1,7 +1,6 @@
 package com.khjxiaogu.aiwuxia;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -22,6 +21,7 @@ public class QueueInputStream extends InputStream {
     }
     @Override
     public int read() throws IOException {
+    	if(finished)return -1;
         // 非阻塞尝试获取数据，如果没有则返回 -1（或可改为阻塞，但需注意单线程死锁）
         if (currentChunk == null || pos >= currentChunk.length) {
             try {
@@ -41,7 +41,7 @@ public class QueueInputStream extends InputStream {
     }
     @Override
 	public int available() throws IOException {
-    	
+    	if(finished)return 0;
     	if (currentChunk == null || pos >= currentChunk.length) {
             try {
             	

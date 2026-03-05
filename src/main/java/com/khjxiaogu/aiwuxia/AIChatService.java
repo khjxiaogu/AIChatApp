@@ -24,7 +24,7 @@ import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AIGalgameMain;
 import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
 import com.khjxiaogu.aiwuxia.apps.AIWuxiaMain;
-import com.khjxiaogu.aiwuxia.state.History;
+import com.khjxiaogu.aiwuxia.state.MemoryHistory;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.annotations.Adapter;
@@ -124,7 +124,7 @@ public class AIChatService implements ServiceClass {
 								trial.add(name);
 							getLogger().info("AI加载成功："+name);
 						}else {
-							
+							getLogger().info("AI加载失败："+name);
 						}
 					}else {
 						getLogger().info("忽视AI："+name+" 出于配置原因");
@@ -311,6 +311,12 @@ public class AIChatService implements ServiceClass {
 		return new ResultDTO(200, new File(parent, "galgame.html"));
 	}
 	@HttpMethod("GET")
+	@HttpPath("/aitrpg")
+	@Adapter
+	public ResultDTO aitrpg() throws IOException {
+		return new ResultDTO(200, new File(parent, "trpg.html"));
+	}
+	@HttpMethod("GET")
 	@HttpPath("/remove")
 	@Adapter
 	public ResultDTO delDialog(@Query("uid")String userid,@Query("cid")String chatid) {
@@ -440,7 +446,7 @@ public class AIChatService implements ServiceClass {
 					}
 					
 				}
-				state = new WebSocketAISession(this,uid,cid, appx, data, new History(), new AISession.AIData());
+				state = new WebSocketAISession(this,uid,cid, appx, data, new MemoryHistory(), new AISession.AIData());
 				logger.info("AI " + cid + " Created");
 			}
 		}

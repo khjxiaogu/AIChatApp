@@ -16,7 +16,11 @@ import java.util.concurrent.ExecutionException;
  */
 public class AIChatWindow extends JFrame {
 
-    // 左侧组件
+    /**
+	 * 
+	 */
+	private static final long serialVersionUID = -295756251826212068L;
+	// 左侧组件
     private JTextArea chatDisplayArea;      // 显示聊天历史（只读）
     private JTextArea inputArea;            // 输入框（自动增高）
     private JScrollPane inputScrollPane;    // 输入框的滚动面板，用于控制高度

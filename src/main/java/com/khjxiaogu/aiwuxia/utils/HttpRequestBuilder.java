@@ -134,6 +134,8 @@ public class HttpRequestBuilder {
 	
 							listener.accept(dataEvent, dataElem);
 						}
+					}catch(ClientTruncatedException err) {
+						huc.disconnect();
 					}catch(Throwable err) {
 						err.printStackTrace();
 					}

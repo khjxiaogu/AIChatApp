@@ -3,10 +3,9 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.Reader;
-import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Random;
@@ -69,7 +68,7 @@ public class AIWuxiaMain extends AIApplication {
 			state.add(Role.USER, ret, true);
 			state.appendInvisibleLine(Role.USER, "\n按上述行动继续，至少写出5条大纲，情景剧本部分按大纲扩写，必须包含所有大纲的要点，内容务必详细详尽，文本优美通顺，至少1500字。");
 			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
-			state.getLast().lastState = airet;
+			state.getLast().setLastState(airet);
 			state.addRow();
 
 			return null;
@@ -146,34 +145,36 @@ public class AIWuxiaMain extends AIApplication {
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
 			int len=0;
-			for(HistoryItem hi:history) {//calculate total dialog rows
-				if(hi.shouldSend) {
-					len+=hi.getFullContent().length();
-				}
+			Iterator<HistoryItem> it=history.sendableIterator();
+			while(it.hasNext()) {
+				HistoryItem hi=it.next();
+				len+=hi.getFullContent().length();
 			}
 			
 			if(len>=140000) {//more than 140000 text:about 100k context,remove until 60000
 				HistoryItem lasthi=null;
-				for(HistoryItem hi:history) {//calculate total dialog rows
-					if(hi.shouldSend) {
-						len-=hi.getFullContent().length();
-						hi.shouldSend=false;
-						if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
-							lasthi=hi;
-							break;
-						}
+				it=history.sendableIterator();
+				while(it.hasNext()) {
+					HistoryItem hi=it.next();
+					len-=hi.getFullContent().length();
+					hi.setSendable(false);
+					if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
+						lasthi=hi;
+						break;
 					}
+					
 				}
 				if(lasthi!=null)
-				history.add(0, new HistoryItem(Role.SYSTEM,constructSystem(lasthi.lastState),true));
+					state.getExtra().put("lastSummary", constructSystem(lasthi.getLastState()));
 			}
-			int size=history.size();
-			for(int j=0;j<size;j++) {
-				HistoryItem hi=history.get(j);
-				if (hi.shouldSend) {
-					
-					b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
-				}
+			if(state.getExtra().containsKey("lastSummary")) {
+				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
+			}
+			it=history.sendableIterator();
+			while(it.hasNext()) {
+				HistoryItem hi=it.next();
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				
 			}
 				
 		}

@@ -11,7 +11,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.google.gson.GsonBuilder;
 import com.khjxiaogu.aiwuxia.scene.AICharaSceneBuilder;
 import com.khjxiaogu.aiwuxia.scene.Endable;
-import com.khjxiaogu.aiwuxia.scene.SceneBuilder.SimplePredicateBuilder;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 

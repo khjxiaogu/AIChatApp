@@ -2,7 +2,6 @@ package com.khjxiaogu.aiwuxia;
 
 import java.io.IOException;
 import java.util.Base64;
-import java.util.UUID;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;

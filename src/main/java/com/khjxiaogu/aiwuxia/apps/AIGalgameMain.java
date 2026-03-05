@@ -3,6 +3,7 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -64,7 +65,7 @@ public class AIGalgameMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
 			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
-			state.getLast().lastState = airet;
+			state.getLast().setLastState(airet);
 			state.addRow();
 
 			return null;
@@ -117,34 +118,37 @@ public class AIGalgameMain extends AIApplication {
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
 			int len=0;
-			for(HistoryItem hi:history) {//calculate total dialog rows
-				if(hi.shouldSend) {
-					len+=hi.getFullContent().length();
-				}
+			Iterator<HistoryItem> it=history.sendableIterator();
+			while(it.hasNext()) {
+				HistoryItem hi=it.next();
+				len+=hi.getFullContent().length();
+				
 			}
 			
 			if(len>=140000) {//more than 140000 text:about 100k context,remove until 60000
 				HistoryItem lasthi=null;
-				for(HistoryItem hi:history) {//calculate total dialog rows
-					if(hi.shouldSend) {
-						len-=hi.getFullContent().length();
-						hi.shouldSend=false;
-						if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
-							lasthi=hi;
-							break;
-						}
+				it=history.sendableIterator();
+				while(it.hasNext()) {
+					HistoryItem hi=it.next();
+					len-=hi.getFullContent().length();
+					hi.setSendable(false);
+					if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
+						lasthi=hi;
+						break;
 					}
 				}
 				if(lasthi!=null)
-				history.add(0, new HistoryItem(Role.SYSTEM,constructSystem(lasthi.lastState),true));
+					state.getExtra().put("lastSummary", constructSystem(lasthi.getLastState()));
 			}
-			int size=history.size();
-			for(int j=0;j<size;j++) {
-				HistoryItem hi=history.get(j);
-				if (hi.shouldSend) {
+			if(state.getExtra().containsKey("lastSummary")) {
+				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
+			}
+			it=history.sendableIterator();
+			while(it.hasNext()) {
+				HistoryItem hi=it.next();
 					
-					b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
-				}
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				
 			}
 				
 		}

@@ -1,0 +1,186 @@
+package com.khjxiaogu.aiwuxia.state;
+
+import java.io.Serializable;
+
+import com.khjxiaogu.aiwuxia.Role;
+
+class HistoryMemoryItem implements Serializable, HistoryItem {
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = -2560643964648148908L;
+	private int identifier = -1;
+	private Role role;
+	private StringBuilder content;
+	private StringBuilder sendContent;
+	private StringBuilder reasonContent;
+	private boolean shouldSend;
+	private StateIntf lastState;
+	private String audioId;
+
+	HistoryMemoryItem(Role role, String content, boolean shouldSend) {
+		super();
+		this.setFullContent(null);
+		this.content = new StringBuilder(content);
+		this.setRole(role);
+		this.shouldSend = shouldSend;
+	}
+	HistoryMemoryItem(Role role, String content, String fullContent) {
+		super();
+		this.setRole(role);
+		this.content = new StringBuilder(content);
+		this.sendContent = new StringBuilder(fullContent);
+		this.shouldSend = true;
+	}
+
+	HistoryMemoryItem(int identifier, Role role, String content, String fullContent) {
+		super();
+		this.setIdentifier(identifier);
+		this.setRole(role);
+		this.content = new StringBuilder(content);
+		this.sendContent = new StringBuilder(fullContent);
+		this.shouldSend = true;
+	}
+	HistoryMemoryItem(int identifier, Role role, String content, String fullContent, boolean shouldSend) {
+		super();
+		this.setIdentifier(identifier);
+		this.setRole(role);
+		if(content!=null)
+			this.content = new StringBuilder(content);
+		if(fullContent!=null)
+			this.sendContent = new StringBuilder(fullContent);
+		this.shouldSend = shouldSend;
+	}
+	HistoryMemoryItem(int identifier, Role role, String content, boolean shouldSend) {
+		super();
+		this.setIdentifier(identifier);
+		this.setRole(role);
+		this.content = new StringBuilder(content);
+		this.shouldSend = shouldSend;
+	}
+
+	@Override
+	public CharSequence getFullContent() {
+		if (sendContent != null)
+			return sendContent;
+		return content;
+	}
+
+	@Override
+	public CharSequence getContent() {
+		return content;
+	}
+
+	@Override
+	public boolean hasFullContent() {
+		return this.sendContent != null;
+	}
+
+	@Override
+	public void createFullContent() {
+		if (sendContent == null)
+			this.sendContent = new StringBuilder(content);
+	}
+	@Override
+	public StringBuilder createReasonContent() {
+		if (reasonContent == null)
+			this.reasonContent = new StringBuilder();
+		return reasonContent;
+	}
+	@Override
+	public void appendLine(String content, boolean shouldSend) {
+		if (this.shouldSend) {
+			if (!shouldSend) {
+				createFullContent();
+			} else {
+				if (sendContent != null) {
+					sendContent.append(content).append("\n");
+				}
+			}
+		}
+		this.content.append(content).append("\n");
+	}
+	@Override
+	public void append(String content, boolean shouldSend) {
+		if (this.shouldSend) {
+			if (!shouldSend) {
+				createFullContent();
+			} else {
+				if (sendContent != null) {
+					sendContent.append(content);
+				}
+			}
+		}
+		this.content.append(content);
+	}
+	@Override
+	public void appendSending(String content) {
+		createFullContent();
+		this.sendContent.append(content);
+	}
+
+	@Override
+	public void setFullContent(String fullContent) {
+		if (fullContent == null)
+			this.sendContent = null;
+		else
+			this.sendContent = new StringBuilder(fullContent);
+	}
+	@Override
+	public void appendReasoner(String fullContent) {
+		createReasonContent().append(fullContent);
+	}
+	@Override
+	public void setAudio(String id) {
+		setAudioId(id);
+	}
+	@Override
+	public String toString() {
+		return "HistoryItem [role=" + getRole() + ", fullContent=" + getFullContent() + "]";
+	}
+	@Override
+	public Role getRole() {
+		return role;
+	}
+	@Override
+	public int getIdentifier() {
+		return identifier;
+	}
+	@Override
+	public String getReasoningContent() {
+		if(reasonContent==null)
+			return "";
+		return reasonContent.toString();
+	}
+	@Override
+	public boolean isSendable() {
+		return shouldSend;
+	}
+	@Override
+	public void setSendable(boolean sendable) {
+		this.shouldSend=sendable;
+	}
+	@Override
+	public String getAudioId() {
+		return audioId;
+	}
+	@Override
+	public void setAudioId(String audioId) {
+		this.audioId = audioId;
+	}
+	@Override
+	public StateIntf getLastState() {
+		return lastState;
+	}
+	@Override
+	public void setLastState(StateIntf lastState) {
+		this.lastState = lastState;
+	}
+	void setRole(Role role) {
+		this.role = role;
+	}
+	void setIdentifier(int identifier) {
+		this.identifier = identifier;
+	}
+
+}
