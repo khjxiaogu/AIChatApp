@@ -22,6 +22,7 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIArticleMain;
 import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AIGalgameMain;
+import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
 import com.khjxiaogu.aiwuxia.apps.AIWuxiaMain;
 import com.khjxiaogu.aiwuxia.state.History;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -103,23 +104,33 @@ public class AIChatService implements ServiceClass {
 		//apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
 		for(File fn:parent.listFiles(File::isDirectory)) {
 			try {
-				if(fn.getName().endsWith("talk")) {
-					String name=fn.getName();
-					File metaFile=new File(fn,"meta.json");
-					if(metaFile.exists()) {
-						JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
-						if(meta.has("name")&&(!meta.has("enabled")||meta.get("enabled").getAsBoolean())) {
-							getLogger().info("正在加载AI："+name);
+				String name=fn.getName();
+				File metaFile=new File(fn,"meta.json");
+				boolean isSucceed=false;
+				if(metaFile.exists()) {
+					JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
+					if(meta.has("name")&&(!meta.has("enabled")||meta.get("enabled").getAsBoolean())) {
+						getLogger().info("正在加载AI："+name);
+						if(fn.getName().endsWith("talk")) {
 							apps.put(name, new AICharaTalkMain(parent,name,meta.get("name").getAsString()));
-							getLogger().info("AI加载成功："+name);
+							isSucceed=true;
+						}else if(fn.getName().endsWith("trpg")) {
+							getLogger().info("正在加载AI："+name);
+							apps.put(name, new AITRPGSceneMain(parent,name,meta.get("name").getAsString()));
+							isSucceed=true;
+						}
+						if(isSucceed) {
 							if(meta.has("trial")&&meta.get("trial").getAsBoolean())
 								trial.add(name);
+							getLogger().info("AI加载成功："+name);
 						}else {
-							getLogger().info("忽视AI："+name+" 出于配置原因");
+							
 						}
 					}else {
-						getLogger().info("忽视AI："+name+" 由于找不到元数据");
+						getLogger().info("忽视AI："+name+" 出于配置原因");
 					}
+				}else {
+					getLogger().info("忽视AI："+name+" 由于找不到元数据");
 				}
 			} catch (Exception e) {
 				getLogger().error(e);

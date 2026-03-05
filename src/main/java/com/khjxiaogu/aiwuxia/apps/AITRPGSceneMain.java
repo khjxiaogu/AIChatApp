@@ -222,7 +222,7 @@ public class AITRPGSceneMain extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		//头几次用思维链版本构建格式
-		return b.end().add("model",/*i<=10?*/"deepseek-reasoner"/*:"deepseek-chat"*/).add("temperature", 1.3).add("max_tokens", 500).add("stream", false).end();
+		return b.end().add("model",/*i<=10?*/"deepseek-reasoner"/*:"deepseek-chat"*/).add("temperature", 1.3).add("max_tokens", 1000).add("stream", false).end();
 
 	}
 	public JsonObject constructSummaryrequest(AISession state,String summary) {
@@ -289,7 +289,6 @@ public class AITRPGSceneMain extends AIApplication {
 		String oldchara=state.getExtra().get("chara");
 		String oldbg=state.getExtra().get("back");
 		String audioId=null;
-		CompletableFuture<Boolean> cf=null;
 		handleReasonerContent(resp,state);
 		if(back!=null)
 		oldbg=back.getSceneData(state.getState().perks);
@@ -306,11 +305,12 @@ public class AITRPGSceneMain extends AIApplication {
 			}
 			sendContent.append(last).append("\n");
 			if (status == 0) {//处理主要剧情
-				if(last.startsWith("==对话==")) {
+				/*if(last.startsWith("==对话==")) {
 					status=1;
-				}else//对话部分错误，督促AI重新生成一份
-					throw new RegenerateNeededException(oldstate);
-				
+				}else*/
+				if (last.startsWith("==场景=="))
+					throw new RegenerateNeededException(oldstate);//对话部分错误，督促AI重新生成一份
+				status=1;
 
 			}else if(status==1) {
 				if (last.startsWith("==场景==")) {
@@ -376,16 +376,6 @@ public class AITRPGSceneMain extends AIApplication {
 		state.getExtra().put("back",bg);
 		state.add(Role.ASSISTANT, content.toString().trim(), sendContent.toString().trim());
 		
-		if(cf!=null) {
-			try {
-				if(cf.get()) {
-					state.getLast().audioId=audioId;	
-					state.postAudioComplete(state.getLast().getIdentifier(), audioId);
-				}
-			} catch (InterruptedException | ExecutionException e) {
-				e.printStackTrace();
-			}
-		}
 		return oldstate;
 	}
 
