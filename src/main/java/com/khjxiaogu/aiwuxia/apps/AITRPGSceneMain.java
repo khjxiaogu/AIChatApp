@@ -394,19 +394,31 @@ public class AITRPGSceneMain extends AIApplication {
 		
 		if(character!=null) {
 			List<String> charaList=new ArrayList<>();
+			List<String> sideList=new ArrayList<>();
 			for(Entry<String, String> s:characs.values.entrySet()) {
-				if(s.getKey().endsWith("位置")&&"前".equals(s.getValue())) {
+				if(s.getKey().endsWith("位置")&&!"不在".equals(s.getValue())) {
+					
 					Map<String,String> charaData=new HashMap<>();
 					String name=s.getKey().substring(0,s.getKey().length()-2);
 					charaData.put("姓名", name);
 					charaData.put("表情", characs.get(name+"表情"));
+					
 					String cchara=character.getSceneData(charaData);
-					if(cchara!=null)
-						charaList.add(cchara);
+					
+					if(cchara!=null) {
+						if("前".equals(s.getValue())) {
+							charaList.add(cchara);
+						}else if("侧".equals(s.getValue())) {
+							sideList.add(cchara);
+						}
+					}
 				}
 			}
 			StringBuilder charaBuilder=new StringBuilder();
 			for(String s:charaList) {
+				charaBuilder.append(s).append(",");
+			}
+			for(String s:sideList) {
 				charaBuilder.append(s).append(",");
 			}
 			chara=charaBuilder.toString();
