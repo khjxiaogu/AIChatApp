@@ -16,8 +16,13 @@ public class BlockingReader extends Reader {
 
 		if(isEnded)
 			return -1;
-		if(internal==null)
+		if(internal==null) {
+			try {
+				Thread.sleep(100);
+			} catch (InterruptedException e) {
+			}
 			return 0;
+		}
 		char[] ca;
 	
 		synchronized(lock) {
@@ -48,6 +53,9 @@ public class BlockingReader extends Reader {
 	}
 	@Override
 	public int read(char[] cbuf, int off, int len) throws IOException {
+		if(isEnded)
+			return -1;
+		
 		CharBuffer cb=CharBuffer.allocate(len);
 		int alen=read(cb);
 		cb.rewind();

@@ -15,8 +15,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIApplication;
 import com.khjxiaogu.aiwuxia.AISession;
+import com.khjxiaogu.aiwuxia.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.Role;
 import com.khjxiaogu.aiwuxia.VolcanoApi;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
@@ -27,6 +29,7 @@ import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -42,7 +45,8 @@ public class AICharaTalkMain extends AIApplication {
 	Map<String,String> replacements;
 	File basePath;
 	String volcappid;
-
+	String localChara;
+	Map<String,String> emote2emote;
 
 	public AICharaTalkMain(File basePath,String modelFolder,String charaname) {
 		super();
@@ -58,13 +62,18 @@ public class AICharaTalkMain extends AIApplication {
 			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
 			summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
 			prelogue = readFile(new File(model, "prelogue.txt"));
-			
-			File voiceFile=new File(model,"volcappid.txt");
-			if(voiceFile.exists())
-				volcappid = readFile(voiceFile);
+			File metaFile=new File(model,"meta.json");
+			JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
+			if(meta.has("volcappid"))
+				volcappid = meta.get("volcappid").getAsString();
+			if(meta.has("localChara")) {
+				localChara = meta.get("localChara").getAsString();
+				emote2emote = gs.fromJson(meta.get("localEmote"), Map.class);
+			}
 			File adrp=new File(model, "replacements.json");
 			if(adrp.exists())
-			replacements = gs.fromJson(readFile(adrp), Map.class);
+				replacements = gs.fromJson(readFile(adrp), Map.class);
+			System.out.println(replacements);
 			if(new File(model,"chara.json").exists()) {
 				character=gs.fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
 				
@@ -252,12 +261,16 @@ public class AICharaTalkMain extends AIApplication {
 	}
 	public JsonObject constructSummaryrequest(AISession state,String summary) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", this.summary).end();
-		if(state.getExtra().containsKey("lastSummary")) {
-			b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
-		}
-		// if (status != null&&!status.isEmpty())
-		b.object().add("role",Role.USER.getRoleName()).add("content", "=== 对话块 ===\n"+summary.trim()).end();
+				.add("role", "system").add("content", this.summary).end();
+			StringBuilder sumerize=new StringBuilder();
+			if(state.getExtra().containsKey("lastSummary")) {
+				sumerize.append("=== 前情提要 ===\\n");
+				sumerize.append( state.getExtra().get("lastSummary"));
+			}
+			sumerize.append("=== 对话块 ===\n");
+			sumerize.append(summary.trim());
+			// if (status != null&&!status.isEmpty())
+			b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
 
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
@@ -345,7 +358,7 @@ public class AICharaTalkMain extends AIApplication {
 					status = 3;
 					if(state.isAudioSession()&&audioId==null) {
 						audioId=UUID.randomUUID().toString();
-						this.generateVoice(state, content.toString(), audioId);
+						cf=this.generateVoice(state, content.toString(), audioId);
 						
 					}
 				} else {
@@ -426,24 +439,54 @@ public class AICharaTalkMain extends AIApplication {
 			}
 		final String faudioId=audioId;
 		final String ftext=orgText;
-		return CompletableFuture.supplyAsync
-		(()->{
-			try {
-				state.appendVoiceToken(ftext.length());
-				byte[] data=VolcanoApi.getAudioData(volcappid,state.user, ftext, faudioId);
-				File aud=new File(basePath,"voice");
-				aud.mkdirs();
-				try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
-					fos.write(data);
-				};
-				return true;
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-			return false;
-		});
+		if(localChara!=null&&LocalVoiceModel.hasOnlineService()) {
+			return CompletableFuture.supplyAsync
+					(()->{
+						try {
+							System.out.println("trying local model");
+							CompletableFuture<byte[]> dataFuture=LocalVoiceModel.requireAudio(localChara, emote2emote.get(state.getState().perks.get("表情")), faudioId, ftext);
+							byte[] data=dataFuture.get();
+							if(data!=null) {
+								File aud=new File(basePath,"voice");
+								aud.mkdirs();
+								try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
+									fos.write(data);
+								};
+								return true;
+							}
+						} catch (IOException | InterruptedException | ExecutionException e) {
+							e.printStackTrace();
+						}
+						return false;
+					});
+			
+		}
+		if(volcappid!=null&&state.getData().isAudioSession)
+			return CompletableFuture.supplyAsync
+			(()->{
+				try {
+					state.appendVoiceToken(ftext.length());
+					byte[] data=VolcanoApi.getAudioData(volcappid,state.user, ftext, faudioId);
+					File aud=new File(basePath,"voice");
+					aud.mkdirs();
+					try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
+						fos.write(data);
+					};
+					return true;
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				return false;
+			});
+		return CompletableFuture.completedFuture(false);
 	}
 	
+	@Override
+	public boolean isLocalVoiceSupported() {
+		return localChara!=null;
+	}
+
+
 	public void prepareScene(AISession state) {
 		String chara=state.getExtra().get("chara");
 		String bg=state.getExtra().get("back");

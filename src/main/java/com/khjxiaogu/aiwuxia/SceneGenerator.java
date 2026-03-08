@@ -321,7 +321,7 @@ public class SceneGenerator {
 		school.withAlt().emote().withValue("脸红").end().withScene("thy1haixiu3bu.png").end();
 		school.withAlt().emote().withValue("惊恐").end().withScene("thy1jingkong12.png").end();
 		school.withAlt().emote().withValue("哭泣").end().withScene("thy1ku3.png").end();
-		school.withAlt().emote().withValue("灼灼").end().withScene("thy1kuazhang1.png").end();
+		school.withAlt().emote().withValue("兴奋").end().withScene("thy1kuazhang1.png").end();
 		school.withAlt().emote().withValue("冷漠").end().withScene("thy1putong1.png").end();
 		school.withAlt().emote().withValue("愤怒").end().withScene("thy1shengqi5.png").end();
 		school.withAlt().emote().withValue("微笑").end().withScene("thy1xiao1.png").end();
@@ -334,7 +334,7 @@ public class SceneGenerator {
 		school.withAlt().emote().withValue("脸红").end().withScene("thy3haixiu3bu.png").end();
 		school.withAlt().emote().withValue("惊恐").end().withScene("thy3jingkong16.png").end();
 		school.withAlt().emote().withValue("哭泣").end().withScene("thy3ku2.png").end();
-		school.withAlt().emote().withValue("灼灼").end().withScene("thy3kuazhang4.png").end();
+		school.withAlt().emote().withValue("兴奋").end().withScene("thy3kuazhang4.png").end();
 		school.withAlt().emote().withValue("冷漠").end().withScene("thy3aishang1.png").end();
 		school.withAlt().emote().withValue("愤怒").end().withScene("thy3shengqi4.png").end();
 		school.withAlt().emote().withValue("微笑").end().withScene("thy3xiao1.png").end();

@@ -38,6 +38,7 @@ import com.khjxiaogu.webserver.web.ServiceClass;
 import com.khjxiaogu.webserver.web.lowlayer.Request;
 import com.khjxiaogu.webserver.web.lowlayer.Response;
 import com.khjxiaogu.webserver.wrappers.ResultDTO;
+import com.khjxiaogu.webserver.wrappers.inadapters.DataIn;
 import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
 
 public class AIChatService implements ServiceClass {
@@ -355,6 +356,18 @@ public class AIChatService implements ServiceClass {
 			e.printStackTrace();
 		}
 	}
+	@HttpPath("/kh$localModelDeploy")
+	public void voiceWebSocket(Request req, Response res) {
+		res.suscribeWebsocketEvents(LocalVoiceModel.lhs);
+		
+	}
+	@HttpPath("/kh$localModelDeployData")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO voicePost(@Query("reqid")String reqid,@Query("type")String type,@GetBy(DataIn.class)byte[] data) {
+		LocalVoiceModel.lhs.onMessage(reqid, data);
+		return new ResultDTO(200);
+	}
 	/**
 	 * @param req
 	 */
@@ -461,6 +474,7 @@ public class AIChatService implements ServiceClass {
 	}
 
 	public void markRelease(WebSocketAISession state) {
+		logger.info("AI " + state.getChatId() + " UnLoaded");
 		uidsockets.remove(state.getChatId());
 	}
 

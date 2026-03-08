@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -35,7 +36,7 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
 public abstract class AIApplication {
 	protected static Gson gs = new Gson();
 	protected static Gson ppgs = new GsonBuilder().setPrettyPrinting().create();
-	protected static ExecutorService exc=Executors.newCachedThreadPool();
+	public  static ExecutorService exc=Executors.newCachedThreadPool();
 	protected String system;
 	protected SimpleLogger logger=new SimpleLogger("AI智能");
 	public static interface MessageHandler {
@@ -91,7 +92,9 @@ public abstract class AIApplication {
 		}
 		return ret;
 	};
-
+	public boolean isLocalVoiceSupported() {
+		return false;
+	}
 	public static AISession.AIData dataFromJson(File jsonFile) throws JsonSyntaxException, IOException {
 		return gs.fromJson(FileUtil.readString(jsonFile), AISession.AIData.class);
 	}
@@ -124,6 +127,9 @@ public abstract class AIApplication {
 
 	public void handleSpeech(AISession state, String ret) {
 		state.onGenStart();
+		int mid=(int) UUID.randomUUID().getMostSignificantBits();
+		String sid=Integer.toString(mid,16);
+		logger.info("message received "+sid);
 		for (MessageHandler i : handlers) {
 			try {
 				if ((ret=i.apply(state,ret))==null)
@@ -132,6 +138,7 @@ public abstract class AIApplication {
 				t.printStackTrace();
 			}
 		}
+		logger.info("message handled "+sid);
 		state.onGenComplete();
 	}
 
@@ -139,7 +146,7 @@ public abstract class AIApplication {
 
 	public RespScheme sendAIRequest(JsonObject req) throws IOException {
 		String tosend = gs.toJson(req);
-		logger.info(ppgs.toJson(req));
+		logger.info("trigger generation");
 		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
@@ -165,8 +172,8 @@ public abstract class AIApplication {
 	public AIOutput sendAIStreamedRequest(JsonObject req, Consumer<Usage> gainUsage) throws IOException {
 		req.addProperty("stream", true);
 		req.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
+		logger.info("trigger generation");
 		String tosend = gs.toJson(req);
-		logger.info(ppgs.toJson(req));
 		StreamedAIOutput readable=new StreamedAIOutput();
 		Usage usage=new Usage();
 		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
@@ -178,6 +185,7 @@ public abstract class AIApplication {
 						System.out.println();
 						logger.info("=================Usage===============");
 						logger.info(usage);
+						logger.info("finish generation");
 						gainUsage.accept(usage);
 						readable.endContent();
 						return;

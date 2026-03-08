@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -25,12 +26,14 @@ import io.netty.util.concurrent.UnorderedThreadPoolEventExecutor;
 
 public class WebSocketAISession extends AISession implements WebsocketEvents {
 
-	ChannelGroup conn=new DefaultChannelGroup(new UnorderedThreadPoolEventExecutor(2));
+	ChannelGroup conn=new DefaultChannelGroup(new UnorderedThreadPoolEventExecutor(3));
 	private final AIChatService parent;
 	private final String chatId;
 	File fn;
 	AIApplication aiapp;
+	ReentrantLock lock=new ReentrantLock();
 	boolean isClientAudioEnabled=false;
+	boolean isLocalAudioEnabled=false;
 	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,File fn, HistoryHolder history, AIData data) {
 		super(uid,history, data);
 		this.fn = fn;
@@ -50,7 +53,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			aiapp.provideInitial(this);
 		}
 		aiapp.prepareScene(this);
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).add("price", this.getPrice()).add("isVoiceUsable",super.isAudioSession()).end().toString()));
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).add("price", this.getPrice()).add("isVoiceUsable",super.isAudioSession()||(aiapp.isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService())).end().toString()));
 
 	}
 	
@@ -77,12 +80,25 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public void onMessage(Channel conn, String message) {
 		JsonObject jo=JsonParser.parseString(message).getAsJsonObject();
 		if(jo.has("message")) {
-			if(isGenerating) {
-				conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id",-1).add("title", "").add("message", "内容生成中，请稍后再试。").end().toString()));
-				return;
+			if(lock.tryLock()) {
+				try {
+					if(isGenerating) {
+						conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id",-1).add("title", "").add("message", "内容生成中，请稍后再试。").end().toString()));
+						return;
+					}
+					aiapp.handleSpeech(this, jo.get("message").getAsString());
+					if(aiapp.isLocalVoiceSupported()&&!super.isAudioSession()) {
+						if(isLocalAudioEnabled!=LocalVoiceModel.hasOnlineService()) {
+							isLocalAudioEnabled=LocalVoiceModel.hasOnlineService();
+							conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
+						}
+					}
+				}finally {
+					lock.unlock();
+				}
+			}else {
+				conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id",-1).add("title", "").add("message", "操作太快啦，请稍后再试").end().toString()));
 			}
-			isGenerating=true;
-			aiapp.handleSpeech(this, jo.get("message").getAsString());
 		}else if(jo.has("requestBackLog")) {
 			requireMoreMessages();
 		}else if(jo.has("voiceEnabled")) {
@@ -136,23 +152,24 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	@Override
 	public void onGenComplete() {
 		
-		super.onGenComplete();
+		
 		parent.updateBrief(chatId, aiapp.getBrief(this));
 		try {
 			AIApplication.saveToJson(this, fn);
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		isGenerating=false;
 		String price=getPrice();
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).add("price",price).end().toString()));
+		
 		parent.setPrice(chatId, price);
+		super.onGenComplete();
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).add("price",price).end().toString()));
 		if(this.conn.isEmpty()) {
 			parent.markRelease(this);
 		}
 	}
 	public boolean isAudioSession() {
-		return isClientAudioEnabled&&super.isAudioSession();
+		return isClientAudioEnabled&&(isLocalAudioEnabled||super.isAudioSession());
 	}
 	public String getChatId() {
 		return chatId;

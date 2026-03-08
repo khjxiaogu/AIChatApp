@@ -22,7 +22,7 @@ public class AISession implements Cloneable {
 		private int minRow=0;
 		private GameStage stage = GameStage.INITIALIZE;
 		private Usage usage = new Usage();
-		private boolean isAudioSession=false;
+		public boolean isAudioSession=false;
 	}
 	protected HistoryHolder history;
 	protected AIData data;

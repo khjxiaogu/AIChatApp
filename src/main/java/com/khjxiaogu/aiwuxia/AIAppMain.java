@@ -9,9 +9,11 @@ import javax.swing.UIManager;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
 import com.khjxiaogu.aiwuxia.state.MemoryHistory;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 
 public class AIAppMain {
 
@@ -21,7 +23,7 @@ public class AIAppMain {
 
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
 		String name="xinghantrpg";
-		int idx=0;
+		int idx=1;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
@@ -55,7 +57,14 @@ public class AIAppMain {
 		// dialog.setBackLog(constructBackLog());
 		acw.setUsage(aistate.getUsage());
 		final AISession cstate = aistate;
-		
+		BasicWebServerBuilder.build().createURIRoot()
+		.createWrapper(new AIChatLocal()).rule("/aichat")
+		.complete()
+		.complete()
+		.setNotFound(new File(new File("save"), "404.html"))
+		.compile()
+		.serverHttp(8998)
+		.info("http服务端已开启");
 		Thread updateThread = new Thread(() -> {
 
 			try {

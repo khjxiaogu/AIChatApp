@@ -138,12 +138,14 @@ public class AITRPGSceneMain extends AIApplication {
 		int i=0;
 		while(i<5) {//最多尝试5次，否则认为是提示词问题
 			try {
+				
 				resp = sendAIStreamedRequest(req, state::addUsage);
 				return precessResponse(resp, state);
 			}catch(RegenerateNeededException ex) {
 				state.getState().set(ex.oldState);
-				i++;
+				
 			}
+			i++;
 		}
 		if(state.getLast().getRole()==Role.USER)
 			state.removeLast();
@@ -190,22 +192,29 @@ public class AITRPGSceneMain extends AIApplication {
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.sendableIterator();
+				int removedSpeech=0;
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
-					len-=hi.getFullContent().length();
-					
-					if(hi.getRole()!=Role.SYSTEM) {
-						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getFullContent()).append("\n");
-					}
-					his.add(hi);
-					if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
-						break;
+					if(hi.isSendable()) {
+						len-=hi.getFullContent().length();
+						
+						if(hi.getRole()!=Role.SYSTEM) {
+							summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getFullContent()).append("\n");
+						}
+						his.add(hi);
+						
+						if(hi.getRole()==Role.ASSISTANT) {
+							removedSpeech++;
+							if(len<=20000) {
+								break;
+							}
+						}
 					}
 					
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
 				his.forEach(t->t.setSendable(false));
-				state.minRows(his.size());
+				state.minRows(removedSpeech);//generally half speech is ai
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
@@ -226,9 +235,15 @@ public class AITRPGSceneMain extends AIApplication {
 	public JsonObject constructSummaryrequest(AISession state,String summary) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", this.summary).end();
-
+		StringBuilder sumerize=new StringBuilder();
+		if(state.getExtra().containsKey("lastSummary")) {
+			sumerize.append("=== 前情提要 ===\\n");
+			sumerize.append( state.getExtra().get("lastSummary"));
+		}
+		sumerize.append("=== 对话块 ===\n");
+		sumerize.append(summary.trim());
 		// if (status != null&&!status.isEmpty())
-		b.object().add("role",Role.USER.getRoleName()).add("content", "=== 对话块 ===\n"+summary.trim()).end();
+		b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
 
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",

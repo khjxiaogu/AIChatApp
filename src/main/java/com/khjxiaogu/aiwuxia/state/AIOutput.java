@@ -9,6 +9,7 @@ import java.io.StringReader;
 public interface AIOutput {
 	public Reader getReasoner();
 	public Reader getContent();
+	public boolean isEnded();
 	public static class StreamedAIOutput implements AIOutput{
 		public final BlockingReader reasoner;
 		public final BlockingReader content;
@@ -24,6 +25,7 @@ public interface AIOutput {
 			content.putCh(object);
 		}
 		public void endContent() {
+			reasoner.setEnded();
 			content.setEnded();
 		}
 		public boolean isEnded() {
@@ -52,6 +54,9 @@ public interface AIOutput {
 		@Override
 		public Reader getContent() {
 			return content;
+		}
+		public boolean isEnded() {
+			return true;
 		}
 	}
 }
