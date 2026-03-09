@@ -390,10 +390,14 @@ public class AITRPGSceneMain extends AIApplication {
 					state.appendLine(Role.ASSISTANT, last, false);
 			} else if (status == 3) {	
 				if(last.contains("=")) {
-					
 					String[] lasts=last.split("=");
-					characs.put(lasts[0].trim(), lasts[1].trim());
+					if(lasts.length==2) {
+						characs.put(lasts[0].trim(), lasts[1].trim());
+						state.appendInvisibleLine(Role.ASSISTANT, last);
+					}
+					
 				}
+				continue;
 			}
 			state.appendInvisibleLine(Role.ASSISTANT, last);
 
