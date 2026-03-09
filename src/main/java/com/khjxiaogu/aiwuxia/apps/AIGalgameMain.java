@@ -332,8 +332,8 @@ public class AIGalgameMain extends AIApplication {
 
 	@Override
 	public String getBrief(AISession state) {
-		if(state.getState().intfs.isEmpty())
+		if(state.getExtra().isEmpty())
 			return null;
-		return state.getState().intfs.values().iterator().next().values.get("姓名");
+		return state.getExtra().get("name");
 	}
 }

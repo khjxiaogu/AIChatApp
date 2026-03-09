@@ -30,16 +30,15 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	private final AIChatService parent;
 	private final String chatId;
 	File fn;
-	AIApplication aiapp;
+	
 	ReentrantLock lock=new ReentrantLock();
 	boolean isClientAudioEnabled=false;
 	boolean isLocalAudioEnabled=false;
 	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,File fn, HistoryHolder history, AIData data) {
-		super(uid,history, data);
+		super(uid,history, data,aiapp);
 		this.fn = fn;
 		this.parent=par;
 		this.chatId=chatid;
-		this.aiapp=aiapp;
 	}
 
 
@@ -47,10 +46,11 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public void onOpen(Channel conn, FullHttpRequest handshake) {
 		
 		this.conn.add(conn);
+
 		if(super.getStage()!=GameStage.INITIALIZE) {
 			requireMoreMessages();
 		}else {
-			aiapp.provideInitial(this);
+			provideInitial();
 		}
 		aiapp.prepareScene(this);
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating?1:0).add("price", this.getPrice()).add("isVoiceUsable",super.isAudioSession()||(aiapp.isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService())).end().toString()));
@@ -82,17 +82,15 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		if(jo.has("message")) {
 			if(lock.tryLock()) {
 				try {
-					if(isGenerating) {
-						conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id",-1).add("title", "").add("message", "内容生成中，请稍后再试。").end().toString()));
-						return;
-					}
-					aiapp.handleSpeech(this, jo.get("message").getAsString());
-					if(aiapp.isLocalVoiceSupported()&&!super.isAudioSession()) {
-						if(isLocalAudioEnabled!=LocalVoiceModel.hasOnlineService()) {
-							isLocalAudioEnabled=LocalVoiceModel.hasOnlineService();
-							conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
+					commandExec.submit(()->{
+						aiapp.handleSpeech(this, jo.get("message").getAsString());
+						if(aiapp.isLocalVoiceSupported()&&!super.isAudioSession()) {
+							if(isLocalAudioEnabled!=LocalVoiceModel.hasOnlineService()) {
+								isLocalAudioEnabled=LocalVoiceModel.hasOnlineService();
+								conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
+							}
 						}
-					}
+					});
 				}finally {
 					lock.unlock();
 				}

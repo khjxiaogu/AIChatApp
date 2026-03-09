@@ -12,8 +12,8 @@ public class AppAISession extends AISession {
 
 
 
-	public AppAISession(String user, HistoryHolder historym, AIData data) {
-		super(user, historym, data);
+	public AppAISession(String user, HistoryHolder historym, AIData data,AIApplication aiapp) {
+		super(user, historym, data,aiapp);
 	}
 
 	@Override

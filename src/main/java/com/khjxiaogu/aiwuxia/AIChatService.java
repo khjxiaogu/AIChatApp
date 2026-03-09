@@ -472,7 +472,7 @@ public class AIChatService implements ServiceClass {
 		res.suscribeWebsocketEvents(state);
 		
 	}
-
+	
 	public void markRelease(WebSocketAISession state) {
 		logger.info("AI " + state.getChatId() + " UnLoaded");
 		uidsockets.remove(state.getChatId());
