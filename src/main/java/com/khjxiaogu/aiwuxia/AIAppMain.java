@@ -22,7 +22,7 @@ public class AIAppMain {
 	}
 
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-		String name="xinghantrpg";
+		String name="fengxitalk";
 		int idx=1;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
@@ -34,37 +34,46 @@ public class AIAppMain {
 		acw.setVisible(true);
 		File dataFolder=new File("save");
 		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
-		AISession aistate = null;
-		if (saveData.exists()) {
-			aistate = new AppAISession("appuser",
-				AIApplication.historyFromJson(saveData),
-				AIApplication.dataFromJson(saveData));
-		}
 		File modelFolder=new File(dataFolder,name);
 		File metaFile=new File(modelFolder,"meta.json");
 		JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 		
-		AITRPGSceneMain main = new AITRPGSceneMain(dataFolder,name,meta.get("name").getAsString());
+		AIApplication main = new AICharaTalkMain(dataFolder,name,meta.get("name").getAsString());
+		AISession aistate = null;
+		if (saveData.exists()) {
+			aistate = new AppAISession("appuser",
+				AIApplication.historyFromJson(saveData),
+				AIApplication.dataFromJson(saveData),
+				main);
+		}
+
 		// construct initail message
 		if (aistate == null) {
 			acw.setBackLog("正在生成初始面板...","");
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.AIData());
-			main.provideInitial(aistate);
+			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.AIData(),main);
+			aistate.provideInitial();
 		}
 		
 		acw.setStatus(main.constructSystem(aistate.getState()));
 		// dialog.setBackLog(constructBackLog());
 		acw.setUsage(aistate.getUsage());
 		final AISession cstate = aistate;
-		BasicWebServerBuilder.build().createURIRoot()
-		.createWrapper(new AIChatLocal()).rule("/aichat")
-		.complete()
-		.complete()
-		.setNotFound(new File(new File("save"), "404.html"))
-		.compile()
-		.serverHttp(8998)
-		.info("http服务端已开启");
+		new Thread(()->{
+			try {
+				BasicWebServerBuilder.build().createURIRoot()
+				.createWrapper(new AIChatLocal()).rule("/aichat")
+				.complete()
+				.complete()
+				.setNotFound(new File(new File("save"), "404.html"))
+				.compile()
+				.serverHttp(8998)
+				.info("http服务端已开启");
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}).start();
 		Thread updateThread = new Thread(() -> {
 
 			try {
@@ -102,7 +111,11 @@ public class AIAppMain {
 			}
 
 			try {
-				main.handleSpeech(aistate, ret);
+				aistate.handleSpeech(ret);
+				Thread.sleep(200);
+				while(aistate.isGenerating) {
+					Thread.sleep(100);
+				}
 				AIApplication.saveToJson(aistate, saveData);
 				acw.setStatus(main.constructSystem(aistate.getState()));
 				// dialog.setBackLog(constructBackLog());

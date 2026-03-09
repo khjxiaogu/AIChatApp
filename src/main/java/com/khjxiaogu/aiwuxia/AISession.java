@@ -3,6 +3,8 @@ package com.khjxiaogu.aiwuxia;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.state.GameStage;
@@ -26,17 +28,20 @@ public class AISession implements Cloneable {
 	}
 	protected HistoryHolder history;
 	protected AIData data;
+	AIApplication aiapp;
 	protected StringBuilder currentReasoner=null;
 	public final String user;
-	transient boolean isGenerating;
+	protected ExecutorService commandExec=Executors.newFixedThreadPool(1);
+	volatile transient boolean isGenerating;
 	public AIData getData() {
 		return data;
 	}
-	public AISession(String user,HistoryHolder historym, AIData data) {
+	public AISession(String user,HistoryHolder historym, AIData data,AIApplication aiapp) {
 		super();
 		this.history = historym;
 		this.data = data;
 		this.user=user;
+		this.aiapp=aiapp;
 	}
 	@Override
 	protected Object clone() throws CloneNotSupportedException {
@@ -224,5 +229,12 @@ public class AISession implements Cloneable {
 	}
 	public void appendVoiceToken(int length) {
 		data.usage.appendVoiceTokens(length);
+	}
+	public void provideInitial() {
+		commandExec.submit(()->aiapp.provideInitial(this));
+		
+	}
+	public void handleSpeech(String ret) {
+		commandExec.submit(()->aiapp.handleSpeech(this,ret));
 	}
 }

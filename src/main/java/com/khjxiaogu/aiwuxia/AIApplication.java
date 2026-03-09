@@ -37,6 +37,7 @@ public abstract class AIApplication {
 	protected static Gson gs = new Gson();
 	protected static Gson ppgs = new GsonBuilder().setPrettyPrinting().create();
 	public  static ExecutorService exc=Executors.newCachedThreadPool();
+	
 	protected String system;
 	protected SimpleLogger logger=new SimpleLogger("AI智能");
 	public static interface MessageHandler {
@@ -124,9 +125,13 @@ public abstract class AIApplication {
 	public AIApplication() {
 		super();
 	}
-
-	public void handleSpeech(AISession state, String ret) {
-		state.onGenStart();
+	public void handleSpeech(AISession state,final String messageInput) {
+		if(state.isGenerating) {
+			state.postMessage(-1, Role.APPLICATION,"内容生成中，请稍后再试。");
+			return;
+		}
+		state.onGenStart();	
+		String ret=messageInput;
 		int mid=(int) UUID.randomUUID().getMostSignificantBits();
 		String sid=Integer.toString(mid,16);
 		logger.info("message received "+sid);
@@ -140,8 +145,8 @@ public abstract class AIApplication {
 		}
 		logger.info("message handled "+sid);
 		state.onGenComplete();
+		
 	}
-
 	public abstract void provideInitial(AISession state);
 
 	public RespScheme sendAIRequest(JsonObject req) throws IOException {
@@ -166,8 +171,13 @@ public abstract class AIApplication {
 		BufferedReader br=new BufferedReader(output.getReasoner());
 		int read;
 		state.resetReasoner();
-		while((read=br.read())!=-1)
-			state.appendReasoning(String.valueOf(Character.toChars(read)));
+		char[] ch=new char[32];
+		while((read=br.read(ch,0,32))!=-1) {
+			if(read>0) {
+				String input=String.valueOf(ch,0,read);
+				state.appendReasoning(input);
+			}
+		}
 	}
 	public AIOutput sendAIStreamedRequest(JsonObject req, Consumer<Usage> gainUsage) throws IOException {
 		req.addProperty("stream", true);
@@ -216,9 +226,9 @@ public abstract class AIApplication {
 	public abstract String constructSystem(StateIntf state);
 	public abstract String getBrief(AISession state);
 
-
-
-
+	/**
+	 * This method should be read-only and mt support
+	 * */
 	public void prepareScene(AISession state) {
 
 		
