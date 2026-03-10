@@ -25,7 +25,7 @@ public class AIGroupApplication extends AIApplication {
 
 	@Override
 	public String getName() {
-		return "枫怡群聊";
+		return name;
 	}
 
 	@Override
@@ -157,8 +157,9 @@ public class AIGroupApplication extends AIApplication {
 
 	}
 	String summary;
-	public AIGroupApplication(File path) throws IOException {
+	public AIGroupApplication(File path,String name) throws IOException {
 		super();
+		this.name=name;
 		system = 
 			
 			FileUtil.readString(new File(path, "role.txt")).replace("\r", "")+

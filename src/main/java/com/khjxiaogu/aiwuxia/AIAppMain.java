@@ -22,7 +22,7 @@ public class AIAppMain {
 	}
 
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-		String name="fengxitalk";
+		String name="haiyintalk";
 		int idx=1;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
@@ -33,7 +33,9 @@ public class AIAppMain {
 		AIChatWindow acw=new AIChatWindow();
 		acw.setVisible(true);
 		File dataFolder=new File("save");
-		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		//File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		File saveData =new File(new File(dataFolder,"saveData"), "1d4a0998b04d4755a7b3d8eba2f5abae.json");
+		
 		File modelFolder=new File(dataFolder,name);
 		File metaFile=new File(modelFolder,"meta.json");
 		JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
