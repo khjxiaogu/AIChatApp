@@ -17,11 +17,11 @@ public class AIGroupSession extends AISession {
 	}
 	public String getPrompt() {
 		StringBuilder sb=new StringBuilder();
-		sb.append("当前时间：").append(new Date().toLocaleString());
+		sb.append("当前时间：").append(new Date().toLocaleString()).append("\n");
 		while(true) {
 			String msg=messageQueue.pollFirst();
 			if(msg==null)break;
-			sb.append(msg);
+			sb.append(msg).append("\n");
 		}
 		return sb.toString();
 	}
