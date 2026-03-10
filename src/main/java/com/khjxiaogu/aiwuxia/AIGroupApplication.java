@@ -6,17 +6,11 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Scanner;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -24,7 +18,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIGroupApplication extends AIApplication {
-
+	String name;
 	@Override
 	public void provideInitial(AISession state) {
 	}
@@ -165,8 +159,13 @@ public class AIGroupApplication extends AIApplication {
 	String summary;
 	public AIGroupApplication(File path) throws IOException {
 		super();
-		system = FileUtil.readString(new File(path, "aigroupfengyi.txt")).replace("\r", "");
-		summary = FileUtil.readString(new File(path, "summary.txt")).replace("\r", "");
+		system = 
+			
+			FileUtil.readString(new File(path, "role.txt")).replace("\r", "")+
+			FileUtil.readString(new File(path, "charaset.txt")).replace("\r", "")+
+			FileUtil.readString(new File(path, "rules.txt")).replace("\r", "");
+		summary = FileUtil.readString(new File(path, "summary.txt")).replace("\r", "")+
+			FileUtil.readString(new File(path, "charaset.txt")).replace("\r", "");
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
