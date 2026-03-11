@@ -39,10 +39,6 @@ public class DeepseekModelProvider implements ModelProvider{
 				.post(true).send(tosend).readJson();
 		//System.out.println(ppgs.toJson(retjs));
 		RespScheme resp = gs.fromJson(retjs, RespScheme.class);
-		if(resp.choices.get(0).message.reasoning_content!=null) {
-			logger.info("=================Reasoner===============");
-			logger.info(resp.choices.get(0).message.reasoning_content);
-		}
 		logger.info("=================Usage===============");
 		logger.info(resp.usage);
 		return resp;

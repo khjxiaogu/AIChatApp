@@ -16,7 +16,6 @@ public class LLMConnector {
 		router=new DefaultModelRouter(providers);
 	}
 	public static AIOutput call(AIRequest request) throws ModelRouteException, IOException {
-		System.out.println(request);
 		return router.route(request).execute(request);
 	}
 }
