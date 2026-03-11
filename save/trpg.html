@@ -49,10 +49,11 @@
         }
         .front-layer {
             position: absolute;
-            top: 0;
+            bottom: 0;
             left: 0;
             width: 100%;
-            height: 100vh;
+            height: 92vh;
+			max-width:100vw;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -62,8 +63,47 @@
             height: 100%;
             width: auto;
             display: block;
-            flex-shrink: 0;
         }
+		.front-layer.car0{
+			z-index:999;
+			left:0vw;
+		}
+		
+		.front-layer.car1{
+			z-index:990;
+			left:20vw;
+		}
+		.front-layer.car2{
+			z-index:996;
+			left:-20vw;
+		}
+		
+		.front-layer.car3{
+			z-index:980;
+			left:40vw;
+		}
+		.front-layer.car4{
+			z-index:980;
+			left:-40vw;
+		}
+		.front-layer.car5{
+			z-index:970;
+			left:60vw;
+		}
+		.front-layer.car6{
+			z-index:970;
+			left:-60vw;
+		}
+		.front-layer.car7{
+			z-index:960;
+			left:80vw;
+		}
+		.front-layer.car8{
+			z-index:960;
+			left:-80vw;
+		}
+
+
         .side-layer {
             position: absolute;
             top: 0;
@@ -262,6 +302,20 @@
             display: flex;
             flex-direction: column; 
         }
+		.export-history {
+            background: rgba(255,255,255,0.15);
+            border: none;
+            color: white;
+            font-size: 1.3rem;
+            width: 90px;
+            height: 44px;
+            border-radius: 22px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.2s;
+        }
         .history-header {
             display: flex;
             justify-content: space-between;
@@ -290,20 +344,6 @@
             width: 44px;
             height: 44px;
             border-radius: 50%;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: 0.2s;
-        }
-		.export-history {
-            background: rgba(255,255,255,0.15);
-            border: none;
-            color: white;
-            font-size: 1.3rem;
-            width: 90px;
-            height: 44px;
-            border-radius: 22px;
             cursor: pointer;
             display: flex;
             align-items: center;
@@ -393,11 +433,8 @@
         </div>
         <div class="layer fg-layer">
             <div class="fg-container">
-                <div class="front-layer">
-                    <img :src="flurl" alt="人物" v-if="flurl">
-                </div>
-                <div class="side-layer">
-                    <img :src="fsurl" alt="人物" v-if="fsurl">
+                <div class="front-layer" :class="['car'+index]"  v-for="(flurl,index) in flurls" v-if="flurl">
+                    <img :src="flurl" alt="人物">
                 </div>
             </div>
         </div>
@@ -405,7 +442,7 @@
 		    <div class="messages-container" ref="msgContainer">
 		        <div v-for="(msg, idx) in recentMessages"  :key="idx" >
 					<div v-for="msg2 in msg.text.split('\n')">
-						【{{ msg.title }}】「<span v-html="msg2"></span>」
+						<template v-if="msg.title !== null">【{{ msg.title }}】「</template><span v-html="msg2"></span><template v-if="msg.title !== null">」</template>
 					</div>
 				</div>
 		    </div>
@@ -429,7 +466,7 @@
             <div class="history-header">
                 <h2><i data-feather="file-text"></i> 历史记录</h2>
 				<span>￥-{{ price }}</span>
-				<span style="display:flex">
+                <span style="display:flex">
 				<button class="export-history" @click="exportHistory"><i data-feather="file"></i>导出</button>
                 <button class="close-history" @click="closeHistory"><i data-feather="x"></i></button></span>
             </div>
@@ -438,7 +475,7 @@
                 <tr v-for="(msg, idx) in messages" :key="'hist-'+idx">
 					<td><a v-show="msg.audioId" style="float:right" @click="playSoundWithWebAudio(msg.audioId)"><i data-feather="play-circle"></i></a></td>
 					<td><div v-for="msg2 in msg.text.split('\n')">
-						【{{ msg.title }}】「<span v-html="msg2"></span>」
+						<template v-if="msg.title !== null">【{{ msg.title }}】「</template><span v-html="msg2"></span><template v-if="msg.title !== null">」</template>
 					</div></td>
 					
                 </tr>
@@ -484,13 +521,11 @@
 		             inputBarHeight: 70,  // 初始值，与 CSS min-height 一致
 					 wssocket: undefined,
 					 prepared: false,
-					 isSideLoading: false,
 					 isFrontLoading:false,
 					 isBackLoading:false,
 					 isAnimateBlocking:false,
-					 fsurl:'',
 					 bgurl:'',
-					 flurl:'',
+					 flurls:[],
 					 appId:'',
 					 chatId:'',
 					 price:'0.00',
@@ -508,7 +543,7 @@
 				 },
 		         methods: {
 					initChat(){
-						let aid=pageQueries.chara+"talk"
+						let aid=pageQueries.chara+"trpg"
 						fetch("querychat?appid="+aid)
 						.then(p=>p.json())
 						.then(p=>{
@@ -532,87 +567,34 @@
 						this.wssocket.send(JSON.stringify({voiceEnabled:nw}));
 						this.unlockWebAudio();
 					},
-					setSideImage(newSrc) {
-					    // 如果新地址与当前相同且图片已加载
-					    if (newSrc === this.fsurl && !this.isSideLoading) {
-					        return;
-					    }
-						if (newSrc == ''){
-							this.fsurl = ''
-							return;
-						}
-					    // 设置加载状态
-					    // 创建一个新Image对象预加载图片
-					    const img = new Image();
-					    img.onload = () => {
-							if(this.isSideLoading){
-								this.isSideLoading = false;
-								this.fsurl = newSrc;
-							}
-							this.notifyProcessQueue();
-					    };
-					    img.onerror = (err) => {
-					        this.isSideLoading = false;
-					        console.error('图片加载失败', err);
-					    };
-					    // 开始加载（设置src会触发请求）
-						this.isSideLoading = true;
-					    img.src = newSrc;
-					},
 					setFrontImage(newSrc) {
-					    // 如果新地址与当前相同且图片已加载
-					    if (newSrc === this.flurl && !this.isFrontLoading) {
-					        return;
-					    }
 						if (newSrc == ''){
-							this.flurl = ''
+							this.flurls = []
 							return;
 						}
-					    // 设置加载状态
-					    // 创建一个新Image对象预加载图片
-					    const img = new Image();
-					    img.onload = () => {
-							if(this.isFrontLoading){
-								this.isFrontLoading = false;
-								this.flurl = newSrc;
+						let imageUrls=newSrc.split(",");
+						imageUrls.pop();
+						let pending = imageUrls.length;          // 剩余未完成的图片数
+						if(pending>0){
+							const handler = () => {
+								pending -= 1;
+								if (pending === 0) {
+									this.isFrontLoading = false;
+									this.flurls = imageUrls;                    // 全部完成，调用回调
+								}
+							};
+							for(var i=0;i<imageUrls.length;i++){
+								imageUrls[i]="resource/"+ imageUrls[i]
 							}
-							this.notifyProcessQueue();
-					    };
-					    img.onerror = (err) => {
-					        this.isFrontLoading = false;
-					        console.error('图片加载失败', err);
-					    };
-					    // 开始加载（设置src会触发请求）
-						this.isFrontLoading = true;
-					    img.src = newSrc;
-					},
-					setBackImage(newSrc) {
-					    // 如果新地址与当前相同且图片已加载
-					    if (newSrc === this.bgurl && !this.isBackLoading) {
-					        return;
-					    }
-						if (newSrc == ''){
-							this.bgurl = ''
-							return;
+							this.isFrontLoading = true;
+							imageUrls.forEach((url) => {
+								const img = new Image();
+								// 无论加载成功或失败都视为完成一次
+								img.onload = handler;
+								img.onerror = handler;
+								img.src =url;
+							});
 						}
-					    // 设置加载状态
-					    
-					    // 创建一个新Image对象预加载图片
-					    const img = new Image();
-					    img.onload = () => {
-							if(this.isBackLoading){
-								this.isBackLoading = false;
-								this.bgurl = newSrc;
-							}
-							this.notifyProcessQueue();
-					    };
-					    img.onerror = (err) => {
-					        this.isBackLoading = false;
-					        console.error('图片加载失败', err);
-					    };
-					    // 开始加载（设置src会触发请求）
-						this.isBackLoading = true;
-					    img.src = newSrc;
 					},
 					exportHistory(){
 						const form = document.createElement('form');
@@ -634,8 +616,36 @@
 						form.submit();
 						document.body.removeChild(form); // 提交后移除表单
 					},
+					setBackImage(newSrc) {
+					    // 如果新地址与当前相同且图片已加载
+					    if (newSrc === this.bgurl && !this.isBackLoading) {
+					        return;
+					    }
+						if (newSrc == ''){
+							this.bgurl = ''
+							return;
+						}
+						newSrc="resource/"+newSrc
+					    // 设置加载状态
+					    
+					    // 创建一个新Image对象预加载图片
+					    const img = new Image();
+					    img.onload = () => {
+							if(this.isBackLoading){
+								this.isBackLoading = false;
+								this.bgurl = newSrc;
+							}
+							this.notifyProcessQueue();
+					    };
+					    img.onerror = (err) => {
+					        this.isBackLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+					    // 开始加载（设置src会触发请求）
+						this.isBackLoading = true;
+					    img.src = newSrc;
+					},
 					open(done){
-						this.isSideLoading=false;
 						this.isFrontLoading=false;
 						this.isBackLoading=false;
 						this.isAnimateBlocking=false;
@@ -675,12 +685,10 @@
 							if(param.scene!=undefined){
 								let scene_data='';
 								if(param.scene_data){
-									scene_data="resource/"+param.scene_data;
+									scene_data=param.scene_data;
 								}
 								if(param.scene=='front')
 									_this.setFrontImage(scene_data)
-								if(param.scene=='side')
-									_this.setSideImage(scene_data)
 								if(param.scene=='back')
 									_this.setBackImage(scene_data)
 								
@@ -702,7 +710,7 @@
 						};
 					},
 					notifyProcessQueue(){
-						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.isAnimateBlocking){
+						if(!this.isBackLoading&&!this.isAnimateBlocking){
 							this.processQueue();
 						}
 					},
@@ -710,7 +718,7 @@
 						
 						while(this.handlerQueue.length>0){
 							this.handleTextMessage(this.handlerQueue.shift());
-							if(this.isSideLoading||this.isFrontLoading||this.isBackLoading||this.isAnimateBlocking)
+							if(this.isBackLoading||this.isAnimateBlocking)
 								break;
 						}
 						
@@ -898,11 +906,10 @@
 							this.speak(content);
 					 },
 					 sendUserMessage(content){
-						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.typing){
-							if(this.newMessage!=''){
+						if(!this.isBackLoading&&!this.typing){
+							if(this.newMessage!='')
 	 							this.sendMessage(this.newMessage);
-								this.newMessage='';
-							}
+							this.newMessage='';
 						}
 	 				 },
 					 requestHistory(){

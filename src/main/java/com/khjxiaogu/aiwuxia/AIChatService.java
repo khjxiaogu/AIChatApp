@@ -36,9 +36,12 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
+import com.khjxiaogu.webserver.annotations.Header;
 import com.khjxiaogu.webserver.annotations.HttpMethod;
 import com.khjxiaogu.webserver.annotations.HttpPath;
 import com.khjxiaogu.webserver.annotations.Query;
+import com.khjxiaogu.webserver.command.CommandHandler;
+import com.khjxiaogu.webserver.command.CommandSender;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 import com.khjxiaogu.webserver.web.FilePageService;
 import com.khjxiaogu.webserver.web.ServiceClass;
@@ -50,7 +53,7 @@ import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
 
 import io.netty.handler.codec.http.HttpHeaderNames;
 
-public class AIChatService implements ServiceClass {
+public class AIChatService implements ServiceClass,CommandHandler {
 	public Connection getDatabase() {
 		return database;
 	}
@@ -288,11 +291,10 @@ public class AIChatService implements ServiceClass {
 		return new ResultDTO(200, new File(parent, "chat.js"));
 	}
 	@HttpMethod("GET")
-	@HttpPath("/doadminreload")
+	@HttpPath("/vue.js")
 	@Adapter
-	public ResultDTO reld() throws IOException {
-		reload();
-		return new ResultDTO(200, "reload succeed!");
+	public ResultDTO vuejs() throws IOException {
+		return new ResultDTO(200, new File(parent, "vue.js"));
 	}
 	@HttpMethod("GET")
 	@HttpPath("/robots.txt")
@@ -368,15 +370,22 @@ public class AIChatService implements ServiceClass {
 	}
 	@HttpPath("/kh$localModelDeploy")
 	public void voiceWebSocket(Request req, Response res) {
-		res.suscribeWebsocketEvents(LocalVoiceModel.lhs);
+		String auth=req.getHeaders().get(HttpHeaderNames.AUTHORIZATION);
+		if(auth!=null&&auth.startsWith("Bearer ")&&System.getProperty("localVoiceToken", "").equals(auth.split(" ")[1]))
+			res.suscribeWebsocketEvents(LocalVoiceModel.lhs);
+		else
+			res.write(404);
 		
 	}
 	@HttpPath("/kh$localModelDeployData")
 	@Adapter
 	@HttpMethod("POST")
-	public ResultDTO voicePost(@Query("reqid")String reqid,@Query("type")String type,@GetBy(DataIn.class)byte[] data) {
-		LocalVoiceModel.lhs.onMessage(reqid, data);
-		return new ResultDTO(200);
+	public ResultDTO voicePost(@Query("reqid")String reqid,@Query("type")String type,@GetBy(DataIn.class)byte[] data,@Header("Authorization")String auth) {
+		if(auth!=null&&auth.startsWith("Bearer ")&&System.getProperty("localVoiceToken", "").equals(auth.split(" ")[1])) {
+			LocalVoiceModel.lhs.onMessage(reqid, data);
+			return new ResultDTO(200);
+		}
+		return new ResultDTO(404);
 	}
 	@HttpPath("/exportChat")
 	@Adapter
@@ -553,6 +562,22 @@ public class AIChatService implements ServiceClass {
 	@Override
 	public String getName() {
 		return "聊天";
+	}
+	@Override
+	public boolean dispatchCommand(String msg, CommandSender sender) {
+		if("reload".equals(msg)) {
+			reload();
+			return true;
+		}
+		return false;
+	}
+	@Override
+	public String getHelp() {
+		return "reload:重载AI配置";
+	}
+	@Override
+	public String getCommandLabel() {
+		return "aichat";
 	}
 
 }

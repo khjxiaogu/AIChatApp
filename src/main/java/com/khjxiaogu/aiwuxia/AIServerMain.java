@@ -37,8 +37,8 @@ public class AIServerMain {
 			.setNotFound(new File(new File("save"), "404.html"))
 			.compile()
 			.serverHttp(8998)
-			.serverHttps(9998)
-			.info("http服务端已开启")
+
+			.info("http服务端 http://0.0.0.0:8998/aichat 已开启")
 			.info("服务端已开启")
 			.info("网页服务端By khjxiaogu 启动完毕").await();
 		}
