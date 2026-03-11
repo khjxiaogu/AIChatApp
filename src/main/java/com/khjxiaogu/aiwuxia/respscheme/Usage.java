@@ -26,6 +26,13 @@ public class Usage implements Serializable{
 		prompt_cache_miss_tokens+=another.prompt_cache_miss_tokens;
 		voice_tokens+=another.voice_tokens;
 	}
+	public void set(Usage another) {
+		completion_tokens=another.completion_tokens;
+		prompt_tokens=another.prompt_tokens;
+		prompt_cache_hit_tokens=another.prompt_cache_hit_tokens;
+		prompt_cache_miss_tokens=another.prompt_cache_miss_tokens;
+		voice_tokens=another.voice_tokens;
+	}
 	public void appendVoiceTokens(int num) {
 		voice_tokens+=num;
 	}

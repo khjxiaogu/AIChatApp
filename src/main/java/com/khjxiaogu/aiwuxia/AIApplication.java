@@ -36,7 +36,7 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
 public abstract class AIApplication {
 	protected static Gson gs = new Gson();
 	protected static Gson ppgs = new GsonBuilder().setPrettyPrinting().create();
-	public  static ExecutorService exc=Executors.newCachedThreadPool();
+
 	
 	protected String system;
 	protected SimpleLogger logger=new SimpleLogger("AI智能");
@@ -190,7 +190,7 @@ public abstract class AIApplication {
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
 	
-				.post(true).send(tosend).readSSE(exc, (ev,s)->{
+				.post(true).send(tosend).readSSE(ModelApi.exc, (ev,s)->{
 					if(s==null||"[DONE]".equals(s)) {
 						System.out.println();
 						logger.info("=================Usage===============");
