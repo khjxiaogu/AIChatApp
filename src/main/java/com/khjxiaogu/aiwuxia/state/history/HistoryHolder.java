@@ -1,8 +1,8 @@
-package com.khjxiaogu.aiwuxia.state;
+package com.khjxiaogu.aiwuxia.state.history;
 
 import java.util.Iterator;
 
-import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.state.Role;
 
 public interface HistoryHolder extends Iterable<HistoryItem> {
 

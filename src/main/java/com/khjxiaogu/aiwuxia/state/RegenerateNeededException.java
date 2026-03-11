@@ -1,5 +1,7 @@
 package com.khjxiaogu.aiwuxia.state;
 
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
+
 public class RegenerateNeededException extends RuntimeException {
 	/**
 	 * 

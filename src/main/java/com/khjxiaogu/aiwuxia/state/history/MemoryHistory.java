@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.state;
+package com.khjxiaogu.aiwuxia.state.history;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -7,8 +7,8 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import com.khjxiaogu.aiwuxia.ReverseIterator;
-import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.utils.ReverseIterator;
 
 public class MemoryHistory implements Serializable, HistoryHolder {
 	/**

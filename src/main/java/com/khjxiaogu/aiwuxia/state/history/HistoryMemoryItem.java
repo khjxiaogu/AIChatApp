@@ -1,8 +1,9 @@
-package com.khjxiaogu.aiwuxia.state;
+package com.khjxiaogu.aiwuxia.state.history;
 
 import java.io.Serializable;
 
-import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
 
 class HistoryMemoryItem implements Serializable, HistoryItem {
 	/**

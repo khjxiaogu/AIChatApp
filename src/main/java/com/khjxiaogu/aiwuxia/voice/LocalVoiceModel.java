@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.voice;
 
 import java.util.concurrent.CompletableFuture;
 

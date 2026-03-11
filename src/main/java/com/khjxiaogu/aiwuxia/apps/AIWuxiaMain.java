@@ -14,16 +14,20 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
-import com.khjxiaogu.aiwuxia.AIApplication;
-import com.khjxiaogu.aiwuxia.AISession;
-import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.Interface;
-import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.status.Interface;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -111,14 +115,9 @@ public class AIWuxiaMain extends AIApplication {
 		state.add(Role.ASSISTANT, inital.toString() + "\n请选择一个姓名，或者输入姓名与性别，或输入“换一批”取得新姓名", "你选额：需要起名建议。==故事大纲==1. 为创建角色提供几个名字。\n==情景剧本==\n==属性面板==\n==操作=="+inital.toString() + "请选择一个姓名。");
 	}
 
-	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
-		RespScheme resp = sendAIRequest(req);
-		state.addUsage(resp.usage);
-		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
-	}
-
-	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		AIOutput resp = sendAIStreamedRequest(req, state::addUsage);
+	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+		AIOutput resp = LLMConnector.call(req);
+		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
 		
 	}
@@ -135,7 +134,7 @@ public class AIWuxiaMain extends AIApplication {
 
 	}
 
-	public JsonObject constructAIrequest(AISession state, String status) {
+	public AIRequest constructAIrequest(AISession state, String status) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system).end();
 		//if (status != null && !status.isEmpty())
@@ -181,7 +180,8 @@ public class AIWuxiaMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("model", "deepseek-chat").add("temperature", 1.6).add("frequency_penalty", 0.3).add("max_tokens", 8192).add("stream", false).end();
+		Builder builder=AIRequest.builder().taskType(TaskType.STORY);
+		return builder.build(b.end().add("temperature", 1.6).add("frequency_penalty", 0.3).add("max_tokens", 8192).end());
 
 	}
 

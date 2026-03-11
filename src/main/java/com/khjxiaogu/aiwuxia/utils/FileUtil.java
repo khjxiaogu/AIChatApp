@@ -6,9 +6,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Scanner;
 import java.util.function.Consumer;
 
 public class FileUtil {
@@ -94,6 +96,18 @@ public class FileUtil {
 		try(FileInputStream fis=new FileInputStream(f)){
 			return readAll(fis);
 		}
+	}
+	public static String readAll(Reader str) throws IOException {
+		StringBuilder sb=new StringBuilder();
+		try(Scanner fis=new Scanner(str)){
+			while(true){
+				String sr=fis.nextLine();
+				if(sr==null) break;
+					sb.append(sr);
+				
+			}
+		}
+		return sb.toString().trim();
 	}
 	public static byte[] readIgnoreSpace(InputStream i) throws IOException {
 		ByteArrayOutputStream ba = new ByteArrayOutputStream(16384);

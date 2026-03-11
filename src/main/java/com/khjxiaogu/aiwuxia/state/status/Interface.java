@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.state;
+package com.khjxiaogu.aiwuxia.state.status;
 
 import java.io.Serializable;
 import java.util.Iterator;

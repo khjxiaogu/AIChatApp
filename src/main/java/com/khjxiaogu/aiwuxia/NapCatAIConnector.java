@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.util.Date;
 import java.util.Map;
 
 import org.java_websocket.client.WebSocketClient;
@@ -14,8 +15,14 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.MemoryHistory;
+import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.apps.AIGroupApplication;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
+import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 
 public class NapCatAIConnector  extends WebSocketClient {
@@ -60,40 +67,60 @@ public class NapCatAIConnector  extends WebSocketClient {
 		    				sender=senderObj.get("nickname").getAsString();
 		    			long senderid=senderObj.get("user_id").getAsLong();
 		    			if(senderid!=botId) {
-			    			JsonArray ja=msg.get("message").getAsJsonArray();
+			    			JsonArray ja=msg.get("raw").getAsJsonObject().get("elements").getAsJsonArray();
 			    			boolean containsAtMe=false;
-			    			StringBuilder msgBuilder=new StringBuilder("【").append(sender).append("】「");
+			    			StringBuilder msgBuilder=new StringBuilder("【").append(sender).append("】");
+			    			boolean hasBarack=false;
 			    			boolean hasText=false;
 			    			for(JsonElement je:ja) {
 			    				JsonObject melm=je.getAsJsonObject();
-			    				String type=melm.get("type").getAsString();
-			    				
-			    				if("text".equals(type)) {
-			    					msgBuilder.append(melm.get("data").getAsJsonObject().get("text").getAsString());
-			    					hasText=true;
-			    				}else if("image".equals(type)) {
-			    					msgBuilder.append("（图片：").append(melm.get("data").getAsJsonObject().get("summary").getAsString()).append("）");
-			    				}else if("at".equals(type)) {
-			    					String qq=melm.get("data").getAsJsonObject().get("qq").getAsString();
-			    					if(String.valueOf(botId).equals(qq)) {
-			    						msgBuilder.append("@"+state.aiapp.getName());
-			    						containsAtMe=true;
-			    						hasText=true;
+			    				if(!melm.get("replyElement").isJsonNull()) {
+			    					JsonObject reply=melm.get("replyElement").getAsJsonObject();
+			    					msgBuilder.append("回复“");
+			    					for(JsonElement replys:reply.get("sourceMsgTextElems").getAsJsonArray()) {
+			    						msgBuilder.append(replys.getAsJsonObject().get("textElemContent"));	
 			    					}
+			    					msgBuilder.append("”：");
+			    					if(reply.get("senderUid").getAsString().equals(String.valueOf(botId))) {
+			    						containsAtMe=true;
+			    					}
+			    					continue;
+			    				}
+			    				if(!hasBarack) {
+			    					msgBuilder.append("「");
+			    					hasBarack=true;
+			    				}
+			    				if(!melm.get("textElement").isJsonNull()) {
+			    					hasText=true;
+			    					JsonObject text=melm.get("textElement").getAsJsonObject();
+			    					if(text.get("atType").getAsInt()!=0) {
+			    						if(text.get("atUid").getAsString().equals(String.valueOf(botId))) {
+			    							msgBuilder.append("@"+state.getAiapp().getName());
+			    							containsAtMe=true;
+			    							continue;
+			    						}
+			    					}
+			    					msgBuilder.append(text.get("content").getAsString());
 			    					
+			    				}else if(!melm.get("picElement").isJsonNull()) {
+			    					JsonObject pic=melm.get("picElement").getAsJsonObject();
+			    					msgBuilder.append("（图片：").append(pic.get("summary").getAsString()).append("）");
 			    				}
 			    			}
 			    			if(hasText) {
 			    				msgBuilder.append("」");
 			    				String messageLine=msgBuilder.toString();
 			    				System.out.println("grep message:"+messageLine);
-			    				if((!containsAtMe)&&messageLine.contains("@"+state.aiapp.getName()))
+			    				if((!containsAtMe)&&messageLine.contains("@"+state.getAiapp().getName()))
 			    					containsAtMe=true;
 			    				state.addMessage(messageLine);
 			    			}
+			    			int hours=new Date().getHours();
+			    			if(hours<6)
+			    				containsAtMe=false;
 			    			if(containsAtMe) {
-			    				state.commandExec.submit(()->{
-		    						state.aiapp.handleSpeech(state,state.getPrompt());
+			    				state.getCommandExec().submit(()->{
+		    						state.getAiapp().handleSpeech(state,state.getPrompt());
 		    						try {
 										AIApplication.saveToJson(state, saveData);
 									} catch (IOException e) {
@@ -129,6 +156,7 @@ public class NapCatAIConnector  extends WebSocketClient {
     }
     public static void main(String[] args) {
     	try {
+    		LLMConnector.initDefault();
     		String name="xinghanirc";
     		File dataFolder=new File("save");
     		File saveData = new File(new File(dataFolder,"saveData"), "savegroup-"+name+".json");

@@ -8,16 +8,19 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
-import com.khjxiaogu.aiwuxia.AIApplication;
-import com.khjxiaogu.aiwuxia.AISession;
-import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.Interface;
-import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.status.Interface;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -81,16 +84,9 @@ public class AIGalgameMain extends AIApplication {
 
 
 	}
-
-	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
-		RespScheme resp = sendAIRequest(req);
-		state.addUsage(resp.usage);
-		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
-	}
-
-	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		AIOutput resp = sendAIStreamedRequest(req, state::addUsage);
-		
+	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+		AIOutput resp = LLMConnector.call(req);
+		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
 		
 	}
@@ -109,7 +105,7 @@ public class AIGalgameMain extends AIApplication {
 	public String constructNameState(String name){
 		return "主角姓名为"+name+"，你需要用该名称称呼主角。";
 	}
-	public JsonObject constructAIrequest(AISession state) {
+	public AIRequest constructAIrequest(AISession state) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system+constructNameState(state.getExtra().get("name"))).end();
 
@@ -155,7 +151,7 @@ public class AIGalgameMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("model", "deepseek-chat").add("temperature", 1.3).add("max_tokens", 8192).add("stream", false).end();
+		return AIRequest.builder().taskType(TaskType.STORY).streamed().build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
 

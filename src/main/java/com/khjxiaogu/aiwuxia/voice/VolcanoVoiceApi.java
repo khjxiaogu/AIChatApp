@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.IOException;
 import java.util.Base64;
@@ -7,7 +7,7 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 
-public class VolcanoApi {
+public class VolcanoVoiceApi {
 	public static byte[] getAudioData(String botid,String uid,String text,String rid) throws IOException {
         String appid = System.getProperty("volcappid");
         String accessToken = System.getProperty("volcsecret");

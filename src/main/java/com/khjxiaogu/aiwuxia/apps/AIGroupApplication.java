@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -7,11 +7,18 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.state.AIOutput;
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -37,12 +44,12 @@ public class AIGroupApplication extends AIApplication {
 	public String getBrief(AISession state) {
 		return "";
 	}
-	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		AIOutput resp = sendAIStreamedRequest(req, state::addUsage);
+	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+		AIOutput resp = LLMConnector.call(req);
+		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
 		
 	}
-
 	public StateIntf precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
 		
@@ -69,7 +76,7 @@ public class AIGroupApplication extends AIApplication {
 		
 		return oldstate;
 	}
-	public JsonObject constructAIrequest(AISession state) throws IOException {
+	public AIRequest constructAIrequest(AISession state) throws IOException {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system).end();
 
@@ -124,10 +131,12 @@ public class AIGroupApplication extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		//头几次用思维链版本构建格式
-		return b.end().add("model",/*i<=10?*/"deepseek-reasoner"/*:"deepseek-chat"*/).add("temperature", 1.3).add("max_tokens", 500).add("stream", false).end();
+		Builder builder=AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.WEAK);
+		
+		return builder.build(b.end().add("temperature", 1.3).add("max_tokens", 500).end());
 
 	}
-	public JsonObject constructSummaryrequest(AISession state,String summary) {
+	public AIRequest constructSummaryrequest(AISession state,String summary) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 				.add("role", "system").add("content", this.summary).end();
 			StringBuilder sumerize=new StringBuilder();
@@ -143,16 +152,16 @@ public class AIGroupApplication extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("model", "deepseek-reasoner").add("temperature", 1.0).add("max_tokens", 8192).add("stream", false).end();
+		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
 	public String makeSummaryrequest(AISession state,String summary) throws IOException {
 		
-			RespScheme resp=super.sendAIRequest(constructSummaryrequest(state,summary));
-			state.addUsage(resp.usage);
+			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
+			resp.addUsageListener(state::addUsage);
 			
 			//System.out.println(resp.choices.get(0).message.reasoning_content);
-			return resp.choices.get(0).message.content;
+			return resp.getContentText();
 		
 
 	}

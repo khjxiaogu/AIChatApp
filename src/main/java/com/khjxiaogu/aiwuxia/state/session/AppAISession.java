@@ -1,9 +1,10 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.state.session;
 
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
+import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 
 import javazoom.jl.decoder.JavaLayerException;
 import javazoom.jl.player.advanced.AdvancedPlayer;

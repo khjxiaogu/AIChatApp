@@ -1,9 +1,11 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.state.session;
 
 import java.util.ArrayDeque;
 import java.util.Date;
 
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
+import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.session.AISession.AIData;
 
 public class AIGroupSession extends AISession {
 	ArrayDeque<String> messageQueue=new ArrayDeque<>();

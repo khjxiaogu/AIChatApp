@@ -1,6 +1,6 @@
 package com.khjxiaogu.aiwuxia.commands;
 
-import com.khjxiaogu.aiwuxia.AISession;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
 
 public class PassthroughHandler implements AIResponseHandler{
 	public static PassthroughHandler INSTANCE;

@@ -1,7 +1,5 @@
 package com.khjxiaogu.aiwuxia.state;
 
-import com.khjxiaogu.aiwuxia.Role;
-
 public class MessageItem {
 	public int id;
 	public Role role;

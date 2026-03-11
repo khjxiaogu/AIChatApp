@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -19,14 +19,17 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
-import com.khjxiaogu.aiwuxia.state.AIOutput;
-import com.khjxiaogu.aiwuxia.state.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.MemoryHistory;
-import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.session.AISession.AIData;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.ClientTruncatedException;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
@@ -126,7 +129,7 @@ public abstract class AIApplication {
 		super();
 	}
 	public void handleSpeech(AISession state,final String messageInput) {
-		if(state.isGenerating) {
+		if(state.isGenerating()) {
 			state.postMessage(-1, Role.APPLICATION,"内容生成中，请稍后再试。");
 			return;
 		}
@@ -148,25 +151,6 @@ public abstract class AIApplication {
 		
 	}
 	public abstract void provideInitial(AISession state);
-
-	public RespScheme sendAIRequest(JsonObject req) throws IOException {
-		String tosend = gs.toJson(req);
-		logger.info("trigger generation");
-		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
-				.header("Content-Type", "application/json")
-				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
-	
-				.post(true).send(tosend).readJson();
-		//System.out.println(ppgs.toJson(retjs));
-		RespScheme resp = gs.fromJson(retjs, RespScheme.class);
-		if(resp.choices.get(0).message.reasoning_content!=null) {
-			logger.info("=================Reasoner===============");
-			logger.info(resp.choices.get(0).message.reasoning_content);
-		}
-		logger.info("=================Usage===============");
-		logger.info(resp.usage);
-		return resp;
-	}
 	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
 		BufferedReader br=new BufferedReader(output.getReasoner());
 		int read;
@@ -178,46 +162,6 @@ public abstract class AIApplication {
 				state.appendReasoning(input);
 			}
 		}
-	}
-	public AIOutput sendAIStreamedRequest(JsonObject req, Consumer<Usage> gainUsage) throws IOException {
-		req.addProperty("stream", true);
-		req.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
-		logger.info("trigger generation");
-		String tosend = gs.toJson(req);
-		StreamedAIOutput readable=new StreamedAIOutput();
-		Usage usage=new Usage();
-		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
-				.header("Content-Type", "application/json")
-				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
-	
-				.post(true).send(tosend).readSSE(ModelApi.exc, (ev,s)->{
-					if(s==null||"[DONE]".equals(s)) {
-						System.out.println();
-						logger.info("=================Usage===============");
-						logger.info(usage);
-						logger.info("finish generation");
-						gainUsage.accept(usage);
-						readable.endContent();
-						return;
-					}
-					//if(readable.isEnded())
-					//	throw new ClientTruncatedException();
-					RespScheme scheme=gs.fromJson(s, RespScheme.class);
-					Message delta=scheme.choices.get(0).delta;
-					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-						readable.putReasoner(delta.reasoning_content);
-					}
-					if(delta.content!=null&&!delta.content.isEmpty()) {
-						
-						readable.putContent(delta.content);
-					}
-					if(scheme.usage!=null)
-						usage.add(scheme.usage);
-					
-				});
-	
-	
-		return readable;
 	}
 	public String getRoleName(AISession state,Role role) {
 		return role.getName();

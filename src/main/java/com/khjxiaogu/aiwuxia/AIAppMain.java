@@ -9,10 +9,15 @@ import javax.swing.UIManager;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
-import com.khjxiaogu.aiwuxia.state.MemoryHistory;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.session.AppAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
 import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 
 public class AIAppMain {
@@ -22,7 +27,7 @@ public class AIAppMain {
 	}
 
 	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-		String name="haiyintalk";
+		String name="xinghantrpg";
 		int idx=1;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
@@ -30,17 +35,18 @@ public class AIAppMain {
         } catch (Exception e) {
             e.printStackTrace();
         }
+		LLMConnector.initDefault();
 		AIChatWindow acw=new AIChatWindow();
 		acw.setVisible(true);
 		File dataFolder=new File("save");
-		//File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
-		File saveData =new File(new File(dataFolder,"saveData"), "1d4a0998b04d4755a7b3d8eba2f5abae.json");
+		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		//File saveData =new File(new File(dataFolder,"saveData"), "1d4a0998b04d4755a7b3d8eba2f5abae.json");
 		
 		File modelFolder=new File(dataFolder,name);
 		File metaFile=new File(modelFolder,"meta.json");
 		JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 		
-		AIApplication main = new AICharaTalkMain(dataFolder,name,meta.get("name").getAsString());
+		AIApplication main = new AITRPGSceneMain(dataFolder,name,meta.get("name").getAsString());
 		AISession aistate = null;
 		if (saveData.exists()) {
 			aistate = new AppAISession("appuser",
@@ -64,7 +70,7 @@ public class AIAppMain {
 		new Thread(()->{
 			try {
 				BasicWebServerBuilder.build().createURIRoot()
-				.createWrapper(new AIChatLocal()).rule("/aichat")
+				.createWrapper(new VoiceModelLocalServer()).rule("/aichat")
 				.complete()
 				.complete()
 				.setNotFound(new File(new File("save"), "404.html"))
@@ -83,7 +89,7 @@ public class AIAppMain {
 
 					if (cstate.checkAndUnsetUpdated()) {
 						String s = main.constructBackLog(cstate);
-						if (cstate.isGenerating)
+						if (cstate.isGenerating())
 							s += "\n生成中...";
 						final String fs = s;
 						String rs="";
@@ -115,7 +121,7 @@ public class AIAppMain {
 			try {
 				aistate.handleSpeech(ret);
 				Thread.sleep(200);
-				while(aistate.isGenerating) {
+				while(aistate.isGenerating()) {
 					Thread.sleep(100);
 				}
 				AIApplication.saveToJson(aistate, saveData);

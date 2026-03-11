@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.state;
 
 public enum Role {
 	ASSISTANT("系统"),

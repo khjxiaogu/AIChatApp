@@ -7,15 +7,19 @@ import java.util.List;
 import java.util.Scanner;
 
 import com.google.gson.JsonObject;
-import com.khjxiaogu.aiwuxia.AIApplication;
-import com.khjxiaogu.aiwuxia.AISession;
-import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -74,14 +78,9 @@ public class AISQLMain extends AIApplication {
 		});
 	}
 
-	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
-		RespScheme resp = sendAIRequest(req);
-		state.addUsage(resp.usage);
-		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
-	}
-
-	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		AIOutput resp = sendAIStreamedRequest(req, state::addUsage);
+	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+		AIOutput resp = LLMConnector.call(req);
+		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
 	}
 
@@ -97,7 +96,7 @@ public class AISQLMain extends AIApplication {
 
 	}
 
-	public JsonObject constructAIrequest(AISession state, String status) {
+	public AIRequest constructAIrequest(AISession state, String status) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system).end();
 		if (status != null && !status.isEmpty())
@@ -116,7 +115,8 @@ public class AISQLMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("model", "deepseek-chat").add("temperature", 1.7).add("stream", false).add("max_tokens", 8192).add("presence_penalty", 1).end();
+		Builder builder=AIRequest.builder().taskType(TaskType.CODE).strength(ReasoningStrength.WEAK).streamed();
+		return builder.build(b.end().add("temperature", 1.7).add("max_tokens", 8192).add("presence_penalty", 1).end());
 
 	}
 

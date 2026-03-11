@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.state.session;
 
 import java.util.HashMap;
 import java.util.List;
@@ -6,11 +6,13 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.state.GameStage;
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
 
 public class AISession implements Cloneable {
 
@@ -231,10 +233,19 @@ public class AISession implements Cloneable {
 		data.usage.appendVoiceTokens(length);
 	}
 	public void provideInitial() {
-		commandExec.submit(()->aiapp.provideInitial(this));
+		getCommandExec().submit(()->getAiapp().provideInitial(this));
 		
 	}
 	public void handleSpeech(String ret) {
-		commandExec.submit(()->aiapp.handleSpeech(this,ret));
+		getCommandExec().submit(()->getAiapp().handleSpeech(this,ret));
+	}
+	public AIApplication getAiapp() {
+		return aiapp;
+	}
+	public ExecutorService getCommandExec() {
+		return commandExec;
+	}
+	public boolean isGenerating() {
+		return isGenerating;
 	}
 }

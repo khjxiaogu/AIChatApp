@@ -16,23 +16,26 @@ import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.khjxiaogu.aiwuxia.AIApplication;
-import com.khjxiaogu.aiwuxia.AISession;
-import com.khjxiaogu.aiwuxia.LocalVoiceModel;
-import com.khjxiaogu.aiwuxia.Role;
-import com.khjxiaogu.aiwuxia.VolcanoApi;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
-import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
-import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
+import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
+import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceApi;
 
 public class AICharaTalkMain extends AIApplication {
 	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
@@ -73,7 +76,6 @@ public class AICharaTalkMain extends AIApplication {
 			File adrp=new File(model, "replacements.json");
 			if(adrp.exists())
 				replacements = gs.fromJson(readFile(adrp), Map.class);
-			System.out.println(replacements);
 			if(new File(model,"chara.json").exists()) {
 				character=gs.fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
 				
@@ -161,19 +163,15 @@ public class AICharaTalkMain extends AIApplication {
 
 	}
 
-	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
-		RespScheme resp = sendAIRequest(req);
-		state.addUsage(resp.usage);
-		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
-	}
 
-	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
+	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
 		AIOutput resp=null;
 		int i=0;
 		while(i<5) {//最多尝试5次，否则认为是提示词问题
 			try {
-				resp = sendAIStreamedRequest(req, state::addUsage);
+				resp = LLMConnector.call(req);
+				resp.addUsageListener(state::addUsage);
 				return precessResponse(resp, state);
 			}catch(RegenerateNeededException ex) {
 				state.getState().set(ex.oldState);
@@ -201,7 +199,7 @@ public class AICharaTalkMain extends AIApplication {
 	public String constructNameState(String name){
 		return "用户是主角，姓名为"+name+"，请直接用姓名称呼主角，不要用“主角”二字指代主角。";
 	}
-	public JsonObject constructAIrequest(AISession state) throws IOException {
+	public AIRequest constructAIrequest(AISession state) throws IOException {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system+constructNameState(state.getExtra().get("name"))).end();
 
@@ -252,13 +250,13 @@ public class AICharaTalkMain extends AIApplication {
 			}
 				
 		}
-
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("temperature", 1.3).add("max_tokens", 500).add("stream", false).end();
+		
+		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).build(b.end().add("temperature", 1.3).add("max_tokens", 500).end());
 
 	}
-	public JsonObject constructSummaryrequest(AISession state,String summary) {
+	public AIRequest constructSummaryrequest(AISession state,String summary) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 				.add("role", "system").add("content", this.summary).end();
 			StringBuilder sumerize=new StringBuilder();
@@ -274,16 +272,17 @@ public class AICharaTalkMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("temperature", 1.3).add("max_tokens", 8192).add("stream", false).end();
+		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
 	public String makeSummaryrequest(AISession state,String summary) throws IOException {
 		
-			RespScheme resp=super.sendAIRequest(constructSummaryrequest(state,summary));
-			state.addUsage(resp.usage);
+			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
+			resp.addUsageListener(state::addUsage);
 			
+			return FileUtil.readAll(resp.getContent());
 			//System.out.println(resp.choices.get(0).message.reasoning_content);
-			return resp.choices.get(0).message.content;
+
 		
 
 	}
@@ -465,7 +464,7 @@ public class AICharaTalkMain extends AIApplication {
 			(()->{
 				try {
 					state.appendVoiceToken(ftext.length());
-					byte[] data=VolcanoApi.getAudioData(volcappid,state.user, ftext, faudioId);
+					byte[] data=VolcanoVoiceApi.getAudioData(volcappid,state.user, ftext, faudioId);
 					File aud=new File(basePath,"voice");
 					aud.mkdirs();
 					try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){

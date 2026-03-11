@@ -13,18 +13,23 @@ import java.util.Map.Entry;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
-import com.khjxiaogu.aiwuxia.AIApplication;
-import com.khjxiaogu.aiwuxia.AISession;
-import com.khjxiaogu.aiwuxia.Role;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
-import com.khjxiaogu.aiwuxia.state.AIOutput;
 import com.khjxiaogu.aiwuxia.state.GameStage;
-import com.khjxiaogu.aiwuxia.state.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.Interface;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
-import com.khjxiaogu.aiwuxia.state.StateIntf;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.status.Interface;
+import com.khjxiaogu.aiwuxia.state.status.StateIntf;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -125,21 +130,15 @@ public class AITRPGSceneMain extends AIApplication {
 
 
 	}
-
-	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
-		RespScheme resp = sendAIRequest(req);
-		state.addUsage(resp.usage);
-		return precessResponse(new AIOutput.FilledAIOutput(resp), state);
-	}
-
-	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
+	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
 		AIOutput resp=null;
 		int i=0;
 		while(i<5) {//最多尝试5次，否则认为是提示词问题
 			try {
 				
-				resp = sendAIStreamedRequest(req, state::addUsage);
+				resp = LLMConnector.call(req);
+				resp.addUsageListener(state::addUsage);
 				return precessResponse(resp, state);
 			}catch(RegenerateNeededException ex) {
 				state.getState().set(ex.oldState);
@@ -168,7 +167,7 @@ public class AITRPGSceneMain extends AIApplication {
 	public String constructNameState(String name){
 		return "用户是主角，姓名为"+name+"，请直接用姓名称呼主角，不要用“主角”二字指代主角。";
 	}
-	public JsonObject constructAIrequest(AISession state) throws IOException {
+	public AIRequest constructAIrequest(AISession state) throws IOException {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system+constructNameState(state.getExtra().get("name"))).end();
 
@@ -229,36 +228,34 @@ public class AITRPGSceneMain extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		//头几次用思维链版本构建格式
-		return b.end().add("model",/*i<=10?*/"deepseek-reasoner"/*:"deepseek-chat"*/).add("temperature", 1.3).add("max_tokens", 4000).add("stream", false).end();
+		Builder builder=AIRequest.builder().taskType(TaskType.CODE).strength(ReasoningStrength.WEAK).streamed();
+		return builder.build(b.end().add("temperature", 1.3).add("max_tokens", 4000).end());
 
 	}
-	public JsonObject constructSummaryrequest(AISession state,String summary) {
+	public AIRequest constructSummaryrequest(AISession state,String summary) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", this.summary).end();
-		StringBuilder sumerize=new StringBuilder();
-		if(state.getExtra().containsKey("lastSummary")) {
-			sumerize.append("=== 前情提要 ===\\n");
-			sumerize.append( state.getExtra().get("lastSummary"));
-		}
-		sumerize.append("=== 对话块 ===\n");
-		sumerize.append(summary.trim());
-		// if (status != null&&!status.isEmpty())
-		b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
+				.add("role", "system").add("content", this.summary).end();
+			StringBuilder sumerize=new StringBuilder();
+			if(state.getExtra().containsKey("lastSummary")) {
+				sumerize.append("=== 前情提要 ===\\n");
+				sumerize.append( state.getExtra().get("lastSummary"));
+			}
+			sumerize.append("=== 对话块 ===\n");
+			sumerize.append(summary.trim());
+			// if (status != null&&!status.isEmpty())
+			b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
 
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return b.end().add("model", "deepseek-reasoner").add("temperature", 1.0).add("max_tokens", 8192).add("stream", false).end();
+		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
 	public String makeSummaryrequest(AISession state,String summary) throws IOException {
 		
-			RespScheme resp=super.sendAIRequest(constructSummaryrequest(state,summary));
-			state.addUsage(resp.usage);
-			
-			//System.out.println(resp.choices.get(0).message.reasoning_content);
-			return resp.choices.get(0).message.content;
-		
+			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
+			resp.addUsageListener(state::addUsage);
+			return FileUtil.readAll(resp.getContent());
 
 	}
 	public String constructBackLog(AISession state) {

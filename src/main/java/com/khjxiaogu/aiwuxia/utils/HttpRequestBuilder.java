@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.BiConsumer;
 
 import com.google.gson.JsonObject;
@@ -17,7 +18,7 @@ import com.google.gson.JsonParser;
 
 public class HttpRequestBuilder {
 	private StringBuilder url;
-	
+	private static ExecutorService defaultService=Executors.newFixedThreadPool(4);
 	List<String[]> headers=new ArrayList<>();
 	boolean followRedirect=true;
 	public HttpRequestBuilder(String ourl) {
@@ -120,6 +121,8 @@ public class HttpRequestBuilder {
 		public void readSSE(ExecutorService serv,BiConsumer<String,String> listener) throws IOException {
 			try {
 				InputStream is=huc.getInputStream();
+				if(serv==null)
+					serv=defaultService;
 				serv.submit(()->{
 					try(Scanner scan=new Scanner(is,StandardCharsets.UTF_8)){
 						while(scan.hasNextLine()) {

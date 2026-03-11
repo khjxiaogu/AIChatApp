@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.voice;
 
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
@@ -11,7 +11,7 @@ import com.khjxiaogu.webserver.web.lowlayer.Response;
 import com.khjxiaogu.webserver.wrappers.ResultDTO;
 import com.khjxiaogu.webserver.wrappers.inadapters.DataIn;
 
-public class AIChatLocal extends AbstractServiceClass {
+public class VoiceModelLocalServer extends AbstractServiceClass {
 	@HttpPath("/kh$localModelDeploy")
 	public void voiceWebSocket(Request req, Response res) {
 		res.suscribeWebsocketEvents(LocalVoiceModel.lhs);

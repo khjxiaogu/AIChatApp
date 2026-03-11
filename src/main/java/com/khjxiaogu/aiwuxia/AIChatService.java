@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -20,14 +21,19 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
+import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIArticleMain;
 import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AIGalgameMain;
 import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
 import com.khjxiaogu.aiwuxia.apps.AIWuxiaMain;
-import com.khjxiaogu.aiwuxia.state.MemoryHistory;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
 import com.khjxiaogu.webserver.annotations.HttpMethod;
@@ -92,6 +98,7 @@ public class AIChatService implements ServiceClass {
 			logger.severe("信息数据库初始化失败！");
 			throw e;
 		}
+		LLMConnector.initDefault();
 		parent = path;
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();
@@ -383,13 +390,12 @@ public class AIChatService implements ServiceClass {
 				if (rs.next()&&rs.getString(1).equals(uid)) {
 					WebSocketAISession state = uidsockets.get(cid);
 					String app=rs.getString(2);
+					AIApplication appx = apps.get(app);
 					if (state == null) {
-						AIApplication appx = apps.get(app);
 						if (appx == null) {
 							return new ResultDTO(400, "App does not exist");
 						}
 						File data = new File(saveData, cid + ".json");
-
 						if (data.exists()) {
 							try {
 								state = new WebSocketAISession(this, uid,cid, appx, data, AIWuxiaMain.historyFromJson(data), AIWuxiaMain.dataFromJson(data));
@@ -397,16 +403,30 @@ public class AIChatService implements ServiceClass {
 								e.printStackTrace();
 								logger.info("AI " + cid + " Load Error");
 							}
-							ResultDTO res= new ResultDTO(200,appx.constructBackLog(state));
-						
-							res.addHeader(HttpHeaderNames.CONTENT_DISPOSITION, "attachment; filename=\""+new String(("故事导出-"+appx.getBrief(state)).getBytes(StandardCharsets.UTF_8),StandardCharsets.ISO_8859_1)+"\"");
-							res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/text");
-							res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
-							res.addHeader(HttpHeaderNames.PRAGMA, "no-cache");
-							res.addHeader(HttpHeaderNames.EXPIRES, "0");
+							
+							
 						}else
 							return new ResultDTO(404, "Chat does not exist");
 					}
+					ByteArrayOutputStream baos=new ByteArrayOutputStream();
+					
+					try {
+						baos.write(0xEF);
+						baos.write(0xBB);
+						baos.write(0xBF);
+						baos.write(appx.constructBackLog(state).getBytes(StandardCharsets.UTF_8));
+					} catch (IOException e) {
+						e.printStackTrace();
+						return new ResultDTO(500,"内部服务器错误");
+					}
+					ResultDTO res= new ResultDTO(200,baos.toByteArray());
+					
+					res.addHeader(HttpHeaderNames.CONTENT_DISPOSITION, "attachment; filename=\""+new String(("故事导出-"+appx.getBrief(state)+".txt").getBytes(StandardCharsets.UTF_8),StandardCharsets.ISO_8859_1)+"\"");
+					res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
+					res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
+					res.addHeader(HttpHeaderNames.PRAGMA, "no-cache");
+					res.addHeader(HttpHeaderNames.EXPIRES, "0");
+					return res;
 				}
 			}
 		} catch (SQLException e) {
