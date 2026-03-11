@@ -2,6 +2,7 @@ package com.khjxiaogu.aiwuxia;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -40,6 +41,8 @@ import com.khjxiaogu.webserver.web.lowlayer.Response;
 import com.khjxiaogu.webserver.wrappers.ResultDTO;
 import com.khjxiaogu.webserver.wrappers.inadapters.DataIn;
 import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
+
+import io.netty.handler.codec.http.HttpHeaderNames;
 
 public class AIChatService implements ServiceClass {
 	public Connection getDatabase() {
@@ -368,6 +371,50 @@ public class AIChatService implements ServiceClass {
 		LocalVoiceModel.lhs.onMessage(reqid, data);
 		return new ResultDTO(200);
 	}
+	@HttpPath("/exportChat")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO export(@Query("uid")String uid,@Query("chatid")String cid) {
+		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ?")) {
+
+			// ps.setString(1, uid);
+			ps.setString(1, cid);
+			try(ResultSet rs = ps.executeQuery()){
+				if (rs.next()&&rs.getString(1).equals(uid)) {
+					WebSocketAISession state = uidsockets.get(cid);
+					String app=rs.getString(2);
+					if (state == null) {
+						AIApplication appx = apps.get(app);
+						if (appx == null) {
+							return new ResultDTO(400, "App does not exist");
+						}
+						File data = new File(saveData, cid + ".json");
+
+						if (data.exists()) {
+							try {
+								state = new WebSocketAISession(this, uid,cid, appx, data, AIWuxiaMain.historyFromJson(data), AIWuxiaMain.dataFromJson(data));
+							} catch (JsonSyntaxException | IOException e) {
+								e.printStackTrace();
+								logger.info("AI " + cid + " Load Error");
+							}
+							ResultDTO res= new ResultDTO(200,appx.constructBackLog(state));
+						
+							res.addHeader(HttpHeaderNames.CONTENT_DISPOSITION, "attachment; filename=\""+new String(("故事导出-"+appx.getBrief(state)).getBytes(StandardCharsets.UTF_8),StandardCharsets.ISO_8859_1)+"\"");
+							res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/text");
+							res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
+							res.addHeader(HttpHeaderNames.PRAGMA, "no-cache");
+							res.addHeader(HttpHeaderNames.EXPIRES, "0");
+						}else
+							return new ResultDTO(404, "Chat does not exist");
+					}
+				}
+			}
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		return new ResultDTO(401, "Unauthorized");
+		
+	}
 	/**
 	 * @param req
 	 */
@@ -378,7 +425,7 @@ public class AIChatService implements ServiceClass {
 		String uid = req.getQuery().get("userId");
 		boolean isCreate=false;
 		String attribute="";
-		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ?")) {
+		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ? and attribute!='removed'")) {
 
 			// ps.setString(1, uid);
 			ps.setString(1, cid);
