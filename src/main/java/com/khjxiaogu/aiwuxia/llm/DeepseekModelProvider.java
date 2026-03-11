@@ -54,7 +54,6 @@ public class DeepseekModelProvider implements ModelProvider{
 		request.request.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		logger.info("trigger generation");
 		String tosend = gs.toJson(request.request);
-		System.out.println(tosend);
 		StreamedAIOutput readable=new StreamedAIOutput();
 		Usage usage=new Usage();
 		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
