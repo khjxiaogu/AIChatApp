@@ -78,7 +78,8 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    					JsonObject reply=melm.get("replyElement").getAsJsonObject();
 			    					msgBuilder.append("回复“");
 			    					for(JsonElement replys:reply.get("sourceMsgTextElems").getAsJsonArray()) {
-			    						msgBuilder.append(replys.getAsJsonObject().get("textElemContent"));	
+			    						if(replys.getAsJsonObject().get("textElemContent").isJsonPrimitive())
+			    						msgBuilder.append(replys.getAsJsonObject().get("textElemContent").getAsString());	
 			    					}
 			    					msgBuilder.append("”：");
 			    					if(reply.get("senderUid").getAsString().equals(String.valueOf(botId))) {
