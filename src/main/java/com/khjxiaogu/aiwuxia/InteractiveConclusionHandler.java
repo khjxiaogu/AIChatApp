@@ -20,7 +20,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 public class InteractiveConclusionHandler {
 
 	public static void main(String[] args) throws IOException {
-		File workingPath=new File("H:\\SteamLibrary\\steamapps\\common\\Conspiracy Field Snow Trap\\extracts\\data\\test\\jiejing");
+		File workingPath=FileUtil.choose();
 		if(workingPath==null)return;
 		LLMConnector.initDefault();
 		String system=FileUtil.readString(new File("save","conclusionprompt.txt"));
