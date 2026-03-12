@@ -385,6 +385,7 @@ public class AITRPGSceneMain extends AIApplication {
 			} else if (status == 2) {	
 				if (last.startsWith("==角色==")) {
 					status=3;
+					continue;
 				}else
 					state.appendLine(Role.ASSISTANT, last, false);
 			} else if (status == 3) {	
@@ -392,9 +393,7 @@ public class AITRPGSceneMain extends AIApplication {
 					String[] lasts=last.split("=");
 					if(lasts.length==2) {
 						characs.put(lasts[0].trim(), lasts[1].trim());
-						state.appendInvisibleLine(Role.ASSISTANT, last);
 					}
-					
 				}
 				continue;
 			}
@@ -403,11 +402,11 @@ public class AITRPGSceneMain extends AIApplication {
 		}
 		if(status==1) {//没有对话和角色部分，重新生成
 			throw new RegenerateNeededException(oldstate);
-		}else if(status!=3){//没有生成角色部分
-			state.appendInvisibleLine(Role.ASSISTANT, "==角色==");
-			for(Entry<String, String> i:characs)
-			state.appendInvisibleLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
 		}
+		state.appendInvisibleLine(Role.ASSISTANT, "==角色==");
+		for(Entry<String, String> i:characs)
+			state.appendInvisibleLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+		
 		String chara=null;
 		
 		if(character!=null) {

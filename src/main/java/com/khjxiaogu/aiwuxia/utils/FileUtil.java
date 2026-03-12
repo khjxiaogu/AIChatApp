@@ -16,6 +16,7 @@ import java.util.function.Consumer;
 
 import javax.swing.JFileChooser;
 import javax.swing.UIManager;
+import javax.swing.filechooser.FileSystemView;
 
 public class FileUtil {
 	public static void transfer(InputStream i,OutputStream os) throws IOException {
@@ -152,8 +153,8 @@ public class FileUtil {
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         
         // 可选：设置初始目录为用户桌面（或其他常用位置）
-        // File desktopDir = FileSystemView.getFileSystemView().getHomeDirectory();
-        // chooser.setCurrentDirectory(desktopDir);
+        File desktopDir = FileSystemView.getFileSystemView().getHomeDirectory();
+        chooser.setCurrentDirectory(desktopDir);
         
         // 显示对话框（"打开"风格）
         int result = chooser.showOpenDialog(null);

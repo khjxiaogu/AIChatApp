@@ -20,8 +20,9 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 public class InteractiveConclusionHandler {
 
 	public static void main(String[] args) throws IOException {
-		File workingPath=FileUtil.choose();
+		File workingPath=new File("H:\\SteamLibrary\\steamapps\\common\\Conspiracy Field Snow Trap\\extracts\\data\\test\\jiejing");
 		if(workingPath==null)return;
+		LLMConnector.initDefault();
 		String system=FileUtil.readString(new File("save","conclusionprompt.txt"));
 		File output=new File("contentOutput.txt");
 		try(PrintStream fos=new PrintStream(output,"UTF-8")){
@@ -31,7 +32,12 @@ public class InteractiveConclusionHandler {
 				.build(conclusionRequest(system,in));
 				AIOutput ao=LLMConnector.call(ar);
 				printAndCollectContent(ao.getReasoner());
-				fos.println(printAndCollectContent(ao.getContent()));
+				System.out.println();
+				System.out.println("==========begin content==========");
+				String last=printAndCollectContent(ao.getContent());
+				fos.println();
+				fos.println("=========="+f.getName()+"==========");
+				fos.println(last);
 			}
 			
 		}
