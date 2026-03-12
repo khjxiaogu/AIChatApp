@@ -22,10 +22,11 @@ public class DeepseekModelProvider implements ModelProvider{
 
 	@Override
 	public AIOutput execute(AIRequest request) throws IOException {
-		if(request.stream) {
-			return sendAIStreamedRequest(request);
-		}
-		return sendAIRequest(request).toOutput();
+		//if(request.stream) {
+		//deepseek:总是使用流式来加速网络
+		return sendAIStreamedRequest(request);
+		//}
+		//return sendAIRequest(request).toOutput();
 	}
 	Gson gs=new Gson();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
