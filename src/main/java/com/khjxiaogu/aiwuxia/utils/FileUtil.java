@@ -14,6 +14,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 import java.util.function.Consumer;
 
+import javax.swing.JFileChooser;
+import javax.swing.UIManager;
+
 public class FileUtil {
 	public static void transfer(InputStream i,OutputStream os) throws IOException {
 		int nRead;
@@ -135,6 +138,32 @@ public class FileUtil {
 		try (FileInputStream fis = new FileInputStream(f)) {
 			return readIgnoreSpace(fis);
 		}
+	}
+	public static File choose() {
+		 // 创建文件选择器
+		try {
+		    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+		} catch (Exception e) {
+		    e.printStackTrace();
+		}
+        JFileChooser chooser = new JFileChooser();
+        
+        // 设置只能选择文件夹，不能选择文件
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        
+        // 可选：设置初始目录为用户桌面（或其他常用位置）
+        // File desktopDir = FileSystemView.getFileSystemView().getHomeDirectory();
+        // chooser.setCurrentDirectory(desktopDir);
+        
+        // 显示对话框（"打开"风格）
+        int result = chooser.showOpenDialog(null);
+        
+        // 判断用户是否点击了“打开”按钮
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File selectedFolder = chooser.getSelectedFile();
+            return selectedFolder;
+        }
+        return null;
 	}
 	public static InputStream fetch(String url) throws IOException {
 		HttpURLConnection huc2 = (HttpURLConnection) new URL(url).openConnection();

@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.apps;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
@@ -140,12 +141,14 @@ public class AISQLMain extends AIApplication {
 		boolean isWaiting = true;
 		int status = 0;
 		
-		try(Scanner scan=new Scanner(op.getContent())){
+		try(BufferedReader scan=new BufferedReader(op.getContent())){
 			StateIntf oldstate = new StateIntf(state.getState());
 			handleReasonerContent(op,state);
 			boolean nstateModified = false;
-			while (scan.hasNextLine()) {
-				String last = scan.nextLine();
+			while (true) {
+				String last = scan.readLine();
+				if(last==null)
+					break;
 				if (isWaiting && last.isEmpty()) {
 					continue;
 				}

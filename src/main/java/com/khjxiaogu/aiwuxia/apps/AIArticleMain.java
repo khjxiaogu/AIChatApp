@@ -1,19 +1,17 @@
 package com.khjxiaogu.aiwuxia.apps;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Scanner;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.state.GameStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -77,13 +75,15 @@ public class AIArticleMain extends AIApplication {
 	public StateIntf sendAndProcessResult(AISession state, JsonObject req) throws IOException {
 		AIOutput resp=LLMConnector.call(AIRequest.builder().taskType(TaskType.STORY).build(req));
 		resp.addUsageListener(state::addUsage);
-		return precessResponse(new Scanner(resp.getContent()), state);
+		try (BufferedReader sc = new BufferedReader(resp.getContent())) {
+			return precessResponse(sc, state);
+		}
 	}
 
 	public StateIntf sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
 		AIOutput resp=LLMConnector.call(AIRequest.builder().taskType(TaskType.STORY).streamed().build(req));
 		resp.addUsageListener(state::addUsage);
-		try (Scanner sc = new Scanner(resp.getContent())) {
+		try (BufferedReader sc = new BufferedReader(resp.getContent())) {
 			return precessResponse(sc, state);
 		}
 	}
@@ -139,14 +139,15 @@ public class AIArticleMain extends AIApplication {
 		state.setStage(GameStage.NAMING);
 	}
 
-	public StateIntf precessResponse(Scanner scan, AISession state) {
+	public StateIntf precessResponse(BufferedReader scan, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 
 		StateIntf oldstate = new StateIntf(state.getState());
 		boolean nstateModified = false;
-		while (scan.hasNextLine()) {
-			String last = scan.nextLine();
+		while (true) {
+			String last = scan.readLine();
+			if(last==null)break;
 			if (isWaiting && last.isEmpty()) {
 				continue;
 			}
