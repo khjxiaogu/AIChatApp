@@ -163,6 +163,19 @@ public abstract class AIApplication {
 			}
 		}
 	}
+	public void printReasonerContent(AIOutput output) throws IOException {
+		BufferedReader br=new BufferedReader(output.getReasoner());
+		int read;
+		char[] ch=new char[32];
+		logger.info("==============Reasoner===============");
+		while((read=br.read(ch,0,32))!=-1) {
+			if(read>0) {
+				String input=String.valueOf(ch,0,read);
+				System.out.print(input);
+			}
+		}
+		logger.info("==============Reasoner End===========");
+	}
 	public String getRoleName(AISession state,Role role) {
 		return role.getName();
 	}

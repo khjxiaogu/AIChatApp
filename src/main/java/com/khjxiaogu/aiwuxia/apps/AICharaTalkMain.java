@@ -281,7 +281,7 @@ public class AICharaTalkMain extends AIApplication {
 		
 			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
 			resp.addUsageListener(state::addUsage);
-			
+			printReasonerContent(resp);
 			return FileUtil.readAll(resp.getContent());
 			//System.out.println(resp.choices.get(0).message.reasoning_content);
 

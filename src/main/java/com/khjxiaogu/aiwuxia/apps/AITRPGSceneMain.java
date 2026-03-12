@@ -256,6 +256,7 @@ public class AITRPGSceneMain extends AIApplication {
 		
 			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
 			resp.addUsageListener(state::addUsage);
+			printReasonerContent(resp);
 			return FileUtil.readAll(resp.getContent());
 
 	}

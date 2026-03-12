@@ -104,7 +104,7 @@ public class FileUtil {
 			while(true){
 				String sr=fis.readLine();
 				if(sr==null) break;
-					sb.append(sr);
+				sb.append(sr).append("\n");
 				
 			}
 		}

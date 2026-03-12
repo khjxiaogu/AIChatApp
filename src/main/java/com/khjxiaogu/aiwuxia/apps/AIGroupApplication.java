@@ -159,7 +159,7 @@ public class AIGroupApplication extends AIApplication {
 		
 			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
 			resp.addUsageListener(state::addUsage);
-			
+			printReasonerContent(resp);
 			//System.out.println(resp.choices.get(0).message.reasoning_content);
 			return resp.getContentText();
 		
