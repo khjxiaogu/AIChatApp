@@ -15,6 +15,7 @@ public interface AIOutput {
 	public Reader getReasoner();
 	public Reader getContent();
 	public boolean isEnded();
+	public void interrupt();
 	public default String getContentText() throws IOException {
 		return FileUtil.readAll(getContent());
 	}
@@ -26,6 +27,7 @@ public interface AIOutput {
 		public final BlockingReader reasoner;
 		public final BlockingReader content;
 		private Usage usage;
+		private boolean interrupted;
 		private List<Consumer<Usage>> usageListener=new ArrayList<>();
 		public StreamedAIOutput() {
 			reasoner=new BlockingReader();
@@ -68,6 +70,13 @@ public interface AIOutput {
 				}
 			
 		}
+		public boolean isInterrupted() {
+			return interrupted;
+		}
+		@Override
+		public void interrupt() {
+			interrupted=true;
+		}
 		
 	}
 	public static class FilledAIOutput implements AIOutput{
@@ -93,6 +102,10 @@ public interface AIOutput {
 		@Override
 		public void addUsageListener(Consumer<Usage> listener) {
 			listener.accept(usage);
+		}
+		@Override
+		public void interrupt() {
+			// noop since generation is already finished.
 		}
 	}
 }

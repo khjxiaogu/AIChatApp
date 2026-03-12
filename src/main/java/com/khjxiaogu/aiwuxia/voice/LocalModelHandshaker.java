@@ -15,7 +15,10 @@ import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 import io.netty.channel.Channel;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
-
+/**
+ * 本地部署模型服务对象
+ * 
+ * */
 public class LocalModelHandshaker implements WebsocketEvents {
 	private static class Result{
 		boolean finished;
@@ -45,10 +48,13 @@ public class LocalModelHandshaker implements WebsocketEvents {
 		Result ar=ars.remove(jo.get("reqid").getAsString());
 		System.out.println("received "+message+ar);
 		if(ar!=null) {
-			if(!jo.has("error")) {
-				ar.data=Base64.getDecoder().decode(jo.get("data").getAsString());
+			synchronized(ar) {
+				if(!jo.has("error")) {
+					ar.data=Base64.getDecoder().decode(jo.get("data").getAsString());
+				}
+				ar.finished=true;
+				ar.notifyAll();
 			}
-			ar.finished=true;
 			
 		}
 	}
@@ -77,18 +83,20 @@ public class LocalModelHandshaker implements WebsocketEvents {
 					Result result=new Result();
 					ars.put(reqid, result);
 					ch.writeAndFlush(new TextWebSocketFrame(request.toString()));
-					
-					for(int timeout=0;timeout<200;timeout++) {
-						if(!ch.isActive())
-							return null;
-						if(result.finished) {
-							return result.data;
+					synchronized(result) {
+						long beginTime=System.currentTimeMillis();
+						long endTime=beginTime+1000*60*3;//3分钟
+						while(true){
+							long currTime=System.currentTimeMillis();
+							if(!ch.isActive()||currTime>=endTime)
+								return null;
+							if(result.finished) {
+								return result.data;
+							}
+							result.wait(endTime-currTime);
 						}
-						Thread.sleep(100);
 					}
-					return null;
 				} catch (Exception e) {
-					// TODO Auto-generated catch block
 					e.printStackTrace();
 				}finally {
 					if(ch!=null)

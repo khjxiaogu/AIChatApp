@@ -4,6 +4,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.khjxiaogu.aiwuxia.llm.providers.DeepseekModelProvider;
+import com.khjxiaogu.aiwuxia.llm.providers.VolcanoModelProvider;
+
 public class LLMConnector {
 	private static ModelRouter router;
 	private LLMConnector() {}

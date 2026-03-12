@@ -1,4 +1,5 @@
 package com.khjxiaogu.aiwuxia.utils;
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -99,9 +100,9 @@ public class FileUtil {
 	}
 	public static String readAll(Reader str) throws IOException {
 		StringBuilder sb=new StringBuilder();
-		try(Scanner fis=new Scanner(str)){
+		try(BufferedReader fis=new BufferedReader(str)){
 			while(true){
-				String sr=fis.nextLine();
+				String sr=fis.readLine();
 				if(sr==null) break;
 					sb.append(sr);
 				

@@ -34,6 +34,8 @@ import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
+import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
+import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceApi;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
 import com.khjxiaogu.webserver.annotations.Header;
@@ -52,7 +54,9 @@ import com.khjxiaogu.webserver.wrappers.inadapters.DataIn;
 import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
 
 import io.netty.handler.codec.http.HttpHeaderNames;
-
+/**
+ * AI对话核心服务，该服务不含登录验证，需要自行添加代理进行验证。
+ * */
 public class AIChatService implements ServiceClass,CommandHandler {
 	public Connection getDatabase() {
 		return database;
@@ -102,6 +106,7 @@ public class AIChatService implements ServiceClass,CommandHandler {
 			throw e;
 		}
 		LLMConnector.initDefault();
+		VoiceModelHandler.model=new VolcanoVoiceApi();
 		parent = path;
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();

@@ -35,6 +35,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
+import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceApi;
 
 public class AICharaTalkMain extends AIApplication {
@@ -174,6 +175,7 @@ public class AICharaTalkMain extends AIApplication {
 				resp.addUsageListener(state::addUsage);
 				return precessResponse(resp, state);
 			}catch(RegenerateNeededException ex) {
+				resp.interrupt();
 				state.getState().set(ex.oldState);
 				i++;
 			}
@@ -464,7 +466,7 @@ public class AICharaTalkMain extends AIApplication {
 			(()->{
 				try {
 					state.appendVoiceToken(ftext.length());
-					byte[] data=VolcanoVoiceApi.getAudioData(volcappid,state.user, ftext, faudioId);
+					byte[] data=VoiceModelHandler.getAudioData(volcappid,state.user, ftext, faudioId);
 					File aud=new File(basePath,"voice");
 					aud.mkdirs();
 					try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
