@@ -1,8 +1,6 @@
-package com.khjxiaogu.aiwuxia.utils;
+package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.IOException;
-
-import com.khjxiaogu.aiwuxia.voice.VoiceModel;
 
 public class VoiceModelHandler {
 	private VoiceModelHandler() {

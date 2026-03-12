@@ -141,6 +141,7 @@ public class AITRPGSceneMain extends AIApplication {
 				resp.addUsageListener(state::addUsage);
 				return precessResponse(resp, state);
 			}catch(RegenerateNeededException ex) {
+				resp.interrupt();
 				state.getState().set(ex.oldState);
 				
 			}

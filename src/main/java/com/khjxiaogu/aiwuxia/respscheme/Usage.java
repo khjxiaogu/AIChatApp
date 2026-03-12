@@ -19,21 +19,21 @@ public class Usage implements Serializable{
 				+ "\n缓存token " + prompt_cache_hit_tokens + "\n新增token "
 				+ prompt_cache_miss_tokens +"\n预估价格："+calculatePrice();
 	}
-	public void add(Usage another) {
+	public synchronized void add(Usage another) {
 		completion_tokens+=another.completion_tokens;
 		prompt_tokens+=another.prompt_tokens;
 		prompt_cache_hit_tokens+=another.prompt_cache_hit_tokens;
 		prompt_cache_miss_tokens+=another.prompt_cache_miss_tokens;
 		voice_tokens+=another.voice_tokens;
 	}
-	public void set(Usage another) {
+	public synchronized void set(Usage another) {
 		completion_tokens=another.completion_tokens;
 		prompt_tokens=another.prompt_tokens;
 		prompt_cache_hit_tokens=another.prompt_cache_hit_tokens;
 		prompt_cache_miss_tokens=another.prompt_cache_miss_tokens;
 		voice_tokens=another.voice_tokens;
 	}
-	public void appendVoiceTokens(int num) {
+	public synchronized void appendVoiceTokens(int num) {
 		voice_tokens+=num;
 	}
 	public String calculatePrice() {

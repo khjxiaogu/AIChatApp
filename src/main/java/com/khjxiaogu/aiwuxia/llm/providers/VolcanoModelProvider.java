@@ -1,14 +1,18 @@
-package com.khjxiaogu.aiwuxia.llm;
+package com.khjxiaogu.aiwuxia.llm.providers;
 
 import java.io.IOException;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
+import com.khjxiaogu.aiwuxia.utils.ClientTruncatedException;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -91,6 +95,12 @@ public class VolcanoModelProvider implements ModelProvider{
 				.header("Authorization", "Bearer "+System.getProperty("volcmodeltoken"))
 	
 				.post(true).send(tosend).readSSE(null, (ev,s)->{
+					if(readable.isInterrupted()) {
+						logger.info("interrupted generation");
+						readable.setUsage(usage);
+						readable.endContent();
+						throw new ClientTruncatedException();
+					}
 					if(s==null||"[DONE]".equals(s)) {
 						System.out.println();
 						logger.info("=================Usage===============");
@@ -112,7 +122,7 @@ public class VolcanoModelProvider implements ModelProvider{
 						readable.putContent(delta.content);
 					}
 					if(scheme.usage!=null)
-						usage.add(scheme.usage);
+						usage.set(scheme.usage);
 					
 				});
 	
