@@ -74,8 +74,6 @@ public class BlockingReader extends Reader {
     }
 
     public boolean isEnded() {
-        synchronized (lock) {
-            return ended;
-        }
+        return ended;
     }
 }
