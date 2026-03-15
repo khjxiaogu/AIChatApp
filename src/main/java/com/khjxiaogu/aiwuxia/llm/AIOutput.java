@@ -37,6 +37,7 @@ public interface AIOutput {
 			reasoner.putCh(object);
 		}
 		public void putContent(String object) {
+			if(!reasoner.isEnded())
 			reasoner.setEnded();
 			content.putCh(object);
 		}
