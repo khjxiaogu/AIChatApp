@@ -199,7 +199,9 @@ public class AITRPGSceneMain extends AIApplication {
 						len-=hi.getFullContent().length();
 						
 						if(hi.getRole()!=Role.SYSTEM) {
-							summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getFullContent()).append("\n");
+							if(hi.getRole()==Role.USER)
+								summery.append("用户").append("：");
+							summery.append(hi.getFullContent()).append("\n");
 						}
 						his.add(hi);
 						
