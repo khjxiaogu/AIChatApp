@@ -3,7 +3,7 @@ package com.khjxiaogu.aiwuxia.state.history;
 import java.io.Serializable;
 
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.status.StateIntf;
+import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
 class HistoryMemoryItem implements Serializable, HistoryItem {
 	/**
@@ -16,12 +16,12 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	private StringBuilder sendContent;
 	private StringBuilder reasonContent;
 	private boolean shouldSend;
-	private StateIntf lastState;
+	private ApplicationState lastState;
 	private String audioId;
 
 	HistoryMemoryItem(Role role, String content, boolean shouldSend) {
 		super();
-		this.setFullContent(null);
+		this.setContextContent(null);
 		this.content = new StringBuilder(content);
 		this.setRole(role);
 		this.shouldSend = shouldSend;
@@ -61,28 +61,25 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	}
 
 	@Override
-	public CharSequence getFullContent() {
+	public CharSequence getContextContent() {
 		if (sendContent != null)
 			return sendContent;
 		return content;
 	}
 
 	@Override
-	public CharSequence getContent() {
+	public CharSequence getDisplayContent() {
 		return content;
 	}
 
-	@Override
-	public boolean hasFullContent() {
+	public boolean hasContextContent() {
 		return this.sendContent != null;
 	}
 
-	@Override
-	public void createFullContent() {
+	public void createContextContent() {
 		if (sendContent == null)
 			this.sendContent = new StringBuilder(content);
 	}
-	@Override
 	public StringBuilder createReasonContent() {
 		if (reasonContent == null)
 			this.reasonContent = new StringBuilder();
@@ -92,7 +89,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	public void appendLine(String content, boolean shouldSend) {
 		if (this.shouldSend) {
 			if (!shouldSend) {
-				createFullContent();
+				createContextContent();
 			} else {
 				if (sendContent != null) {
 					sendContent.append(content).append("\n");
@@ -105,7 +102,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	public void append(String content, boolean shouldSend) {
 		if (this.shouldSend) {
 			if (!shouldSend) {
-				createFullContent();
+				createContextContent();
 			} else {
 				if (sendContent != null) {
 					sendContent.append(content);
@@ -115,13 +112,13 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 		this.content.append(content);
 	}
 	@Override
-	public void appendSending(String content) {
-		createFullContent();
+	public void appendContext(String content) {
+		createContextContent();
 		this.sendContent.append(content);
 	}
 
 	@Override
-	public void setFullContent(String fullContent) {
+	public void setContextContent(String fullContent) {
 		if (fullContent == null)
 			this.sendContent = null;
 		else
@@ -131,13 +128,10 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	public void appendReasoner(String fullContent) {
 		createReasonContent().append(fullContent);
 	}
-	@Override
-	public void setAudio(String id) {
-		setAudioId(id);
-	}
+
 	@Override
 	public String toString() {
-		return "HistoryItem [role=" + getRole() + ", fullContent=" + getFullContent() + "]";
+		return "HistoryItem [role=" + getRole() + ", fullContent=" + getContextContent() + "]";
 	}
 	@Override
 	public Role getRole() {
@@ -154,11 +148,11 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 		return reasonContent.toString();
 	}
 	@Override
-	public boolean isSendable() {
+	public boolean isValidContext() {
 		return shouldSend;
 	}
 	@Override
-	public void setSendable(boolean sendable) {
+	public void setValidContext(boolean sendable) {
 		this.shouldSend=sendable;
 	}
 	@Override
@@ -170,11 +164,11 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 		this.audioId = audioId;
 	}
 	@Override
-	public StateIntf getLastState() {
+	public ApplicationState getLastState() {
 		return lastState;
 	}
 	@Override
-	public void setLastState(StateIntf lastState) {
+	public void setLastState(ApplicationState lastState) {
 		this.lastState = lastState;
 	}
 	void setRole(Role role) {

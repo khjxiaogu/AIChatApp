@@ -6,19 +6,25 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 
-public class Interface implements Serializable,Iterable<Map.Entry<String, String>> {
+public class MemoryAttributeSet implements Serializable, AttributeSet {
 	/**
 	 * 
 	 */
 	private static final long serialVersionUID = -7540278636736725189L;
 	public Map<String, String> values = new LinkedHashMap<>();
+	public void clear() {
+		values.clear();
+	}
+	public String putIfAbsent(String key, String value) {
+		return values.putIfAbsent(key, value);
+	}
 	public String name;
 
-	public Interface(String name) {
+	public MemoryAttributeSet(String name) {
 		super();
 		this.name = name;
 	}
-	public Interface(Interface other) {
+	public MemoryAttributeSet(MemoryAttributeSet other) {
 		super();
 		this.name = other.name;
 		this.values.putAll(other.values);
@@ -47,5 +53,8 @@ public class Interface implements Serializable,Iterable<Map.Entry<String, String
 	@Override
 	public Iterator<Entry<String, String>> iterator() {
 		return values.entrySet().iterator();
+	}
+	public Map<String,String> getAsMap(){
+		return values;
 	}
 }

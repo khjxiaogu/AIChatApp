@@ -130,7 +130,7 @@ public class NapCatAIConnector  extends WebSocketClient {
 		    						HistoryItem hi=state.getLast();
 		    						if(hi.getRole()==Role.ASSISTANT) {
 
-		    							this.send(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", groupId).add("message", state.getLast().getContent().toString().trim()).end().end().toString());
+		    							this.send(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", groupId).add("message", state.getLast().getDisplayContent().toString().trim()).end().end().toString());
 		    						}
 		    						
 		    					});
@@ -170,8 +170,8 @@ public class NapCatAIConnector  extends WebSocketClient {
     				AIApplication.dataFromJson(saveData),
     				main);
     		}else {
-    			aistate = new AIGroupSession("appuser",new MemoryHistory(), new AISession.AIData(),main);
-    			aistate.provideInitial();
+    			aistate = new AIGroupSession("appuser",new MemoryHistory(), new AISession.ExtraData(),main);
+    			aistate.provideInitialHint();
     		}
     	
 			new NapCatAIConnector(aistate,saveData,Long.parseLong(System.getProperty("bot")),Long.parseLong(System.getProperty("group")),System.getProperty("napcat_url"),System.getProperty("napcat_token")).connectBlocking();

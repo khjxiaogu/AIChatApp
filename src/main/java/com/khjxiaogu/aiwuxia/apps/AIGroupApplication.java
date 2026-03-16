@@ -18,7 +18,7 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.status.StateIntf;
+import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -36,7 +36,7 @@ public class AIGroupApplication extends AIApplication {
 	}
 
 	@Override
-	public String constructSystem(StateIntf state) {
+	public String constructSystem(ApplicationState state) {
 		return "";
 	}
 
@@ -44,16 +44,16 @@ public class AIGroupApplication extends AIApplication {
 	public String getBrief(AISession state) {
 		return "";
 	}
-	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
 		
 	}
-	public StateIntf precessResponse(AIOutput resp, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
 		
-		StateIntf oldstate = new StateIntf(state.getState());
+		ApplicationState oldstate = new ApplicationState(state.getState());
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		StringBuilder sendContent=new StringBuilder();
@@ -87,25 +87,25 @@ public class AIGroupApplication extends AIApplication {
 		if (history != null && !history.isEmpty()) {
 			
 			int len=0;
-			Iterator<HistoryItem> it=history.sendableIterator();
+			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
 				if(hi.getRole()==Role.ASSISTANT) {
 					i++;
 				}
-				len+=hi.getFullContent().length();
+				len+=hi.getContextContent().length();
 				
 			}
 			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
-				it=history.sendableIterator();
+				it=history.validContextIterator();
 				while(it.hasNext()) {//calculate total dialog rows
 					HistoryItem hi=it.next();
-					len-=hi.getFullContent().length();
+					len-=hi.getContextContent().length();
 					
 					if(hi.getRole()!=Role.SYSTEM) {
-						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getFullContent()).append("\n");
+						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getContextContent()).append("\n");
 					}
 					his.add(hi);
 					if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
@@ -114,16 +114,16 @@ public class AIGroupApplication extends AIApplication {
 					
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
-				his.forEach(t->t.setSendable(false));
-				state.minRows(his.size());
+				his.forEach(t->t.setValidContext(false));
+				state.minDialogRows(his.size());
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
 			}
-			it=history.sendableIterator();
+			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
 			}
 				
 		}
@@ -179,9 +179,9 @@ public class AIGroupApplication extends AIApplication {
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
-			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
+			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
 			state.getLast().setLastState(airet);
-			state.addRow();
+			state.addDialogRow();
 
 			return null;
 		});

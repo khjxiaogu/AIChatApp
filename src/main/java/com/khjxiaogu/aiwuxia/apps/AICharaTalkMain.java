@@ -23,13 +23,14 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
-import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.ApplicationStage;
+import com.khjxiaogu.aiwuxia.state.AttributeValidator;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.status.StateIntf;
+import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -39,8 +40,6 @@ import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceApi;
 
 public class AICharaTalkMain extends AIApplication {
-	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
-	Pattern intfPattern = Pattern.compile("【([^面]+)面板】");
 	String charaname;
 	String summary;
 	String prelogue="";
@@ -50,6 +49,7 @@ public class AICharaTalkMain extends AIApplication {
 	File basePath;
 	String volcappid;
 	String localChara;
+	AttributeValidator validator;
 	Map<String,String> emote2emote;
 
 	public AICharaTalkMain(File basePath,String modelFolder,String charaname) {
@@ -74,6 +74,9 @@ public class AICharaTalkMain extends AIApplication {
 				localChara = meta.get("localChara").getAsString();
 				emote2emote = gs.fromJson(meta.get("localEmote"), Map.class);
 			}
+			File validfile=new File(model, "validator.json");
+			if(validfile.exists())
+				validator=AttributeValidator.fromJson(readFile(validfile));
 			File adrp=new File(model, "replacements.json");
 			if(adrp.exists())
 				replacements = gs.fromJson(readFile(adrp), Map.class);
@@ -91,7 +94,7 @@ public class AICharaTalkMain extends AIApplication {
 		// naming
 		handlers.add((state, ret) -> {
 
-			if (state.getStage() == GameStage.NAMING) {
+			if (state.getStage() == ApplicationStage.NAMING) {
 				if(ret.length()>6) {
 					state.add(Role.SYSTEM, "名称不得多于6字符", false);
 				}else {
@@ -103,7 +106,7 @@ public class AICharaTalkMain extends AIApplication {
 					}*/
 					state.getExtra().put("name", ret);
 					state.add(Role.USER, ret, false);
-					state.setStage(GameStage.STARTED);
+					state.setStage(ApplicationStage.STARTED);
 					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
 					return null;
 				}
@@ -115,13 +118,13 @@ public class AICharaTalkMain extends AIApplication {
 		// check interface
 		handlers.add(revertAndRegen);
 		handlers.add((state, ret) -> {
-			if (state.getStage() == GameStage.STARTED) {
+			if (state.getStage() == ApplicationStage.STARTED) {
 				if ("重读".equals(ret)) {
 					HistoryItem last=state.getLast();
 					if(last.getRole()==Role.ASSISTANT) {
 						if(last.getAudioId()==null) {
 							String audioId=UUID.randomUUID().toString();
-							CompletableFuture<Boolean> cf=this.generateVoice(state, last.getContent().toString(), audioId);
+							CompletableFuture<Boolean> cf=this.generateVoice(state, last.getDisplayContent().toString(), audioId);
 							if(cf.get()) {
 								last.setAudioId(audioId);
 								state.postAudioComplete(last.getIdentifier(),audioId);
@@ -136,9 +139,9 @@ public class AICharaTalkMain extends AIApplication {
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
-			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
+			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
 			state.getLast().setLastState(airet);
-			state.addRow();
+			state.addDialogRow();
 
 			return null;
 		});
@@ -156,7 +159,7 @@ public class AICharaTalkMain extends AIApplication {
 
 
 	public void provideNames(AISession state) {
-		if (state.getStage() == GameStage.NAMING) {
+		if (state.getStage() == ApplicationStage.NAMING) {
 			state.removeLast();
 			// state.removeLast();
 		} 
@@ -165,7 +168,7 @@ public class AICharaTalkMain extends AIApplication {
 	}
 
 
-	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
 		AIOutput resp=null;
 		int i=0;
@@ -182,7 +185,7 @@ public class AICharaTalkMain extends AIApplication {
 		}
 		if(state.getLast().getRole()==Role.USER)
 			state.removeLast();
-		state.minRow();
+		state.minDialogRow();
 		return state.getLast().getLastState();
 		
 	}
@@ -212,25 +215,25 @@ public class AICharaTalkMain extends AIApplication {
 		if (history != null && !history.isEmpty()) {
 			
 			int len=0;
-			Iterator<HistoryItem> it=history.sendableIterator();
+			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
 				if(hi.getRole()==Role.ASSISTANT) {
 					i++;
 				}
-				len+=hi.getFullContent().length();
+				len+=hi.getContextContent().length();
 				
 			}
 			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
-				it=history.sendableIterator();
+				it=history.validContextIterator();
 				while(it.hasNext()) {//calculate total dialog rows
 					HistoryItem hi=it.next();
-					len-=hi.getFullContent().length();
+					len-=hi.getContextContent().length();
 					
 					if(hi.getRole()!=Role.SYSTEM) {
-						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getFullContent()).append("\n");
+						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getContextContent()).append("\n");
 					}
 					his.add(hi);
 					if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
@@ -239,16 +242,16 @@ public class AICharaTalkMain extends AIApplication {
 					
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
-				his.forEach(t->t.setSendable(false));
-				state.minRows(his.size());
+				his.forEach(t->t.setValidContext(false));
+				state.minDialogRows(his.size());
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
 			}
-			it=history.sendableIterator();
+			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
 			}
 				
 		}
@@ -291,7 +294,7 @@ public class AICharaTalkMain extends AIApplication {
 	public String constructBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
 		for (HistoryItem hs : state.getHistory()) {
-			sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContent())
+			sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getDisplayContent())
 				.append("\n");
 		}
 
@@ -300,13 +303,13 @@ public class AICharaTalkMain extends AIApplication {
 	}
 	public String constructSummaryBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
-		Iterator<HistoryItem> it=state.getHistory().sendableIterator();
+		Iterator<HistoryItem> it=state.getHistory().validContextIterator();
 		if(state.getExtra().containsKey("lastSummary")) {
 			sb.append( state.getExtra().get("lastSummary"));
 		}
 		while(it.hasNext()) {
 			HistoryItem hs=it.next();
-				sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getFullContent()).append("\n");
+				sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContextContent()).append("\n");
 		}
 
 		return sb.toString();
@@ -315,14 +318,14 @@ public class AICharaTalkMain extends AIApplication {
 
 	public void provideInitial(AISession state) {
 		state.add(Role.SYSTEM, "请输入姓名", false);
-		state.setStage(GameStage.NAMING);
+		state.setStage(ApplicationStage.NAMING);
 	}
 
-	public StateIntf precessResponse(AIOutput resp, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 		
-		StateIntf oldstate = new StateIntf(state.getState());
+		ApplicationState oldstate = new ApplicationState(state.getState());
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		StringBuilder sendContent=new StringBuilder();
@@ -345,7 +348,7 @@ public class AICharaTalkMain extends AIApplication {
 			if (isWaiting) {
 				isWaiting = false;
 			}
-			sendContent.append(last).append("\n");
+			
 			if (status == 0) {//处理主要剧情
 				if(last.startsWith("==对话==")) {
 					status=1;
@@ -353,13 +356,12 @@ public class AICharaTalkMain extends AIApplication {
 					throw new RegenerateNeededException(oldstate);
 				
 
-			}else if(status==1) {
+			}else if(status==1) {//处理演出
 				if (last.startsWith("==场景==")) {
 					status = 3;
 					if(state.isAudioSession()&&audioId==null) {
 						audioId=UUID.randomUUID().toString();
 						cf=this.generateVoice(state, content.toString(), audioId);
-						
 					}
 				} else {
 					content.append(last).append("\n");
@@ -369,15 +371,26 @@ public class AICharaTalkMain extends AIApplication {
 				
 					
 				if(last.contains("=")) {
-					
 					String[] lasts=last.split("=");
-					state.getState().perks.put(lasts[0].trim(), lasts[1].trim());
-					
+					if(lasts.length>=2) {
+						String key=lasts[0].trim();
+						String value=lasts[1].trim();
+						if(validator!=null&&!validator.validate(key, value))
+							continue;
+						state.getState().perks.put(key,value);
+					}
 				}
+				continue;
 			}
+			sendContent.append(last).append("\n");
 		}
 		if(status!=3) {//没有场景部分，督促AI重新生成一份
 			throw new RegenerateNeededException(oldstate);
+		}
+		if(!state.getState().perks.isEmpty()){
+			sendContent.append("==场景==\n");
+			for(Entry<String, String> i:state.getState().perks.entrySet())
+				sendContent.append(i.getKey()).append("=").append(i.getValue()).append("\n");
 		}
 		String pos=state.getState().perks.get("位置");
 		String chara=null;
@@ -388,21 +401,21 @@ public class AICharaTalkMain extends AIApplication {
 		if(chara!=null) {
 			switch(pos) {
 			case "前":
-				state.setScene("front", chara);
-				state.setScene("side", "");
+				state.sendSceneContent("front", chara);
+				state.sendSceneContent("side", "");
 				break;
 			case "侧":
-				state.setScene("front", "");
-				state.setScene("side", chara);
+				state.sendSceneContent("front", "");
+				state.sendSceneContent("side", chara);
 				break;
 			default:
-				state.setScene("front", "");
-				state.setScene("side", "");
+				state.sendSceneContent("front", "");
+				state.sendSceneContent("side", "");
 				break;
 			}
 		}else {
-			state.setScene("front", "");
-			state.setScene("side", "");
+			state.sendSceneContent("front", "");
+			state.sendSceneContent("side", "");
 		}
 		
 		String bg=null;
@@ -411,9 +424,9 @@ public class AICharaTalkMain extends AIApplication {
 		if(bg==null)
 			bg=oldbg;
 		if(bg!=null)
-			state.setScene("back", bg);
+			state.sendSceneContent("back", bg);
 		else
-			state.setScene("back", "");
+			state.sendSceneContent("back", "");
 		state.getExtra().put("chara",chara);
 		state.getExtra().put("back",bg);
 		state.add(Role.ASSISTANT, content.toString().trim(), sendContent.toString().trim());
@@ -494,28 +507,28 @@ public class AICharaTalkMain extends AIApplication {
 		if(chara!=null) {
 			switch(pos) {
 			case "前":
-				state.setScene("front", chara);
-				state.setScene("side", "");
+				state.sendSceneContent("front", chara);
+				state.sendSceneContent("side", "");
 				break;
 			case "侧":
-				state.setScene("front", "");
-				state.setScene("side", chara);
+				state.sendSceneContent("front", "");
+				state.sendSceneContent("side", chara);
 				break;
 			default:
-				state.setScene("front", "");
-				state.setScene("side", "");
+				state.sendSceneContent("front", "");
+				state.sendSceneContent("side", "");
 				break;
 			}
 		}else {
-			state.setScene("front", "");
-			state.setScene("side", "");
+			state.sendSceneContent("front", "");
+			state.sendSceneContent("side", "");
 		}
 		if(bg!=null)
-			state.setScene("back", bg);
+			state.sendSceneContent("back", bg);
 		else
-			state.setScene("back", "");
+			state.sendSceneContent("back", "");
 	};
-	public String constructSystem(StateIntf state) {
+	public String constructSystem(ApplicationState state) {
 		if (state == null || state.perks.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("==场景==\n");

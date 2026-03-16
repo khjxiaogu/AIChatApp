@@ -21,28 +21,27 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
-import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.ApplicationStage;
+import com.khjxiaogu.aiwuxia.state.AttributeValidator;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.status.Interface;
-import com.khjxiaogu.aiwuxia.state.status.StateIntf;
+import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
+import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AITRPGSceneMain extends AIApplication {
-	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
-	Pattern intfPattern = Pattern.compile("【([^面]+)面板】");
 	String charaname;
 	String summary;
 	String prelogue="";
 	SceneSelector back;
 	SceneSelector character;
-	Map<String,String> replacements;
+	AttributeValidator validator;
 	File basePath;
 
 
@@ -60,9 +59,9 @@ public class AITRPGSceneMain extends AIApplication {
 			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
 			summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
 			prelogue = readFile(new File(model, "prelogue.txt"));
-			File adrp=new File(model, "replacements.json");
-			if(adrp.exists())
-			replacements = gs.fromJson(readFile(adrp), Map.class);
+			File validfile=new File(model, "validator.json");
+			if(validfile.exists())
+				validator=AttributeValidator.fromJson(readFile(validfile));
 			if(new File(model,"chara.json").exists()) {
 				character=gs.fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
 				
@@ -77,7 +76,7 @@ public class AITRPGSceneMain extends AIApplication {
 		// naming
 		handlers.add((state, ret) -> {
 
-			if (state.getStage() == GameStage.NAMING) {
+			if (state.getStage() == ApplicationStage.NAMING) {
 				if(ret.length()>6) {
 					state.add(Role.SYSTEM, "名称不得多于6字符", false);
 				}else {
@@ -89,7 +88,7 @@ public class AITRPGSceneMain extends AIApplication {
 					}*/
 					state.getExtra().put("name", ret);
 					state.add(Role.USER, ret, false);
-					state.setStage(GameStage.STARTED);
+					state.setStage(ApplicationStage.STARTED);
 					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
 					return null;
 				}
@@ -103,9 +102,9 @@ public class AITRPGSceneMain extends AIApplication {
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
-			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
+			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
 			state.getLast().setLastState(airet);
-			state.addRow();
+			state.addDialogRow();
 
 			return null;
 		});
@@ -123,14 +122,14 @@ public class AITRPGSceneMain extends AIApplication {
 
 
 	public void provideNames(AISession state) {
-		if (state.getStage() == GameStage.NAMING) {
+		if (state.getStage() == ApplicationStage.NAMING) {
 			state.removeLast();
 			// state.removeLast();
 		} 
 
 
 	}
-	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
 		AIOutput resp=null;
 		int i=0;
@@ -149,7 +148,7 @@ public class AITRPGSceneMain extends AIApplication {
 		}
 		if(state.getLast().getRole()==Role.USER)
 			state.removeLast();
-		state.minRow();
+		state.minDialogRow();
 		return state.getLast().getLastState();
 		
 	}
@@ -179,24 +178,24 @@ public class AITRPGSceneMain extends AIApplication {
 		if (history != null && !history.isEmpty()) {
 			
 			int len=0;
-			Iterator<HistoryItem> it=history.sendableIterator();
+			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
 				if(hi.getRole()==Role.ASSISTANT) {
 					i++;
 				}
-				len+=hi.getFullContent().length();
+				len+=hi.getContextContent().length();
 				
 			}
 			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
-				it=history.sendableIterator();
+				it=history.validContextIterator();
 				int removedSpeech=0;
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
-					if(hi.isSendable()) {
-						len-=hi.getFullContent().length();
+					if(hi.isValidContext()) {
+						len-=hi.getContextContent().length();
 						
 						if(hi.getRole()!=Role.SYSTEM) {
 							if(hi.getRole()==Role.USER)
@@ -215,16 +214,16 @@ public class AITRPGSceneMain extends AIApplication {
 					
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
-				his.forEach(t->t.setSendable(false));
-				state.minRows(removedSpeech);//generally half speech is ai
+				his.forEach(t->t.setValidContext(false));
+				state.minDialogRows(removedSpeech);//generally half speech is ai
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
 			}
-			it=history.sendableIterator();
+			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
 			}
 		}
 
@@ -268,7 +267,7 @@ public class AITRPGSceneMain extends AIApplication {
 			String roleName=getRoleName(state,hs.getRole());
 			if(roleName!=null)
 				sb.append(roleName).append("：");
-			sb.append(hs.getContent())
+			sb.append(hs.getDisplayContent())
 				.append("\n");
 		}
 
@@ -277,13 +276,13 @@ public class AITRPGSceneMain extends AIApplication {
 	}
 	public String constructSummaryBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
-		Iterator<HistoryItem> it=state.getHistory().sendableIterator();
+		Iterator<HistoryItem> it=state.getHistory().validContextIterator();
 		if(state.getExtra().containsKey("lastSummary")) {
 			sb.append( state.getExtra().get("lastSummary"));
 		}
 		while(it.hasNext()) {
 			HistoryItem hs=it.next();
-				sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getFullContent()).append("\n");
+				sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContextContent()).append("\n");
 		}
 
 		return sb.toString();
@@ -293,26 +292,24 @@ public class AITRPGSceneMain extends AIApplication {
 
 	public void provideInitial(AISession state) {
 		state.add(Role.SYSTEM, "请输入姓名", false);
-		state.setStage(GameStage.NAMING);
+		state.setStage(ApplicationStage.NAMING);
 	}
 
-	public StateIntf precessResponse(AIOutput resp, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 		
-		StateIntf oldstate = new StateIntf(state.getState());
+		ApplicationState oldstate = new ApplicationState(state.getState());
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		String oldchara=state.getExtra().get("chara");
 		String oldbg=state.getExtra().get("back");
-		String audioId=null;
 		handleReasonerContent(resp,state);
-		Interface scene=state.getState().getOrCreateInterface("场景");
-		Interface characs=state.getState().getOrCreateInterface("角色");
+		AttributeSet scene=state.getState().getOrCreateInterface("场景");
+		AttributeSet characs=state.getState().getOrCreateInterface("角色");
 		if(back!=null)
-		oldbg=back.getSceneData(scene.values);
+		oldbg=back.getSceneData(scene.getAsMap());
 		String bg=null;	
-		boolean isContentSent=false;
 		while (true) {
 			last=reader.readLine();
 			if(last==null) {
@@ -332,26 +329,30 @@ public class AITRPGSceneMain extends AIApplication {
 				if (last.startsWith("==场景==")) {
 					
 				}else if(!scene.isEmpty()){
-					state.appendInvisibleLine(Role.ASSISTANT, "==场景==");
+					state.appendContextLine(Role.ASSISTANT, "==场景==");
 					for(Entry<String, String> i:scene)
-					state.appendInvisibleLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+						state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
 				}else
 					throw new RegenerateNeededException(oldstate);//对话部分错误，督促AI重新生成一份
 				status=1;
 
 			}else if(status==1) {//处理场景
 				if (last.startsWith("==对话==")) {
-					
+					if(!scene.isEmpty()){
+						state.appendContextLine(Role.ASSISTANT, "==场景==");
+						for(Entry<String, String> i:scene)
+							state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+					}
 					if(back!=null)
-						bg=back.getSceneData(scene.values);
+						bg=back.getSceneData(scene.getAsMap());
 					if(bg==null)
 						bg=oldbg;
 					if(bg!=null)
-						state.setScene("back", bg);
+						state.sendSceneContent("back", bg);
 					else
-						state.setScene("back", "");
+						state.sendSceneContent("back", "");
 					status = 2;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
+					state.appendContextLine(Role.ASSISTANT, last);
 					int codePoint=0,codePoint2=0;
 					while((codePoint=reader.read())!=-1) {
 						if(codePoint!='=') {
@@ -360,7 +361,7 @@ public class AITRPGSceneMain extends AIApplication {
 						}else if((codePoint2=reader.read())=='=') {
 							String read=reader.readLine();
 							if(read.startsWith("角色==")) {
-								state.appendInvisibleLine(Role.ASSISTANT, "==角色==");
+								state.appendContextLine(Role.ASSISTANT, "==角色==");
 								status=3;
 								break;
 							}
@@ -381,7 +382,17 @@ public class AITRPGSceneMain extends AIApplication {
 				} else {
 					if(last.contains("=")) {
 						String[] lasts=last.split("=");
-						scene.put(lasts[0].trim(), lasts[1].trim());
+						if(lasts.length==2) {
+							String key=lasts[0].trim();
+							String value=lasts[1].trim();
+							if(validator!=null) {
+								if(!validator.validate(key, value)) {
+									continue;
+								}
+							}
+							scene.put(key,value);
+						}
+						continue;
 					}
 				}
 			} else if (status == 2) {	
@@ -394,27 +405,34 @@ public class AITRPGSceneMain extends AIApplication {
 				if(last.contains("=")) {
 					String[] lasts=last.split("=");
 					if(lasts.length==2) {
-						characs.put(lasts[0].trim(), lasts[1].trim());
+						String key=lasts[0].trim();
+						String value=lasts[1].trim();
+						if(validator!=null) {
+							if(!validator.validate(key, value)) {
+								continue;
+							}
+						}
+						characs.put(key, value);
 					}
 				}
 				continue;
 			}
-			state.appendInvisibleLine(Role.ASSISTANT, last);
+			state.appendContextLine(Role.ASSISTANT, last);
 
 		}
 		if(status==1) {//没有对话和角色部分，重新生成
 			throw new RegenerateNeededException(oldstate);
 		}
-		state.appendInvisibleLine(Role.ASSISTANT, "==角色==");
+		state.appendContextLine(Role.ASSISTANT, "==角色==");
 		for(Entry<String, String> i:characs)
-			state.appendInvisibleLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+			state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
 		
 		String chara=null;
 		
 		if(character!=null) {
 			List<String> charaList=new ArrayList<>();
 			List<String> sideList=new ArrayList<>();
-			for(Entry<String, String> s:characs.values.entrySet()) {
+			for(Entry<String, String> s:characs) {
 				if(s.getKey().endsWith("位置")&&!"不在".equals(s.getValue())) {
 					
 					Map<String,String> charaData=new HashMap<>();
@@ -445,9 +463,9 @@ public class AITRPGSceneMain extends AIApplication {
 		if(chara==null)
 			chara=oldchara;
 		if(chara!=null) {
-			state.setScene("front", chara);
+			state.sendSceneContent("front", chara);
 		}else {
-			state.setScene("front", "");
+			state.sendSceneContent("front", "");
 		}
 		if(chara!=null)
 			state.getExtra().put("chara",chara);
@@ -461,20 +479,20 @@ public class AITRPGSceneMain extends AIApplication {
 		String chara=state.getExtra().get("chara");
 		String bg=state.getExtra().get("back");
 		if(chara!=null) {
-			state.setScene("front", chara);
+			state.sendSceneContent("front", chara);
 		}else {
-			state.setScene("front", "");
+			state.sendSceneContent("front", "");
 		}
 		if(bg!=null)
-			state.setScene("back", bg);
+			state.sendSceneContent("back", bg);
 		else
-			state.setScene("back", "");
+			state.sendSceneContent("back", "");
 	};
-	public String constructSystem(StateIntf state) {
+	public String constructSystem(ApplicationState state) {
 		if (state == null || state.intfs.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("");
-		for (Interface intf : state.intfs.values())
+		for (AttributeSet intf : state.intfs.values())
 			sb.append(intf.toString());
 
 		return sb.toString();

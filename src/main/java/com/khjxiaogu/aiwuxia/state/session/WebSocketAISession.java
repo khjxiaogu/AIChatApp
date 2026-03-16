@@ -11,11 +11,11 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
-import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.session.AISession.AIData;
+import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -39,7 +39,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	ReentrantLock lock=new ReentrantLock();
 	boolean isClientAudioEnabled=false;
 	boolean isLocalAudioEnabled=false;
-	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,File fn, HistoryHolder history, AIData data) {
+	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,File fn, HistoryHolder history, ExtraData data) {
 		super(uid,history, data,aiapp);
 		this.fn = fn;
 		this.parent=par;
@@ -52,10 +52,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		
 		this.conn.add(conn);
 
-		if(super.getStage()!=GameStage.INITIALIZE) {
+		if(super.getStage()!=ApplicationStage.INITIALIZE) {
 			requireMoreMessages();
 		}else {
-			provideInitial();
+			provideInitialHint();
 		}
 		getAiapp().prepareScene(this);
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating()?1:0).add("price", this.getPrice()).add("isVoiceUsable",super.isAudioSession()||(getAiapp().isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService())).end().toString()));
@@ -136,18 +136,18 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		super.postMessages(items);
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> ja=JsonBuilder.object().array("messages");
 		for(HistoryItem i:items) {
-			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object().add("id", i.getIdentifier()).add("title", getAiapp().getRoleName(this, i.getRole())).add("message", i.getContent().toString());
+			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object().add("id", i.getIdentifier()).add("title", getAiapp().getRoleName(this, i.getRole())).add("message", i.getDisplayContent().toString());
 			if(i.getAudioId()!=null)
 				ix.add("audioId", i.getAudioId());
 		}
 		conn.writeAndFlush(new TextWebSocketFrame(ja.end().end().toString()));
 	}
 	@Override
-	public void onGenStart() {
-		super.onGenStart();
+	public void onGenerateStart() {
+		super.onGenerateStart();
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating()?1:0).end().toString()));
 	}
-	public void setScene(String type,String value) {
+	public void sendSceneContent(String type,String value) {
 
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("scene", type).add("scene_data", value).end().toString()));
 	}

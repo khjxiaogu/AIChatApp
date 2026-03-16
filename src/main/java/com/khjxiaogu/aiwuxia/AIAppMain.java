@@ -110,8 +110,8 @@ public class AIAppMain {
 		if (aistate == null) {
 			acw.setBackLog("正在生成初始面板...","");
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.AIData(),main);
-			aistate.provideInitial();
+			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.ExtraData(),main);
+			aistate.provideInitialHint();
 		}
 		
 		acw.setStatus(main.constructSystem(aistate.getState()));
@@ -144,8 +144,8 @@ public class AIAppMain {
 							s += "\n生成中...";
 						final String fs = s;
 						String rs="";
-						if(cstate.getReasoningContent()!=null) {
-							rs=cstate.getReasoningContent();
+						if(cstate.getReasonerContent()!=null) {
+							rs=cstate.getReasonerContent();
 						}
 						final String rfs=rs;
 						SwingUtilities.invokeLater(() -> {
@@ -170,7 +170,7 @@ public class AIAppMain {
 			}
 
 			try {
-				aistate.handleSpeech(ret);
+				aistate.handleUserSpeech(ret);
 				Thread.sleep(200);
 				while(aistate.isGenerating()) {
 					Thread.sleep(100);

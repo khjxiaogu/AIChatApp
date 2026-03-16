@@ -21,13 +21,14 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.status.Interface;
-import com.khjxiaogu.aiwuxia.state.status.StateIntf;
+import com.khjxiaogu.aiwuxia.state.status.MemoryAttributeSet;
+import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
+import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -44,19 +45,19 @@ public class AIWuxiaMain extends AIApplication {
 		// naming
 		handlers.add((state, ret) -> {
 
-			if (state.getStage() == GameStage.NAMING) {
+			if (state.getStage() == ApplicationStage.NAMING) {
 				if ("换一批".equals(ret)) {
 					provideNames(state);
 
 					return null;
 				}
-				state.setStage(GameStage.STARTED);
+				state.setStage(ApplicationStage.STARTED);
 			}
 			return ret;
 		});
 		// check interface
 		handlers.add((state, ret) -> {
-			if (state.getStage() == GameStage.STARTED) {
+			if (state.getStage() == ApplicationStage.STARTED) {
 				if ("查看面板".equals(ret)) {
 					state.add(Role.USER, ret, false);
 					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
@@ -70,10 +71,10 @@ public class AIWuxiaMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			
 			state.add(Role.USER, ret, true);
-			state.appendInvisibleLine(Role.USER, "\n按上述行动继续，至少写出5条大纲，情景剧本部分按大纲扩写，必须包含所有大纲的要点，内容务必详细详尽，文本优美通顺，至少1500字。");
-			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
+			state.appendContextLine(Role.USER, "\n按上述行动继续，至少写出5条大纲，情景剧本部分按大纲扩写，必须包含所有大纲的要点，内容务必详细详尽，文本优美通顺，至少1500字。");
+			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
 			state.getLast().setLastState(airet);
-			state.addRow();
+			state.addDialogRow();
 
 			return null;
 		});
@@ -92,9 +93,14 @@ public class AIWuxiaMain extends AIApplication {
 			e.printStackTrace();
 		}
 	}
-
+	protected static int popFirst(Set<Integer> set) {
+		Iterator<Integer> it = set.iterator();
+		int ret = it.next();
+		it.remove();
+		return ret;
+	}
 	public void provideNames(AISession state) {
-		if (state.getStage() == GameStage.NAMING) {
+		if (state.getStage() == ApplicationStage.NAMING) {
 			state.removeLast();
 			// state.removeLast();
 		} else
@@ -115,7 +121,7 @@ public class AIWuxiaMain extends AIApplication {
 		state.add(Role.ASSISTANT, inital.toString() + "\n请选择一个姓名，或者输入姓名与性别，或输入“换一批”取得新姓名", "你选额：需要起名建议。==故事大纲==1. 为创建角色提供几个名字。\n==情景剧本==\n==属性面板==\n==操作=="+inital.toString() + "请选择一个姓名。");
 	}
 
-	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
@@ -144,19 +150,19 @@ public class AIWuxiaMain extends AIApplication {
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
 			int len=0;
-			Iterator<HistoryItem> it=history.sendableIterator();
+			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				len+=hi.getFullContent().length();
+				len+=hi.getContextContent().length();
 			}
 			
 			if(len>=140000) {//more than 140000 text:about 100k context,remove until 60000
 				HistoryItem lasthi=null;
-				it=history.sendableIterator();
+				it=history.validContextIterator();
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
-					len-=hi.getFullContent().length();
-					hi.setSendable(false);
+					len-=hi.getContextContent().length();
+					hi.setValidContext(false);
 					if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
 						lasthi=hi;
 						break;
@@ -169,10 +175,10 @@ public class AIWuxiaMain extends AIApplication {
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
 			}
-			it=history.sendableIterator();
+			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
 				
 			}
 				
@@ -198,15 +204,15 @@ public class AIWuxiaMain extends AIApplication {
 
 	public void provideInitial(AISession state) {
 		provideNames(state);
-		state.setStage(GameStage.NAMING);
+		state.setStage(ApplicationStage.NAMING);
 	}
 
-	public StateIntf precessResponse(AIOutput op, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput op, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 		
-		Interface intf = null;
-		StateIntf oldstate = new StateIntf(state.getState());
+		AttributeSet intf = null;
+		ApplicationState oldstate = new ApplicationState(state.getState());
 		boolean nstateModified = false;
 		boolean isDraft=false;
 		BufferedReader reader=new BufferedReader(op.getContent());
@@ -223,7 +229,7 @@ public class AIWuxiaMain extends AIApplication {
 				isWaiting = false;
 			}
 			if(last.startsWith("==故事大纲==")) {
-				state.appendInvisibleLine(Role.ASSISTANT, last);
+				state.appendContextLine(Role.ASSISTANT, last);
 				isDraft=true;
 				continue;
 			}
@@ -233,7 +239,7 @@ public class AIWuxiaMain extends AIApplication {
 					//no append because later
 				}else {
 					
-					state.appendInvisibleLine(Role.ASSISTANT, last);
+					state.appendContextLine(Role.ASSISTANT, last);
 					state.getState().extras.add(last);
 					continue;
 				}
@@ -242,10 +248,10 @@ public class AIWuxiaMain extends AIApplication {
 			if (status == 0) {//处理主要剧情
 				if (last.startsWith("==属性面板==")) {
 					status = 1;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
+					state.appendContextLine(Role.ASSISTANT, last);
 				} else if (last.startsWith("==操作==")) {
 					status = 3;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
+					state.appendContextLine(Role.ASSISTANT, last);
 					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
 				} else {
 					state.appendLine(Role.ASSISTANT, last, true);
@@ -272,9 +278,9 @@ public class AIWuxiaMain extends AIApplication {
 				}
 			} else if (status == 1) {//处理属性面板
 				if (last.startsWith("==操作==")) {
-					state.appendInvisibleLine(Role.ASSISTANT, buildAttrStr(state));
+					state.appendContextLine(Role.ASSISTANT, buildAttrStr(state));
 					status = 3;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
+					state.appendContextLine(Role.ASSISTANT, last);
 					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
 					
 				}else {
@@ -282,36 +288,36 @@ public class AIWuxiaMain extends AIApplication {
 					Matcher m1 = intfPattern.matcher(last);
 					if (m1.find()) {
 						intf = state.getState().intfs.computeIfAbsent(m1.group(1),s->{
-							Interface itf=new Interface(s);
+							MemoryAttributeSet itf=new MemoryAttributeSet(s);
 							if("主角".equals(s)) {
-								itf.values.putIfAbsent("姓名","");
-								itf.values.putIfAbsent("性别","");
-								itf.values.putIfAbsent("年龄","");
-								itf.values.putIfAbsent("容貌","");
-								itf.values.putIfAbsent("天赋","");
-								itf.values.putIfAbsent("灵根","");
-								itf.values.putIfAbsent("境界","");
-								itf.values.putIfAbsent("功法","");
-								itf.values.putIfAbsent("出身","");
-								itf.values.putIfAbsent("状态","");
-								itf.values.putIfAbsent("灵石","");
-								itf.values.putIfAbsent("物品清单","");
+								itf.putIfAbsent("姓名","");
+								itf.putIfAbsent("性别","");
+								itf.putIfAbsent("年龄","");
+								itf.putIfAbsent("容貌","");
+								itf.putIfAbsent("天赋","");
+								itf.putIfAbsent("灵根","");
+								itf.putIfAbsent("境界","");
+								itf.putIfAbsent("功法","");
+								itf.putIfAbsent("出身","");
+								itf.putIfAbsent("状态","");
+								itf.putIfAbsent("灵石","");
+								itf.putIfAbsent("物品清单","");
 							}else {
-								itf.values.putIfAbsent("姓名","");
-								itf.values.putIfAbsent("性别","");
-								itf.values.putIfAbsent("性格","");
-								itf.values.putIfAbsent("年龄","");
-								itf.values.putIfAbsent("容貌","");
-								itf.values.putIfAbsent("天赋","");
-								itf.values.putIfAbsent("灵根","");
-								itf.values.putIfAbsent("境界","");
-								itf.values.putIfAbsent("功法","");
-								itf.values.putIfAbsent("出身","");
-								itf.values.putIfAbsent("状态","");
-								itf.values.putIfAbsent("物品清单","");
-								itf.values.putIfAbsent("关系网络","");
-								itf.values.putIfAbsent("好感度","");
-								itf.values.putIfAbsent("记忆烙印",""); 
+								itf.putIfAbsent("姓名","");
+								itf.putIfAbsent("性别","");
+								itf.putIfAbsent("性格","");
+								itf.putIfAbsent("年龄","");
+								itf.putIfAbsent("容貌","");
+								itf.putIfAbsent("天赋","");
+								itf.putIfAbsent("灵根","");
+								itf.putIfAbsent("境界","");
+								itf.putIfAbsent("功法","");
+								itf.putIfAbsent("出身","");
+								itf.putIfAbsent("状态","");
+								itf.putIfAbsent("物品清单","");
+								itf.putIfAbsent("关系网络","");
+								itf.putIfAbsent("好感度","");
+								itf.putIfAbsent("记忆烙印",""); 
 							}
 							return itf;
 						});
@@ -322,7 +328,7 @@ public class AIWuxiaMain extends AIApplication {
 					Matcher m2 = sxPattern.matcher(last);
 					int index = 0;
 					while (m2.find(index)) {
-						intf.values.put(m2.group(1), m2.group(2));
+						intf.put(m2.group(1), m2.group(2));
 						index = m2.end();
 					}
 					nstateModified = true;
@@ -330,7 +336,7 @@ public class AIWuxiaMain extends AIApplication {
 			} else if (status == 2) {
 				if (last.startsWith("==操作==")) {
 					status = 3;
-					state.appendInvisibleLine(Role.ASSISTANT, last);
+					state.appendContextLine(Role.ASSISTANT, last);
 					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
 				} else {
 					int pos = last.indexOf('.');
@@ -357,15 +363,15 @@ public class AIWuxiaMain extends AIApplication {
 		if (state == null || state.getState().intfs.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("");
-		for (Interface intf : state.getState().intfs.values())
+		for (AttributeSet intf : state.getState().intfs.values())
 			sb.append(intf.toString());
 		return sb.toString();
 	}
-	public String constructSystem(StateIntf state) {
+	public String constructSystem(ApplicationState state) {
 		if (state == null || state.intfs.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("==属性面板==\n");
-		for (Interface intf : state.intfs.values())
+		for (AttributeSet intf : state.intfs.values())
 			sb.append(intf.toString());
 		//sb.append("【叙事轨迹】\n");
 		/*for (Entry<String, String> p : state.getState().perks.entrySet()) {
@@ -385,6 +391,6 @@ public class AIWuxiaMain extends AIApplication {
 	public String getBrief(AISession state) {
 		if(state.getState().intfs.isEmpty())
 			return null;
-		return state.getState().intfs.values().iterator().next().values.get("姓名");
+		return state.getState().intfs.values().iterator().next().get("姓名");
 	}
 }

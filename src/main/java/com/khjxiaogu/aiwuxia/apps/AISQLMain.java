@@ -15,12 +15,12 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.state.GameStage;
+import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.status.StateIntf;
+import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -40,8 +40,8 @@ public class AISQLMain extends AIApplication {
 		// naming
 		handlers.add((state, ret) -> {
 
-			if (state.getStage() == GameStage.NAMING) {
-				state.setStage(GameStage.STARTED);
+			if (state.getStage() == ApplicationStage.NAMING) {
+				state.setStage(ApplicationStage.STARTED);
 			}
 			return ret;
 		});
@@ -58,7 +58,7 @@ public class AISQLMain extends AIApplication {
 		});
 		// check interface
 		handlers.add((state, ret) -> {
-			if (state.getStage() == GameStage.STARTED) {
+			if (state.getStage() == ApplicationStage.STARTED) {
 				if ("查看定义".equals(ret)) {
 					state.add(Role.USER, ret, false);
 					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
@@ -71,15 +71,15 @@ public class AISQLMain extends AIApplication {
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
-			StateIntf airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
+			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
 			state.getLast().setLastState(airet);
-			state.addRow();
+			state.addDialogRow();
 
 			return null;
 		});
 	}
 
-	public StateIntf sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
@@ -106,10 +106,10 @@ public class AISQLMain extends AIApplication {
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			Iterator<HistoryItem> it=history.sendableIterator();
+			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getFullContent().toString().trim()).end();
+				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
 				
 			}
 		}
@@ -124,7 +124,7 @@ public class AISQLMain extends AIApplication {
 	public String constructBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
 		for (HistoryItem hs : state.getHistory()) {
-			sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContent())
+			sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getDisplayContent())
 				.append("\n");
 		}
 
@@ -134,15 +134,15 @@ public class AISQLMain extends AIApplication {
 
 	public void provideInitial(AISession state) {
 		state.add(Role.ASSISTANT,"请提供表定义，定义必须开始以“定义”二字",false);
-		state.setStage(GameStage.NAMING);
+		state.setStage(ApplicationStage.NAMING);
 	}
 
-	public StateIntf precessResponse(AIOutput op, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput op, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 		
 		try(BufferedReader scan=new BufferedReader(op.getContent())){
-			StateIntf oldstate = new StateIntf(state.getState());
+			ApplicationState oldstate = new ApplicationState(state.getState());
 			handleReasonerContent(op,state);
 			boolean nstateModified = false;
 			while (true) {
@@ -161,7 +161,7 @@ public class AISQLMain extends AIApplication {
 				if (status == 0) {
 					if (last.startsWith("==SQL==")) {
 						status = 2;
-						state.appendInvisibleLine(Role.ASSISTANT, last);
+						state.appendContextLine(Role.ASSISTANT, last);
 					} else {  
 						state.appendLine(Role.ASSISTANT, last, true);
 					}
@@ -176,7 +176,7 @@ public class AISQLMain extends AIApplication {
 		}
 	}
 
-	public String constructSystem(StateIntf state) {
+	public String constructSystem(ApplicationState state) {
 		if (state == null || state.extras.isEmpty())
 			return "";
 		StringBuilder sb = new StringBuilder("=====定义=====\n");

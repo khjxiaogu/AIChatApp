@@ -13,7 +13,7 @@ public class AppAISession extends AISession {
 
 
 
-	public AppAISession(String user, HistoryHolder historym, AIData data,AIApplication aiapp) {
+	public AppAISession(String user, HistoryHolder historym, ExtraData data,AIApplication aiapp) {
 		super(user, historym, data,aiapp);
 	}
 

@@ -5,11 +5,11 @@ import java.util.Date;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.session.AISession.AIData;
+import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 
 public class AIGroupSession extends AISession {
 	ArrayDeque<String> messageQueue=new ArrayDeque<>();
-	public AIGroupSession(String user, HistoryHolder historym, AIData data, AIApplication aiapp) {
+	public AIGroupSession(String user, HistoryHolder historym, ExtraData data, AIApplication aiapp) {
 		super(user, historym, data, aiapp);
 	}
 	public void addMessage(String msg) {

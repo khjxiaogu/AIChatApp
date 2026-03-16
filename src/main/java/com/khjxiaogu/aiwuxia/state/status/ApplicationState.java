@@ -7,29 +7,29 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
-public class StateIntf implements Serializable{
+public class ApplicationState implements Serializable{
 	/**
 	 * 
 	 */
 	private static final long serialVersionUID = 846642562841460630L;
-	public Map<String, Interface> intfs = new LinkedHashMap<>();
+	public Map<String, MemoryAttributeSet> intfs = new LinkedHashMap<>();
 	public Map<String, String> perks = new LinkedHashMap<>();
 	public List<String> extras=new ArrayList<>();
-	public StateIntf(StateIntf last) {
+	public ApplicationState(ApplicationState last) {
 		super();
-		for(Entry<String, Interface> intf:last.intfs.entrySet()) {
-			this.intfs.put(intf.getKey(), new Interface(intf.getValue()));
+		for(Entry<String, MemoryAttributeSet> intf:last.intfs.entrySet()) {
+			this.intfs.put(intf.getKey(), new MemoryAttributeSet(intf.getValue()));
 		}
 		this.perks.putAll(last.perks);
 		this.extras.addAll(last.extras);
 	}
-	public StateIntf() {
+	public ApplicationState() {
 		super();
 	}
-	public Interface getOrCreateInterface(String name) {
-		return intfs.computeIfAbsent(name, Interface::new);
+	public AttributeSet getOrCreateInterface(String name) {
+		return intfs.computeIfAbsent(name, MemoryAttributeSet::new);
 	}
-	public void set(StateIntf last) {
+	public void set(ApplicationState last) {
 		this.intfs.clear();
 		this.perks.clear();
 		this.extras.clear();
