@@ -22,7 +22,6 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
-import com.khjxiaogu.aiwuxia.state.AttributeValidator;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -30,6 +29,7 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
+import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -45,13 +45,13 @@ public class AITRPGSceneMain extends AIApplication {
 	File basePath;
 
 
-	public AITRPGSceneMain(File basePath,String modelFolder,String charaname) {
+	public AITRPGSceneMain(File basePath,File modelFolder,String charaname,JsonObject meta) {
 		super();
 		this.charaname=charaname;
 		
 		try {
 			this.basePath=basePath;
-			File model=new File(basePath,modelFolder);
+			File model=modelFolder;
 			
 			String role = readFile(new File(model, "role.txt"));
 			String charaset=readFile(new File(model, "charaset.txt"));
@@ -200,7 +200,7 @@ public class AITRPGSceneMain extends AIApplication {
 						if(hi.getRole()!=Role.SYSTEM) {
 							if(hi.getRole()==Role.USER)
 								summery.append("用户").append("：");
-							summery.append(hi.getFullContent()).append("\n");
+							summery.append(hi.getDisplayContent()).append("\n");
 						}
 						his.add(hi);
 						

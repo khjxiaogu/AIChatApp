@@ -6,14 +6,14 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -26,6 +26,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIGroupApplication extends AIApplication {
 	String name;
+	String charaName;
 	@Override
 	public void provideInitial(AISession state) {
 	}
@@ -42,7 +43,7 @@ public class AIGroupApplication extends AIApplication {
 
 	@Override
 	public String getBrief(AISession state) {
-		return "";
+		return name;
 	}
 	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
@@ -165,8 +166,12 @@ public class AIGroupApplication extends AIApplication {
 		
 
 	}
+	@Override
+	public String getRoleName(AISession state, Role role) {
+		return role==Role.ASSISTANT?charaName:super.getRoleName(state, role);
+	}
 	String summary;
-	public AIGroupApplication(File path,String name) throws IOException {
+	public AIGroupApplication(File path,String name,JsonObject meta) throws IOException {
 		super();
 		this.name=name;
 		system = 
@@ -176,6 +181,7 @@ public class AIGroupApplication extends AIApplication {
 			FileUtil.readString(new File(path, "rules.txt")).replace("\r", "");
 		summary = FileUtil.readString(new File(path, "summary.txt")).replace("\r", "")+
 			FileUtil.readString(new File(path, "charaset.txt")).replace("\r", "");
+		this.charaName=meta.get("charaName").getAsString();
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);

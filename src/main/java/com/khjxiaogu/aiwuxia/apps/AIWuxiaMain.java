@@ -82,12 +82,12 @@ public class AIWuxiaMain extends AIApplication {
 
 	public AIWuxiaMain(File path) {
 		try {
-			system = FileUtil.readString(new File(path, "promptwuxia.txt")).replace("\r", "");
+			system = FileUtil.readString(new File(path, "prompt.txt")).replace("\r", "");
 
 			malenames = new ArrayList<>(Arrays.asList(FileUtil
-				.readString(new File(path, "name-wuxia-male.txt")).replace("\r", "").split("\n")));
+				.readString(new File(path, "name-male.txt")).replace("\r", "").split("\n")));
 			femalenames = new ArrayList<>(Arrays.asList(FileUtil
-				.readString(new File(path, "name-wuxia-female.txt")).replace("\r", "").split("\n")));
+				.readString(new File(path, "name-female.txt")).replace("\r", "").split("\n")));
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();

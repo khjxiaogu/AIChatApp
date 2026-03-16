@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia;
+package com.khjxiaogu.aiwuxia.tools;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -25,11 +25,12 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 public class AISummary {
 
 	public static void main(String[] args) throws IOException {
+		String name="fengyitalk";
+		int idx=0;
 		File dataFolder=new File("save");
 		String system=FileUtil.readString(new File(dataFolder,"summaryprompt.txt"));
 		LLMConnector.initDefault();
-		//File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
-		File saveData =new File(new File(dataFolder,"saveData"), "19d604d7e0e74232b7363fabfba81061.json");
+		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
 		MemoryHistory his=AIApplication.historyFromJson(saveData);
 		Iterator<HistoryItem> it=his.iterator();
 		StringBuilder summary=new StringBuilder();
@@ -38,12 +39,12 @@ public class AISummary {
 		while(it.hasNext()) {
 			HistoryItem hi=it.next();
 		
-			len+=hi.getFullContent().length();
+			len+=hi.getContextContent().length();
 			
 			if(hi.getRole()!=Role.SYSTEM) {
 				if(hi.getRole()==Role.USER)
 					summary.append("【用户】：");
-				summary.append(hi.getFullContent()).append("\n");
+				summary.append(hi.getDisplayContent()).append("\n");
 			}
 			if(len>60000) {
 				len=0;

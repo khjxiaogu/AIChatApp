@@ -16,7 +16,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
-import com.khjxiaogu.aiwuxia.apps.AIGroupApplication;
+import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -96,7 +96,7 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    					JsonObject text=melm.get("textElement").getAsJsonObject();
 			    					if(text.get("atType").getAsInt()!=0) {
 			    						if(text.get("atUid").getAsString().equals(String.valueOf(botId))) {
-			    							msgBuilder.append("@"+state.getAiapp().getName());
+			    							msgBuilder.append("@"+state.getAiapp().getRoleName(state, Role.ASSISTANT));
 			    							containsAtMe=true;
 			    							continue;
 			    						}
@@ -112,7 +112,7 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    				msgBuilder.append("」");
 			    				String messageLine=msgBuilder.toString();
 			    				System.out.println("grep message:"+messageLine);
-			    				if((!containsAtMe)&&messageLine.contains("@"+state.getAiapp().getName()))
+			    				if((!containsAtMe)&&messageLine.contains("@"+state.getAiapp().getRoleName(state, Role.ASSISTANT)))
 			    					containsAtMe=true;
 			    				state.addMessage(messageLine);
 			    			}
@@ -155,14 +155,14 @@ public class NapCatAIConnector  extends WebSocketClient {
     public void onError(Exception e) {
         close(CloseFrame.NORMAL, e.toString());
     }
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Throwable {
     	try {
     		LLMConnector.initDefault();
     		String name="xinghanirc";
     		File dataFolder=new File("save");
     		File saveData = new File(new File(dataFolder,"saveData"), "savegroup-"+name+".json");
-    		File modelFolder = new File(dataFolder,name);
-    		AIApplication main = new AIGroupApplication(modelFolder,"汪星涵");
+    		File modelFolder = new File(dataFolder,"apps/"+name);
+    		AIApplication main = AIApplicationRegistry.createInstance(dataFolder, modelFolder);
     		AIGroupSession aistate = null;
     		if (saveData.exists()) {
     			aistate = new AIGroupSession("appuser",

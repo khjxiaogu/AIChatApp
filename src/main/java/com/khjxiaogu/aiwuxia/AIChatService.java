@@ -22,6 +22,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.AIArticleMain;
 import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AIGalgameMain;
@@ -168,11 +169,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public void reload() {
 		apps.clear();
 		trial.clear();
-		apps.put("wuxia", new AIWuxiaMain(parent));
-		apps.put("article", new AIArticleMain(parent));
-		apps.put("fengyi", new AIGalgameMain(parent, "promptfengyi.txt", "枫怡DLC"));
 		//apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
-		for (File fn : parent.listFiles(File::isDirectory)) {
+		for (File fn : new File(parent,"apps").listFiles(File::isDirectory)) {
 			try {
 				String name = fn.getName();
 				File metaFile = new File(fn, "meta.json");
@@ -181,18 +179,14 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					JsonObject meta = JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 					if (meta.has("name") && (!meta.has("enabled") || meta.get("enabled").getAsBoolean())) {
 						getLogger().info("正在加载AI：" + name);
-						if (fn.getName().endsWith("talk")) {
-							apps.put(name, new AICharaTalkMain(parent, name, meta.get("name").getAsString()));
-							isSucceed = true;
-						} else if (fn.getName().endsWith("trpg")) {
-							apps.put(name, new AITRPGSceneMain(parent, name, meta.get("name").getAsString()));
-							isSucceed = true;
-						}
-						if (isSucceed) {
+						
+						try {
+							apps.put(name, AIApplicationRegistry.createInstance(parent, fn, meta));
 							if (meta.has("trial") && meta.get("trial").getAsBoolean())
 								trial.add(name);
 							getLogger().info("AI加载成功：" + name);
-						} else {
+						} catch (Throwable e) {
+							e.printStackTrace();
 							getLogger().info("AI加载失败：" + name);
 						}
 					} else {

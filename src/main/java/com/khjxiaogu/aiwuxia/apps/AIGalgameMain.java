@@ -3,22 +3,20 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
+import java.util.List;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
-import com.khjxiaogu.aiwuxia.state.AttributeValidator;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.status.MemoryAttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -28,18 +26,15 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIGalgameMain extends AIApplication {
 	String charaname;
-	AttributeValidator validator;
-	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
-	Pattern intfPattern = Pattern.compile("【([^面]+)面板】");
-	public AIGalgameMain(File basePath,String promptName,String charaname) {
+	String summary;
+	String initSelection;
+	public AIGalgameMain(File basePath,String charaname) throws IOException {
 		super();
 		this.charaname=charaname;
-		try {
-			system = FileUtil.readString(new File(basePath, promptName)).replace("\r", "");
-
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		String charaset= FileUtil.readString(new File(basePath, "charaset.txt")).replace("\r", "");
+		system = FileUtil.readString(new File(basePath, "prompt.txt")).replace("\r", "")+"\n=== 人物设定 ===\n"+charaset;
+		summary = FileUtil.readString(new File(basePath, "summary.txt")).replace("\r", "")+"\n=== 人物设定 ===\n"+charaset;
+		initSelection =FileUtil.readString(new File(basePath, "init.txt")).replace("\r", "");
 		// naming
 		handlers.add((state, ret) -> {
 
@@ -56,7 +51,7 @@ public class AIGalgameMain extends AIApplication {
 					state.getExtra().put("name", ret);
 					state.add(Role.USER, ret, false);
 					state.setStage(ApplicationStage.STARTED);
-					return "开始游戏";
+					return initSelection;
 				}
 				return null;
 			}
@@ -105,7 +100,7 @@ public class AIGalgameMain extends AIApplication {
 	public String constructNameState(String name){
 		return "主角姓名为"+name+"，你需要用该名称称呼主角。";
 	}
-	public AIRequest constructAIrequest(AISession state) {
+	public AIRequest constructAIrequest(AISession state) throws IOException {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system+constructNameState(state.getExtra().get("name"))).end();
 
@@ -121,20 +116,35 @@ public class AIGalgameMain extends AIApplication {
 				
 			}
 			
-			if(len>=140000) {//more than 140000 text:about 100k context,remove until 60000
-				HistoryItem lasthi=null;
+			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
+				StringBuilder summery=new StringBuilder();
+				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
+				int removedSpeech=0;
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
+					
 					len-=hi.getContextContent().length();
-					hi.setValidContext(false);
-					if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
-						lasthi=hi;
-						break;
+					
+					if(hi.getRole()!=Role.SYSTEM) {
+						if(hi.getRole()==Role.USER)
+							summery.append("用户").append("：");
+						summery.append(hi.getDisplayContent()).append("\n");
 					}
+					his.add(hi);
+					
+					if(hi.getRole()==Role.ASSISTANT) {
+						removedSpeech++;
+						if(len<=20000) {
+							break;
+						}
+					}
+					
+					
 				}
-				if(lasthi!=null)
-					state.getExtra().put("lastSummary", constructSystem(lasthi.getLastState()));
+				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
+				his.forEach(t->t.setValidContext(false));
+				state.minDialogRows(removedSpeech);//generally half speech is ai
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
@@ -154,7 +164,33 @@ public class AIGalgameMain extends AIApplication {
 		return AIRequest.builder().taskType(TaskType.STORY).streamed().build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
+	public AIRequest constructSummaryrequest(AISession state,String summary) {
+		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
+				.add("role", "system").add("content", this.summary).end();
+			StringBuilder sumerize=new StringBuilder();
+			if(state.getExtra().containsKey("lastSummary")) {
+				sumerize.append("=== 前情提要 ===\\n");
+				sumerize.append( state.getExtra().get("lastSummary"));
+			}
+			sumerize.append("=== 对话块 ===\n");
+			sumerize.append(summary.trim());
+			// if (status != null&&!status.isEmpty())
+			b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
 
+
+		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
+		// true);
+		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+
+	}
+	public String makeSummaryrequest(AISession state,String summary) throws IOException {
+		
+			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
+			resp.addUsageListener(state::addUsage);
+			printReasonerContent(resp);
+			return FileUtil.readAll(resp.getContent());
+
+	}
 	public String constructBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
 		for (HistoryItem hs : state.getHistory()) {
@@ -175,11 +211,8 @@ public class AIGalgameMain extends AIApplication {
 		boolean isWaiting = true;
 		int status = 0;
 
-		AttributeSet intf = null;
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		boolean nstateModified = false;
-		boolean isDraft=false;
-
 		handleReasonerContent(resp,state);
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
@@ -198,31 +231,11 @@ public class AIGalgameMain extends AIApplication {
 				//System.out.println("\n=================Content===============");
 				isWaiting = false;
 			}
-			if(last.startsWith("==故事大纲==")) {
-				state.appendContextLine(Role.ASSISTANT, last);
-				isDraft=true;
-				continue;
-			}
-			if(isDraft) {
-				if(last.startsWith("==属性面板==")||last.startsWith("==操作==")||last.startsWith("==情景剧本==")) {
-					isDraft=false;
-					//no append because later
-				}else {
-					
-					state.appendContextLine(Role.ASSISTANT, last);
-					state.getState().extras.add(last);
-					continue;
-				}
-			}
-			
 			if (status == 0) {//处理主要剧情
-				if (last.startsWith("==属性面板==")) {
-					status = 1;
+				if (last.startsWith("==操作==")) {
+					status = 2;
 					state.appendContextLine(Role.ASSISTANT, last);
-				} else if (last.startsWith("==操作==")) {
-					status = 3;
-					state.appendContextLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
+					state.appendLine(Role.ASSISTANT, "选择你的操作（数字或行动）：", false);
 				} else {
 					if(last.startsWith("==情景剧本=="))
 						state.appendContextLine(Role.ASSISTANT, last);
@@ -249,47 +262,6 @@ public class AIGalgameMain extends AIApplication {
 						}
 					}
 				}
-			} else if (status == 1) {//处理属性面板
-				if (last.startsWith("==操作==")) {
-					state.appendContextLine(Role.ASSISTANT, buildAttrStr(state));
-					status = 3;
-					state.appendContextLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
-					
-				}else {
-					//state.appendInvisibleLine(Role.ASSISTANT, last);
-					Matcher m1 = intfPattern.matcher(last);
-					if (m1.find()) {
-						intf = state.getState().intfs.computeIfAbsent(m1.group(1), MemoryAttributeSet::new);
-						continue;
-					}
-					if (intf == null)
-						continue;
-					Matcher m2 = sxPattern.matcher(last);
-					int index = 0;
-					while (m2.find(index)) {
-						intf.put(m2.group(1), m2.group(2));
-						index = m2.end();
-					}
-					nstateModified = true;
-				}
-			} else if (status == 2) {
-				if (last.startsWith("==操作==")) {
-					status = 3;
-					state.appendContextLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
-				} else {
-					int pos = last.indexOf('.');
-					if (pos > 0) {
-						String cont = last.substring(pos + 1).trim();
-						String num = last.substring(0, pos).trim();
-						if (cont.startsWith("【删除】"))
-							state.getState().perks.remove(num);
-						else
-							state.getState().perks.put(num, cont);
-						nstateModified = true;
-					}
-				}
 			} else {
 				state.appendLine(Role.ASSISTANT, last, true);
 			}
@@ -307,17 +279,7 @@ public class AIGalgameMain extends AIApplication {
 		return sb.toString();
 	}
 	public String constructSystem(ApplicationState state) {
-		if (state == null || state.intfs.isEmpty())
-			return "";
-		StringBuilder sb = new StringBuilder("==属性面板==\n");
-		for (AttributeSet intf : state.intfs.values())
-			sb.append(intf.toString());
-		//sb.append("【叙事轨迹】\n");
-		/*for (Entry<String, String> p : state.getState().perks.entrySet()) {
-			sb.append(p.getKey()).append(". ").append(p.getValue()).append("\n");
-		}*/
-
-		return sb.toString();
+		return "";
 
 	}
 

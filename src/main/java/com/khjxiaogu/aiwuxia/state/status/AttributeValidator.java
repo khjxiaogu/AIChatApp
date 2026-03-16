@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.state;
+package com.khjxiaogu.aiwuxia.state.status;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
@@ -60,11 +60,20 @@ public class AttributeValidator {
         // 没有规则匹配该 key，验证失败
         return false;
     }
+    public boolean validateKey(String key) {
+        for (Rule rule : rules) {
+            if (rule.keyPattern.matcher(key).matches()) {
+                 return true;  
+            }
+        }
+        // 没有规则匹配该 key，验证失败
+        return false;
+    }
 
     /**
      * 内部规则类，封装 key 的正则和对应的 value 正则列表。
      */
-    private static class Rule {
+    public static class Rule {
         final Pattern keyPattern;
         final List<Pattern> valuePatterns;
 
@@ -76,7 +85,7 @@ public class AttributeValidator {
     /**
      * Gson 序列化适配器：将 Rule 转换为其正则字符串表示。
      */
-    private static class RuleSerializer implements JsonSerializer<Rule>,JsonDeserializer<Rule>  {
+    public  static class RuleSerializer implements JsonSerializer<Rule>,JsonDeserializer<Rule>  {
         @Override
         public JsonElement serialize(Rule src, Type typeOfSrc, JsonSerializationContext context) {
             JsonObject obj = new JsonObject();

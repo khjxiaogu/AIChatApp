@@ -4,7 +4,6 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
-import java.util.concurrent.ExecutionException;
 
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -12,6 +11,7 @@ import javax.swing.UIManager;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
 import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -37,31 +37,6 @@ public class AIAppMain {
 	private AIAppMain() {
 		// TODO Auto-generated constructor stub
 	}
-	public static AIRequest constructSummaryrequest(String summaryPrompt,String lastSummary,String summary) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-				.add("role", "system").add("content", summaryPrompt).end();
-			StringBuilder sumerize=new StringBuilder();
-			if(lastSummary!=null) {
-				sumerize.append("=== 前情提要 ===\\n");
-				sumerize.append(lastSummary);
-			}
-			sumerize.append("=== 对话块 ===\n");
-			sumerize.append(summary.trim());
-			// if (status != null&&!status.isEmpty())
-			b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
-
-
-		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
-		// true);
-		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
-
-	}
-	public static AIOutput makeSummaryrequest(String lastSummary,String summary) throws IOException {
-		
-			AIOutput resp=LLMConnector.call(constructSummaryrequest(FileUtil.readString(new File("save/xinghantrpg/summary.txt")),lastSummary,summary));
-			return resp;
-
-	}
 	public static String printAndCollectContent(Reader output) throws IOException {
 		BufferedReader br=new BufferedReader(output);
 		int read;
@@ -76,9 +51,9 @@ public class AIAppMain {
 		}
 		return sb.toString();
 	}
-	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
-		String name="xinghantrpg";
-		int idx=1;
+	public static void main(String[] args) throws Throwable {
+		String name="fengyidlc";
+		int idx=0;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
@@ -90,14 +65,14 @@ public class AIAppMain {
 		AIChatWindow acw=new AIChatWindow();
 		acw.setVisible(true);
 		File dataFolder=new File("save");
-		//File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
-		File saveData =new File(new File(dataFolder,"saveData"), "19d604d7e0e74232b7363fabfba81061.json");
+		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		//File saveData =new File(new File(dataFolder,"saveData"), "19d604d7e0e74232b7363fabfba81061.json");
 		
-		File modelFolder=new File(dataFolder,name);
+		File modelFolder=new File(dataFolder,"apps/"+name);
 		File metaFile=new File(modelFolder,"meta.json");
 		JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 		
-		AIApplication main = new AITRPGSceneMain(dataFolder,name,meta.get("name").getAsString());
+		AIApplication main = AIApplicationRegistry.createInstance(dataFolder, modelFolder, meta);
 		AISession aistate = null;
 		if (saveData.exists()) {
 			aistate = new AppAISession("appuser",

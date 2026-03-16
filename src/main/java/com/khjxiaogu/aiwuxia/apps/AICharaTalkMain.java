@@ -24,13 +24,13 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
-import com.khjxiaogu.aiwuxia.state.AttributeValidator;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
+import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -52,13 +52,13 @@ public class AICharaTalkMain extends AIApplication {
 	AttributeValidator validator;
 	Map<String,String> emote2emote;
 
-	public AICharaTalkMain(File basePath,String modelFolder,String charaname) {
+	public AICharaTalkMain(File basePath,File modelFolder,String charaname,JsonObject meta) {
 		super();
 		this.charaname=charaname;
 		
 		try {
 			this.basePath=basePath;
-			File model=new File(basePath,modelFolder);
+			File model=modelFolder;
 			
 			String role = readFile(new File(model, "role.txt"));
 			String charaset=readFile(new File(model, "charaset.txt"));
@@ -66,8 +66,6 @@ public class AICharaTalkMain extends AIApplication {
 			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
 			summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
 			prelogue = readFile(new File(model, "prelogue.txt"));
-			File metaFile=new File(model,"meta.json");
-			JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 			if(meta.has("volcappid"))
 				volcappid = meta.get("volcappid").getAsString();
 			if(meta.has("localChara")) {

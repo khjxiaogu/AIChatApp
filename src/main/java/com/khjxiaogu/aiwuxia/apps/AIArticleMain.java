@@ -24,8 +24,6 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIArticleMain extends AIApplication {
-	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
-	Pattern intfPattern = Pattern.compile("【([^面]+)面板】");
 
 	List<String> femalenames;
 	List<String> malenames;
@@ -65,7 +63,7 @@ public class AIArticleMain extends AIApplication {
 
 	public AIArticleMain(File path) {
 		try {
-			system = FileUtil.readString(new File(path, "promptwrite.txt")).replace("\r", "");
+			system = FileUtil.readString(new File(path, "prompt.txt")).replace("\r", "");
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();

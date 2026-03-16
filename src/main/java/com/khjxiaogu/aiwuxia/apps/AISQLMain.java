@@ -28,11 +28,9 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AISQLMain extends AIApplication {
 
-	List<String> femalenames;
-	List<String> malenames;
-	{
+	public AISQLMain(File folder){
 		try {
-			system = FileUtil.readString(new File("save", "promptsql.txt")).replace("\r", "");
+			system = FileUtil.readString(new File(folder, "prompt.txt")).replace("\r", "");
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
