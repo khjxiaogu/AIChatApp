@@ -99,7 +99,7 @@ public abstract class AIApplication {
 				if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
 					HistoryItem hi = state.removeLast();
 					if(hi.getRole()==Role.ASSISTANT) {
-						HistoryItem userhi = state.removeLast();
+						HistoryItem userhi = state.deleteLast();
 						state.minDialogRow();
 						if (hi.getLastState() != null) {
 							state.getState().set(hi.getLastState());
@@ -115,9 +115,9 @@ public abstract class AIApplication {
 					HistoryItem last=state.getLast();
 					if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
 						
-						HistoryItem hi = state.removeLast();
+						HistoryItem hi = state.deleteLast();
 						if(last.getRole()==Role.ASSISTANT) {
-							state.removeLast();
+							state.deleteLast();
 							state.minDialogRow();
 							if (hi.getLastState() != null) {
 								state.getState().set(hi.getLastState());

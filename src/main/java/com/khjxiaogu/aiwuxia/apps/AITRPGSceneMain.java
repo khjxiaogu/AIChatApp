@@ -187,7 +187,7 @@ public class AITRPGSceneMain extends AIApplication {
 				len+=hi.getContextContent().length();
 				
 			}
-			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
+			if(len>=60000) {//more than 100000 text:about 60k context,remove until 20000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
@@ -206,7 +206,7 @@ public class AITRPGSceneMain extends AIApplication {
 						
 						if(hi.getRole()==Role.ASSISTANT) {
 							removedSpeech++;
-							if(len<=20000) {
+							if(len<=10000) {
 								break;
 							}
 						}

@@ -170,7 +170,7 @@ public class AICharaTalkMain extends AIApplication {
 		//System.out.println(AIApplication.ppgs.toJson(req));
 		AIOutput resp=null;
 		int i=0;
-		while(i<5) {//最多尝试5次，否则认为是提示词问题
+		while(i<8) {//最多尝试5次，否则认为是提示词问题
 			try {
 				resp = LLMConnector.call(req);
 				resp.addUsageListener(state::addUsage);
@@ -179,6 +179,15 @@ public class AICharaTalkMain extends AIApplication {
 				resp.interrupt();
 				state.getState().set(ex.oldState);
 				i++;
+				if(i==4)
+					try {
+						Thread.sleep(2000);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+						Thread.currentThread().interrupt();
+						break;
+					}
 			}
 		}
 		if(state.getLast().getRole()==Role.USER)
@@ -222,10 +231,11 @@ public class AICharaTalkMain extends AIApplication {
 				len+=hi.getContextContent().length();
 				
 			}
-			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
+			if(len>=60000) {//more than 100000 text:about 60k context,remove until 10000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
+				int removedSpeech=0;
 				while(it.hasNext()) {//calculate total dialog rows
 					HistoryItem hi=it.next();
 					len-=hi.getContextContent().length();
@@ -234,14 +244,17 @@ public class AICharaTalkMain extends AIApplication {
 						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getContextContent()).append("\n");
 					}
 					his.add(hi);
-					if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
-						break;
+					if(hi.getRole()==Role.ASSISTANT) {
+						removedSpeech++;
+						if(len<=10000) {
+							break;
+						}
 					}
 					
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
 				his.forEach(t->t.setValidContext(false));
-				state.minDialogRows(his.size());
+				state.minDialogRows(removedSpeech);
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
@@ -256,7 +269,7 @@ public class AICharaTalkMain extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		
-		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).build(b.end().add("temperature", 1.3).add("max_tokens", 500).end());
+		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).build(b.end().add("temperature", 1.3).add("max_tokens", 1000).end());
 
 	}
 	public AIRequest constructSummaryrequest(AISession state,String summary) {
@@ -350,9 +363,10 @@ public class AICharaTalkMain extends AIApplication {
 			if (status == 0) {//处理主要剧情
 				if(last.startsWith("==对话==")) {
 					status=1;
-				}else//对话部分错误，督促AI重新生成一份
+				}else{//对话部分错误，督促AI重新生成一份
+					logger.info("retry because header error");
 					throw new RegenerateNeededException(oldstate);
-				
+				}
 
 			}else if(status==1) {//处理演出
 				if (last.startsWith("==场景==")) {
@@ -361,6 +375,7 @@ public class AICharaTalkMain extends AIApplication {
 						audioId=UUID.randomUUID().toString();
 						cf=this.generateVoice(state, content.toString(), audioId);
 					}
+					continue;
 				} else {
 					content.append(last).append("\n");
 				}
@@ -370,21 +385,28 @@ public class AICharaTalkMain extends AIApplication {
 					
 				if(last.contains("=")) {
 					String[] lasts=last.split("=");
-					if(lasts.length>=2) {
+					if(lasts.length==2) {
 						String key=lasts[0].trim();
 						String value=lasts[1].trim();
 						if(validator!=null&&!validator.validate(key, value))
 							continue;
 						state.getState().perks.put(key,value);
 					}
+					continue;
 				}
 				continue;
 			}
 			sendContent.append(last).append("\n");
 		}
-		if(status!=3) {//没有场景部分，督促AI重新生成一份
+		if(status==0) {//truncated
+			logger.info("regenerate as truncated");
 			throw new RegenerateNeededException(oldstate);
 		}
+		if(status!=3)
+			if(state.isAudioSession()&&audioId==null) {
+				audioId=UUID.randomUUID().toString();
+				cf=this.generateVoice(state, content.toString(), audioId);
+			}
 		if(!state.getState().perks.isEmpty()){
 			sendContent.append("==场景==\n");
 			for(Entry<String, String> i:state.getState().perks.entrySet())

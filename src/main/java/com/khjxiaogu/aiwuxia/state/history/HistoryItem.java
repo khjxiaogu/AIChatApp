@@ -99,7 +99,19 @@ public interface HistoryItem {
      * @param sendable 新的可发送状态
      */
     void setValidContext(boolean sendable);
+    /**
+     * 判断该条目是否已撤回。
+     *
+     * @return 如果可发送则返回 true，否则返回 false
+     */
+    boolean isDeleted();
 
+    /**
+     * 设置该条目是否已撤回。
+     *
+     * @param sendable 新的可发送状态
+     */
+    void setDeleted(boolean sendable);
     /**
      * 获取与该条目关联的音频标识符。
      * 如果条目包含语音信息，该 ID 可用于检索对应的音频数据。

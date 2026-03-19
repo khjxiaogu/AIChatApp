@@ -432,7 +432,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO chatjs() throws IOException {
 		return new ResultDTO(200, new File(parent, "chat.js"));
 	}
-
+	@HttpMethod("GET")
+	@HttpPath("/ptrpg")
+	@Adapter
+	public ResultDTO ptrpg() throws IOException {
+		return new ResultDTO(200, new File(parent, "ptrpg.html"));
+	}
 	/**
 	 * HTTP GET端点：返回vue.js文件。
 	 *

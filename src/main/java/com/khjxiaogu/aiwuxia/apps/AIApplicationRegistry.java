@@ -17,7 +17,7 @@ public class AIApplicationRegistry {
 	static{
 		register("write",(base,folder,name,meta)->new AIArticleMain(folder));
 		register("talk",(base,folder,name,meta)->new AICharaTalkMain(base,folder, name, meta));
-		register("galgame",(base,folder,name,meta)->new AIGalgameMain(folder, name));
+		register("galgame",(base,folder,name,meta)->new AIGalgameMain(folder, name,meta));
 		register("group",(base,folder,name,meta)->new AIGroupApplication(folder, name,meta));
 		register("sql",(base,folder,name,meta)->new AISQLMain(folder));
 		register("trpg",(base,folder,name,meta)->new AITRPGSceneMain(base,folder, name, meta));

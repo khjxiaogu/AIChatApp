@@ -28,13 +28,16 @@ public class AIGalgameMain extends AIApplication {
 	String charaname;
 	String summary;
 	String initSelection;
-	public AIGalgameMain(File basePath,String charaname) throws IOException {
+	String defaultBg;
+	public AIGalgameMain(File basePath,String charaname,JsonObject meta) throws IOException {
 		super();
 		this.charaname=charaname;
 		String charaset= FileUtil.readString(new File(basePath, "charaset.txt")).replace("\r", "");
 		system = FileUtil.readString(new File(basePath, "prompt.txt")).replace("\r", "")+"\n=== 人物设定 ===\n"+charaset;
 		summary = FileUtil.readString(new File(basePath, "summary.txt")).replace("\r", "")+"\n=== 人物设定 ===\n"+charaset;
 		initSelection =FileUtil.readString(new File(basePath, "init.txt")).replace("\r", "");
+		if(meta.has("background"))
+			defaultBg=meta.get("background").getAsString();
 		// naming
 		handlers.add((state, ret) -> {
 
@@ -68,6 +71,14 @@ public class AIGalgameMain extends AIApplication {
 
 			return null;
 		});
+	}
+
+
+	@Override
+	public void prepareScene(AISession state) {
+		super.prepareScene(state);
+		if(defaultBg!=null)
+		state.sendSceneContent("back", defaultBg);
 	}
 
 

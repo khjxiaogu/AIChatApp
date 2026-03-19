@@ -23,10 +23,9 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 		return history.isEmpty();
 	}
 
-	@SuppressWarnings("unchecked")
 	@Override
 	public Iterator<HistoryItem> iterator() {
-		return (Iterator)history.iterator();
+		return new NonDeletedIterator(history.iterator());
 	}
 
 	@Override
@@ -56,8 +55,10 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	public synchronized void removeOf(int identifier) {
 		for(Iterator<HistoryItem> it=reverseIterator();it.hasNext();) {
 			HistoryItem hi=it.next();
-			if(hi.getIdentifier()==identifier)
+			if(hi.getIdentifier()==identifier) {
 				it.remove();
+				it.remove();
+			}
 		}
 	}
 /*
@@ -80,7 +81,7 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 
 	@Override
 	public Iterator<HistoryItem> reverseIterator() {
-		return new ReverseIterator(history);
+		return new NonDeletedIterator(new ReverseIterator<>(history));
 	}
 
 	public int newUniqueId() {
@@ -153,10 +154,63 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	        throw new UnsupportedOperationException("remove not supported");
 	    }
 	}
-	@Override
-	public HistoryMemoryItem peekLast() {
-		return history.get(history.size()-1);
+	public static class NonDeletedIterator implements Iterator<HistoryItem> {
+	    private final Iterator<HistoryMemoryItem> iterator;
+	    private HistoryMemoryItem nextItem; // 缓存下一个可发送的元素
+	    private HistoryMemoryItem toRemove;
+	    /**
+	     * 通过一个迭代器构造
+	     */
+	    public NonDeletedIterator(Iterator<HistoryMemoryItem> iterator) {
+	        this.iterator = iterator;
+	        advance();
+	    }
+
+	    /**
+	     * 通过一个 List 构造
+	     */
+	    public NonDeletedIterator(List<HistoryMemoryItem> list) {
+	        this(list.iterator());
+	    }
+
+	    /**
+	     * 查找下一个符合条件的元素，保存到 nextItem
+	     */
+	    private void advance() {
+	    	toRemove=nextItem;
+	        while (iterator.hasNext()) {
+	        	HistoryMemoryItem item = iterator.next();
+	            if (!item.isDeleted()) {
+	                nextItem = item;
+	                return;
+	            }
+	        }
+	        nextItem = null; // 没有更多元素
+	    }
+
+	    @Override
+	    public boolean hasNext() {
+	        return nextItem != null;
+	    }
+
+	    @Override
+	    public HistoryMemoryItem next() {
+	        if (!hasNext()) {
+	            throw new NoSuchElementException();
+	        }
+	        HistoryMemoryItem result = nextItem;
+	        advance(); // 提前加载下一个
+	        return result;
+	    }
+
+	    @Override
+	    public void remove() {
+	        if(toRemove==null)
+	        	throw new NoSuchElementException();
+	        toRemove.setDeleted(true);
+	    }
 	}
+	
 
 	@Override
 	public Iterator<HistoryItem> validContextIterator() {

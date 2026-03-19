@@ -158,7 +158,7 @@ public class NapCatAIConnector  extends WebSocketClient {
     public static void main(String[] args) throws Throwable {
     	try {
     		LLMConnector.initDefault();
-    		String name="xinghanirc";
+    		String name="fengyiirc";
     		File dataFolder=new File("save");
     		File saveData = new File(new File(dataFolder,"saveData"), "savegroup-"+name+".json");
     		File modelFolder = new File(dataFolder,"apps/"+name);

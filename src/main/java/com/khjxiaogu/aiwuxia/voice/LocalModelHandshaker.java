@@ -107,8 +107,11 @@ public class LocalModelHandshaker implements WebsocketEvents {
     public void onMessage(String reqid, byte[] data) {
         Result ar = ars.remove(reqid);
         if (ar != null) {
+        	synchronized(ar) {
             ar.data = data;
             ar.finished = true;
+            ar.notifyAll();
+        	}
             // 注意：此处未调用 notifyAll，可能意味着此方法用于同步或已不再需要等待
         }
     }
@@ -164,11 +167,12 @@ public class LocalModelHandshaker implements WebsocketEvents {
                         long endTime = beginTime + 1000 * 60 * 3; // 3 分钟超时
                         while (true) {
                             long currTime = System.currentTimeMillis();
-                            if (!ch.isActive() || currTime >= endTime)
-                                return null; // 连接断开或超时
                             if (result.finished) {
                                 return result.data; // 成功接收到数据
                             }
+                            if (!ch.isActive() || currTime >= endTime)
+                                return null; // 连接断开或超时
+                            
                             // 等待剩余时间，或被唤醒
                             result.wait(endTime - currTime);
                         }

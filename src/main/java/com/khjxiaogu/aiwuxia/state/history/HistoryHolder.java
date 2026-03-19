@@ -68,7 +68,9 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
      *
      * @return 最后一个 {@link HistoryItem}，如果容器为空则返回 null
      */
-    HistoryItem peekLast();
+    default HistoryItem peekLast() {
+		return reverseIterator().next();
+	}
 
     /**
      * 返回一个迭代器，仅遍历那些被标记为“有效上下文”的历史条目。
@@ -112,4 +114,15 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
      * @return 被移除的最后一个 {@link HistoryItem}，如果容器为空则可能返回 null（具体取决于实现）
      */
     HistoryItem removeLast();
+
+    /**
+     * 撤回并返回容器中的最后一个历史条目（即最新添加的条目）。
+     *
+     * @return 被移除的最后一个 {@link HistoryItem}，如果容器为空则可能返回 null（具体取决于实现）
+     */
+    default HistoryItem deleteLast() {
+    	HistoryItem hi=peekLast();
+    	hi.setDeleted(true);
+    	return hi;
+    }
 }

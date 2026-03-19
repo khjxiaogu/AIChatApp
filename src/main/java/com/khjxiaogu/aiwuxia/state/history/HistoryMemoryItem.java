@@ -16,6 +16,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	private StringBuilder sendContent;
 	private StringBuilder reasonContent;
 	private boolean shouldSend;
+	private boolean deleted=false;
 	private ApplicationState lastState;
 	private String audioId;
 
@@ -176,6 +177,14 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	}
 	void setIdentifier(int identifier) {
 		this.identifier = identifier;
+	}
+	@Override
+	public boolean isDeleted() {
+		return deleted;
+	}
+	@Override
+	public void setDeleted(boolean sendable) {
+		deleted=sendable;
 	}
 
 }

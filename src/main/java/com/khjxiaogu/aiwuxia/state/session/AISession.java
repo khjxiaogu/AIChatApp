@@ -236,7 +236,16 @@ public class AISession {
 		delMessage(removed.getIdentifier());
 		return removed;
 	}
-
+	/**
+	 * 撤回并返回最后一个历史条目。
+	 *
+	 * @return 被移除的最后一个 {@link HistoryItem} 对象
+	 */
+	public HistoryItem deleteLast() {
+		HistoryItem removed = history.deleteLast();
+		delMessage(removed.getIdentifier());
+		return removed;
+	}
 	/**
 	 * 获取最后一个历史条目（不移除）。
 	 *
