@@ -35,36 +35,31 @@ import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.regex.Pattern;
-
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
-import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
-import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceApi;
 
 public class AICharaTalkMain extends AIApplication {
 	String charaname;
-	String summary;
 	String prelogue="";
 	SceneSelector back;
 	SceneSelector character;
@@ -74,7 +69,7 @@ public class AICharaTalkMain extends AIApplication {
 	String localChara;
 	AttributeValidator validator;
 	Map<String,String> emote2emote;
-
+	HistoryCompacter compactor;
 	public AICharaTalkMain(File basePath,File modelFolder,String charaname,JsonObject meta) {
 		super();
 		this.charaname=charaname;
@@ -87,7 +82,8 @@ public class AICharaTalkMain extends AIApplication {
 			String charaset=readFile(new File(model, "charaset.txt"));
 			String rules=readFile(new File(model, "rules.txt"));
 			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
-			summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
+			compactor=new HistoryCompacter(readFile(new File(model, "summary.txt")), charaset, "1");
+			//summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
 			prelogue = readFile(new File(model, "prelogue.txt"));
 			if(meta.has("volcappid"))
 				volcappid = meta.get("volcappid").getAsString();
@@ -231,6 +227,42 @@ public class AICharaTalkMain extends AIApplication {
 		}
 
 	}
+	@Override
+	public void onload(AISession state) {
+		if(state.getExtra().containsKey("lastSummary")&&!state.getExtra().containsKey("永久记忆")) {
+			state.onGenerateStart();
+			state.postMessage(-1, Role.APPLICATION,"系统正在修复历史记录中，请稍候。");
+			try {
+				runFullCompact(state);
+			} catch (ModelRouteException | IOException e) {
+				e.printStackTrace();
+			}
+			state.onGenComplete();
+		}
+	}
+
+
+	@Override
+	public void runFullCompact(AISession state) throws ModelRouteException, IOException {
+		Iterator<HistoryItem> it=state.getHistory().iterator();
+		int len=0;
+		StringBuilder summery=new StringBuilder();
+		compactor.clearHistoryState(state.getExtra());
+		while(it.hasNext()) {
+			HistoryItem hi=it.next();
+			len+=hi.getContextContent().length();
+			if(hi.getRole()!=Role.SYSTEM) {
+				summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getDisplayContent()).append("\n");
+			}
+			if(len>60000) {
+				len=0;
+				String str=summery.toString();
+				summery=new StringBuilder();
+				compactor.compactHistory(state.getExtra(), str,state::addUsage);
+			}
+		}
+		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
+	}
 	public String constructNameState(String name){
 		return "用户是主角，姓名为"+name+"，请直接用姓名称呼主角，不要用“主角”二字指代主角。";
 	}
@@ -254,7 +286,7 @@ public class AICharaTalkMain extends AIApplication {
 				len+=hi.getContextContent().length();
 				
 			}
-			if(len>=60000) {//more than 100000 text:about 60k context,remove until 10000
+			if(len>=70000) {//more than 100000 text:about 60k context,remove until 10000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
@@ -275,7 +307,8 @@ public class AICharaTalkMain extends AIApplication {
 					}
 					
 				}
-				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
+				compactor.compactHistory(state.getExtra(), summery.toString(),state::addUsage);
+				state.getExtra().put("lastSummary",compactor.constructHistory(state.getExtra()));
 				his.forEach(t->t.setValidContext(false));
 				state.minDialogRows(removedSpeech);
 			}
@@ -295,36 +328,7 @@ public class AICharaTalkMain extends AIApplication {
 		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).build(b.end().add("temperature", 1.3).add("max_tokens", 1000).end());
 
 	}
-	public AIRequest constructSummaryrequest(AISession state,String summary) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-				.add("role", "system").add("content", this.summary).end();
-			StringBuilder sumerize=new StringBuilder();
-			if(state.getExtra().containsKey("lastSummary")) {
-				sumerize.append("=== 前情提要 ===\\n");
-				sumerize.append( state.getExtra().get("lastSummary"));
-			}
-			sumerize.append("=== 对话块 ===\n");
-			sumerize.append(summary.trim());
-			// if (status != null&&!status.isEmpty())
-			b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
 
-
-		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
-		// true);
-		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
-
-	}
-	public String makeSummaryrequest(AISession state,String summary) throws IOException {
-		
-			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
-			resp.addUsageListener(state::addUsage);
-			printReasonerContent(resp);
-			return FileUtil.readAll(resp.getContent());
-			//System.out.println(resp.choices.get(0).message.reasoning_content);
-
-		
-
-	}
 	public String constructBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
 		for (HistoryItem hs : state.getHistory()) {
@@ -493,13 +497,36 @@ public class AICharaTalkMain extends AIApplication {
 			for(Entry<String, String> ent:replacements.entrySet()) {
 				orgText=orgText.replaceAll(ent.getKey(), ent.getValue());
 			}
+		orgText=orgText.trim();
+		if(orgText.isEmpty())
+			return CompletableFuture.completedFuture(false);
 		final String faudioId=audioId;
 		final String ftext=orgText;
+
+		if(volcappid!=null&&state.getData().isAudioSession)
+			return CompletableFuture.supplyAsync
+			(()->{
+				try {
+					logger.info("正在从火山引擎生成语音："+ftext);
+					state.appendVoiceToken(ftext.length());
+					byte[] data=VoiceModelHandler.getAudioData(volcappid,state.user, ftext, faudioId);
+					File aud=new File(basePath,"voice");
+					aud.mkdirs();
+					try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
+						fos.write(data);
+					};
+					return true;
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				return false;
+			});
+		
 		if(localChara!=null&&LocalVoiceModel.hasOnlineService()) {
 			return CompletableFuture.supplyAsync
 					(()->{
 						try {
-							System.out.println("trying local model");
+							logger.info("正在从本地语音引擎生成语音："+ftext);
 							CompletableFuture<byte[]> dataFuture=LocalVoiceModel.requireAudio(localChara, emote2emote.get(state.getState().perks.get("表情")), faudioId, ftext);
 							byte[] data=dataFuture.get();
 							if(data!=null) {
@@ -517,23 +544,6 @@ public class AICharaTalkMain extends AIApplication {
 					});
 			
 		}
-		if(volcappid!=null&&state.getData().isAudioSession)
-			return CompletableFuture.supplyAsync
-			(()->{
-				try {
-					state.appendVoiceToken(ftext.length());
-					byte[] data=VoiceModelHandler.getAudioData(volcappid,state.user, ftext, faudioId);
-					File aud=new File(basePath,"voice");
-					aud.mkdirs();
-					try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
-						fos.write(data);
-					};
-					return true;
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-				return false;
-			});
 		return CompletableFuture.completedFuture(false);
 	}
 	
@@ -547,7 +557,8 @@ public class AICharaTalkMain extends AIApplication {
 		String chara=state.getExtra().get("chara");
 		String bg=state.getExtra().get("back");
 		String pos=state.getState().perks.get("位置");
-		if(chara!=null) {
+		if(chara!=null&&pos!=null
+				) {
 			switch(pos) {
 			case "前":
 				state.sendSceneContent("front", chara);

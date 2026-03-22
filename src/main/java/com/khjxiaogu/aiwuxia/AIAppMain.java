@@ -75,7 +75,7 @@ public class AIAppMain {
 		return sb.toString();
 	}
 	public static void main(String[] args) throws Throwable {
-		String name="fengyidlc";
+		String name="fengxitalk";
 		int idx=0;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
@@ -88,8 +88,8 @@ public class AIAppMain {
 		AIChatWindow acw=new AIChatWindow();
 		acw.setVisible(true);
 		File dataFolder=new File("save");
-		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
-		//File saveData =new File(new File(dataFolder,"saveData"), "19d604d7e0e74232b7363fabfba81061.json");
+		//File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		File saveData =new File(new File(dataFolder,"saveData"), "dbf0b38ff80644689aabe14d031253cc.json");//
 		
 		File modelFolder=new File(dataFolder,"apps/"+name);
 		File metaFile=new File(modelFolder,"meta.json");
@@ -101,17 +101,19 @@ public class AIAppMain {
 			aistate = new AppAISession("appuser",
 				AIApplication.historyFromJson(saveData),
 				AIApplication.dataFromJson(saveData),
-				main);
+				main,saveData);
 		}
 
 		// construct initail message
 		if (aistate == null) {
 			acw.setBackLog("正在生成初始面板...","");
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.ExtraData(),main);
+			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.ExtraData(),main,saveData);
 			aistate.provideInitialHint();
 		}
-		
+		aistate.onLoad();
+		//AIApplication.saveToJson(aistate, saveData);
+		/*
 		acw.setStatus(main.constructSystem(aistate.getState()));
 		// dialog.setBackLog(constructBackLog());
 		acw.setUsage(aistate.getUsage());
@@ -173,7 +175,6 @@ public class AIAppMain {
 				while(aistate.isGenerating()) {
 					Thread.sleep(100);
 				}
-				AIApplication.saveToJson(aistate, saveData);
 				acw.setStatus(main.constructSystem(aistate.getState()));
 				// dialog.setBackLog(constructBackLog());
 				if (aistate != null)
@@ -183,6 +184,6 @@ public class AIAppMain {
 
 			}
 
-		}
+		}*/
 	}
 }

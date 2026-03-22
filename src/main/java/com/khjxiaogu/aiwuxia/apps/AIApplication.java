@@ -44,6 +44,7 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
+import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
@@ -120,7 +121,7 @@ public abstract class AIApplication {
 			if ("重新生成".equals(ret)) {
 				HistoryItem last=state.getLast();
 				if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
-					HistoryItem hi = state.removeLast();
+					HistoryItem hi = state.deleteLast();
 					if(hi.getRole()==Role.ASSISTANT) {
 						HistoryItem userhi = state.deleteLast();
 						state.minDialogRow();
@@ -348,4 +349,8 @@ public abstract class AIApplication {
     public void prepareScene(AISession state) {
         // 默认无操作
     }
+	public void runFullCompact(AISession state) throws Exception {
+	}
+	public void onload(AISession state) {
+	}
 }

@@ -92,7 +92,10 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
      * @return 最后一个 {@link HistoryItem}，如果容器为空则返回 null
      */
     default HistoryItem peekLast() {
-		return reverseIterator().next();
+		Iterator<HistoryItem> rit= reverseIterator();
+		if(rit.hasNext())
+			return rit.next();
+		return null;
 	}
 
     /**
@@ -145,7 +148,8 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
      */
     default HistoryItem deleteLast() {
     	HistoryItem hi=peekLast();
-    	hi.setDeleted(true);
+    	if(hi!=null)
+    		hi.setDeleted(true);
     	return hi;
     }
 }

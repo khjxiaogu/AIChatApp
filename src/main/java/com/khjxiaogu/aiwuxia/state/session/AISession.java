@@ -569,4 +569,8 @@ public class AISession {
 	public ExtraData getData() {
 		return data;
 	}
+
+	public void onLoad() {
+		getCommandExec().submit(()->this.aiapp.onload(this));
+	}
 }

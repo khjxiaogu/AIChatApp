@@ -194,6 +194,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			parent.markRelease(this);
 		}
 	}
+
 	public boolean isAudioSession() {
 		return isClientAudioEnabled&&(isLocalAudioEnabled||super.isAudioSession());
 	}

@@ -23,8 +23,10 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -34,10 +36,11 @@ import javazoom.jl.player.advanced.AdvancedPlayer;
 
 public class AppAISession extends AISession {
 
+	File saveData;
 
-
-	public AppAISession(String user, HistoryHolder historym, ExtraData data,AIApplication aiapp) {
+	public AppAISession(String user, HistoryHolder historym, ExtraData data,AIApplication aiapp,File saveData) {
 		super(user, historym, data,aiapp);
+		this.saveData=saveData;
 	}
 
 	@Override
@@ -53,6 +56,16 @@ public class AppAISession extends AISession {
 			player.play();
 		} catch (JavaLayerException | FileNotFoundException e) {
 			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+
+	@Override
+	public void onGenComplete() {
+		super.onGenComplete();
+		try {
+			AIApplication.saveToJson(this, saveData);
+		} catch (IOException e) {
 			e.printStackTrace();
 		}
 	}

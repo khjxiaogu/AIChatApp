@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>游戏存档管理 - 档案馆</title>
+    <!-- Feather Icons -->
+    <script src="https://unpkg.com/feather-icons"></script>
+    <!-- Vue2 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: #f5f7fb;
+            color: #1e293b;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 主布局：宽屏侧边栏+内容区，窄屏自适应 */
+        .app-container {
+            display: flex;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+			min-height:100vh;
+        }
+
+        /* ========= 侧边栏 (游戏列表) ========= */
+        .game-sidebar {
+            width: 280px;
+            background: white;
+            border-right: 1px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 2px 0 12px rgba(0, 0, 0, 0.02);
+            transition: all 0.2s;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header {
+            padding: 24px 20px 16px;
+            border-bottom: 1px solid #eef2f6;
+        }
+
+        .sidebar-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #0f172a;
+        }
+
+        .sidebar-header h2 i {
+            color: #3b82f6;
+        }
+
+        .game-list {
+            flex: 1;
+            padding: 16px 12px;
+        }
+
+        .game-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            margin-bottom: 6px;
+            border-radius: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: #ffffff;
+            border: 1px solid transparent;
+        }
+
+        .game-item:hover {
+            background: #f8fafc;
+            border-color: #e2edff;
+        }
+
+        .game-item.active {
+            background: #eff6ff;
+            border-color: #b9d0f8;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+        }
+
+        .game-item .game-icon {
+            color: #5b6e8c;
+            width: 28px;
+            text-align: center;
+        }
+
+        .game-name {
+            font-weight: 500;
+            font-size: 0.95rem;
+            flex: 1;
+            color: #1e293b;
+        }
+
+        .game-item.active .game-name {
+            color: #2563eb;
+            font-weight: 600;
+        }
+
+        /* ========= 主内容区 ========= */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            background: #f8fafc;
+            padding: 0 24px 24px 24px;
+        }
+
+        /* 顶部栏 */
+        .content-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            padding: 20px 0 16px;
+            border-bottom: 1px solid #e2edf2;
+            margin-bottom: 24px;
+            background: #f8fafc;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .game-info h1 {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #0f172a;
+            letter-spacing: -0.3px;
+        }
+
+        .game-info .game-url-hint {
+            font-size: 0.75rem;
+            color: #5b6e8c;
+            margin-top: 4px;
+        }
+
+        .launch-btn {
+            background: #10b981;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 40px;
+            color: white;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+            box-shadow: 0 2px 6px rgba(16, 185, 129, 0.2);
+        }
+
+        .launch-btn:hover {
+            background: #059669;
+            transform: scale(1.01);
+        }
+
+        .launch-btn:active {
+            transform: scale(0.98);
+        }
+
+        /* 存档区域头部 + 刷新 */
+        .archive-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .archive-header h3 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* 存档列表（卡片式，响应式） */
+        .archives-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        /* 存档卡片 */
+        .archive-card {
+            background: white;
+            border-radius: 24px;
+            padding: 18px 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+            border: 1px solid #eef2f8;
+            transition: all 0.2s;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 16px;
+            position: relative;
+        }
+
+        .archive-card:hover {
+            border-color: #cbdff5;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
+        }
+
+        /* 单选区域 */
+        .radio-slot {
+            flex-shrink: 0;
+            width: 32px;
+        }
+
+        .custom-radio {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid #cbd5e1;
+            background: white;
+            display: inline-block;
+            position: relative;
+            cursor: pointer;
+            transition: 0.1s;
+        }
+
+        input[type="radio"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            accent-color: #3b82f6;
+        }
+
+        /* 存档详情区域 (弹性) */
+        .archive-details {
+            flex: 3;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px 24px;
+            align-items: center;
+        }
+
+        .info-group {
+            min-width: 110px;
+        }
+
+        .info-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: #5b6e8c;
+            letter-spacing: 0.3px;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            font-weight: 600;
+            color: #0f172a;
+            font-size: 0.95rem;
+        }
+
+        .spend {
+            color: #0f3b2c;
+            background: #eef9f2;
+            padding: 2px 10px;
+            border-radius: 20px;
+            display: inline-block;
+            font-size: 0.85rem;
+        }
+
+        .remark-edit {
+            min-width: 180px;
+            flex: 1;
+        }
+
+        .remark-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            background: #fefefe;
+            transition: 0.2s;
+            font-family: inherit;
+        }
+
+        .remark-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+        }
+
+        .char-count {
+            font-size: 0.65rem;
+            color: #7c8ba0;
+            text-align: right;
+            margin-top: 4px;
+        }
+
+        /* 截图区域 */
+        .screenshot-area {
+            flex-shrink: 0;
+            width: 64px;
+            height: 64px;
+            background: #f1f5f9;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .screenshot-area img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 12px;
+        }
+
+        .no-screenshot {
+            color: #94a3b8;
+            font-size: 10px;
+        }
+
+        /* 新存档栏位特殊样式 */
+        .new-archive-card {
+            background: #fefce8;
+            border: 1px dashed #d9c98e;
+            opacity: 0.9;
+        }
+
+        .new-badge {
+            background: #fde047;
+            color: #854d0e;
+            font-size: 0.7rem;
+            padding: 2px 12px;
+            border-radius: 50px;
+            font-weight: 600;
+        }
+
+        .new-placeholder {
+            color: #a16207;
+            font-weight: 500;
+        }
+
+        /* 刷新按钮 */
+        .refresh-btn {
+            background: white;
+            border: 1px solid #cbd5e1;
+            border-radius: 40px;
+            padding: 8px 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+            color: #334155;
+        }
+
+        .refresh-btn:hover {
+            background: #f1f5f9;
+            border-color: #94a3b8;
+        }
+
+        /* 窄屏适配 */
+        @media (max-width: 780px) {
+            .app-container {
+                flex-direction: column;
+            }
+            .game-sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid #e2e8f0;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            .sidebar-header {
+                padding: 14px 20px;
+            }
+            .game-list {
+                display: flex;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                padding: 12px;
+                gap: 8px;
+            }
+            .game-item {
+                flex-shrink: 0;
+                width: auto;
+                margin-bottom: 0;
+            }
+            .main-content {
+                padding: 0 16px 20px 16px;
+            }
+            .archive-details {
+                flex-direction: column;
+                align-items: flex-start;
+                width: 100%;
+            }
+            .remark-edit {
+                width: 100%;
+            }
+            .screenshot-area {
+                align-self: flex-start;
+            }
+            .archive-card {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .radio-slot {
+                margin-bottom: 8px;
+            }
+            .content-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+
+        /* 加载状态 / 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 48px 20px;
+            color: #6c7a91;
+        }
+
+        button {
+            background: none;
+            border: none;
+            cursor: pointer;
+        }
+
+        footer {
+            font-size: 0.7rem;
+            text-align: center;
+            margin-top: 12px;
+            color: #8c9bb0;
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="app-container">
+        <!-- 侧边栏：游戏列表 -->
+        <aside class="game-sidebar">
+            <div class="sidebar-header">
+                <h2>
+                    我的游戏库
+                </h2>
+            </div>
+            <div class="game-list">
+                <div v-for="game in games" :key="game.id" 
+                     class="game-item" 
+                     :class="{ active: currentGame && currentGame.id === game.id }"
+                     @click="selectGame(game)">
+                    <span class="game-icon"><i data-feather="folder"></i></span>
+                    <span class="game-name">{{ game.name }}</span>
+                    <span v-if="currentGame && currentGame.id === game.id" style="color:#3b82f6;"><i data-feather="check"></i></span>
+                </div>
+                <div v-if="games.length === 0" class="empty-state" style="padding: 20px;">暂无游戏</div>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <div class="content-header">
+                <div class="game-info">
+                    <h1>{{ currentGame ? currentGame.name : '未选择游戏' }}</h1>
+                </div>
+                <button class="launch-btn" @click="launchGame" :disabled="!currentGame">
+                    <i data-feather="play"></i> 启动游戏
+                </button>
+            </div>
+
+            <div class="archive-header">
+                <h3><i data-feather="save"></i> 存档列表</h3>
+                <!-- 刷新按钮位置 -->
+                <button class="refresh-btn" @click="refreshArchives" :disabled="!currentGame">
+                    <i data-feather="refresh-cw"></i> 刷新存档
+                </button>
+            </div>
+
+            <!-- 存档列表 -->
+            <div class="archives-list" v-if="currentGame">
+                <!-- 普通存档循环 -->
+                <div v-for="archive in archives" :key="archive.archiveId" class="archive-card">
+                    <div class="radio-slot">
+                        <input type="radio" :value="archive.archiveId" v-model="selectedArchiveId" @change="onSelectArchive(archive.archiveId)" :name="`archiveGroup`">
+                    </div>
+                    <div class="archive-details">
+                        <div class="info-group">
+                            <div class="info-label">角色名称</div>
+                            <div class="info-value">{{ archive.characterName || '无名者' }}</div>
+                        </div>
+                        <div class="info-group">
+                            <div class="info-label">token消耗</div>
+                            <div class="info-value spend">{{ formatMoney(archive.totalSpend) }}</div>
+                        </div>
+                        <div class="remark-edit">
+                            <div class="info-label">备注 <span style="color:#ec489a;">(可编辑)</span></div>
+                            <input type="text" class="remark-input" maxlength="20" v-model="archive.remark" @blur="updateRemark(archive)" placeholder="添加备注（限20字）">
+                            <div class="char-count">{{ (archive.remark || '').length }}/20</div>
+                        </div>
+                    </div>
+                    <div class="screenshot-area">
+                        <img v-if="archive.screenshot" :src="archive.screenshot" alt="游戏截图" @error="onImgError(archive)">
+                        <span v-else class="no-screenshot"><i data-feather="image"></i></span>
+                    </div>
+                </div>
+
+                <!-- 新存档栏位 (特殊) -->
+                <div class="archive-card new-archive-card">
+                    <div class="radio-slot">
+                        <input type="radio" value="new" v-model="selectedArchiveId" @change="onSelectNewArchive" :name="`archiveGroup`">
+                    </div>
+                    <div class="archive-details" style="flex: 4;">
+                        <div class="info-group">
+                            <div class="info-label"><span class="new-badge">✨ 新存档位</span></div>
+                            <div class="info-value new-placeholder">尚未创建存档</div>
+                            <div style="font-size: 12px; color:#ad8b3a;">选中后标记待创建，启动游戏后生成</div>
+                        </div>
+                        <div class="remark-edit">
+                            <div class="info-label">备注</div>
+                            <input type="text" class="remark-input" disabled placeholder="新存档暂不可编辑" value="---">
+                        </div>
+                    </div>
+                    <div class="screenshot-area">
+                        <span class="no-screenshot"><i data-feather="plus-circle"></i></span>
+                    </div>
+                </div>
+
+                <div v-if="archives.length === 0" class="empty-state">
+                    <i data-feather="inbox"></i> 暂无存档，可以选中“新存档位”进行标记
+                </div>
+            </div>
+            <div v-else class="empty-state" style="margin-top: 80px;">
+                <i data-feather="alert-circle"></i> 请从左侧选择一个游戏开始管理
+            </div>
+            <footer>※ 备注编辑后自动保存，单选存档即时同步至云端</footer>
+        </main>
+    </div>
+</div>
+
+<script>
+    // ----------------------------- 模拟后端数据 & API 层 (Mock) -----------------------------
+    // 为了满足功能完全演示，实现内存数据库，模拟异步请求，包含游戏、存档、选中状态、新存档标记等
+
+    // 初始游戏列表
+    const mockGames = [
+        { id: 1001, name: '星穹纪元', url: 'https://example.com/starrail' },
+        { id: 1002, name: '暗黑秘境', url: 'https://example.com/diablo' },
+        { id: 1003, name: '云境传说', url: 'https://example.com/cloudsaga' }
+    ];
+
+    // 存档原始数据 (key: gameId)
+    let archivesDB = {
+        1001: [
+            { archiveId: 5001, characterName: '流萤', totalSpend: 328.5, remark: '最喜欢这套时装', selected: true, screenshot: 'https://picsum.photos/id/1015/80/80' },
+            { archiveId: 5002, characterName: '星', totalSpend: 98.0, remark: '新手礼包', selected: false, screenshot: '' },
+            { archiveId: 5003, characterName: '瓦尔特', totalSpend: 648.0, remark: '武器大师', selected: false, screenshot: 'https://picsum.photos/id/104/80/80' }
+        ],
+        1002: [
+            { archiveId: 6001, characterName: '死灵法师', totalSpend: 268.0, remark: '召唤流派', selected: true, screenshot: 'https://picsum.photos/id/29/80/80' },
+            { archiveId: 6002, characterName: '野蛮人', totalSpend: 0, remark: '初始', selected: false, screenshot: '' }
+        ],
+        1003: [
+            //{ archiveId: 7001, characterName: '灵汐', totalSpend: 198.0, remark: '唯美古风', selected: true, screenshot: 'https://picsum.photos/id/30/80/80' }
+        ]
+    };
+
+    // 存储每个游戏是否选中“新存档位”(待创建标记)
+    let newArchiveFlag = {
+        1001: false,
+        1002: false,
+        1003: false
+    };
+
+    // 辅助深拷贝存档列表（用于模拟刷新）
+    function getArchivesCopy(gameId) {
+        const original = archivesDB[gameId] || [];
+        return original.map(a => ({ ...a }));
+    }
+
+    // 模拟延时
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // 模拟 API: 获取游戏列表
+    async function fetchGamesAPI() {
+        await delay(200);
+        return { success: true, data: [...mockGames] };
+    }
+
+    // 获取存档列表 + 新存档选中标记
+    async function fetchArchivesAPI(gameId) {
+        await delay(300);
+        const archivesList = archivesDB[gameId] ? archivesDB[gameId].map(a => ({ ...a })) : [];
+        const hasNewFlag = newArchiveFlag[gameId] || false;
+        return { success: true, data: { archives: archivesList, newSelected: hasNewFlag } };
+    }
+
+    // 更新备注接口
+    async function updateRemarkAPI(archiveId, remark, gameId) {
+        await delay(200);
+        // 查找存档并更新
+        const gameArchives = archivesDB[gameId];
+        if (!gameArchives) return { success: false, message: '存档不存在' };
+        const target = gameArchives.find(a => a.archiveId === archiveId);
+        if (target) {
+            if (remark.length > 20) remark = remark.slice(0,20);
+            target.remark = remark;
+            return { success: true, data: { archiveId, remark } };
+        }
+        return { success: false, message: '未找到存档' };
+    }
+
+    // 选中存档接口 (archiveId 为数字/字符串，如果是新存档传空字符串 '')
+    async function selectArchiveAPI(gameId, archiveId) {
+        await delay(200);
+        // 先清除同游戏所有存档的选中状态，以及新存档标记
+        if (archivesDB[gameId]) {
+            archivesDB[gameId].forEach(arc => { arc.selected = false; });
+        }
+        // 清除新存档标记
+        newArchiveFlag[gameId] = false;
+
+        if (archiveId === '' || archiveId === 'new') {
+            // 选中新存档位 (空字符串代表新存档)
+            newArchiveFlag[gameId] = true;
+            return { success: true, selected: 'new', message: '已标记待创建新存档' };
+        } else {
+            // 选中已有存档
+            const targetArchive = archivesDB[gameId]?.find(a => a.archiveId === archiveId);
+            if (targetArchive) {
+                targetArchive.selected = true;
+                return { success: true, selected: archiveId };
+            } else {
+                return { success: false, message: '存档不存在' };
+            }
+        }
+    }
+
+    // ----------------------------- Vue 主应用 -----------------------------
+    Vue.config.productionTip = false;
+    new Vue({
+        el: '#app',
+        data: {
+            games: [],               // 游戏列表
+            currentGame: null,       // 当前选中的游戏对象
+            archives: [],            // 当前游戏的存档列表 (不含新存档)
+            selectedArchiveId: null, // 当前选中的存档id (数字或字符串'new')
+            loadingArchives: false,
+        },
+        async mounted() {
+            await this.loadGames();
+            // 自动选中第一个游戏
+            /*if (this.games.length > 0) {
+                await this.selectGame(this.games[0]);
+            }*/
+            // 初始化feather图标 (需在dom渲染后)
+            /*this.$nextTick(() => {
+                feather.replace();
+            });*/
+        },
+        watch: {
+            archives: {
+                deep: true,
+                handler() {
+                    //this.$nextTick(() => feather.replace());
+                }
+            },
+            currentGame() {
+                //this.$nextTick(() => feather.replace());
+            }
+        },
+        methods: {
+            // 加载游戏列表
+            async loadGames() {
+                const res = await fetchGamesAPI();
+                if (res.success) {
+                    this.games = res.data;
+                } else {
+                    console.warn('游戏列表加载失败');
+                }
+            },
+            // 选择游戏
+            async selectGame(game) {
+                if (!game) return;
+                this.currentGame = game;
+                // 重置选中存档id，等待加载存档后重置
+                this.selectedArchiveId = null;
+                await this.loadArchivesForGame(game.id);
+            },
+            // 加载存档 (刷新也会调用)
+            async loadArchivesForGame(gameId) {
+                if (!gameId) return;
+                this.loadingArchives = true;
+                try {
+                    const res = await fetchArchivesAPI(gameId);
+                    if (res.success) {
+                        const { archives: rawArchives, newSelected } = res.data;
+                        this.archives = rawArchives.map(arc => ({
+                            ...arc,
+                            // 保证remark字段至少为空字符串
+                            remark: arc.remark || ''
+                        }));
+                        // 根据后端返回的选中标志设置 selectedArchiveId
+                        // 优先已有存档的selected=true，否则如果新存档标志位真则设为'new'
+                        const selectedArchive = this.archives.find(arc => arc.selected === true);
+                        if (selectedArchive) {
+                            this.selectedArchiveId = selectedArchive.archiveId;
+                        } else if (newSelected) {
+                            this.selectedArchiveId = 'new';
+                        } else {
+                            this.selectedArchiveId = null;
+                        }
+                    } else {
+                        this.archives = [];
+                        this.selectedArchiveId = null;
+                    }
+                } catch (error) {
+                    console.error('加载存档失败', error);
+                } finally {
+                    this.loadingArchives = false;
+                    this.$nextTick(() => feather.replace());
+                }
+            },
+            // 刷新当前游戏存档
+            async refreshArchives() {
+                if (!this.currentGame) return;
+                await this.loadArchivesForGame(this.currentGame.id);
+                // 刷新完成后更新图标
+                this.$nextTick(() => feather.replace());
+            },
+            // 用户点击已有存档的 radio
+            async onSelectArchive(archiveId) {
+                if (!this.currentGame) return;
+                // 如果重复点击同一个存档，不需要重复请求
+                if (this.selectedArchiveId === archiveId) return;
+                // 暂存之前的选中值，用于失败回滚
+                const prevSelected = this.selectedArchiveId;
+                // 乐观更新UI
+                this.selectedArchiveId = archiveId;
+                try {
+                    const res = await selectArchiveAPI(this.currentGame.id, archiveId);
+                    if (!res.success) {
+                        // 失败回滚
+                        this.selectedArchiveId = prevSelected;
+                        alert('选择存档失败: ' + (res.message || '网络错误'));
+                    } else {
+                        // 成功后确保后端状态同步，重新拉取存档列表以保证selected标记和新存档标记同步
+                        await this.loadArchivesForGame(this.currentGame.id);
+                    }
+                } catch (err) {
+                    this.selectedArchiveId = prevSelected;
+                    alert('请求出错，请重试');
+                }
+                this.$nextTick(() => feather.replace());
+            },
+            // 选中新存档栏位
+            async onSelectNewArchive() {
+                if (!this.currentGame) return;
+                if (this.selectedArchiveId === 'new') return;
+                const prevSelected = this.selectedArchiveId;
+                this.selectedArchiveId = 'new';
+                try {
+                    const res = await selectArchiveAPI(this.currentGame.id, ''); // 空字符串表示新存档
+                    if (!res.success) {
+                        this.selectedArchiveId = prevSelected;
+                        alert('标记新存档失败');
+                    } else {
+                        await this.loadArchivesForGame(this.currentGame.id);
+                    }
+                } catch (err) {
+                    this.selectedArchiveId = prevSelected;
+                    alert('标记新存档失败，请重试');
+                }
+                this.$nextTick(() => feather.replace());
+            },
+            // 编辑备注完成时 (失焦)
+            async updateRemark(archive) {
+                if (!archive || !archive.archiveId) return;
+                // 限制字数(二次保证)
+                let newRemark = archive.remark || '';
+                if (newRemark.length > 20) {
+                    newRemark = newRemark.slice(0, 20);
+                    archive.remark = newRemark;
+                }
+                const oldRemark = archive.remark; 
+                try {
+                    const res = await updateRemarkAPI(archive.archiveId, newRemark, this.currentGame.id);
+                    if (!res.success) {
+                        // 还原备注内容
+                        archive.remark = oldRemark;
+                        alert('备注保存失败');
+                    } else {
+                        // 更新成功，保持最新内容
+                        if (res.data && res.data.remark !== undefined) {
+                            archive.remark = res.data.remark;
+                        }
+                    }
+                } catch (err) {
+                    archive.remark = oldRemark;
+                    alert('备注保存异常');
+                }
+                this.$nextTick(() => feather.replace());
+            },
+            // 启动游戏：跳转到当前游戏url
+            launchGame() {
+                if (!this.currentGame) {
+                    alert('请先选择一个游戏');
+                    return;
+                }
+                const gameUrl = this.currentGame.url;
+                if (gameUrl) {
+                    // 模拟跳转 (实际会跳转到对应游戏地址)
+                    window.open(gameUrl, '_blank');
+                    // 需求：按下后跳转到后端提供的游戏url
+                } else {
+                    alert('游戏URL无效，请联系管理员');
+                }
+            },
+            formatMoney(val) {
+                if (val === undefined || val === null) return '0';
+                return val.toFixed(2);
+            },
+            onImgError(archive) {
+                archive.screenshot = '';
+                this.$forceUpdate();
+            }
+        },
+        updated() {
+            // 每次视图更新后重新渲染 feather 图标
+            /*if (typeof feather !== 'undefined') {
+                feather.replace();
+            }*/
+        }
+    });
+</script>
+</body>
+</html>

@@ -128,7 +128,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			"price TEXT, " +					   // 价格字符串
 			"time	BIGINT(32) " +				// 时间戳（毫秒）
 			");";
-
+	private final static String createRemark = "CREATE TABLE IF NOT EXISTS chatdata (" +
+			"chatid TEXT NOT NULL, " +		   // 对话ID
+			"remark TEXT, " +					   // 备注字符串
+			"selected TEXT " +					   // 是否选中字符串
+			");";
 	/** 当前活跃的WebSocket会话映射，键为对话ID，值为对应的WebSocket会话对象 */
 	protected Map<String, WebSocketAISession> uidsockets = new ConcurrentHashMap<>();
 
@@ -170,6 +174,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			database.createStatement().execute(AIChatService.createMsg);
 			database.createStatement().execute(AIChatService.createPerm);
 			database.createStatement().execute(AIChatService.createPrice);
+			database.createStatement().execute(AIChatService.createRemark);
 		} catch (SQLException e) {
 			logger.severe("信息数据库初始化失败！");
 			throw e;
@@ -309,7 +314,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * @return JSON数组，包含匹配的对话信息
 	 */
 	public JsonArray findChat(String uid, String app) {
-		try (PreparedStatement ps = database.prepareStatement("SELECT chatid,brief,time,app FROM chats WHERE uid = ? and app = ?")) {
+		try (PreparedStatement ps = database.prepareStatement("SELECT c.chatid,c.brief,c.time,c.app FROM chats c LEFT JOIN chatdata cd ON c.chatid=cd.chatid WHERE c.uid = ? and c.app = ? and c.attribute!='deleted' and (cd.selected is null or cd.selected = '1')")) {
 			ps.setString(1, uid);
 			ps.setString(2, app);
 			ResultSet rs = ps.executeQuery();
@@ -332,7 +337,30 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return new JsonArray();
 	}
-
+	public JsonArray findChatForArchive(String uid, String app) {
+		try (PreparedStatement ps = database.prepareStatement("SELECT c.chatid,c.brief,c.time,c.app,p.price,r.remark,c.attribute FROM chats c Left join price p on p.chatid=c.chatid Left join remarks r on c.chatid=r.chatid WHERE uid = ? and app = ? and attribute!='deleted'")) {
+			ps.setString(1, uid);
+			ps.setString(2, app);
+			ResultSet rs = ps.executeQuery();
+			JsonArray ja = new JsonArray();
+			while (rs.next()) {
+				String appid = rs.getString(4);
+				AIApplication ent = apps.get(appid);
+				if (ent != null)
+					ja.add(JsonBuilder.object()
+							.add("chatid", rs.getString(1))
+							.add("appname", ent.getName())
+							.add("app", ent.getName())
+							.add("time", rs.getString(3))
+							.add("name", rs.getString(2) == null ? "新对话" : rs.getString(2))
+							.end());
+			}
+			return ja;
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		return new JsonArray();
+	}
 	/**
 	 * 生成一个全局唯一的对话ID（UUID去除横线），并确保在数据库中不存在。
 	 *
@@ -741,16 +769,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						isCreate = true;
 					}
 					if (!isCreate && trial.contains(app)) { // 公测应用，允许每个用户创建一个
-						try (PreparedStatement ps2 = database.prepareStatement("SELECT chatid FROM chats WHERE app = ? and uid = ?")) {
-							ps2.setString(1, app);
-							ps2.setString(2, uid);
-							try (ResultSet rs2 = ps2.executeQuery()) {
-								if (!rs2.next()) {
-									isCreate = true;
-									attribute = "hide";
-								}
-							}
-						}
+						isCreate = true;
+						attribute = "hide";
 					}
 					if (!isCreate) {
 						res.write(400, "App does not exist");
@@ -775,6 +795,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					state = new WebSocketAISession(this, uid, cid, appx, data,
 							AIWuxiaMain.historyFromJson(data),
 							AIWuxiaMain.dataFromJson(data));
+					state.onLoad();
 					logger.info("AI " + cid + " Loaded");
 				} catch (JsonSyntaxException | IOException e) {
 					e.printStackTrace();
@@ -801,9 +822,19 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					} catch (SQLException e) {
 						e.printStackTrace();
 					}
+					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chatdata(chatid,remark,selected) VALUES(?,?,?)")) {
+						ps2.setString(1, cid);
+						ps2.setString(2, "");
+						ps2.setString(3, "1");
+						ps2.executeUpdate();
+					} catch (SQLException e) {
+						e.printStackTrace();
+					}
+					
 				}
 				state = new WebSocketAISession(this, uid, cid, appx, data,
 						new MemoryHistory(), new AISession.ExtraData());
+				
 				logger.info("AI " + cid + " Created");
 			}
 		}

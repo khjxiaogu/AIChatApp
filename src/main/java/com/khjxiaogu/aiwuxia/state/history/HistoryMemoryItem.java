@@ -34,6 +34,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	 */
 	private static final long serialVersionUID = -2560643964648148908L;
 	private int identifier = -1;
+	private int prevIdentifier = -1;
 	private Role role;
 	private StringBuilder content;
 	private StringBuilder sendContent;
@@ -43,6 +44,12 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	private ApplicationState lastState;
 	private String audioId;
 
+	public int getPrevIdentifier() {
+		return prevIdentifier;
+	}
+	public void setPrevIdentifier(int prevIdentifier) {
+		this.prevIdentifier = prevIdentifier;
+	}
 	HistoryMemoryItem(Role role, String content, boolean shouldSend) {
 		super();
 		this.setContextContent(null);

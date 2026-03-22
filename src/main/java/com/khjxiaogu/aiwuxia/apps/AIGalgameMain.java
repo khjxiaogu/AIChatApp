@@ -33,10 +33,12 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
@@ -49,7 +51,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIGalgameMain extends AIApplication {
 	String charaname;
-	String summary;
+	HistoryCompacter compactor;
 	String initSelection;
 	String defaultBg;
 	public AIGalgameMain(File basePath,String charaname,JsonObject meta) throws IOException {
@@ -57,7 +59,7 @@ public class AIGalgameMain extends AIApplication {
 		this.charaname=charaname;
 		String charaset= FileUtil.readString(new File(basePath, "charaset.txt")).replace("\r", "");
 		system = FileUtil.readString(new File(basePath, "prompt.txt")).replace("\r", "")+"\n=== 人物设定 ===\n"+charaset;
-		summary = FileUtil.readString(new File(basePath, "summary.txt")).replace("\r", "")+"\n=== 人物设定 ===\n"+charaset;
+		compactor=new HistoryCompacter(FileUtil.readString(new File(basePath, "summary.txt")).replace("\r", ""), charaset, "1");
 		initSelection =FileUtil.readString(new File(basePath, "init.txt")).replace("\r", "");
 		if(meta.has("background"))
 			defaultBg=meta.get("background").getAsString();
@@ -87,8 +89,14 @@ public class AIGalgameMain extends AIApplication {
 		handlers.add(revertAndRegen);
 		// AI response, always valid
 		handlers.add((state, ret) -> {
-			state.add(Role.USER, ret, true);
-			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
+			ApplicationState airet;
+			try {
+				state.add(Role.USER, ret, true);
+				airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
+			}finally{
+				if(state.getLast().getRole()==Role.USER)
+					state.removeLast();
+			}
 			state.getLast().setLastState(airet);
 			state.addDialogRow();
 
@@ -134,6 +142,45 @@ public class AIGalgameMain extends AIApplication {
 	public String constructNameState(String name){
 		return "主角姓名为"+name+"，你需要用该名称称呼主角。";
 	}
+	
+	@Override
+	public void onload(AISession state) {
+		if(state.getExtra().containsKey("lastSummary")&&!state.getExtra().containsKey("永久记忆")) {
+			state.onGenerateStart();
+			state.postMessage(-1, Role.APPLICATION,"系统正在修复历史记录中，请稍候。");
+			try {
+				runFullCompact(state);
+			} catch (ModelRouteException | IOException e) {
+				e.printStackTrace();
+			}
+			state.onGenComplete();
+		}
+	}
+
+
+	@Override
+	public void runFullCompact(AISession state) throws ModelRouteException, IOException {
+		Iterator<HistoryItem> it=state.getHistory().iterator();
+		int len=0;
+		StringBuilder summery=new StringBuilder();
+		compactor.clearHistoryState(state.getExtra());
+		while(it.hasNext()) {
+			HistoryItem hi=it.next();
+			len+=hi.getContextContent().length();
+			if(hi.getRole()!=Role.SYSTEM) {
+				if(hi.getRole()==Role.USER)
+					summery.append("【"+getRoleName(state,hi.getRole())+"】").append("：");
+				summery.append(hi.getDisplayContent()).append("\n");
+			}
+			if(len>80000) {
+				len=0;
+				String str=summery.toString();
+				summery=new StringBuilder();
+				compactor.compactHistory(state.getExtra(), str,state::addUsage);
+			}
+		}
+		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
+	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 			.add("role", "system").add("content", system+constructNameState(state.getExtra().get("name"))).end();
@@ -150,7 +197,7 @@ public class AIGalgameMain extends AIApplication {
 				
 			}
 			
-			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
+			if(len>=90000) {//more than 100000 text:about 60k context,remove until 20000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
@@ -162,21 +209,22 @@ public class AIGalgameMain extends AIApplication {
 					
 					if(hi.getRole()!=Role.SYSTEM) {
 						if(hi.getRole()==Role.USER)
-							summery.append("用户").append("：");
+							summery.append("【"+getRoleName(state,hi.getRole())+"】").append("：");
 						summery.append(hi.getDisplayContent()).append("\n");
 					}
 					his.add(hi);
 					
 					if(hi.getRole()==Role.ASSISTANT) {
 						removedSpeech++;
-						if(len<=20000) {
+						if(len<=10000) {
 							break;
 						}
 					}
 					
 					
 				}
-				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
+				compactor.compactHistory(state.getExtra(), summery.toString(),state::addUsage);
+				state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
 				his.forEach(t->t.setValidContext(false));
 				state.minDialogRows(removedSpeech);//generally half speech is ai
 			}
@@ -198,33 +246,7 @@ public class AIGalgameMain extends AIApplication {
 		return AIRequest.builder().taskType(TaskType.STORY).streamed().build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
-	public AIRequest constructSummaryrequest(AISession state,String summary) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-				.add("role", "system").add("content", this.summary).end();
-			StringBuilder sumerize=new StringBuilder();
-			if(state.getExtra().containsKey("lastSummary")) {
-				sumerize.append("=== 前情提要 ===\\n");
-				sumerize.append( state.getExtra().get("lastSummary"));
-			}
-			sumerize.append("=== 对话块 ===\n");
-			sumerize.append(summary.trim());
-			// if (status != null&&!status.isEmpty())
-			b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
 
-
-		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
-		// true);
-		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
-
-	}
-	public String makeSummaryrequest(AISession state,String summary) throws IOException {
-		
-			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
-			resp.addUsageListener(state::addUsage);
-			printReasonerContent(resp);
-			return FileUtil.readAll(resp.getContent());
-
-	}
 	public String constructBackLog(AISession state) {
 		StringBuilder sb = new StringBuilder("");
 		for (HistoryItem hs : state.getHistory()) {
@@ -317,6 +339,14 @@ public class AIGalgameMain extends AIApplication {
 
 	}
 
+	@Override
+	public String getRoleName(AISession state,Role role) {
+		switch(role) {
+		case USER:String brief=getBrief(state);return brief==null?"我":brief ;
+		case ASSISTANT:return "";
+		default:return role.getName();
+		}
+	}
 	@Override
 	public String getName() {
 		return charaname;

@@ -54,7 +54,10 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	@Override
 	public synchronized HistoryItem add( Role role, String content, String fullContent,boolean isSendable) {
 		HistoryMemoryItem mhi;
+		HistoryItem last=peekLast();
 		history.add(mhi=new HistoryMemoryItem(newUniqueId(),role,content,fullContent,isSendable));
+		if(last!=null)
+			mhi.setPrevIdentifier(last.getIdentifier());
 		return mhi;
 	}
 
@@ -79,7 +82,6 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 		for(Iterator<HistoryItem> it=reverseIterator();it.hasNext();) {
 			HistoryItem hi=it.next();
 			if(hi.getIdentifier()==identifier) {
-				it.remove();
 				it.remove();
 			}
 		}
@@ -149,7 +151,7 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	    private void advance() {
 	        while (iterator.hasNext()) {
 	        	HistoryMemoryItem item = iterator.next();
-	            if (item.isValidContext()) {
+	            if (item.isValidContext()&&!item.isDeleted()) {
 	                nextItem = item;
 	                return;
 	            }
@@ -243,7 +245,11 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	@Override
 	public HistoryItem removeLast() {
 		if(history.isEmpty())return null;
-		return remove(history.size()-1);
+		for(int i=history.size()-1;i>=0;i--) {
+			if(!history.get(i).isDeleted())
+			return history.remove(i);
+		}
+		return null;
 	}
 
 }

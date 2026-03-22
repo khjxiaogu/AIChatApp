@@ -27,8 +27,14 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
+import java.util.ArrayList;
 import java.util.Iterator;
-
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Scanner;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -51,62 +57,151 @@ public class AISummary {
 		String name="fengyitalk";
 		int idx=0;
 		File dataFolder=new File("save");
-		String system=FileUtil.readString(new File(dataFolder,"summaryprompt.txt"));
+		String system=FileUtil.readString(new File(dataFolder,"summaryprompt2.txt"));
+		String charaset=FileUtil.readString(new File(dataFolder,"charaset.txt"));
 		LLMConnector.initDefault();
-		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		//File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		File saveData = new File(new File(dataFolder,"saveData"), "a718f2955f2a4f7fbebafca629f3c3b1.json");
+		
 		MemoryHistory his=AIApplication.historyFromJson(saveData);
 		Iterator<HistoryItem> it=his.iterator();
-		StringBuilder summary=new StringBuilder();
-		String lastSummary=null;
+		StringBuilder summary=new StringBuilder("==故事设定==\n");
+		summary.append(charaset).append("\n");
+		summary.append("==对话==");
+		
+		String str=null;
+		Gson json=new GsonBuilder().setPrettyPrinting().create();
 		int len=0;
+		int i=0;
+		Scanner scan=new Scanner(System.in);
 		while(it.hasNext()) {
+			
 			HistoryItem hi=it.next();
 		
 			len+=hi.getContextContent().length();
 			
 			if(hi.getRole()!=Role.SYSTEM) {
 				if(hi.getRole()==Role.USER)
-					summary.append("【用户】：");
+					summary.append("【主角】：");
 				summary.append(hi.getDisplayContent()).append("\n");
 			}
 			if(len>60000) {
 				len=0;
-				String str=summary.toString();
-				summary=new StringBuilder();
-				lastSummary=makeSummaryrequest(system,lastSummary,str);
+				str=summary.toString();
+			
+				
+				File curSecFile=new File(dataFolder,"summary-gen-"+(i+1)+".json");
+				Map<String,String> curSection=null;
+				boolean isLoaded=false;
+				if(curSecFile.exists()) {
+					System.out.println("recover state from file");
+					isLoaded=true;
+					curSection=json.fromJson(FileUtil.readString(curSecFile), Map.class);
+				}else {
+					System.out.println("=============================");
+					System.out.println("=============================");
+					System.out.println(str);
+					System.out.println("=============================");
+					System.out.println("=============================");
+					while(curSection==null)
+						curSection=splitSections(LLMConnector.call(constructSummaryrequest(system,str)));
+					FileUtil.transfer(json.toJson(curSection), curSecFile);
+				}
+				Map<String,String> lastSection=null;
+				File lastSecFile=new File(dataFolder,"summary-gen-"+i+".json");
+				if(lastSecFile.exists()) {
+					lastSection=json.fromJson(FileUtil.readString(lastSecFile), Map.class);
+				}
+				summary=new StringBuilder("==故事设定==\n");
+				summary.append(charaset).append("\n");
+				summary.append("\n==永久记忆==\n");
+				if(lastSection!=null) 
+					summary.append(lastSection.get("永久记忆").trim()).append("\n");
+				summary.append(curSection.get("永久记忆").trim()).append("\n\n");
+				List<String> stories=new ArrayList<>();
+				if(lastSection!=null) 
+					for(String s:lastSection.get("故事脉络").split("\n")) {
+						s=s.trim();
+						if(!s.isEmpty()) {
+							stories.add(s);
+						}
+					}
+				for(String s:curSection.get("故事脉络").split("\n")) {
+					s=s.trim();
+					if(!s.isEmpty()) {
+						stories.add(s);
+					}
+				}
+				int minSection=Math.max(stories.size()-50, 0);
+				summary.append("\n==故事脉络==\n");
+				for(int j=minSection;j<stories.size();j++)
+					summary.append(stories.get(j)).append("\n");
+				
+				summary.append("\n==约定==\n").append(curSection.get("约定"));
+				summary.append("\n==角色状态==\n").append(curSection.get("角色状态"));
+				summary.append("\n==持有物品==\n").append(curSection.get("持有物品"));
+				summary.append("\n==前情提要==\n").append(curSection.get("对话摘要"));
+					
+				
+				summary.append("\n==对话==\n");
+				++i;
+				System.out.println("gen"+i);
+				if(!isLoaded)
+				scan.nextLine();
+				//if(++i>=8)
+				//break;
+				//lastSummary=makeSummaryrequest(system,lastSummary,str);
 			}
 			
 			
 		}
-		System.out.println("=============最终结果================");
-		System.out.println(lastSummary);
+		//Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(str), null);
+		//System.out.println("=============最终结果================");
+		//System.out.println(lastSummary);
 	}
-	public static AIRequest constructSummaryrequest(String prompt, String lastASummary, String summary) {
+	public static Map<String,String> splitSections(AIOutput resp) throws IOException {
+		boolean isWaiting = true;
+		BufferedReader reader=new BufferedReader(resp.getContent());
+		String last;
+		Map<String,String> section=new LinkedHashMap<>();
+		printAndCollectContent(resp.getReasoner());
+		String currentSection="";
+		StringBuilder currentContent=null;
+		while (true) {
+			last=reader.readLine();
+			if(last==null) {
+				break;
+			}
+			if (isWaiting && last.isEmpty()) {
+				continue;
+			}
+			if (isWaiting) {
+				isWaiting = false;
+			}
+			System.out.println(last);
+			if(last.startsWith("==")&&last.endsWith("==")) {
+				if(currentContent!=null)
+					section.put(currentSection, currentContent.toString().trim());
+				currentSection=last.substring(2,last.length()-2);
+				currentContent=new StringBuilder();
+			}else
+			if(currentContent!=null)
+				currentContent.append(last.trim()).append("\n");
+		}
+		if(currentContent!=null)
+			section.put(currentSection, currentContent.toString().trim());
+		return section.isEmpty()?null:section;
+	}
+	public static AIRequest constructSummaryrequest(String prompt,String input) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 				.add("role", "system").add("content", prompt).end();
-			StringBuilder sumerize=new StringBuilder();
-			if(lastASummary!=null) {
-				sumerize.append("=== 前情提要 ===\\n");
-				sumerize.append(lastASummary);
-			}
-			sumerize.append("=== 对话块 ===\n");
-			sumerize.append(summary.trim());
 			// if (status != null&&!status.isEmpty())
-			b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
+			b.object().add("role",Role.USER.getRoleName()).add("content", input).end();
 
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
-
-	}
-	public static String makeSummaryrequest(String prompt, String lastSummary, String summary) throws IOException {
-		
-			AIOutput resp=LLMConnector.call(constructSummaryrequest(prompt, lastSummary,summary));
-			System.out.println("=============思维链================");
-			printAndCollectContent(resp.getReasoner());
-			System.out.println("=============输出================");
-			return printAndCollectContent(resp.getContent());
 
 	}
 	public static String printAndCollectContent(Reader output) throws IOException {
@@ -121,6 +216,7 @@ public class AISummary {
 				sb.append(input);
 			}
 		}
+		System.out.println();
 		return sb.toString();
 	}
 }
