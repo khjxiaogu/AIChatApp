@@ -57,6 +57,7 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceApi;
@@ -65,6 +66,7 @@ import com.khjxiaogu.webserver.annotations.GetBy;
 import com.khjxiaogu.webserver.annotations.Header;
 import com.khjxiaogu.webserver.annotations.HttpMethod;
 import com.khjxiaogu.webserver.annotations.HttpPath;
+import com.khjxiaogu.webserver.annotations.PostQuery;
 import com.khjxiaogu.webserver.annotations.Query;
 import com.khjxiaogu.webserver.command.CommandHandler;
 import com.khjxiaogu.webserver.command.CommandSender;
@@ -109,7 +111,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			"uid	 TEXT(40)   NOT NULL, " + // 用户ID
 			"brief TEXT, " +				   // 对话简述
 			"app TEXT NOT NULL, " +			 // 智能体名称
-			"chatid TEXT NOT NULL, " +		  // 对话ID
+			"chatid TEXT PRIMARY KEY, " +		  // 对话ID
 			"time	BIGINT(64), " +			// 时间戳（毫秒）
 			"status TEXT, " +					// 状态
 			"attribute TEXT DEFAULT ''" +		// 附加信息（如隐藏标记）
@@ -124,12 +126,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 	/** 创建费用记录表的SQL语句 */
 	private final static String createPrice = "CREATE TABLE IF NOT EXISTS price (" +
-			"chatid TEXT NOT NULL, " +		   // 对话ID
+			"chatid TEXT PRIMARY KEY, " +		   // 对话ID
 			"price TEXT, " +					   // 价格字符串
 			"time	BIGINT(32) " +				// 时间戳（毫秒）
 			");";
 	private final static String createRemark = "CREATE TABLE IF NOT EXISTS chatdata (" +
-			"chatid TEXT NOT NULL, " +		   // 对话ID
+			"chatid TEXT PRIMARY KEY, " +		   // 对话ID
 			"remark TEXT, " +					   // 备注字符串
 			"selected TEXT " +					   // 是否选中字符串
 			");";
@@ -138,6 +140,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 	/** 可用的AI应用映射，键为应用ID（如"wuxia"），值为对应的AI应用实例 */
 	private Map<String, AIApplication> apps = new HashMap<>();
+	
+	private Map<String, String> urls = new HashMap<>();
 
 	/** 公测中的AI应用ID集合，对于这些应用，每个用户只能创建一个对话实例 */
 	private Set<String> trial = new HashSet<>();
@@ -212,6 +216,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 							apps.put(name, AIApplicationRegistry.createInstance(parent, fn, meta));
 							if (meta.has("trial") && meta.get("trial").getAsBoolean())
 								trial.add(name);
+							if(meta.has("url"))
+								urls.put(name, meta.get("url").getAsString());
 							getLogger().info("AI加载成功：" + name);
 						} catch (Throwable e) {
 							e.printStackTrace();
@@ -337,30 +343,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return new JsonArray();
 	}
-	public JsonArray findChatForArchive(String uid, String app) {
-		try (PreparedStatement ps = database.prepareStatement("SELECT c.chatid,c.brief,c.time,c.app,p.price,r.remark,c.attribute FROM chats c Left join price p on p.chatid=c.chatid Left join remarks r on c.chatid=r.chatid WHERE uid = ? and app = ? and attribute!='deleted'")) {
-			ps.setString(1, uid);
-			ps.setString(2, app);
-			ResultSet rs = ps.executeQuery();
-			JsonArray ja = new JsonArray();
-			while (rs.next()) {
-				String appid = rs.getString(4);
-				AIApplication ent = apps.get(appid);
-				if (ent != null)
-					ja.add(JsonBuilder.object()
-							.add("chatid", rs.getString(1))
-							.add("appname", ent.getName())
-							.add("app", ent.getName())
-							.add("time", rs.getString(3))
-							.add("name", rs.getString(2) == null ? "新对话" : rs.getString(2))
-							.end());
-			}
-			return ja;
-		} catch (SQLException e) {
-			getLogger().printStackTrace(e);
-		}
-		return new JsonArray();
-	}
+
 	/**
 	 * 生成一个全局唯一的对话ID（UUID去除横线），并确保在数据库中不存在。
 	 *
@@ -407,7 +390,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO chats(@Query("uid") String uid) {
 		return new ResultDTO(200, getChatListUser(uid));
 	}
-
+	@HttpMethod("GET")
+	@HttpPath("/archive")
+	@Adapter
+	public ResultDTO archive(@Query("uid") String uid) {
+		return new ResultDTO(200, new File(parent, "saveman.html"));
+	}
 	/**
 	 * HTTP GET端点：查询指定用户在指定应用下的对话。
 	 *
@@ -446,7 +434,45 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO apps(@Query("uid") String uid) {
 		return new ResultDTO(200, getChatApps(uid));
 	}
-
+	@HttpMethod("GET")
+	@HttpPath("/archiveApplist")
+	@Adapter
+	public ResultDTO archiveApps(@Query("uid") String uid) {
+		Set<String> curApps=new HashSet<>();
+		JsonArray ja = new JsonArray();
+		try (PreparedStatement ps = database.prepareStatement("SELECT app FROM permission WHERE uid = ? and state='1'")) {
+			ps.setString(1, uid);
+			ResultSet rs = ps.executeQuery();
+			while (rs.next()) {
+				
+				String appName = rs.getString(1);
+				curApps.add(appName);
+				AIApplication ent = apps.get(appName);
+				String url=urls.get(appName);
+				if (ent != null) {
+					JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", ent.getName()).add("appid", appName);
+					if(url!=null)
+						jb.add("url", url);
+					ja.add(jb.end());
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		for(String s:trial) {
+			if(curApps.add(s)) {
+				AIApplication ent = apps.get(s);
+				String url=urls.get(s);
+				if (ent != null) {
+					JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", ent.getName()).add("appid", s);
+					if(url!=null)
+						jb.add("url", url);
+					ja.add(jb.end());
+				}
+			}
+		}
+		return new ResultDTO(200, ja);
+	}
 	/**
 	 * HTTP GET端点：提供静态资源文件（如图片、CSS等）。
 	 *
@@ -840,6 +866,241 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		uidsockets.put(cid, state);
 		res.suscribeWebsocketEvents(state);
+	}
+	/**
+	 * 根据用户 ID、对话 ID 修改备注。
+	 * 若对应的 chats 记录存在且未被删除，且 chatdata 中已有记录则更新，否则插入新记录。
+	 */
+	@HttpPath("/updateRemark")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO updateRemark(@Query("uid") String userId, @PostQuery("chatid") String chatId,@PostQuery("remark") String newRemark) {
+		  // 1. 校验对话是否存在且未被移除
+	    String checkChatSql = "SELECT 1 FROM chats WHERE uid = ? AND chatid = ? AND attribute != 'removed'";
+	    try (PreparedStatement ps = database.prepareStatement(checkChatSql)) {
+	        ps.setString(1, userId);
+	        ps.setString(2, chatId);
+	        try (ResultSet rs = ps.executeQuery()) {
+	            if (!rs.next()) {
+	                return new ResultDTO(404,"对话不存在或已被移除");
+	            }
+	        }
+	    } catch (SQLException e) {
+			e.printStackTrace();
+			return new ResultDTO(500,"内部错误");
+		}
+
+	    // 2. 检查chatdata中是否已有记录
+	    String checkDataSql = "SELECT 1 FROM chatdata WHERE chatid = ?";
+	    boolean exists;
+	    try (PreparedStatement ps = database.prepareStatement(checkDataSql)) {
+	        ps.setString(1, chatId);
+	        try (ResultSet rs = ps.executeQuery()) {
+	            exists = rs.next();
+	        }
+	    } catch (SQLException e) {
+			e.printStackTrace();
+
+			return new ResultDTO(500,"内部错误");
+		}
+
+	    // 3. 更新或插入
+	    if (exists) {
+	        String updateSql = "UPDATE chatdata SET remark = ? WHERE chatid = ?";
+	        try (PreparedStatement ps = database.prepareStatement(updateSql)) {
+	            ps.setString(1, newRemark);
+	            ps.setString(2, chatId);
+	            ps.executeUpdate();
+	        } catch (SQLException e) {
+				e.printStackTrace();
+
+				return new ResultDTO(500,"内部错误");
+			}
+	    } else {
+	        String insertSql = "INSERT INTO chatdata (chatid, remark, selected) VALUES (?, ?, ?)";
+	        try (PreparedStatement ps = database.prepareStatement(insertSql)) {
+	            ps.setString(1, chatId);
+	            ps.setString(2, newRemark);
+	            ps.setString(3, "");   // selected默认为空字符串
+	            ps.executeUpdate();
+	        } catch (SQLException e) {
+				e.printStackTrace();
+				return new ResultDTO(500,"内部错误");
+			}
+	    }
+	    String remarkSql = "SELECT remark FROM chatdata WHERE chatid = ?";
+	    try (PreparedStatement remarkStmt = database.prepareStatement(remarkSql)) {
+	    	remarkStmt.setString(1, chatId);
+	        try (ResultSet rs = remarkStmt.executeQuery()) {
+	            if (rs.next()) {
+	                return new ResultDTO(200,rs.getString(1));
+	            }
+	        }
+	    } catch (SQLException e) {
+			e.printStackTrace();
+			return new ResultDTO(500,"内部错误");
+	    }
+	    return new ResultDTO(404,"对话不存在或已被移除");
+	}
+
+	/**
+	 * 根据用户 ID、对话 ID、智能体名称，将该用户该智能体下所有对话的 selected 设为 0，
+	 * 并将指定对话的 selected 设为 1。若 chatdata 中缺少记录则自动插入。
+	 */
+	@HttpPath("/updateSelection")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO updateSelected(@Query("uid") String userId,@PostQuery("chatid") String chatId,@PostQuery("appid") String appName) {
+		 // 开启事务（保证原子性）
+	    try {
+			database.setAutoCommit(false);
+		} catch (SQLException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	    try {
+	        // 1. 获取该用户该智能体所有未移除的对话ID
+	        String selectChatsSql = "SELECT chatid FROM chats WHERE uid = ? AND app = ? AND attribute != 'removed'";
+	        java.util.List<String> chatids = new java.util.ArrayList<>();
+	        try (PreparedStatement ps = database.prepareStatement(selectChatsSql)) {
+	            ps.setString(1, userId);
+	            ps.setString(2, appName);
+	            try (ResultSet rs = ps.executeQuery()) {
+	                while (rs.next()) {
+	                    chatids.add(rs.getString("chatid"));
+	                }
+	            }
+	        }
+
+	        // 2. 确保每个对话在chatdata中都有记录，并设置selected=0
+	        for (String chatid : chatids) {
+	            // 检查是否存在
+	            String checkSql = "SELECT 1 FROM chatdata WHERE chatid = ?";
+	            boolean exists;
+	            try (PreparedStatement ps = database.prepareStatement(checkSql)) {
+	                ps.setString(1, chatid);
+	                try (ResultSet rs = ps.executeQuery()) {
+	                    exists = rs.next();
+	                }
+	            }
+	            if (exists) {
+	                String updateSql = "UPDATE chatdata SET selected = '0' WHERE chatid = ?";
+	                try (PreparedStatement ps = database.prepareStatement(updateSql)) {
+	                    ps.setString(1, chatid);
+	                    ps.executeUpdate();
+	                }
+	            } else {
+	                String insertSql = "INSERT INTO chatdata (chatid, remark, selected) VALUES (?, ?, ?)";
+	                try (PreparedStatement ps = database.prepareStatement(insertSql)) {
+	                    ps.setString(1, chatid);
+	                    ps.setString(2, "");   // remark默认空字符串
+	                    ps.setString(3, "0");
+	                    ps.executeUpdate();
+	                }
+	            }
+	        }
+	        if(chatId.isEmpty()) {
+	        	 database.commit();
+	        	return new ResultDTO(200,"");
+	        }
+	        // 3. 验证目标对话是否属于上述集合（即未被移除且属于该用户、该智能体）
+	        if (!chatids.contains(chatId)) {
+	        	throw new IllegalStateException("目标对话不存在、已被移除或不属于指定智能体");
+	        }
+
+	        // 4. 将目标对话的selected设为1
+	        String checkTargetSql = "SELECT 1 FROM chatdata WHERE chatid = ?";
+	        boolean targetExists;
+	        try (PreparedStatement ps = database.prepareStatement(checkTargetSql)) {
+	            ps.setString(1, chatId);
+	            try (ResultSet rs = ps.executeQuery()) {
+	                targetExists = rs.next();
+	            }
+	        }
+	        if (targetExists) {
+	            String updateSql = "UPDATE chatdata SET selected = '1' WHERE chatid = ?";
+	            try (PreparedStatement ps = database.prepareStatement(updateSql)) {
+	                ps.setString(1, chatId);
+	                ps.executeUpdate();
+	            }
+	        } else {
+	            String insertSql = "INSERT INTO chatdata (chatid, remark, selected) VALUES (?, ?, ?)";
+	            try (PreparedStatement ps = database.prepareStatement(insertSql)) {
+	                ps.setString(1, chatId);
+	                ps.setString(2, "");
+	                ps.setString(3, "1");
+	                ps.executeUpdate();
+	            }
+	        }
+
+	        database.commit();
+	    } catch (SQLException e) {
+	        try {
+				database.rollback();
+			} catch (SQLException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+	        return new ResultDTO(500,"内部错误");
+	    }catch(IllegalStateException ex) {
+	    	 try {
+					database.rollback();
+				} catch (SQLException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
+		        return new ResultDTO(400,ex.getMessage());
+	    	
+	    } finally {
+	        try {
+				database.setAutoCommit(true);
+			} catch (SQLException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+	    }
+	    return new ResultDTO(200,chatId);
+	}
+
+	/**
+	 * 连表查询对话详情，包括智能体名称、简述、价格、备注、是否选中。
+	 * 若 price 或 chatdata 无记录，对应字段返回空字符串。
+	 */
+	@HttpPath("/queryArchives")
+	@Adapter
+	@HttpMethod("GET")
+	public ResultDTO queryChats(@Query("uid") String uid,@Query("appid") String appName) throws SQLException {
+	    String sql = "SELECT c.chatid, c.brief, c.time, p.price, d.remark, d.selected " +
+	                 "FROM chats c " +
+	                 "LEFT JOIN price p ON c.chatid = p.chatid " +
+	                 "LEFT JOIN chatdata d ON c.chatid = d.chatid " +
+	                 "WHERE c.uid = ? AND c.app = ? AND c.attribute != 'removed'";
+
+	    JsonArray ja = new JsonArray();
+
+		AIApplication ent = apps.get(appName);
+		if(ent==null)
+			return new ResultDTO(400,"应用不存在");
+	    try (PreparedStatement ps = database.prepareStatement(sql)) {
+	        ps.setString(1, uid);
+	        ps.setString(2, appName);
+	        try (ResultSet rs = ps.executeQuery()) {
+	            while (rs.next()) {
+	                JsonObject obj = new JsonObject();
+	                obj.addProperty("chatid", rs.getString("chatid"));
+	                obj.addProperty("appname", appName);
+	                obj.addProperty("app", appName);
+	                obj.addProperty("time", rs.getString("time")); // 时间戳转为字符串
+	                String brief = rs.getString("brief");
+	                obj.addProperty("name", brief == null ? "新对话" : brief);
+	                obj.addProperty("price", rs.getString("price") == null ? "" : rs.getString("price"));
+	                obj.addProperty("remark", rs.getString("remark") == null ? "" : rs.getString("remark"));
+	                obj.addProperty("selected", rs.getString("selected") == null ? "" : rs.getString("selected"));
+	                ja.add(obj);
+	            }
+	        }
+	    }
+	    return new ResultDTO(200,ja.toString());
 	}
 
 	/**
