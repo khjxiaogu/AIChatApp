@@ -208,8 +208,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		int uncached_cost=0;
 		if(usage.prompt_cache_hit_tokens==0&&usage.prompt_cache_miss_tokens==0) {
 			uncached_cost+=usage.prompt_tokens;
-		}else
+		}else {
 			uncached_cost+=usage.prompt_cache_miss_tokens;
+			uncached_cost+=usage.prompt_cache_hit_tokens/10;
+		}
 		uncached_cost+=usage.completion_tokens;
 		parent.consumeTokens(user, uncached_cost);
 		
