@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>用量统计</title>
+    <script src="feather.min.js"></script>
+    <script src="vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: #f5f7fb;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            padding: 16px 12px 32px 12px;
+            color: #1e293b;
+        }
+
+        /* 主容器 */
+        .dashboard {
+            max-width: 90vh;
+            margin: 0 auto;
+        }
+
+        /* 卡片通用样式 */
+        .card {
+            background: #ffffff;
+            border-radius: 24px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+            padding: 20px 18px;
+            margin-bottom: 20px;
+            transition: all 0.2s ease;
+            
+        }
+
+        .card-header {
+            font-size: 18px;
+            font-weight: 600;
+            color: #0f172a;
+            margin-bottom: 18px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-left: 4px solid #3b82f6;
+            padding-left: 12px;
+        }
+        .card-header i {
+            font-size: 20px;
+        }
+
+        /* 指标网格布局 */
+        .stats-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .stat-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 12px;
+        }
+
+        .stat-item {
+            flex: 1;
+            min-width: 120px;
+            background: #f8fafc;
+            border-radius: 20px;
+            padding: 12px 14px;
+            transition: all 0.2s;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: #5b6e8c;
+            letter-spacing: 0.3px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .stat-number {
+            font-size: 24px;
+            font-weight: 700;
+            color: #0f172a;
+            line-height: 1.2;
+            word-break: break-word;
+        }
+
+        .stat-unit {
+            font-size: 13px;
+            font-weight: 400;
+            color: #5b6e8c;
+            margin-left: 4px;
+        }
+
+        .stat-sub {
+            font-size: 12px;
+            color: #6c86a3;
+            margin-top: 6px;
+        }
+
+        .progress-bar-bg {
+            background-color: #e2e8f0;
+            border-radius: 20px;
+            height: 8px;
+            overflow: hidden;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        .progress-fill {
+            background-color: #3b82f6;
+            width: 0%;
+            height: 100%;
+            border-radius: 20px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-fill-warning {
+            background-color: #f97316;
+        }
+
+        .badge {
+            background-color: #eef2ff;
+            color: #1e40af;
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 30px;
+            display: inline-block;
+            font-weight: 500;
+        }
+
+        .divider {
+            height: 1px;
+            background: #eef2f6;
+            margin: 12px 0 8px 0;
+        }
+
+        .flex-between {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* 图表容器 */
+        .chart-container {
+            width: 100%;
+            height: 280px;
+            margin-top: 8px;
+        }
+
+        .loading-state {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 40px 0;
+            color: #5b6e8c;
+            font-size: 14px;
+        }
+
+        .error-state {
+            background: #fee2e2;
+            color: #b91c1c;
+            padding: 12px;
+            border-radius: 20px;
+            text-align: center;
+            font-size: 13px;
+        }
+
+        /* 免费与付费配色 */
+        .free-color {
+            color: #3b82f6;
+        }
+        .paid-color {
+            color: #f97316;
+        }
+
+        /* 移动端微调 */
+        @media (max-width: 480px) {
+            body {
+                padding: 12px 10px 24px 10px;
+            }
+            .card {
+                padding: 16px 14px;
+            }
+            .stat-number {
+                font-size: 22px;
+            }
+            .stat-item {
+                padding: 10px 12px;
+            }
+            .card-header {
+                font-size: 17px;
+                margin-bottom: 14px;
+            }
+        }
+
+        /* 简单图标占位 */
+        .icon-em {
+            font-weight: 600;
+            font-style: normal;
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="dashboard">
+        <!-- 加载状态 -->
+        <div v-if="loading" class="card loading-state">
+            <div>📊 加载用量数据中...</div>
+        </div>
+
+        <!-- 错误状态 -->
+        <div v-else-if="error" class="card error-state">
+            ⚠️ {{ error }}，请刷新重试
+        </div>
+
+        <!-- 主体内容 -->
+        <div v-else>
+            <!-- 当日用量 + 额度卡片 -->
+            <div class="card">
+                <div class="card-header">
+                    <span>今日用量总览</span>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-item" style="background: #f0f9ff;">
+                        <div class="stat-label">
+                            基础配额
+                        </div>
+                        <div class="flex-between" style="margin-bottom: 6px;">
+                            <span class="stat-number">{{ formatNumber(freeTotal) }}</span>
+                            <span class="badge">总量</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-fill" :style="{ width: freeUsagePercent + '%' }"></div>
+                        </div>
+                        <div class="flex-between" style="margin-top: 8px;">
+                            <span>累计已用: <strong>{{ formatNumber(freeCost) }}</strong></span>
+                            <span>剩余: <strong>{{ formatNumber(freeRemaining) }}</strong></span>
+                        </div>
+                    </div>
+                    <div class="stat-item" style="background: #fff7ed;">
+                        <div class="stat-label">
+                            补充配额
+                        </div>
+                        <div class="flex-between" style="margin-bottom: 8px;">
+                            <span class="stat-number">{{ formatNumber(paidRemaining) }}<span class="stat-unit">Token</span></span>
+                            <span class="badge">剩余补充配额</span>
+                        </div>
+                        <div class="stat-label" style="margin-top: 6px;">
+                            今日补充配额使用量
+                        </div>
+                        <div class="flex-between" style="margin-bottom: 8px;">
+                        <span class="stat-number" style="font-size: 26px; color:#ea580c;">
+                            {{ formatNumber(paidCost) }} <span class="stat-unit">Token</span>
+                           
+                        </span>
+                         <span class="badge">剩余补充配额</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 附加关键数值摘要 (剩余付费额度已在上面展示) -->
+                <div style="margin-top: 12px; background: #f1f5f9; border-radius: 20px; padding: 10px 12px; font-size: 12px; display: flex; justify-content: space-between;">
+                    <span>基础配额总额: {{ formatNumber(freeTotal) }}</span>
+                    <span>累计基础配额已用: {{ formatNumber(freeCost) }}</span>
+                    <span>补充配额剩余: {{ formatNumber(paidRemaining) }}</span>
+                </div>
+            </div>
+
+            <!-- 近30日用量统计柱状图 (堆叠柱状图：免费+付费) -->
+            <div class="card">
+                <div class="card-header">
+                    <span>近30日用量趋势</span>
+                    <span style="font-size: 12px; font-weight: normal; margin-left: auto;">单位: Token</span>
+                </div>
+                <div class="chart-container" ref="chartDom"></div>
+                <div class="stat-sub" style="text-align: center; margin-top: 8px;">
+                    <span style="display: inline-block; width: 12px; height: 12px; background: #3b82f6; border-radius: 2px;"></span> 免费使用 &nbsp;&nbsp;
+                    <span style="display: inline-block; width: 12px; height: 12px; background: #f97316; border-radius: 2px;"></span> 付费使用
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+	var pageQueries={};
+	var searchStr = location.toString();
+	searchStr = searchStr.substr(searchStr.indexOf("?")+1);
+	searchStr=searchStr.replace("#","");
+	var searchs = searchStr.split("&");
+	var isFirstSelect=false;
+	for(var i=0;i<searchs.length;i++){
+		var rq = searchs[i].split("=");
+		pageQueries[rq[0]]=rq[1];
+	}
+	feather.replace();
+	async function fetchDailyUsage(start,end) {
+		
+		return fetch("useHistory?uid="+pageQueries.uid+"&start="+start+"&end="+end)
+		.then(p=>{
+			if (p.status === 200) {
+					return p.json();
+			    } else {
+			    	return p.text().then(r=>{return Promise.reject(r);});
+			    }
+			
+		})
+	}
+	async function fetchTodayUsage() {
+		
+		return fetch("useToday?uid="+pageQueries.uid)
+		.then(p=>{
+			if (p.status === 200) {
+					return p.json();
+			    } else {
+			    	return p.text().then(r=>{return Promise.reject(r);});
+			    }
+			
+		})
+	}
+
+    var vue=new Vue({
+        el: '#app',
+        data() {
+            return {
+                loading: true,
+                error: null,
+                // 后端数据
+                tokenRemaining: null,    // { freeTotal, paidRemaining, freeCost }
+                dailyUsageList: [],      // [{ date, freeUsed, paidUsed }]
+                chartInstance: null
+            };
+        },
+        computed: {
+            // 免费总额度
+            freeTotal() {
+                return this.tokenRemaining ? this.tokenRemaining.freeTotal : 0;
+            },
+            // 累计免费已用量
+            freeCost() {
+                return this.tokenRemaining ? this.tokenRemaining.freeCost : 0;
+            },
+            // 剩余免费额度
+            freeRemaining() {
+                return Math.max(0, this.freeTotal - this.freeCost);
+            },
+            // 免费使用占比 (累计)
+            freeUsagePercent() {
+                if (this.freeTotal <= 0) return 0;
+                let percent = (this.freeCost / this.freeTotal) * 100;
+                return Math.min(100, percent.toFixed(1));
+            },
+            // 剩余付费额度
+            paidRemaining() {
+                return this.tokenRemaining ? this.tokenRemaining.paidRemaining : 0;
+            },
+            paidCost() {
+                return this.tokenRemaining ? this.tokenRemaining.paidCost : 0;
+            },
+            // 累计付费消耗 (总付费额度 - 剩余付费额度) 但需要从历史中汇总，展示用
+            totalPaidConsumed() {
+                if (!this.dailyUsageList.length) return 0;
+                return this.dailyUsageList.reduce((sum, day) => sum + (day.paidUsed || 0), 0);
+            },
+            // 今日数据 (从dailyUsageList中获取最后一条，因为最后一条日期就是今天)
+            todayData() {
+                if (!this.dailyUsageList.length) return { freeUsed: 0, paidUsed: 0, date: '' };
+                // 确保最后一个日期是今天 (mock生成保证)
+                return this.dailyUsageList[this.dailyUsageList.length - 1];
+            },
+            // 今日免费使用量
+            todayFreeUsed() {
+                return this.todayData.freeUsed || 0;
+            },
+            // 今日付费使用量
+            todayPaidUsed() {
+                return this.todayData.paidUsed || 0;
+            },
+            // 今日免费使用量 / 免费总额度 的百分比 (当日免费额度使用量/总量)
+            todayFreePercent() {
+                if (this.freeTotal <= 0) return 0;
+                let percent = (this.todayFreeUsed / this.freeTotal) * 100;
+                return percent.toFixed(1);
+            },
+            // 准备柱状图所需数据: xAxis日期列表, 免费系列, 付费系列
+            chartData() {
+                if (!this.dailyUsageList.length) return { dates: [], freeSeries: [], paidSeries: [] };
+                const dates = [];
+                const freeData = [];
+                const paidData = [];
+                // 为了柱状图美观，只展示近30天，直接使用全部
+                this.dailyUsageList.forEach(item => {
+                    // 格式化日期显示为 MM-dd 更紧凑
+                    const parts = item.date.split('-');
+                    const shortDate = `${parts[1]}/${parts[2]}`;
+                    dates.push(shortDate);
+                    freeData.push(item.freeUsed);
+                    paidData.push(item.paidUsed);
+                });
+                return { dates, freeSeries: freeData, paidSeries: paidData };
+            }
+        },
+        watch: {
+            dailyUsageList: {
+                handler() {
+                    this.$nextTick(() => {
+                        this.renderChart();
+                    });
+                },
+                deep: true
+            }
+        },
+        mounted() {
+            this.loadData();
+            window.addEventListener('resize', this.handleResize);
+        },
+        beforeDestroy() {
+            window.removeEventListener('resize', this.handleResize);
+            if (this.chartInstance) {
+                this.chartInstance.dispose();
+                this.chartInstance = null;
+            }
+        },
+        methods: {
+            formatNumber(num) {
+                if (num === undefined || num === null) return '0';
+                return Number(num).toLocaleString('zh-CN');
+            },
+       	    pad(n) {
+				return n.toString().padStart(2, '0');
+            },
+			formatDate(date) {
+       	        const y = date.getFullYear();
+       	        const m = this.pad(date.getMonth() + 1);
+       	        const d = this.pad(date.getDate());
+       	        return `${y}-${m}-${d}`;
+       	    },
+            loadData() {
+                this.loading = true;
+               	fetchTodayUsage().then(data=>{
+               		this.tokenRemaining = data;
+               		this.loading = false;
+               	    const now = new Date();
+               	    const year = now.getFullYear();
+               	    const month = now.getMonth(); // 0-11
+               	    // 本月初：月份的第一天 00:00:00
+               	    const startDate = new Date(year, month, 1, 0, 0, 0, 0);
+               	    // 本月末：下个月的第一天减去1毫秒
+               	    const endDate = new Date(year, month + 1, 1, 0, 0, 0, 0);
+               	 	endDate.setDate(-1)
+               	    
+               		fetchDailyUsage(this.formatDate(startDate),this.formatDate(endDate)).then(data=>{
+						var datum={}
+						for(let o of data)
+							datum[o.date]=o
+               			
+						var list=[];
+               	        // 生成从 today - days + 1 到 today 的日期
+               	        for (let i = 1; i <endDate.getDate(); i++) {
+               	            const date = new Date(now);
+               	            date.setDate(i);
+               	            const dateStr=this.formatDate(date);
+               	            const dat=datum[dateStr]||{}
+               	            list.push({
+               	                date: dateStr,
+               	                freeUsed: dat.freeUsed||0,
+               	                paidUsed: dat.paidUsed||0
+               	            });
+               	        }
+                   		this.dailyUsageList = list; 
+                   	}).catch(err=>{
+    					this.error=err;
+                   	})
+               	}).catch(err=>{
+					this.error=err;
+               	})
+               	
+               	
+            },
+            renderChart() {
+                if (!this.$refs.chartDom) return;
+                const { dates, freeSeries, paidSeries } = this.chartData;
+                if (!dates.length) return;
+                
+                if (this.chartInstance) {
+                    this.chartInstance.dispose();
+                }
+                const dom = this.$refs.chartDom;
+                this.chartInstance = echarts.init(dom);
+                const option = {
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: { type: 'shadow' },
+                        valueFormatter: (value) => (value ? this.formatNumber(value) : '0') + ' Token',
+                        backgroundColor: 'rgba(255,255,255,0.96)',
+                        borderColor: '#ccc',
+                        borderWidth: 1,
+                        textStyle: { color: '#1e293b', fontSize: 12 }
+                    },
+                    legend: {
+                        show: false,   // 使用自定义图例代替，节省空间
+                        // 但为了移动端不拥挤，我们手动在外部展示图例，内部隐藏
+                    },
+                    grid: {
+                        left: '8%',
+                        right: '5%',
+                        top: 12,
+                        bottom: 25,
+                        containLabel: true,
+                        backgroundColor: '#fefefe'
+                    },
+                    xAxis: {
+                        type: 'category',
+                        data: dates,
+                        axisTick: { show: false },
+                        axisLine: { lineStyle: { color: '#cbd5e1' } },
+                        axisLabel: {
+                            rotate: dates.length > 20 ? 35 : 0,
+                            interval: 0,
+                            fontSize: 10,
+                            margin: 12,
+                            hideOverlap: false,
+                            fontWeight: 'normal',
+                            color: '#4b5563'
+                        }
+                    },
+                    yAxis: {
+                        type: 'value',
+                        name: '用量 (Token)',
+                        nameTextStyle: { fontSize: 11, color: '#6c86a3' },
+                        splitLine: { lineStyle: { type: 'dashed', color: '#e2e8f0' } },
+                        axisLabel: {
+                            fontSize: 10,
+                            formatter: (value) => {
+                                if (value >= 1000) return (value / 1000).toFixed(0) + 'k';
+                                return value;
+                            }
+                        }
+                    },
+                    series: [
+                        {
+                            name: '免费使用量',
+                            type: 'bar',
+                            stack: 'total',
+                            barWidth: '60%',
+                            data: freeSeries,
+                            itemStyle: {
+                                borderRadius: [4, 4, 0, 0],
+                                color: '#3b82f6'
+                            },
+                            label: { show: false },
+                            emphasis: { focus: 'series' }
+                        },
+                        {
+                            name: '付费使用量',
+                            type: 'bar',
+                            stack: 'total',
+                            barWidth: '60%',
+                            data: paidSeries,
+                            itemStyle: {
+                                borderRadius: [4, 4, 0, 0],
+                                color: '#f97316'
+                            },
+                            label: { show: false },
+                            emphasis: { focus: 'series' }
+                        }
+                    ],
+                    // 移动端优化：如果宽度不够，开启 dataZoom 可选，为了更好体验加简单缩放
+                    dataZoom: dates.length > 24 ? [{
+                        type: 'inside',
+                        start: 0,
+                        end: 100,
+                        zoomOnMouseWheel: false,
+                        moveOnMouseMove: true,
+                        moveOnMouseWheel: true
+                    }] : [],
+                    toolbox: {
+                        show: false,
+                    }
+                };
+                this.chartInstance.setOption(option, true);
+                // 调整尺寸适应容器
+                setTimeout(() => {
+                    if (this.chartInstance) this.chartInstance.resize();
+                }, 100);
+            },
+            handleResize() {
+                if (this.chartInstance) {
+                    this.chartInstance.resize();
+                }
+            }
+        }
+    });
+</script>
+</body>
+</html>

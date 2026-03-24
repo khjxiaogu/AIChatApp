@@ -3,11 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>游戏存档管理 - 档案馆</title>
-    <!-- Feather Icons -->
-    <script src="https://unpkg.com/feather-icons"></script>
-    <!-- Vue2 CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.js"></script>
+    <title>存档管理</title>
+    <script src="feather.min.js"></script>
+    <script src="vue.js"></script>
     <style>
         * {
             margin: 0;
@@ -508,11 +506,11 @@
 	                    <div class="sub-info-group">
 	                        <div class="info-group">
 	                            <div class="info-label">角色名称</div>
-	                            <div class="info-value">{{ archive.brief || '未命名' }}</div>
+	                            <div class="info-value">{{ archive.name || '未命名' }}</div>
 	                        </div>
 	                        <div class="info-group">
 	                            <div class="info-label">token消耗</div>
-	                            <div class="info-value spend">{{ formatMoney(archive.price) }}</div>
+	                            <div class="info-value spend">￥{{ formatMoney(archive.price) }}</div>
 	                        </div>
                         </div>
                         <div class="remark-edit">
@@ -534,7 +532,7 @@
                     </div>
                     <div class="archive-details" style="flex: 4;">
                         <div class="info-group">
-                            <div class="info-label"><span class="new-badge">✨ 新存档位</span></div>
+                            <div class="info-label"><span class="new-badge">新存档位</span></div>
                             <div class="info-value new-placeholder">以空白存档启动游戏</div>
                         </div>
             

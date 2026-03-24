@@ -509,7 +509,7 @@
 		         methods: {
 					initChat(){
 						let aid=pageQueries.chara+"talk"
-						fetch("querychat?appid="+aid)
+						fetch("querychat?appid="+aid+"&uid="+pageQueries.uid)
 						.then(p=>p.json())
 						.then(p=>{
 							if(p.length>0){
@@ -554,6 +554,7 @@
 					    img.onerror = (err) => {
 					        this.isSideLoading = false;
 					        console.error('图片加载失败', err);
+					        this.notifyProcessQueue();
 					    };
 					    // 开始加载（设置src会触发请求）
 						this.isSideLoading = true;
@@ -581,6 +582,7 @@
 					    img.onerror = (err) => {
 					        this.isFrontLoading = false;
 					        console.error('图片加载失败', err);
+					        this.notifyProcessQueue();
 					    };
 					    // 开始加载（设置src会触发请求）
 						this.isFrontLoading = true;
@@ -609,6 +611,7 @@
 					    img.onerror = (err) => {
 					        this.isBackLoading = false;
 					        console.error('图片加载失败', err);
+					        this.notifyProcessQueue();
 					    };
 					    // 开始加载（设置src会触发请求）
 						this.isBackLoading = true;

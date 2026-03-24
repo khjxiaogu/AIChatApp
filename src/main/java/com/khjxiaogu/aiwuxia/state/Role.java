@@ -35,7 +35,7 @@ public enum Role {
     /** 系统角色，显示名称为"系统" */
     SYSTEM("系统"),
     /** 应用角色，应用需要自行决定显示名称 */
-    APPLICATION("");
+    APPLICATION("系统");
 
     /** 角色的小写名称（由枚举常量名转换而来），用于内部标识 */
     final String name;

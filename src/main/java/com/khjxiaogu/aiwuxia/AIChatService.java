@@ -128,7 +128,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/** 语音资源文件服务（用于提供音频文件） */
 	private FilePageService voice;
 	// 默认每个用户每天的免费token额度
-	private static final int DEFAULT_FREE_DAILY_LIMIT = 1000;
+	private static final int DEFAULT_FREE_DAILY_LIMIT = 500_000;
 	/**
 	 * 构造AI对话服务，初始化数据库连接、文件目录和AI应用。
 	 *
@@ -570,7 +570,18 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO featherjs() throws IOException {
 		return new ResultDTO(200, new File(parent, "feather.min.js"));
 	}
-
+	@HttpMethod("GET")
+	@HttpPath("/echarts.min.js")
+	@Adapter
+	public ResultDTO echartsjs() throws IOException {
+		return new ResultDTO(200, new File(parent, "echarts.min.js"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/usage")
+	@Adapter
+	public ResultDTO usage() throws IOException {
+		return new ResultDTO(200, new File(parent, "usage.html"));
+	}
 	/**
 	 * HTTP GET端点：返回aiindex.html文件（主页）。
 	 *
@@ -1228,11 +1239,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
 		int freeUsed = getDailyFreeUsed(userId, today);
 		int freeLimit = getUserFreeLimit(userId);
-
+		int paidUsed = getDailyPaidUsed(userId);
 		// 获取付费余额
 		int paidRemaining = getPaidBalance(userId);
 
-		return new ResultDTO(200,JsonBuilder.object().add("freeTotal", freeLimit).add("paidRemaining", paidRemaining).add("freeCost", freeUsed));
+		return new ResultDTO(200,JsonBuilder.object().add("freeTotal", freeLimit).add("paidRemaining", paidRemaining).add("freeCost", freeUsed).add("paidCost", paidUsed));
 	}
 
 	/**
@@ -1390,7 +1401,22 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return 0;
 	}
-
+	private int getDailyPaidUsed(String userId) {
+		String date = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+		String sql = "SELECT paid_used FROM daily_usage WHERE user_id = ? AND date = ?";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, date);
+			ResultSet rs = pstmt.executeQuery();
+			if (rs.next()) {
+				return rs.getInt("paid_used");
+			}
+			return 0;
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return 0;
+	}
 	/**
 	 * 获取用户付费余额
 	 */
