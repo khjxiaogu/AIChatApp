@@ -34,6 +34,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -59,6 +60,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	private final String chatId;
 	File fn;
 	
+
 	ReentrantLock lock=new ReentrantLock();
 	boolean isClientAudioEnabled=false;
 	boolean isLocalAudioEnabled=false;
@@ -201,5 +203,19 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public String getChatId() {
 		return chatId;
 	}
-
+	@Override
+	public void addUsage(Usage usage) {
+		int uncached_cost=0;
+		if(usage.prompt_cache_hit_tokens==0&&usage.prompt_cache_miss_tokens==0) {
+			uncached_cost+=usage.prompt_tokens;
+		}
+		uncached_cost+=usage.completion_tokens;
+		parent.consumeTokens(user, uncached_cost);
+		
+		super.addUsage(usage);
+	}
+	@Override
+	public boolean canGenerate() {
+		return parent.hasAnyTokenRemaining(user);
+	}
 }

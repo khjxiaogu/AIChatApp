@@ -32,6 +32,9 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -46,10 +49,6 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
-import com.khjxiaogu.aiwuxia.apps.AIArticleMain;
-import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
-import com.khjxiaogu.aiwuxia.apps.AIGalgameMain;
-import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
 import com.khjxiaogu.aiwuxia.apps.AIWuxiaMain;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
@@ -82,9 +81,8 @@ import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
 import io.netty.handler.codec.http.HttpHeaderNames;
 
 /**
- * AI对话核心服务，负责管理AI对话会话、用户权限、历史记录以及与前端WebSocket通信。
- * 该类实现了 {@link ServiceClass} 和 {@link CommandHandler} 接口，提供HTTP端点供前端调用，
- * 并管理多个AI应用实例（如武侠、文章、Galgame等）。
+ * AI对话核心服务，负责管理AI对话会话、用户权限、历史记录以及与前端WebSocket通信。 该类实现了 {@link ServiceClass} 和
+ * {@link CommandHandler} 接口，提供HTTP端点供前端调用， 并管理多个AI应用实例（如武侠、文章、Galgame等）。
  * <p>
  * 注意：该服务本身不包含登录验证，需要调用方自行添加代理进行验证。
  * </p>
@@ -106,35 +104,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/** 日志记录器，标签为"聊天" */
 	public final SimpleLogger logger = new SimpleLogger("聊天");
 
-	/** 创建对话记录表的SQL语句 */
-	private final static String createMsg = "CREATE TABLE IF NOT EXISTS chats (" +
-			"uid	 TEXT(40)   NOT NULL, " + // 用户ID
-			"brief TEXT, " +				   // 对话简述
-			"app TEXT NOT NULL, " +			 // 智能体名称
-			"chatid TEXT PRIMARY KEY, " +		  // 对话ID
-			"time	BIGINT(64), " +			// 时间戳（毫秒）
-			"status TEXT, " +					// 状态
-			"attribute TEXT DEFAULT ''" +		// 附加信息（如隐藏标记）
-			");";
 
-	/** 创建权限表的SQL语句 */
-	private final static String createPerm = "CREATE TABLE IF NOT EXISTS permission (" +
-			"uid	 TEXT(40)   NOT NULL, " +   // 用户ID
-			"app TEXT NOT NULL, " +			   // 智能体
-			"state TEXT NOT NULL" +				// 许可状态（如'1'表示允许）
-			");";
-
-	/** 创建费用记录表的SQL语句 */
-	private final static String createPrice = "CREATE TABLE IF NOT EXISTS price (" +
-			"chatid TEXT PRIMARY KEY, " +		   // 对话ID
-			"price TEXT, " +					   // 价格字符串
-			"time	BIGINT(32) " +				// 时间戳（毫秒）
-			");";
-	private final static String createRemark = "CREATE TABLE IF NOT EXISTS chatdata (" +
-			"chatid TEXT PRIMARY KEY, " +		   // 对话ID
-			"remark TEXT, " +					   // 备注字符串
-			"selected TEXT " +					   // 是否选中字符串
-			");";
 	/** 当前活跃的WebSocket会话映射，键为对话ID，值为对应的WebSocket会话对象 */
 	protected Map<String, WebSocketAISession> uidsockets = new ConcurrentHashMap<>();
 
@@ -157,12 +127,13 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 	/** 语音资源文件服务（用于提供音频文件） */
 	private FilePageService voice;
-
+	// 默认每个用户每天的免费token额度
+	private static final int DEFAULT_FREE_DAILY_LIMIT = 1000;
 	/**
 	 * 构造AI对话服务，初始化数据库连接、文件目录和AI应用。
 	 *
 	 * @param path 服务数据根目录
-	 * @throws SQLException 如果数据库初始化失败
+	 * @throws SQLException           如果数据库初始化失败
 	 * @throws ClassNotFoundException 如果找不到SQLite JDBC驱动
 	 */
 	public AIChatService(File path) throws SQLException, ClassNotFoundException {
@@ -175,10 +146,57 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		logger.info("正在链接SQLITE信息数据库...");
 		try {
 			database = DriverManager.getConnection("jdbc:sqlite:" + new File(path, "messages.db"));
-			database.createStatement().execute(AIChatService.createMsg);
-			database.createStatement().execute(AIChatService.createPerm);
-			database.createStatement().execute(AIChatService.createPrice);
-			database.createStatement().execute(AIChatService.createRemark);
+			try (Statement stmt = database.createStatement()) {
+
+				/** 创建对话记录表的SQL语句 */
+				String createMsg = "CREATE TABLE IF NOT EXISTS chats (" +
+					"uid	 TEXT(40)   NOT NULL, " + // 用户ID
+					"brief TEXT, " + // 对话简述
+					"app TEXT NOT NULL, " + // 智能体名称
+					"chatid TEXT NOT NULL, " + // 对话ID
+					"time	BIGINT(64), " + // 时间戳（毫秒）
+					"status TEXT, " + // 状态
+					"attribute TEXT DEFAULT ''" + // 附加信息（如隐藏标记）
+					");";
+
+				/** 创建权限表的SQL语句 */
+				String createPerm = "CREATE TABLE IF NOT EXISTS permission (" +
+					"uid	 TEXT(40)   NOT NULL, " + // 用户ID
+					"app TEXT NOT NULL, " + // 智能体
+					"state TEXT NOT NULL" + // 许可状态（如'1'表示允许）
+					");";
+
+				/** 创建费用记录表的SQL语句 */
+				String createPrice = "CREATE TABLE IF NOT EXISTS price (" +
+					"chatid TEXT NOT NULL, " + // 对话ID
+					"price TEXT, " + // 价格字符串
+					"time	BIGINT(32) " + // 时间戳（毫秒）
+					");";
+				String createRemark = "CREATE TABLE IF NOT EXISTS chatdata (" +
+					"chatid TEXT PRIMARY KEY, " +		   // 对话ID
+					"remark TEXT, " +					   // 备注字符串
+					"selected TEXT " +					   // 是否选中字符串
+					");";
+				String createPaidBalanceTable = "CREATE TABLE IF NOT EXISTS user_paid_balance ("
+					+ "user_id TEXT PRIMARY KEY,"
+					+ "balance INTEGER NOT NULL DEFAULT 0)";
+				String createDailyUsageTable = "CREATE TABLE IF NOT EXISTS daily_usage ("
+					+ "user_id TEXT,"
+					+ "date TEXT,"
+					+ "free_used INTEGER NOT NULL DEFAULT 0,"
+					+ "paid_used INTEGER NOT NULL DEFAULT 0,"
+					+ "PRIMARY KEY (user_id, date))";
+				String createFreeLimitOverrideTable = "CREATE TABLE IF NOT EXISTS user_free_limit_override ("
+					+ "user_id TEXT PRIMARY KEY,"
+					+ "free_limit INTEGER NOT NULL)";
+				stmt.execute(createMsg);
+				stmt.execute(createPerm);
+				stmt.execute(createPrice);
+				stmt.execute(createRemark);
+				stmt.execute(createPaidBalanceTable);
+				stmt.execute(createDailyUsageTable);
+				stmt.execute(createFreeLimitOverrideTable);
+			}
 		} catch (SQLException e) {
 			logger.severe("信息数据库初始化失败！");
 			throw e;
@@ -194,15 +212,14 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * 重新加载所有AI应用配置。
-	 * 扫描根目录下的所有子目录，根据meta.json元数据动态加载AI应用（如talk类型、trpg类型），
+	 * 重新加载所有AI应用配置。 扫描根目录下的所有子目录，根据meta.json元数据动态加载AI应用（如talk类型、trpg类型），
 	 * 并更新apps映射和trial集合。
 	 */
 	public void reload() {
 		apps.clear();
 		trial.clear();
-		//apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
-		for (File fn : new File(parent,"apps").listFiles(File::isDirectory)) {
+		// apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
+		for (File fn : new File(parent, "apps").listFiles(File::isDirectory)) {
 			try {
 				String name = fn.getName();
 				File metaFile = new File(fn, "meta.json");
@@ -211,7 +228,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					JsonObject meta = JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 					if (meta.has("name") && (!meta.has("enabled") || meta.get("enabled").getAsBoolean())) {
 						getLogger().info("正在加载AI：" + name);
-						
+
 						try {
 							apps.put(name, AIApplicationRegistry.createInstance(parent, fn, meta));
 							if (meta.has("trial") && meta.get("trial").getAsBoolean())
@@ -233,8 +250,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				getLogger().error(e);
 			}
 		}
-		//trial.clear();
-		//trial.add("fengyitalk");
+		// trial.clear();
+		// trial.add("fengyitalk");
 	}
 
 	/**
@@ -298,12 +315,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				AIApplication ent = apps.get(appid);
 				if (ent != null)
 					ja.add(JsonBuilder.object()
-							.add("chatid", rs.getString(1))
-							.add("appid", appid)
-							.add("time", rs.getString(3))
-							.add("app", ent.getName())
-							.add("name", rs.getString(2) == null ? "新对话" : rs.getString(2))
-							.end());
+						.add("chatid", rs.getString(1))
+						.add("appid", appid)
+						.add("time", rs.getString(3))
+						.add("app", ent.getName())
+						.add("name", rs.getString(2) == null ? "新对话" : rs.getString(2))
+						.end());
 			}
 			return ja;
 		} catch (SQLException e) {
@@ -330,12 +347,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				AIApplication ent = apps.get(appid);
 				if (ent != null)
 					ja.add(JsonBuilder.object()
-							.add("chatid", rs.getString(1))
-							.add("appid", appid)
-							.add("app", ent.getName())
-							.add("time", rs.getString(3))
-							.add("name", rs.getString(2) == null ? "新对话" : rs.getString(2))
-							.end());
+						.add("chatid", rs.getString(1))
+						.add("appid", appid)
+						.add("app", ent.getName())
+						.add("time", rs.getString(3))
+						.add("name", rs.getString(2) == null ? "新对话" : rs.getString(2))
+						.end());
 			}
 			return ja;
 		} catch (SQLException e) {
@@ -607,8 +624,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * HTTP GET端点：删除（隐藏）指定对话。
-	 * 将对话的attribute字段设置为"hide"，使其在列表中不可见。
+	 * HTTP GET端点：删除（隐藏）指定对话。 将对话的attribute字段设置为"hide"，使其在列表中不可见。
 	 *
 	 * @param userid 用户ID
 	 * @param chatid 对话ID
@@ -663,8 +679,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * WebSocket端点：用于本地语音模型的部署（私有化部署）。
-	 * 需要提供Bearer Token进行认证，Token通过系统属性"localVoiceToken"配置。
+	 * WebSocket端点：用于本地语音模型的部署（私有化部署）。 需要提供Bearer
+	 * Token进行认证，Token通过系统属性"localVoiceToken"配置。
 	 *
 	 * @param req 请求对象
 	 * @param res 响应对象
@@ -679,8 +695,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * HTTP POST端点：接收本地语音模型产出的数据（如音频字节数组）。
-	 * 需要Bearer Token认证。
+	 * HTTP POST端点：接收本地语音模型产出的数据（如音频字节数组）。 需要Bearer Token认证。
 	 *
 	 * @param reqid 请求ID
 	 * @param type  数据类型
@@ -692,9 +707,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@Adapter
 	@HttpMethod("POST")
 	public ResultDTO voicePost(@Query("reqid") String reqid,
-							   @Query("type") String type,
-							   @GetBy(DataIn.class) byte[] data,
-							   @Header("Authorization") String auth) {
+		@Query("type") String type,
+		@GetBy(DataIn.class) byte[] data,
+		@Header("Authorization") String auth) {
 		if (auth != null && auth.startsWith("Bearer ") && System.getProperty("localVoiceToken", "").equals(auth.split(" ")[1])) {
 			LocalVoiceModel.lhs.onMessage(reqid, data);
 			return new ResultDTO(200);
@@ -730,8 +745,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						if (data.exists()) {
 							try {
 								state = new WebSocketAISession(this, uid, cid, appx, data,
-										AIWuxiaMain.historyFromJson(data),
-										AIWuxiaMain.dataFromJson(data));
+									AIWuxiaMain.historyFromJson(data),
+									AIWuxiaMain.dataFromJson(data));
 							} catch (JsonSyntaxException | IOException e) {
 								e.printStackTrace();
 								logger.info("AI " + cid + " Load Error");
@@ -751,8 +766,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					}
 					ResultDTO res = new ResultDTO(200, baos.toByteArray());
 					res.addHeader(HttpHeaderNames.CONTENT_DISPOSITION,
-							"attachment; filename=\"" + new String(("故事导出-" + appx.getBrief(state) + ".txt")
-									.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1) + "\"");
+						"attachment; filename=\"" + new String(("故事导出-" + appx.getBrief(state) + ".txt")
+							.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1) + "\"");
 					res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
 					res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
 					res.addHeader(HttpHeaderNames.PRAGMA, "no-cache");
@@ -859,8 +874,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					
 				}
 				state = new WebSocketAISession(this, uid, cid, appx, data,
-						new MemoryHistory(), new AISession.ExtraData());
-				
+					new MemoryHistory(), new AISession.ExtraData());
 				logger.info("AI " + cid + " Created");
 			}
 		}
@@ -1104,8 +1118,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * 释放指定的WebSocket会话，从活跃会话映射中移除。
-	 * 当WebSocket连接关闭时调用。
+	 * 释放指定的WebSocket会话，从活跃会话映射中移除。 当WebSocket连接关闭时调用。
 	 *
 	 * @param state 要释放的会话对象
 	 */
@@ -1124,14 +1137,285 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return "聊天";
 	}
 
+
+
 	/**
-	 * 处理控制台命令。
-	 * 支持命令：
+	 * 设置用户免费限额覆盖（若freeLimit <= 0则删除覆盖记录，恢复使用默认值）
+	 * 
+	 * @param userId    用户ID
+	 * @param freeLimit 自定义免费限额（>0表示设置，<=0表示删除覆盖）
+	 * @throws SQLException 数据库操作异常
+	 */
+	public synchronized void setFreeLimitOverride(String userId, int freeLimit){
+		if (freeLimit > 0) {
+			String sql = "INSERT INTO user_free_limit_override (user_id, free_limit) VALUES (?, ?) "
+				+ "ON CONFLICT(user_id) DO UPDATE SET free_limit = ?";
+			try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+				pstmt.setString(1, userId);
+				pstmt.setInt(2, freeLimit);
+				pstmt.setInt(3, freeLimit);
+				pstmt.executeUpdate();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+		} else {
+			String sql = "DELETE FROM user_free_limit_override WHERE user_id = ?";
+			try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+				pstmt.setString(1, userId);
+				pstmt.executeUpdate();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+
+	/**
+	 * 获取用户的实际免费每日限额（优先使用覆盖表，否则返回全局默认值）
+	 * 
+	 * @param userId 用户ID
+	 * @return 免费每日限额
+	 * @throws SQLException 数据库操作异常
+	 */
+	private int getUserFreeLimit(String userId) {
+		String sql = "SELECT free_limit FROM user_free_limit_override WHERE user_id = ?";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			ResultSet rs = pstmt.executeQuery();
+			if (rs.next()) {
+				return rs.getInt("free_limit");
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return DEFAULT_FREE_DAILY_LIMIT;
+	}
+
+	/**
+	 * 增加付费token（系统充值）
+	 * 
+	 * @param userId 用户ID
+	 * @param amount 增加数量（必须为正数）
+	 * @throws SQLException 数据库操作异常
+	 */
+	public synchronized void increasePaidTokens(String userId, int amount){
+		if (amount <= 0) {
+			throw new IllegalArgumentException("增加数量必须为正数");
+		}
+		String sql = "INSERT INTO user_paid_balance (user_id, balance) VALUES (?, ?) "
+			+ "ON CONFLICT(user_id) DO UPDATE SET balance = balance + ?";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setInt(2, amount);
+			pstmt.setInt(3, amount);
+			pstmt.executeUpdate();
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * 获取用户剩余token（免费+付费）
+	 * 
+	 * @param userId 用户ID
+	 * @return TokenRemaining对象，包含免费总额度、付费剩余和今日免费已使用量
+	 * @throws SQLException 数据库操作异常
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/useToday")
+	@Adapter
+	public ResultDTO getRemainingTokens(@Query("uid")String userId) {
+		// 获取当天已使用的免费token和用户免费限额
+		String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+		int freeUsed = getDailyFreeUsed(userId, today);
+		int freeLimit = getUserFreeLimit(userId);
+
+		// 获取付费余额
+		int paidRemaining = getPaidBalance(userId);
+
+		return new ResultDTO(200,JsonBuilder.object().add("freeTotal", freeLimit).add("paidRemaining", paidRemaining).add("freeCost", freeUsed));
+	}
+
+	/**
+	 * 检查用户是否还有任何token剩余（免费或付费）
+	 * 
+	 * @param userId 用户ID
+	 * @return true表示还有剩余，false表示已无可用token
+	 * @throws SQLException 数据库操作异常
+	 */
+	public synchronized boolean hasAnyTokenRemaining(String userId) {
+		String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+		int freeUsed = getDailyFreeUsed(userId, today);
+		int freeLimit = getUserFreeLimit(userId);
+		int freeRemaining = freeLimit - freeUsed;
+		int paidRemaining = getPaidBalance(userId);
+		return freeRemaining + paidRemaining > 0;
+	}
+
+	/**
+	 * 消耗token（优先消耗免费，不足时消耗付费）
+	 * 
+	 * @param userId 用户ID
+	 * @param tokens 需要消耗的token数量（必须为正数）
+	 * @return true表示消耗成功，false表示总余额不足
+	 * @throws SQLException 数据库操作异常
+	 */
+	public synchronized void consumeTokens(String userId, int tokens) {
+		if (tokens <= 0) {
+			throw new IllegalArgumentException("消耗数量必须为正数");
+		}
+
+		// 开始事务
+		try {
+			String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+
+			// 获取当天已使用免费token、用户免费限额和付费余额
+			int freeUsed = getDailyFreeUsed(userId, today);
+			int freeLimit = getUserFreeLimit(userId);
+			int freeRemaining = Math.max(0, freeLimit - freeUsed);
+			int paidBalance = getPaidBalance(userId);
+
+			// 计算实际可消耗的免费和付费数量
+			int freeConsume = Math.min(tokens, freeRemaining);
+			int paidConsume = tokens - freeConsume;
+
+			if(paidConsume>paidBalance) {
+				int reminder=paidConsume-paidBalance;
+				paidConsume=paidBalance;
+				freeConsume+=reminder;
+			}
+
+			// 更新daily_usage表（免费消耗）
+			if (freeConsume > 0) {
+				String upsertFreeSql = "INSERT INTO daily_usage (user_id, date, free_used, paid_used) VALUES (?, ?, ?, 0)"
+					+ " ON CONFLICT(user_id, date) DO UPDATE SET free_used = free_used + ?";
+				try (PreparedStatement pstmt = database.prepareStatement(upsertFreeSql)) {
+					pstmt.setString(1, userId);
+					pstmt.setString(2, today);
+					pstmt.setInt(3, freeConsume);
+					pstmt.setInt(4, freeConsume);
+					pstmt.executeUpdate();
+				} catch (SQLException e) {
+					e.printStackTrace();
+				}
+			}
+
+			// 更新daily_usage表（付费消耗）
+			if (paidConsume > 0) {
+				String upsertPaidSql = "INSERT INTO daily_usage (user_id, date, free_used, paid_used) VALUES (?, ?, 0, ?)"
+					+ " ON CONFLICT(user_id, date) DO UPDATE SET paid_used = paid_used + ?";
+				try (PreparedStatement pstmt = database.prepareStatement(upsertPaidSql)) {
+					pstmt.setString(1, userId);
+					pstmt.setString(2, today);
+					pstmt.setInt(3, paidConsume);
+					pstmt.setInt(4, paidConsume);
+					pstmt.executeUpdate();
+				} catch (SQLException e) {
+					e.printStackTrace();
+				}
+			}
+
+			// 更新付费余额
+			if (paidConsume > 0) {
+				String updatePaidSql = "UPDATE user_paid_balance SET balance = balance - ? WHERE user_id = ?";
+				try (PreparedStatement pstmt = database.prepareStatement(updatePaidSql)) {
+					pstmt.setInt(1, paidConsume);
+					pstmt.setString(2, userId);
+					pstmt.executeUpdate();
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * 查询指定日期范围内每天的免费和付费token用量
+	 * 
+	 * @param userId    用户ID
+	 * @param startDate 起始日期（格式：yyyy-MM-dd）
+	 * @param endDate   结束日期（格式：yyyy-MM-dd）
+	 * @return 每日用量列表，包含日期、免费用量、付费用量
+	 * @throws SQLException 数据库操作异常
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/useHistory")
+	@Adapter
+	public ResultDTO getDailyUsage(@Query("uid")String userId,@Query("start")String startDate,@Query("end")String endDate){
+		LocalDate start = LocalDate.parse(startDate);
+		LocalDate end = LocalDate.parse(endDate);
+		if (start.isAfter(end)) {
+			return new ResultDTO(500,"起始日期不能晚于结束日期");
+		}
+
+		// 查询数据库中已有的记录
+		String sql = "SELECT date, free_used, paid_used FROM daily_usage WHERE user_id = ? AND date BETWEEN ? AND ?";
+		JsonArray ja=new JsonArray();
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, startDate);
+			pstmt.setString(3, endDate);
+			ResultSet rs = pstmt.executeQuery();
+			// 将查询结果存入临时map
+			while (rs.next()) {
+				String date = rs.getString("date");
+				int freeUsed = rs.getInt("free_used");
+				int paidUsed = rs.getInt("paid_used");
+				ja.add(JsonBuilder.object().add("date", date).add("freeUsed", freeUsed).add("paidUsed", paidUsed).end());
+			}
+			// 填充所有日期（没有记录的用量为0）
+		} catch (SQLException e) {
+			e.printStackTrace();
+			return new ResultDTO(500,"内部错误");
+		}
+		return new ResultDTO(200,ja);
+	}
+
+	// ---------- 辅助方法 ----------
+
+	/**
+	 * 获取指定用户指定日期的免费已使用量
+	 */
+	private int getDailyFreeUsed(String userId, String date) {
+		String sql = "SELECT free_used FROM daily_usage WHERE user_id = ? AND date = ?";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, date);
+			ResultSet rs = pstmt.executeQuery();
+			if (rs.next()) {
+				return rs.getInt("free_used");
+			}
+			return 0;
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return 0;
+	}
+
+	/**
+	 * 获取用户付费余额
+	 */
+	private int getPaidBalance(String userId){
+		String sql = "SELECT balance FROM user_paid_balance WHERE user_id = ?";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			ResultSet rs = pstmt.executeQuery();
+			if (rs.next()) {
+				return rs.getInt("balance");
+			}
+			return 0;
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return 0;
+	}
+
+	/**
+	 * 处理控制台命令。 支持命令：
 	 * <ul>
-	 *   <li>reload - 重新加载AI配置</li>
+	 * <li>reload - 重新加载AI配置</li>
 	 * </ul>
 	 *
-	 * @param msg	命令字符串
+	 * @param msg    命令字符串
 	 * @param sender 命令发送者
 	 * @return 如果命令被处理返回true
 	 */

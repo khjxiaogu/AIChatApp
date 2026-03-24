@@ -107,7 +107,14 @@ public abstract class AIApplication {
 	public static String readFile(File f) throws IOException {
 		return FileUtil.readString(f).replace("\r", "");
 	}
-
+	protected MessageHandler checkTokenUse=(state,ret) ->{
+		if(state.canGenerate()) {
+			return ret;
+		}else {
+			state.postMessage(-1, Role.APPLICATION, "token限额已达到，明天再来吧！");
+			return null;
+		}
+	};
     /**
      * 默认的“撤回与重新生成”消息处理器。
      * 该处理器会在会话处于{@link ApplicationStage#STARTED}阶段时，
@@ -222,6 +229,7 @@ public abstract class AIApplication {
 
 	public AIApplication() {
 		super();
+		handlers.add(checkTokenUse);
 	}
     /**
      * 处理用户的输入消息。

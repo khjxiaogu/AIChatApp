@@ -355,7 +355,9 @@ public class AISession {
 	public void addUsage(Usage usage) {
 		data.usage.add(usage);
 	}
-
+	public boolean canGenerate() {
+		return true;
+	}
 	/**
 	 * 获取使用量统计的字符串表示。
 	 *

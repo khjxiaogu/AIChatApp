@@ -80,6 +80,7 @@ public class DeepseekModelProvider implements ModelProvider{
 		String tosend = gs.toJson(request.request);
 		StreamedAIOutput readable=new StreamedAIOutput();
 		Usage usage=new Usage();
+		Usage simusage=new Usage();
 		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
@@ -87,6 +88,10 @@ public class DeepseekModelProvider implements ModelProvider{
 				.post(true).send(tosend).readSSE(null, (ev,s)->{
 					if(readable.isInterrupted()) {
 						logger.info("interrupted generation");
+						if(usage.completion_tokens>0)
+							readable.setUsage(usage);
+						else
+							readable.setUsage(simusage);
 						readable.endContent();
 						throw new ClientTruncatedException();
 					}
@@ -104,12 +109,14 @@ public class DeepseekModelProvider implements ModelProvider{
 					RespScheme scheme=gs.fromJson(s, RespScheme.class);
 					Message delta=scheme.choices.get(0).delta;
 					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
+						simusage.completion_tokens++;
 						readable.putReasoner(delta.reasoning_content);
 					}
 					if(delta.content!=null&&!delta.content.isEmpty()) {
-						
+						simusage.completion_tokens++;
 						readable.putContent(delta.content);
 					}
+					
 					if(scheme.usage!=null)
 						usage.add(scheme.usage);
 					
