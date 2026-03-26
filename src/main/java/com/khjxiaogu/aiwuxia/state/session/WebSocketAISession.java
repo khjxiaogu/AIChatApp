@@ -221,4 +221,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public boolean canGenerate() {
 		return parent.hasAnyTokenRemaining(user);
 	}
+
+
+	@Override
+	public void refillChatBox(String text) {
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("sendbox",text).end().toString()));
+	}
 }

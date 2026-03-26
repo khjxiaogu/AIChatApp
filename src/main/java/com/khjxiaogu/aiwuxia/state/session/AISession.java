@@ -328,6 +328,9 @@ public class AISession {
 	public void setUpdated() {
 		isUpdated = true;
 	}
+	public void refillChatBox(String text) {
+		
+	}
 
 	/**
 	 * 当生成完成时调用，清除生成标记并设置更新标记。

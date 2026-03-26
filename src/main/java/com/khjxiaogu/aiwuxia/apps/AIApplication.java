@@ -27,37 +27,21 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.function.Consumer;
-
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
-import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
-import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
-import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
-import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
-import com.khjxiaogu.aiwuxia.utils.ClientTruncatedException;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 /**
@@ -112,6 +96,7 @@ public abstract class AIApplication {
 			return ret;
 		}else {
 			state.postMessage(-1, Role.APPLICATION, "token限额已达到，明天再来吧！");
+			state.refillChatBox(ret);
 			return null;
 		}
 	};
@@ -148,11 +133,15 @@ public abstract class AIApplication {
 						
 						HistoryItem hi = state.deleteLast();
 						if(last.getRole()==Role.ASSISTANT) {
-							state.deleteLast();
+							HistoryItem uhi=state.deleteLast();
+							if(uhi.getRole()==Role.USER)
+								state.refillChatBox(uhi.getDisplayContent().toString());
 							state.minDialogRow();
 							if (hi.getLastState() != null) {
 								state.getState().set(hi.getLastState());
 							}
+						}else if(last.getRole()==Role.USER){
+							state.refillChatBox(last.getDisplayContent().toString());
 						}
 					}
 				}

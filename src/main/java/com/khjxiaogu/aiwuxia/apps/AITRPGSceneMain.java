@@ -169,8 +169,10 @@ public class AITRPGSceneMain extends AIApplication {
 			}
 			i++;
 		}
-		if(state.getLast().getRole()==Role.USER)
-			state.removeLast();
+		if(state.getLast().getRole()==Role.USER) {
+			HistoryItem hi=state.removeLast();
+			state.refillChatBox(hi.getDisplayContent().toString());
+		}
 		state.minDialogRow();
 		return state.getLast().getLastState();
 		

@@ -70,10 +70,10 @@ public class AICharaTalkMain extends AIApplication {
 	AttributeValidator validator;
 	Map<String,String> emote2emote;
 	HistoryCompacter compactor;
+	static int cal;
 	public AICharaTalkMain(File basePath,File modelFolder,String charaname,JsonObject meta) {
 		super();
 		this.charaname=charaname;
-		
 		try {
 			this.basePath=basePath;
 			File model=modelFolder;
@@ -209,8 +209,10 @@ public class AICharaTalkMain extends AIApplication {
 					}
 			}
 		}
-		if(state.getLast().getRole()==Role.USER)
-			state.removeLast();
+		if(state.getLast().getRole()==Role.USER) {
+			HistoryItem hi=state.removeLast();
+			state.refillChatBox(hi.getDisplayContent().toString());
+		}
 		state.minDialogRow();
 		return state.getLast().getLastState();
 		

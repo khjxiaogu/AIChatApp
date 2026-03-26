@@ -94,8 +94,10 @@ public class AIGalgameMain extends AIApplication {
 				state.add(Role.USER, ret, true);
 				airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
 			}finally{
-				if(state.getLast().getRole()==Role.USER)
-					state.removeLast();
+				if(state.getLast().getRole()==Role.USER) {
+					HistoryItem hi=state.removeLast();
+					state.refillChatBox(hi.getDisplayContent().toString());
+				}
 			}
 			state.getLast().setLastState(airet);
 			state.addDialogRow();

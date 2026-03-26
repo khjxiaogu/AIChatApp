@@ -27,6 +27,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -189,6 +190,19 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				String createFreeLimitOverrideTable = "CREATE TABLE IF NOT EXISTS user_free_limit_override ("
 					+ "user_id TEXT PRIMARY KEY,"
 					+ "free_limit INTEGER NOT NULL)";
+		        String createCDKTable = "CREATE TABLE IF NOT EXISTS cdk ("
+		        		+ "code TEXT PRIMARY KEY,"
+		        		+ "cost INTEGER NOT NULL,"
+		        		+ "remaining_uses INTEGER NOT NULL,"
+		        		+ "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)";
+
+		        String createLogTable = "CREATE TABLE IF NOT EXISTS redemption_log ("
+		        		+ "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+		        		+ "cdk_code TEXT NOT NULL,"
+		        		+ "user_id TEXT NOT NULL,"
+		        		+ "cost INTEGER NOT NULL,"
+		        		+ "redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+		        		+ "UNIQUE(cdk_code, user_id))";
 				stmt.execute(createMsg);
 				stmt.execute(createPerm);
 				stmt.execute(createPrice);
@@ -196,6 +210,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				stmt.execute(createPaidBalanceTable);
 				stmt.execute(createDailyUsageTable);
 				stmt.execute(createFreeLimitOverrideTable);
+				stmt.execute(createCDKTable);
+				stmt.execute(createLogTable);
 			}
 		} catch (SQLException e) {
 			logger.severe("信息数据库初始化失败！");
@@ -1434,6 +1450,166 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return 0;
 	}
+
+    /**
+     * 生成10位随机CDK码（大写字母和数字）
+     */
+    private static String generateCDKCode() {
+        String characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        SecureRandom random = new SecureRandom();
+        StringBuilder sb = new StringBuilder(10);
+        for (int i = 0; i < 10; i++) {
+            sb.append(characters.charAt(random.nextInt(characters.length())));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 确保CDK码唯一，如果冲突则重新生成
+     */
+    private String generateUniqueCDKCode() throws SQLException {
+        String code;
+        boolean exists;
+        do {
+            code = generateCDKCode();
+            exists = checkCDKExists(code);
+        } while (exists);
+        return code;
+    }
+
+    /**
+     * 检查CDK码是否已存在
+     */
+    private boolean checkCDKExists(String code) throws SQLException {
+        String sql = "SELECT 1 FROM cdk WHERE code = ?";
+        try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+            pstmt.setString(1, code);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+    Object lock=new Object();
+    /**
+     * 创建CDK
+     * @param cost 每次兑换的费用（整数）
+     * @param uses 可使用次数
+     * @return 生成的唯一CDK码
+     * @throws SQLException 数据库操作异常
+     */
+    @HttpMethod("GET")
+	@HttpPath("/gencdk")
+	@Adapter
+    public ResultDTO createCDK(@Query("cost")String cost,@Query("uses")String uses,@Query("token")String token) {
+    	if(!System.getProperty("cdk_secret").equals(token))
+    		return new ResultDTO(404);
+        synchronized (lock) {
+            // 生成唯一CDK码
+            int ncost=Integer.parseInt(cost);
+            int nuses=Integer.parseInt(uses);
+        	
+            String code = null;
+            // 插入数据库
+            String insertSQL = "INSERT INTO cdk (code, cost, remaining_uses) VALUES (?, ?, ?)";
+            try (PreparedStatement pstmt = database.prepareStatement(insertSQL)) {
+            	code=generateUniqueCDKCode();
+                pstmt.setString(1, code);
+                pstmt.setInt(2, ncost);
+                pstmt.setInt(3, nuses);
+                pstmt.executeUpdate();
+            } catch (SQLException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				 return new ResultDTO(500,e.getMessage());
+			}
+
+            return new ResultDTO(200,code);
+        }
+    }
+
+    /**
+     * 兑换CDK
+     * @param code CDK码
+     * @param userId 用户ID
+     * @return 兑换成功返回的费用
+     * @throws SQLException 数据库操作异常
+     * @throws IllegalArgumentException 当CDK无效、已耗尽或用户已兑换过时抛出
+     */
+	@HttpMethod("GET")
+	@HttpPath("/redeem")
+	@Adapter
+    public ResultDTO redeemCDK(@Query("cdk")String code,@Query("uid")String userId) {
+        synchronized (lock) {
+            // 1. 检查CDK是否存在且剩余次数>0
+            String selectCDK = "SELECT cost, remaining_uses FROM cdk WHERE code = ?";
+            int cost = -1;
+            int remainingUses = -1;
+            try (PreparedStatement pstmt = database.prepareStatement(selectCDK)) {
+                pstmt.setString(1, code);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (!rs.next()) {
+                        return new ResultDTO(400,"CDK不存在: " + code);
+                    }
+                    cost = rs.getInt("cost");
+                    remainingUses = rs.getInt("remaining_uses");
+                    if (remainingUses <= 0) {
+                        return new ResultDTO(400,"CDK已耗尽: " + code);
+                    }
+                }
+            } catch (SQLException e3) {
+				// TODO Auto-generated catch block
+				e3.printStackTrace();
+				return new ResultDTO(500,"CDK兑换失败，系统错误，请稍后再试");
+			}
+
+            // 2. 检查用户是否已经兑换过此CDK
+            String checkLog = "SELECT 1 FROM redemption_log WHERE cdk_code = ? AND user_id = ?";
+            try (PreparedStatement pstmt = database.prepareStatement(checkLog)) {
+                pstmt.setString(1, code);
+                pstmt.setString(2, userId);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        return new ResultDTO(400,"已兑换过该CDK");
+                    }
+                }
+            } catch (SQLException e2) {
+				e2.printStackTrace();
+				return new ResultDTO(500,"CDK兑换失败，系统错误，请稍后再试");
+			}
+
+            // 3. 扣减次数（更新remaining_uses）
+            String updateCDK = "UPDATE cdk SET remaining_uses = remaining_uses - 1 WHERE code = ? and remaining_uses>0";
+            int rowsUpdated=0;
+            try (PreparedStatement pstmt = database.prepareStatement(updateCDK)) {
+                pstmt.setString(1, code);
+                rowsUpdated = pstmt.executeUpdate();
+            } catch (SQLException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+            if (rowsUpdated != 1) {
+            	return new ResultDTO(400,"CDK已失效");
+            }
+            if(cost>0) {
+            	this.increasePaidTokens(userId, cost);
+            }else {
+            	return new ResultDTO(400,"CDK已耗尽: " + code);
+            }
+            // 4. 插入兑换日志
+            String insertLog = "INSERT INTO redemption_log (cdk_code, user_id, cost) VALUES (?, ?, ?)";
+            try (PreparedStatement pstmt = database.prepareStatement(insertLog)) {
+                pstmt.setString(1, code);
+                pstmt.setString(2, userId);
+                pstmt.setInt(3, cost);
+                pstmt.executeUpdate();
+            } catch (SQLException e) {
+                e.printStackTrace();
+                
+            }
+
+            return new ResultDTO(200,"CDK兑换成功");
+        }
+    }
 
 	/**
 	 * 处理控制台命令。 支持命令：

@@ -145,6 +145,25 @@
             background: #eef2f6;
             margin: 12px 0 8px 0;
         }
+        /* 刷新按钮 */
+        .refresh-btn {
+            background: white;
+            border: 1px solid #cbd5e1;
+            border-radius: 40px;
+            padding: 8px 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+            color: #334155;
+        }
+
+        .refresh-btn:hover {
+            background: #f1f5f9;
+            border-color: #94a3b8;
+        }
 
         .flex-between {
             display: flex;
@@ -185,6 +204,57 @@
             color: #f97316;
         }
 
+        /* CDK 兑换区域样式 */
+        .cdk-section {
+            margin-top: 16px;
+            padding-top: 12px;
+            border-top: 1px solid #eef2f6;
+        }
+        .cdk-input-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 8px;
+        }
+        .cdk-input {
+            flex: 1;
+            padding: 10px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 40px;
+            font-size: 14px;
+            outline: none;
+            transition: all 0.2s;
+            background: #fff;
+        }
+        .cdk-input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+        }
+        .cdk-btn {
+            background: #3b82f6;
+            border: none;
+            border-radius: 40px;
+            padding: 8px 18px;
+            color: white;
+            font-weight: 500;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+        .cdk-btn:active {
+            background: #2563eb;
+        }
+        .cdk-message {
+            font-size: 12px;
+            margin-top: 8px;
+            padding-left: 8px;
+            color: #16a34a;
+        }
+        .cdk-message.error {
+            color: #dc2626;
+        }
+
         /* 移动端微调 */
         @media (max-width: 480px) {
             body {
@@ -203,6 +273,14 @@
                 font-size: 17px;
                 margin-bottom: 14px;
             }
+            .cdk-input {
+                font-size: 13px;
+                padding: 8px 12px;
+            }
+            .cdk-btn {
+                padding: 6px 14px;
+                font-size: 13px;
+            }
         }
 
         /* 简单图标占位 */
@@ -217,12 +295,12 @@
     <div class="dashboard">
         <!-- 加载状态 -->
         <div v-if="loading" class="card loading-state">
-            <div>📊 加载用量数据中...</div>
+            <div>加载用量数据中...</div>
         </div>
 
         <!-- 错误状态 -->
         <div v-else-if="error" class="card error-state">
-            ⚠️ {{ error }}，请刷新重试
+            {{ error }}，请刷新重试
         </div>
 
         <!-- 主体内容 -->
@@ -231,6 +309,9 @@
             <div class="card">
                 <div class="card-header">
                     <span>今日用量总览</span>
+					 <button class="refresh-btn" @click="location.href='index'">
+                    <i data-feather="home"></i> 返回主页
+                </button>
                 </div>
                 <div class="stats-grid">
                     <div class="stat-item" style="background: #f0f9ff;">
@@ -254,7 +335,7 @@
                             补充配额
                         </div>
                         <div class="flex-between" style="margin-bottom: 8px;">
-                            <span class="stat-number">{{ formatNumber(paidRemaining) }}<span class="stat-unit">Token</span></span>
+                            <span class="stat-number">{{ formatNumber(paidRemaining)+' ' }}<span class="stat-unit">Token</span></span>
                             <span class="badge">剩余补充配额</span>
                         </div>
                         <div class="stat-label" style="margin-top: 6px;">
@@ -262,10 +343,25 @@
                         </div>
                         <div class="flex-between" style="margin-bottom: 8px;">
                         <span class="stat-number" style="font-size: 26px; color:#ea580c;">
-                            {{ formatNumber(paidCost) }} <span class="stat-unit">Token</span>
+                            {{ formatNumber(paidCost)}} <span class="stat-unit">Token</span>
                            
                         </span>
-                         <span class="badge">剩余补充配额</span>
+                         <span class="badge">已用补充配额</span>
+                        </div>
+                        
+                        <div class="cdk-section">
+                            <div class="stat-label" style="margin-bottom: 4px;">
+                                兑换码
+                            </div>
+                            <div class="cdk-input-group">
+                                <input type="text" class="cdk-input" v-model="cdkCode" placeholder="请输入兑换码" @keyup.enter="exchangeCdk">
+                                <button class="cdk-btn" @click="exchangeCdk" :disabled="exchangeLoading">
+                                    {{ exchangeLoading ? '兑换中...' : '兑换' }}
+                                </button>
+                            </div>
+                            <div v-if="cdkMessage" class="cdk-message" :class="{ 'error': cdkMessageType === 'error' }">
+                                {{ cdkMessage }}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -286,8 +382,8 @@
                 </div>
                 <div class="chart-container" ref="chartDom"></div>
                 <div class="stat-sub" style="text-align: center; margin-top: 8px;">
-                    <span style="display: inline-block; width: 12px; height: 12px; background: #3b82f6; border-radius: 2px;"></span> 免费使用 &nbsp;&nbsp;
-                    <span style="display: inline-block; width: 12px; height: 12px; background: #f97316; border-radius: 2px;"></span> 付费使用
+                    <span style="display: inline-block; width: 12px; height: 12px; background: #3b82f6; border-radius: 2px;"></span> 基础配额 &nbsp;&nbsp;
+                    <span style="display: inline-block; width: 12px; height: 12px; background: #f97316; border-radius: 2px;"></span> 补充配额
                 </div>
             </div>
         </div>
@@ -330,6 +426,21 @@
 			
 		})
 	}
+	
+	// 模拟CDK兑换接口（实际开发时替换为真实接口）
+	async function exchangeCdkApi(cdkCode) {
+		// 此处模拟后端API调用，实际应替换为真实fetch请求
+		// 示例：return fetch("/exchangeCdk", { method: "POST", body: JSON.stringify({uid, cdkCode}) })
+		return fetch("redeem?uid="+pageQueries.uid+"&cdk="+cdkCode)
+		.then(p=>{
+			if (p.status === 200) {
+					return p.text();
+			    } else {
+			    	return p.text().then(r=>{return Promise.reject(r);});
+			    }
+			
+		})
+	}
 
     var vue=new Vue({
         el: '#app',
@@ -338,9 +449,14 @@
                 loading: true,
                 error: null,
                 // 后端数据
-                tokenRemaining: null,    // { freeTotal, paidRemaining, freeCost }
+                tokenRemaining: null,    // { freeTotal, paidRemaining, freeCost, paidCost }
                 dailyUsageList: [],      // [{ date, freeUsed, paidUsed }]
-                chartInstance: null
+                chartInstance: null,
+                // CDK兑换相关
+                cdkCode: '',
+                exchangeLoading: false,
+                cdkMessage: '',
+                cdkMessageType: 'info'   // 'info' or 'error'
             };
         },
         computed: {
@@ -489,6 +605,38 @@
                	
                	
             },
+            // CDK 兑换方法
+            exchangeCdk() {
+                if (!this.cdkCode || this.cdkCode.trim() === '') {
+                    this.cdkMessage = '请输入CDK兑换码';
+                    this.cdkMessageType = 'error';
+                    return;
+                }
+                this.exchangeLoading = true;
+                this.cdkMessage = '';
+                   // 调用CDK兑换接口（此处替换为真实后端API）
+                   exchangeCdkApi(this.cdkCode.trim())
+                   .then(r=>{
+                   	this.cdkMessage=r;
+                   	this.cdkMessageType = 'success';
+                   	setTimeout(this.loadData,500);
+                   	setTimeout(() => {
+                           if (this.cdkMessage) {
+                               this.cdkMessage = '';
+                           }
+                       }, 3000);
+                	this.exchangeLoading=false;
+                   }).catch(r=>{
+                   	this.cdkMessage=r;
+                   	this.cdkMessageType = 'error';
+                   	setTimeout(() => {
+                           if (this.cdkMessage) {
+                               this.cdkMessage = '';
+                           }
+                       }, 3000);
+                	this.exchangeLoading=false;
+                   });
+            },
             renderChart() {
                 if (!this.$refs.chartDom) return;
                 const { dates, freeSeries, paidSeries } = this.chartData;
@@ -551,7 +699,7 @@
                     },
                     series: [
                         {
-                            name: '免费使用量',
+                            name: '基础配额使用量',
                             type: 'bar',
                             stack: 'total',
                             barWidth: '60%',
@@ -564,7 +712,7 @@
                             emphasis: { focus: 'series' }
                         },
                         {
-                            name: '付费使用量',
+                            name: '补充配额使用量',
                             type: 'bar',
                             stack: 'total',
                             barWidth: '60%',
