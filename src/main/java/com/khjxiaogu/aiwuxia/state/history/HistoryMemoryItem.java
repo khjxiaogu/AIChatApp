@@ -216,5 +216,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	public void setDeleted(boolean sendable) {
 		deleted=sendable;
 	}
-
+    public void setReasonContent(String reasonContent) {
+		this.reasonContent=new StringBuilder(reasonContent);
+	}
 }

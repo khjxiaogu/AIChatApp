@@ -164,4 +164,6 @@ public interface HistoryItem {
      * @param lastState 新的应用状态对象
      */
     void setLastState(ApplicationState lastState);
+	int getPrevIdentifier();
+	void setPrevIdentifier(int prevIdentifier);
 }
