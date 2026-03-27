@@ -96,7 +96,7 @@ public abstract class AIApplication {
 		if(state.canGenerate()) {
 			return ret;
 		}else {
-			state.postMessage(-1, Role.APPLICATION, "token限额已达到，明天再来吧！");
+			state.sendNotice("token限额已达到，明天再来吧！");
 			state.refillChatBox(ret);
 			return null;
 		}
@@ -230,7 +230,8 @@ public abstract class AIApplication {
      */
 	public void handleSpeech(AISession state,final String messageInput) {
 		if(state.isGenerating()) {
-			state.postMessage(-1, Role.APPLICATION,"内容生成中，请稍后再试。");
+			state.sendNotice("内容生成中，请稍后再试。");
+			state.refillChatBox(messageInput);
 			return;
 		}
 		state.onGenerateStart();	

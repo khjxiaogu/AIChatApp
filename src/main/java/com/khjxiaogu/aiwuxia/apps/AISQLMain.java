@@ -58,14 +58,7 @@ public class AISQLMain extends AIApplication {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		// naming
-		handlers.add((state, ret) -> {
 
-			if (state.getStage() == ApplicationStage.NAMING) {
-				state.setStage(ApplicationStage.STARTED);
-			}
-			return ret;
-		});
 		handlers.add((state, ret) -> {
 
 			
@@ -154,7 +147,7 @@ public class AISQLMain extends AIApplication {
 
 	public void provideInitial(AISession state) {
 		state.add(Role.ASSISTANT,"请提供表定义，定义必须开始以“定义”二字",false);
-		state.setStage(ApplicationStage.NAMING);
+		state.setStage(ApplicationStage.STARTED);
 	}
 
 	public ApplicationState precessResponse(AIOutput op, AISession state) throws IOException {

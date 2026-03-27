@@ -172,7 +172,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 					lock.unlock();
 				}
 			}else {
-				sendFrame(JsonBuilder.object().add("id",-1).add("title", "").add("message", "操作太快啦，请稍后再试").end().toString());
+				sendNotice("操作太快啦，请稍后再试");
 			}
 		}else if(jo.has("requestBackLog")) {
 			requireMoreMessages();

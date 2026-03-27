@@ -27,7 +27,9 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.function.Consumer;
 
+import com.khjxiaogu.aiwuxia.AIChatWindow;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 
@@ -37,10 +39,27 @@ import javazoom.jl.player.advanced.AdvancedPlayer;
 public class AppAISession extends AISession {
 
 	File saveData;
-
-	public AppAISession(String user, HistoryHolder historym, ExtraData data,AIApplication aiapp,File saveData) {
+	AIChatWindow window;
+	public AppAISession(String user, HistoryHolder historym, ExtraData data,AIApplication aiapp,File saveData,AIChatWindow win) {
 		super(user, historym, data,aiapp);
 		this.saveData=saveData;
+		this.window=win;
+	}
+
+	@Override
+	public void refillChatBox(String text) {
+		window.setInput(text);
+	}
+
+	@Override
+	public void requestUserInput(String input, String prompt, Consumer<String> consumer) {
+		consumer.accept(window.prompt(prompt));
+		
+	}
+
+	@Override
+	public void sendNotice(String msg) {
+		window.showMessage(msg);
 	}
 
 	@Override

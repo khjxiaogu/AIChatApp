@@ -100,6 +100,7 @@ public class AITRPGSceneMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			if (state.getStage() == ApplicationStage.NAMING) {
 				this.sendNamingPrompt(state);
+				state.refillChatBox(ret);
 				return null;
 			}
 			return ret;

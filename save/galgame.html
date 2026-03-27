@@ -528,8 +528,7 @@
 						this.wssocket.send(JSON.stringify({message:sent}));
 					},
 					setVoiceEnabled(nw){
-						this.isVoiceEnabled=nw;
-						this.wssocket.send(JSON.stringify({voiceEnabled:nw}));
+						this.wssocket.send(JSON.stringify({operation:"setVoiceEnabled",voiceEnabled:nw}));
 						this.unlockWebAudio();
 					},
 					setSideImage(newSrc) {
@@ -695,6 +694,21 @@
 								_this.playSoundWithWebAudio(param.audioId);
 							
 							}
+							if(param.sendbox!=undefined){
+								_this.newMessage=param.sendbox;
+							
+							}
+							if(param.isVoiceEnabled!=undefined)
+								_this.isVoiceEnabled=param.isVoiceEnabled;
+							if(param.notice!=undefined)
+								alert(param.notice);
+							if(param.input!=undefined){
+								var text=prompt(param.prompt);
+								if(text!=null)
+									_this.wssocket.send(JSON.stringify({operation:"prompt",input:param.input,content:text}));
+								
+							}
+							
 							if(param.price!=undefined){
 								console.info(param.price)
 								_this.price=param.price.substr(0,param.price.indexOf(".")+3);
@@ -768,17 +782,15 @@
 						this.open(done);
 					},
 					triggerRead(){
-					 this.sendMessage('重读');
+						this.wssocket.send(JSON.stringify({operation:"genVoice"}));
 					},
 					// ...原有方法
 					refreshMessages() {
-					    // 重置为初始消息（示例）
-					    this.sendMessage('重新生成');
-					    // 可同时重置输入框等
+						this.wssocket.send(JSON.stringify({operation:"regen"}));
 					},
 					undoLastOwn() {
 					    // 查找最后一个自己发送的消息并删除
-					    this.sendMessage('撤回')
+						this.wssocket.send(JSON.stringify({operation:"revert"}));
 					},
 					// 可以添加一个方法来切换typing状态，或由其他事件触发
 					toggleTyping() {
@@ -902,7 +914,7 @@
 					 },
 					 sendUserMessage(content){
 						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.typing){
-							if(this.newMessage!=''){
+							if(this.newMessage!=''&&this.wssocket!=undefined&&this.wssocket.readyState==1){
 	 							this.sendMessage(this.newMessage);
 								this.newMessage='';
 							}

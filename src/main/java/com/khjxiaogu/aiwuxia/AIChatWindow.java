@@ -288,6 +288,17 @@ public class AIChatWindow extends JFrame {
         	inputArea.setEnabled(false);
         }
     }
+    public void setInput(String str) {
+    	inputArea.setText(str);
+    	     
+    }
+    public String prompt(String prompt) {
+        return JOptionPane.showInputDialog(null, prompt);
+    }
+    
+    public void showMessage(String message) {
+        JOptionPane.showMessageDialog(null, message);
+    }
     boolean status=false;
     public String showDialog() throws InterruptedException, ExecutionException {
     	status=false;

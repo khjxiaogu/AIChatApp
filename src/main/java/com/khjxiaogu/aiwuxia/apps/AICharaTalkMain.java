@@ -112,6 +112,7 @@ public class AICharaTalkMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			if (state.getStage() == ApplicationStage.NAMING) {
 				this.sendNamingPrompt(state);
+				state.refillChatBox(ret);
 				return null;
 			}
 			return ret;
@@ -197,7 +198,7 @@ public class AICharaTalkMain extends AIApplication {
 	public void onload(AISession state) {
 		if(state.getExtra().containsKey("lastSummary")&&!state.getExtra().containsKey("永久记忆")) {
 			state.onGenerateStart();
-			state.postMessage(-1, Role.APPLICATION,"系统正在修复历史记录中，请稍候。");
+			state.sendNotice("系统正在修复历史记录中，请稍候。");
 			try {
 				runFullCompact(state);
 			} catch (ModelRouteException | IOException e) {
