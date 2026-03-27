@@ -89,7 +89,6 @@ public class AIWuxiaMain extends AIApplication {
 			}
 			return ret;
 		});
-		handlers.add(revertAndRegen);
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			

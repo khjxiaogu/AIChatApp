@@ -110,49 +110,13 @@ public class AICharaTalkMain extends AIApplication {
 		}
 		// naming
 		handlers.add((state, ret) -> {
-
 			if (state.getStage() == ApplicationStage.NAMING) {
-				if(ret.length()>6) {
-					state.add(Role.SYSTEM, "名称不得多于6字符", false);
-				}else {
-					
-					/*if(state.extraData.containsKey("name")) {
-						state.extraData.put("nick", ret);
-						
-						return "开始游戏";
-					}*/
-					state.getExtra().put("name", ret);
-					state.add(Role.USER, ret, false);
-					state.setStage(ApplicationStage.STARTED);
-					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
-					return null;
-				}
+				this.sendNamingPrompt(state);
 				return null;
 			}
 			return ret;
 		});
 		
-		// check interface
-		handlers.add(revertAndRegen);
-		handlers.add((state, ret) -> {
-			if (state.getStage() == ApplicationStage.STARTED) {
-				if ("重读".equals(ret)) {
-					HistoryItem last=state.getLast();
-					if(last.getRole()==Role.ASSISTANT) {
-						if(last.getAudioId()==null) {
-							String audioId=UUID.randomUUID().toString();
-							CompletableFuture<Boolean> cf=this.generateVoice(state, last.getDisplayContent().toString(), audioId);
-							if(cf.get()) {
-								last.setAudioId(audioId);
-								state.postAudioComplete(last.getIdentifier(),audioId);
-							}
-						}
-					}
-					return null;
-				}
-			}
-			return ret;
-		});
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
@@ -355,10 +319,23 @@ public class AICharaTalkMain extends AIApplication {
 		return sb.toString();
 
 	}
-
+	public void sendNamingPrompt(AISession state) {
+		state.requestUserInput("name", "请输入玩家姓名，名称不得多于6字符",(ret)->{
+			if (state.getStage() == ApplicationStage.NAMING) {
+				if(ret.length()>6) {
+					sendNamingPrompt(state);
+				}else {
+					state.getExtra().put("name", ret);
+					state.setStage(ApplicationStage.STARTED);
+					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
+				}
+			}
+		});
+	}
 	public void provideInitial(AISession state) {
-		state.add(Role.SYSTEM, "请输入姓名", false);
 		state.setStage(ApplicationStage.NAMING);
+		this.sendNamingPrompt(state);
+
 	}
 
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
@@ -492,6 +469,7 @@ public class AICharaTalkMain extends AIApplication {
 		}
 		return oldstate;
 	}
+	@Override
 	public CompletableFuture<Boolean> generateVoice(AISession state,String orgText,String audioId){
 		
 		//

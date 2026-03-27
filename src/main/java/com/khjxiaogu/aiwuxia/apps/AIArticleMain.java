@@ -52,14 +52,6 @@ public class AIArticleMain extends AIApplication {
 	List<String> malenames;
 	{
 		
-		// naming
-		handlers.add((state, ret) -> {
-
-			if (state.getStage() == ApplicationStage.NAMING) {
-				state.setStage(ApplicationStage.STARTED);
-			}
-			return ret;
-		});
 		// check interface
 		handlers.add((state, ret) -> {
 			if (state.getStage() == ApplicationStage.STARTED) {
@@ -71,8 +63,6 @@ public class AIArticleMain extends AIApplication {
 			}
 			return ret;
 		});
-
-		handlers.add(revertAndRegen);
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
@@ -157,7 +147,7 @@ public class AIArticleMain extends AIApplication {
 
 	public void provideInitial(AISession state) {
 		state.add(Role.ASSISTANT,"请提供写作内容要求",false);
-		state.setStage(ApplicationStage.NAMING);
+		state.setStage(ApplicationStage.STARTED);
 	}
 
 	public ApplicationState precessResponse(BufferedReader scan, AISession state) throws IOException {

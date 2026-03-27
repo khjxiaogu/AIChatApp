@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -108,48 +109,45 @@ public abstract class AIApplication {
      *
      * @see MessageHandler
      */
-	protected MessageHandler revertAndRegen=(state, ret) -> {
-		if (state.getStage() == ApplicationStage.STARTED) {
-			if ("重新生成".equals(ret)) {
-				HistoryItem last=state.getLast();
-				if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
-					HistoryItem hi = state.deleteLast();
-					if(hi.getRole()==Role.ASSISTANT) {
-						HistoryItem userhi = state.deleteLast();
-						state.minDialogRow();
-						if (hi.getLastState() != null) {
-							state.getState().set(hi.getLastState());
-						}
-						return userhi.getDisplayContent().toString();
-					}
-					return hi.getDisplayContent().toString();
-					
+
+	public void doRegen(AISession state) {
+		HistoryItem last=state.getLast();
+		if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
+			HistoryItem hi = state.deleteLast();
+			if(hi.getRole()==Role.ASSISTANT) {
+				HistoryItem userhi = state.deleteLast();
+				state.minDialogRow();
+				if (hi.getLastState() != null) {
+					state.getState().set(hi.getLastState());
 				}
-				return null;
-			} else if ("撤回".equals(ret)) {
-				if(state.getDialogRow()>state.getMinDialogRow()) {
-					HistoryItem last=state.getLast();
-					if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
-						
-						HistoryItem hi = state.deleteLast();
-						if(last.getRole()==Role.ASSISTANT) {
-							HistoryItem uhi=state.deleteLast();
-							if(uhi.getRole()==Role.USER)
-								state.refillChatBox(uhi.getDisplayContent().toString());
-							state.minDialogRow();
-							if (hi.getLastState() != null) {
-								state.getState().set(hi.getLastState());
-							}
-						}else if(last.getRole()==Role.USER){
-							state.refillChatBox(last.getDisplayContent().toString());
-						}
+				this.handleSpeech(state, userhi.getDisplayContent().toString());
+				return;
+			}
+			this.handleSpeech(state, hi.getDisplayContent().toString());
+			
+		}
+	}
+	public void doRevert(AISession state) {
+		if(state.getDialogRow()>state.getMinDialogRow()) {
+			HistoryItem last=state.getLast();
+			if(last.getRole()==Role.ASSISTANT||last.getRole()==Role.USER) {
+				
+				HistoryItem hi = state.deleteLast();
+				if(last.getRole()==Role.ASSISTANT) {
+					HistoryItem uhi=state.deleteLast();
+					if(uhi.getRole()==Role.USER)
+						state.refillChatBox(uhi.getDisplayContent().toString());
+					state.minDialogRow();
+					if (hi.getLastState() != null) {
+						state.getState().set(hi.getLastState());
 					}
+				}else if(last.getRole()==Role.USER){
+					state.refillChatBox(last.getDisplayContent().toString());
 				}
-				return null;
 			}
 		}
-		return ret;
-	};
+	}
+
     /**
      * 判断当前应用是否支持本地语音（例如语音合成/识别）。
      * 默认返回false，子类可覆盖。
@@ -349,5 +347,8 @@ public abstract class AIApplication {
 	public void runFullCompact(AISession state) throws Exception {
 	}
 	public void onload(AISession state) {
+	}
+	public CompletableFuture<Boolean> generateVoice(AISession state,String orgText,String audioId){
+		return CompletableFuture.completedFuture(false);
 	}
 }

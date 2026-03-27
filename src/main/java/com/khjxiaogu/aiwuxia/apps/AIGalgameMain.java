@@ -65,28 +65,13 @@ public class AIGalgameMain extends AIApplication {
 			defaultBg=meta.get("background").getAsString();
 		// naming
 		handlers.add((state, ret) -> {
-
 			if (state.getStage() == ApplicationStage.NAMING) {
-				if(ret.length()>6) {
-					state.add(Role.ASSISTANT, "名称不得多于6字符", false);
-				}else {
-					
-					/*if(state.extraData.containsKey("name")) {
-						state.extraData.put("nick", ret);
-						
-						return "开始游戏";
-					}*/
-					state.getExtra().put("name", ret);
-					state.add(Role.USER, ret, false);
-					state.setStage(ApplicationStage.STARTED);
-					return initSelection;
-				}
+				this.sendNamingPrompt(state);
 				return null;
 			}
 			return ret;
 		});
 		// check interface
-		handlers.add(revertAndRegen);
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			ApplicationState airet;
@@ -114,15 +99,6 @@ public class AIGalgameMain extends AIApplication {
 		state.sendSceneContent("back", defaultBg);
 	}
 
-
-	public void provideNames(AISession state) {
-		if (state.getStage() == ApplicationStage.NAMING) {
-			state.removeLast();
-			// state.removeLast();
-		} 
-
-
-	}
 	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		resp.addUsageListener(state::addUsage);
@@ -260,11 +236,24 @@ public class AIGalgameMain extends AIApplication {
 
 	}
 
-	public void provideInitial(AISession state) {
-		state.add(Role.ASSISTANT, "请输入姓名", false);
-		state.setStage(ApplicationStage.NAMING);
+	public void sendNamingPrompt(AISession state) {
+		state.requestUserInput("name", "请输入玩家姓名，名称不得多于6字符",(ret)->{
+			if (state.getStage() == ApplicationStage.NAMING) {
+				if(ret.length()>6) {
+					sendNamingPrompt(state);
+				}else {
+					state.getExtra().put("name", ret);
+					state.setStage(ApplicationStage.STARTED);
+					this.handleSpeech(state, initSelection);
+				}
+			}
+		});
 	}
+	public void provideInitial(AISession state) {
+		state.setStage(ApplicationStage.NAMING);
+		this.sendNamingPrompt(state);
 
+	}
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
