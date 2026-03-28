@@ -28,6 +28,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.gson.JsonObject;
@@ -61,7 +63,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	File fn;
 	
 
-	ReentrantLock lock=new ReentrantLock();
+	AtomicBoolean lock=new AtomicBoolean();
 	boolean isClientAudioEnabled=false;
 	boolean isLocalAudioEnabled=false;
 	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,File fn, HistoryHolder history, ExtraData data) {
@@ -110,7 +112,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public void onMessage(Channel conn, String message) {
 		JsonObject jo=JsonParser.parseString(message).getAsJsonObject();
 		if(jo.has("message")) {
-			if(lock.tryLock()) {
+			if(lock.compareAndSet(false, true)) {
 				try {
 					getCommandExec().submit(()->{
 						getAiapp().handleSpeech(this, jo.get("message").getAsString());
@@ -120,9 +122,11 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 								conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
 							}
 						}
-					});
+					}).get();
+				} catch (InterruptedException | ExecutionException e) {
+					e.printStackTrace();
 				}finally {
-					lock.unlock();
+					lock.set(false);
 				}
 			}else {
 				conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("id",-1).add("title", "").add("message", "操作太快啦，请稍后再试").end().toString()));
