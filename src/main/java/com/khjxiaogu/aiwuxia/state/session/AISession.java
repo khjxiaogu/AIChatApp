@@ -26,8 +26,10 @@ package com.khjxiaogu.aiwuxia.state.session;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
@@ -387,7 +389,18 @@ public class AISession {
 	public ApplicationStage getStage() {
 		return data.stage;
 	}
-
+	Map<String,Consumer<String>> pendingInputs=new ConcurrentHashMap<>();
+	public void requestUserInput(String input,String prompt,Consumer<String> consumer) {
+		pendingInputs.put(input, consumer);
+	}
+	public void sendNotice(String msg) {
+		
+	}
+	public void handleUserInput(String input,String value) {
+		Consumer<String> csm=pendingInputs.remove(input);
+		if(csm!=null)
+			csm.accept(value);
+	}
 	/**
 	 * 获取额外数据映射。
 	 *

@@ -101,19 +101,19 @@ public class AIAppMain {
 			aistate = new AppAISession("appuser",
 				AIApplication.historyFromJson(saveData),
 				AIApplication.dataFromJson(saveData),
-				main,saveData);
+				main,saveData,acw);
 		}
 
 		// construct initail message
 		if (aistate == null) {
 			acw.setBackLog("正在生成初始面板...","");
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.ExtraData(),main,saveData);
+			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.ExtraData(),main,saveData,acw);
 			aistate.provideInitialHint();
 		}
 		aistate.onLoad();
-		//AIApplication.saveToJson(aistate, saveData);
-		/*
+		AIApplication.saveToJson(aistate, saveData);
+		
 		acw.setStatus(main.constructSystem(aistate.getState()));
 		// dialog.setBackLog(constructBackLog());
 		acw.setUsage(aistate.getUsage());
@@ -184,6 +184,6 @@ public class AIAppMain {
 
 			}
 
-		}*/
+		}
 	}
 }

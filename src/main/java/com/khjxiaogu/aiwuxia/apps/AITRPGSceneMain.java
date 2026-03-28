@@ -98,30 +98,15 @@ public class AITRPGSceneMain extends AIApplication {
 		}
 		// naming
 		handlers.add((state, ret) -> {
-
 			if (state.getStage() == ApplicationStage.NAMING) {
-				if(ret.length()>6) {
-					state.add(Role.SYSTEM, "名称不得多于6字符", false);
-				}else {
-					
-					/*if(state.extraData.containsKey("name")) {
-						state.extraData.put("nick", ret);
-						
-						return "开始游戏";
-					}*/
-					state.getExtra().put("name", ret);
-					state.add(Role.USER, ret, false);
-					state.setStage(ApplicationStage.STARTED);
-					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
-					return null;
-				}
+				this.sendNamingPrompt(state);
+				state.refillChatBox(ret);
 				return null;
 			}
 			return ret;
 		});
 		
 		// check interface
-		handlers.add(revertAndRegen);
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
@@ -151,6 +136,19 @@ public class AITRPGSceneMain extends AIApplication {
 		} 
 
 
+	}
+	public void sendNamingPrompt(AISession state) {
+		state.requestUserInput("name", "请输入玩家姓名，名称不得多于6字符",(ret)->{
+			if (state.getStage() == ApplicationStage.NAMING) {
+				if(ret.length()>6) {
+					sendNamingPrompt(state);
+				}else {
+					state.getExtra().put("name", ret);
+					state.setStage(ApplicationStage.STARTED);
+					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
+				}
+			}
+		});
 	}
 	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
