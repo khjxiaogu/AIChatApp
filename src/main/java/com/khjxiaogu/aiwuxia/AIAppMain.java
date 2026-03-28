@@ -35,21 +35,11 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
-import com.khjxiaogu.aiwuxia.apps.AICharaTalkMain;
-import com.khjxiaogu.aiwuxia.apps.AITRPGSceneMain;
-import com.khjxiaogu.aiwuxia.llm.AIOutput;
-import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AppAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
 import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceApi;
@@ -88,8 +78,8 @@ public class AIAppMain {
 		AIChatWindow acw=new AIChatWindow();
 		acw.setVisible(true);
 		File dataFolder=new File("save");
-		//File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
-		File saveData =new File(new File(dataFolder,"saveData"), "dbf0b38ff80644689aabe14d031253cc.json");//
+		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		//File saveData =new File(new File(dataFolder,"saveData"), "dbf0b38ff80644689aabe14d031253cc.json");//
 		
 		File modelFolder=new File(dataFolder,"apps/"+name);
 		File metaFile=new File(modelFolder,"meta.json");

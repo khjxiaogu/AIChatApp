@@ -32,7 +32,7 @@ public class BlockingReader extends Reader {
     private int length;
     private boolean ended;
     private final Object lock = new Object();
-
+    private IOException sourceException;
     public BlockingReader() {}
 
     public void setEnded() {
@@ -52,7 +52,13 @@ public class BlockingReader extends Reader {
             lock.notifyAll();
         }
     }
-
+    public void putException(IOException ex) {
+    	synchronized (lock) {
+    		this.sourceException=ex;
+            ended = true;
+            lock.notifyAll();
+        }
+    }
     @Override
     public int read(char[] cbuf, int off, int len) throws IOException {
         // 参数校验
@@ -71,9 +77,10 @@ public class BlockingReader extends Reader {
                     throw new IOException("Interrupted while reading", e);
                 }
             }
-
             // 如果流结束且无数据，返回 -1
             if (position >= length && ended) {
+            	if(sourceException!=null)
+                	throw sourceException;
                 return -1;
             }
 

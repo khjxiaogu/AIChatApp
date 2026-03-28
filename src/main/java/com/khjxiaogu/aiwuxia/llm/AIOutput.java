@@ -122,6 +122,10 @@ public interface AIOutput {
 			reasoner.setEnded();
 			content.setEnded();
 		}
+		public void exception(IOException ex) {
+			reasoner.putException(ex);
+			content.putException(ex);
+		}
 		public boolean isEnded() {
 			return content.isEnded();
 		}

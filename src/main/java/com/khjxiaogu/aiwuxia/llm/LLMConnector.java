@@ -26,6 +26,8 @@ package com.khjxiaogu.aiwuxia.llm;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.khjxiaogu.aiwuxia.llm.providers.DeepseekModelProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.VolcanoModelProvider;
@@ -39,7 +41,8 @@ public class LLMConnector {
 
     /** 模型路由器实例，负责根据请求选择合适的模型提供商 */
     private static ModelRouter router;
-
+    
+    private static ExecutorService exec=Executors.newFixedThreadPool(16);
     /**
      * 私有构造函数，防止外部实例化。
      */
@@ -74,6 +77,6 @@ public class LLMConnector {
      * @throws IOException 如果在执行模型调用过程中发生 I/O 错误
      */
     public static AIOutput call(AIRequest request) throws ModelRouteException, IOException {
-        return router.route(request).execute(request);
+        return router.route(request).execute(exec,request);
     }
 }

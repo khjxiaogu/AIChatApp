@@ -24,18 +24,19 @@
 package com.khjxiaogu.aiwuxia.llm.providers;
 
 import java.io.IOException;
+import java.util.concurrent.ExecutorService;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
-import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
+import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
+import com.khjxiaogu.aiwuxia.llm.ModelProvider;
+import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
-import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
-import com.khjxiaogu.aiwuxia.utils.ClientTruncatedException;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -48,10 +49,10 @@ public class DeepseekModelProvider implements ModelProvider{
 	}
 
 	@Override
-	public AIOutput execute(AIRequest request) throws IOException {
+	public AIOutput execute(ExecutorService exec,AIRequest request) throws IOException {
 		//if(request.stream) {
 		//deepseek:总是使用流式来加速网络
-		return sendAIStreamedRequest(request);
+		return sendAIStreamedRequest(exec,request);
 		//}
 		//return sendAIRequest(request).toOutput();
 	}
@@ -71,7 +72,7 @@ public class DeepseekModelProvider implements ModelProvider{
 		logger.info(resp.usage);
 		return resp;
 	}
-	public AIOutput sendAIStreamedRequest(AIRequest request) throws IOException {
+	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
 
 		request.request.addProperty("model", request.category==ModelCategory.REASONING?"deepseek-reasoner":"deepseek-chat");
 		request.request.addProperty("stream", true);
@@ -81,47 +82,53 @@ public class DeepseekModelProvider implements ModelProvider{
 		StreamedAIOutput readable=new StreamedAIOutput();
 		Usage usage=new Usage();
 		Usage simusage=new Usage();
-		HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
-				.header("Content-Type", "application/json")
-				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
+		exec.submit(()->{
+			try {
+				HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
+						.header("Content-Type", "application/json")
+						.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
 	
-				.post(true).send(tosend).readSSE(null, (ev,s)->{
-					if(readable.isInterrupted()) {
-						logger.info("interrupted generation");
-						if(usage.completion_tokens>0)
-							readable.setUsage(usage);
-						else
-							readable.setUsage(simusage);
-						readable.endContent();
-						throw new ClientTruncatedException();
-					}
-					if(s==null||"[DONE]".equals(s)) {
-						System.out.println();
-						logger.info("=================Usage===============");
-						logger.info(usage);
-						logger.info("finish generation");
-						readable.setUsage(usage);
-						readable.endContent();
-						return;
-					}
-					//if(readable.isEnded())
-					//	throw new ClientTruncatedException();
-					RespScheme scheme=gs.fromJson(s, RespScheme.class);
-					Message delta=scheme.choices.get(0).delta;
-					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-						simusage.completion_tokens++;
-						readable.putReasoner(delta.reasoning_content);
-					}
-					if(delta.content!=null&&!delta.content.isEmpty()) {
-						simusage.completion_tokens++;
-						readable.putContent(delta.content);
-					}
-					
-					if(scheme.usage!=null)
-						usage.add(scheme.usage);
-					
-				});
-	
+						.post(true).send(tosend).readSSE((ev,s)->{
+							if(readable.isInterrupted()) {
+								logger.info("interrupted generation");
+								if(usage.completion_tokens>0)
+									readable.setUsage(usage);
+								else
+									readable.setUsage(simusage);
+								readable.endContent();
+								return false;
+							}
+							if(s==null||"[DONE]".equals(s)) {
+								System.out.println();
+								logger.info("=================Usage===============");
+								logger.info(usage);
+								logger.info("finish generation");
+								readable.setUsage(usage);
+								readable.endContent();
+								return false;
+							}
+							//if(readable.isEnded())
+							//	throw new ClientTruncatedException();
+							RespScheme scheme=gs.fromJson(s, RespScheme.class);
+							Message delta=scheme.choices.get(0).delta;
+							if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
+								simusage.completion_tokens++;
+								readable.putReasoner(delta.reasoning_content);
+							}
+							if(delta.content!=null&&!delta.content.isEmpty()) {
+								simusage.completion_tokens++;
+								readable.putContent(delta.content);
+							}
+							
+							if(scheme.usage!=null)
+								usage.add(scheme.usage);
+							return true;
+						});
+			} catch (IOException e) {
+				e.printStackTrace();
+				readable.exception(e);
+			}
+		});
 	
 		return readable;
 	}

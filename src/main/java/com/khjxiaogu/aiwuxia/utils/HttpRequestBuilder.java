@@ -41,7 +41,6 @@ import com.google.gson.JsonParser;
 
 public class HttpRequestBuilder {
 	private StringBuilder url;
-	private static ExecutorService defaultService=Executors.newFixedThreadPool(4);
 	List<String[]> headers=new ArrayList<>();
 	boolean followRedirect=true;
 	public HttpRequestBuilder(String ourl) {
@@ -128,49 +127,74 @@ public class HttpRequestBuilder {
 			String res= huc.getHeaderField("Location");
 			return res;
 		}
+		private void closeOutput() {
+			if(os!=null)
+				try {
+					OutputStream cos=os;
+					os=null;
+					cos.close();
+				}catch(Throwable t) {
+					t.printStackTrace();
+				}
+		}
+		private void close() {
+			closeOutput();
+			huc.disconnect();
+		}
 		public String readString() throws IOException {
-			return new String(FileUtil.readAll(huc.getInputStream()), StandardCharsets.UTF_8);
+			closeOutput();
+			try(InputStream is=huc.getInputStream()){
+				return new String(FileUtil.readAll(is), StandardCharsets.UTF_8);
+			}catch(IOException ex){
+				generateExceptionFromError(ex);
+			}finally{
+				close();
+			}
+			return null;//this should never happen
 		}
 		public JsonObject readJson() throws IOException {
-			try {
-				JsonObject json= JsonParser.parseString(FileUtil.readString(huc.getInputStream())).getAsJsonObject();
+			closeOutput();
+			try(InputStream is=huc.getInputStream()){
+				JsonObject json= JsonParser.parseString(FileUtil.readString(is)).getAsJsonObject();
 				return json;
 			}catch(IOException ex){
-				
-				throw new IOException(FileUtil.readString(huc.getErrorStream()),ex);
+				generateExceptionFromError(ex);
+			}finally{
+				close();
 			}
+			return null;//this should never happen
 			
 		}
-		public void readSSE(ExecutorService serv,BiConsumer<String,String> listener) throws IOException {
-			try {
-				InputStream is=huc.getInputStream();
-				if(serv==null)
-					serv=defaultService;
-				serv.submit(()->{
-					try(Scanner scan=new Scanner(is,StandardCharsets.UTF_8)){
-						while(scan.hasNextLine()) {
-							String resp=scan.nextLine();
-							//System.out.println(resp);
-							if(resp.isEmpty()||resp.startsWith(":"))
-								continue;
-							int idx=resp.indexOf(":");
-							String dataEvent=resp.substring(0,idx);
-							if(resp.charAt(idx+1)==' ') idx++;
-							String dataElem=resp.substring(idx+1);
-	
-							listener.accept(dataEvent, dataElem);
-						}
-					}catch(ClientTruncatedException err) {
-						huc.disconnect();
-					}catch(Throwable err) {
-						err.printStackTrace();
-					}
-					//System.out.println("Connection closed");
-					
-				});
-			}catch(IOException ex){
+		private void generateExceptionFromError(IOException ex) throws IOException {
+			try(InputStream errorStream=huc.getErrorStream()){
+				throw new IOException(FileUtil.readString(errorStream),ex);
+			}
+		}
+		public void readSSE(SSEListener listener) throws IOException {
+			closeOutput();
+			try(InputStream is=huc.getInputStream();Scanner scan=new Scanner(is,StandardCharsets.UTF_8)){
 				
-				throw new IOException(FileUtil.readString(huc.getErrorStream()),ex);
+				try{
+					while(scan.hasNextLine()) {
+						String resp=scan.nextLine();
+						//System.out.println(resp);
+						if(resp.isEmpty()||resp.startsWith(":"))
+							continue;
+						int idx=resp.indexOf(":");
+						String dataEvent=resp.substring(0,idx);
+						if(resp.charAt(idx+1)==' ') idx++;
+						String dataElem=resp.substring(idx+1);
+						if(!listener.accept(dataEvent, dataElem)) {
+							break;
+						}
+					}
+				}catch(Throwable err) {
+					err.printStackTrace();
+				}
+			}catch(IOException ex){
+				generateExceptionFromError(ex);
+			}finally{
+				close();
 			}
 			
 		}

@@ -24,6 +24,8 @@
 package com.khjxiaogu.aiwuxia.llm;
 
 import java.io.IOException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 
 /**
  * 模型提供者接口，用于统一封装对不同 AI 模型（如本地部署、云端 API 等）的调用。
@@ -48,5 +50,5 @@ public interface ModelProvider {
      * @return AI 模型的输出对象，包含推理内容和最终内容
      * @throws IOException 如果网络通信、数据读取或处理过程中发生 I/O 错误
      */
-    AIOutput execute(AIRequest request) throws IOException;
+    AIOutput execute(ExecutorService executor,AIRequest request) throws IOException;
 }

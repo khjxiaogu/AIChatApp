@@ -24,6 +24,8 @@
 package com.khjxiaogu.aiwuxia.llm.providers;
 
 import java.io.IOException;
+import java.util.concurrent.ExecutorService;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -35,7 +37,6 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
-import com.khjxiaogu.aiwuxia.utils.ClientTruncatedException;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -48,9 +49,9 @@ public class VolcanoModelProvider implements ModelProvider{
 	}
 
 	@Override
-	public AIOutput execute(AIRequest request) throws IOException {
+	public AIOutput execute(ExecutorService exec,AIRequest request) throws IOException {
 		if(request.stream) {
-			return sendAIStreamedRequest(request);
+			return sendAIStreamedRequest(exec,request);
 		}
 		return sendAIRequest(request).toOutput();
 	}
@@ -102,7 +103,7 @@ public class VolcanoModelProvider implements ModelProvider{
 		logger.info(resp.usage);
 		return resp;
 	}
-	public AIOutput sendAIStreamedRequest(AIRequest request) throws IOException {
+	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
 		request.request.addProperty("model", getModelType(request));
 		request.request.addProperty("reasoning_effort", getEffort(request));
 		request.request.addProperty("stream", true);
@@ -113,42 +114,48 @@ public class VolcanoModelProvider implements ModelProvider{
 		String tosend = gs.toJson(request.request);
 		StreamedAIOutput readable=new StreamedAIOutput();
 		Usage usage=new Usage();
-		HttpRequestBuilder.create("ark.cn-beijing.volces.com").url("/api/v3/chat/completions")
-				.header("Content-Type", "application/json")
-				.header("Authorization", "Bearer "+System.getProperty("volcmodeltoken"))
-	
-				.post(true).send(tosend).readSSE(null, (ev,s)->{
-					if(readable.isInterrupted()) {
-						logger.info("interrupted generation");
-						readable.setUsage(usage);
-						readable.endContent();
-						throw new ClientTruncatedException();
-					}
-					if(s==null||"[DONE]".equals(s)) {
-						System.out.println();
-						logger.info("=================Usage===============");
-						logger.info(usage);
-						logger.info("finish generation");
-						readable.setUsage(usage);
-						readable.endContent();
-						return;
-					}
-					//if(readable.isEnded())
-					//	throw new ClientTruncatedException();
-					RespScheme scheme=gs.fromJson(s, RespScheme.class);
-					Message delta=scheme.choices.get(0).delta;
-					if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-						readable.putReasoner(delta.reasoning_content);
-					}
-					if(delta.content!=null&&!delta.content.isEmpty()) {
-						
-						readable.putContent(delta.content);
-					}
-					if(scheme.usage!=null)
-						usage.set(scheme.usage);
-					
-				});
-	
+		exec.submit(()->{
+		try {
+			HttpRequestBuilder.create("ark.cn-beijing.volces.com").url("/api/v3/chat/completions")
+					.header("Content-Type", "application/json")
+					.header("Authorization", "Bearer "+System.getProperty("volcmodeltoken"))
+
+					.post(true).send(tosend).readSSE((ev,s)->{
+						if(readable.isInterrupted()) {
+							logger.info("interrupted generation");
+							readable.setUsage(usage);
+							readable.endContent();
+							return false;
+						}
+						if(s==null||"[DONE]".equals(s)) {
+							System.out.println();
+							logger.info("=================Usage===============");
+							logger.info(usage);
+							logger.info("finish generation");
+							readable.setUsage(usage);
+							readable.endContent();
+							return false;
+						}
+						//if(readable.isEnded())
+						//	throw new ClientTruncatedException();
+						RespScheme scheme=gs.fromJson(s, RespScheme.class);
+						Message delta=scheme.choices.get(0).delta;
+						if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
+							readable.putReasoner(delta.reasoning_content);
+						}
+						if(delta.content!=null&&!delta.content.isEmpty()) {
+							
+							readable.putContent(delta.content);
+						}
+						if(scheme.usage!=null)
+							usage.set(scheme.usage);
+						return true;
+					});
+		} catch (IOException e) {
+			e.printStackTrace();
+			readable.exception(e);
+		}
+		});
 	
 		return readable;
 	}
