@@ -29,13 +29,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryCompacter;
@@ -58,7 +58,8 @@ public class AIGalgameMain extends AIApplication {
 		super();
 		this.charaname=charaname;
 		String charaset= FileUtil.readString(new File(basePath, "charaset.txt")).replace("\r", "");
-		system = FileUtil.readString(new File(basePath, "prompt.txt")).replace("\r", "")+"\n=== 人物设定 ===\n"+charaset;
+		
+		system ="【核心规则】\n"+FileUtil.readString(new File(basePath, "prompt.txt")).replace("\r", "")+"\n【游戏设定】\n"+ charaset;
 		compactor=new HistoryCompacter(FileUtil.readString(new File(basePath, "summary.txt")).replace("\r", ""), charaset, "1");
 		initSelection =FileUtil.readString(new File(basePath, "init.txt")).replace("\r", "");
 		if(meta.has("background"))
@@ -166,6 +167,7 @@ public class AIGalgameMain extends AIApplication {
 
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
+		
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
 			int len=0;
@@ -205,7 +207,8 @@ public class AIGalgameMain extends AIApplication {
 				compactor.compactHistory(state.getExtra(), summery.toString(),state::addUsage);
 				state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
 				his.forEach(t->t.setValidContext(false));
-				state.minDialogRows(removedSpeech);//generally half speech is ai
+
+				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
@@ -264,6 +267,7 @@ public class AIGalgameMain extends AIApplication {
 		handleReasonerContent(resp,state);
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
+		int orderIndex=1;
 		while (true) {
 			last=reader.readLine();
 			if(last==null) {
@@ -311,6 +315,13 @@ public class AIGalgameMain extends AIApplication {
 					}
 				}
 			} else {
+				if(status==2) {
+					if(!Character.isDigit(last.charAt(0))) {
+						last=orderIndex+". "+last;
+					}	
+					orderIndex++;
+				}
+					
 				state.appendLine(Role.ASSISTANT, last, true);
 			}
 

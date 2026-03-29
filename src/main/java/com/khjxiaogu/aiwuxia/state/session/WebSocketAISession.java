@@ -160,8 +160,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		JsonObject jo=JsonParser.parseString(message).getAsJsonObject();
 		if(jo.has("message")) {
 			if(lock.compareAndSet(false, true)) {
-				try {
-					getCommandExec().submit(()->{
+				getCommandExec().submit(()->{
+					try {
 						getAiapp().handleSpeech(this, jo.get("message").getAsString());
 						if(getAiapp().isLocalVoiceSupported()&&!super.isAudioSession()) {
 							if(isLocalAudioEnabled!=LocalVoiceModel.hasOnlineService()) {
@@ -169,12 +169,11 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 								conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
 							}
 						}
-					}).get();
-				} catch (InterruptedException | ExecutionException e) {
-					e.printStackTrace();
-				}finally {
-					lock.set(false);
-				}
+					}finally{
+						lock.set(false);
+					}
+				});
+				
 			}else {
 				sendNotice("操作太快啦，请稍后再试");
 			}
@@ -280,9 +279,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			uncached_cost+=usage.prompt_tokens;
 		}else {
 			uncached_cost+=usage.prompt_cache_miss_tokens;
-			uncached_cost+=usage.prompt_cache_hit_tokens/10;
+			uncached_cost+=Math.ceil(usage.prompt_cache_hit_tokens/10f);
 		}
-		uncached_cost+=usage.completion_tokens;
+		uncached_cost+=Math.ceil(usage.completion_tokens*1.5f);
 		parent.consumeTokens(user, uncached_cost);
 		
 		super.addUsage(usage);

@@ -139,7 +139,8 @@ public class AIGroupApplication extends AIApplication {
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
 				his.forEach(t->t.setValidContext(false));
-				state.minDialogRows(his.size());
+
+				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();

@@ -79,7 +79,7 @@ public class AITRPGSceneMain extends AIApplication {
 			String role = readFile(new File(model, "role.txt"));
 			String charaset=readFile(new File(model, "charaset.txt"));
 			String rules=readFile(new File(model, "rules.txt"));
-			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
+			system=role + "\n\n【游戏设定】\n" + charaset +"\n" + rules;
 			summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
 			prelogue = readFile(new File(model, "prelogue.txt"));
 			File validfile=new File(model, "validator.json");
@@ -238,7 +238,7 @@ public class AITRPGSceneMain extends AIApplication {
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
 				his.forEach(t->t.setValidContext(false));
-				state.minDialogRows(removedSpeech);//generally half speech is ai
+				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();

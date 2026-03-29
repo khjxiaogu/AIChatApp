@@ -65,7 +65,7 @@ public class AIAppMain {
 		return sb.toString();
 	}
 	public static void main(String[] args) throws Throwable {
-		String name="fengxitalk";
+		String name="cstgal";
 		int idx=0;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {
@@ -101,7 +101,7 @@ public class AIAppMain {
 			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.ExtraData(),main,saveData,acw);
 			aistate.provideInitialHint();
 		}
-		aistate.onLoad();
+		aistate.onLoad().get();
 		AIApplication.saveToJson(aistate, saveData);
 		
 		acw.setStatus(main.constructSystem(aistate.getState()));
@@ -160,8 +160,12 @@ public class AIAppMain {
 			}
 
 			try {
-				aistate.handleUserSpeech(ret);
-				Thread.sleep(200);
+				if("<重新生成>".equals(ret))
+					aistate.getAiapp().doRegen(cstate);
+				else if("<撤回>".equals(ret))
+					aistate.getAiapp().doRevert(cstate);
+				else
+					aistate.handleUserSpeech(ret).get();
 				while(aistate.isGenerating()) {
 					Thread.sleep(100);
 				}

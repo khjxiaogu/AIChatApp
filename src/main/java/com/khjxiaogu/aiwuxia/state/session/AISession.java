@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
@@ -493,6 +494,9 @@ public class AISession {
 	public void minDialogRows(int rows) {
 		data.row -= rows;
 	}
+	public void setDialogRows(int rows) {
+		data.row = rows;
+	}
 
 	/**
 	 * 判断是否为音频会话。
@@ -539,8 +543,8 @@ public class AISession {
 	/**
 	 * 提供初始提示（例如在会话开始时由 AI 应用触发）。 通过 {@link #commandExec} 提交任务以确保顺序执行。
 	 */
-	public void provideInitialHint() {
-		getCommandExec().submit(() -> getAiapp().provideInitial(this));
+	public Future<?> provideInitialHint() {
+		return getCommandExec().submit(() -> getAiapp().provideInitial(this));
 	}
 
 	/**
@@ -548,8 +552,8 @@ public class AISession {
 	 *
 	 * @param message 语音识别后的文本消息
 	 */
-	public void handleUserSpeech(String message) {
-		getCommandExec().submit(() -> getAiapp().handleSpeech(this, message));
+	public Future<?> handleUserSpeech(String message) {
+		return getCommandExec().submit(() -> getAiapp().handleSpeech(this, message));
 	}
 
 	/**
@@ -588,7 +592,7 @@ public class AISession {
 		return data;
 	}
 
-	public void onLoad() {
-		getCommandExec().submit(()->this.aiapp.onload(this));
+	public Future<?> onLoad() {
+		return getCommandExec().submit(()->this.aiapp.onload(this));
 	}
 }

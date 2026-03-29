@@ -56,7 +56,9 @@ public class AIChatWindow extends JFrame {
     // 常量定义
     private static final int MAX_INPUT_HEIGHT = 120;    // 输入框最大高度(像素)，约4-5行
     private static final int MIN_INPUT_HEIGHT = 30;      // 最小高度
-
+    private boolean isRegenRequired;
+    private boolean isRevertRequired;
+    private Object lock=new Object();
     public AIChatWindow() {
         setTitle("AI 对话窗口");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -173,15 +175,23 @@ public class AIChatWindow extends JFrame {
         // 底部输入区域：输入滚动面板 + 发送按钮
         JPanel bottomPanel = new JPanel(new BorderLayout(5, 0));
         bottomPanel.setBorder(BorderFactory.createEmptyBorder(5, 0, 0, 0));
-
+        JPanel controlPanel = new JPanel(new BorderLayout(0, 1));
         // 发送按钮（简单功能：将输入框内容追加到聊天区）
         JButton sendButton = new JButton("发送");
         sendButton.setFont(new Font("SansSerif", Font.BOLD, 14));
         sendButton.addActionListener(this::sendMessage);
+        JButton revertButton = new JButton("撤回");
+        revertButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+        revertButton.addActionListener(this::revertMessage);
+        JButton regenButton = new JButton("重新生成");
+        regenButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+        regenButton.addActionListener(this::regenMessage);
 
         bottomPanel.add(inputScrollPane, BorderLayout.CENTER);
-        bottomPanel.add(sendButton, BorderLayout.EAST);
-
+        controlPanel.add(sendButton, BorderLayout.WEST);
+        controlPanel.add(revertButton, BorderLayout.CENTER);
+        controlPanel.add(regenButton, BorderLayout.EAST);
+        bottomPanel.add(controlPanel, BorderLayout.EAST);
         leftPanel.add(bottomPanel, BorderLayout.SOUTH);
         return leftPanel;
     }
@@ -284,9 +294,28 @@ public class AIChatWindow extends JFrame {
     private void sendMessage(ActionEvent e) {
         String message = inputArea.getText().trim();
         if (!message.isEmpty()) {
-        	status=true;
-        	inputArea.setEnabled(false);
+        	synchronized(lock) {
+	        	status=true;
+	        	inputArea.setEnabled(false);
+	        	lock.notifyAll();
+        	}
         }
+    }
+
+    private void revertMessage(ActionEvent e) {
+    	isRevertRequired=true;
+    	synchronized(lock) {
+        	status=true;
+        	lock.notifyAll();
+    	}
+    }
+  
+    private void regenMessage(ActionEvent e) {
+    	isRegenRequired=true;
+    	synchronized(lock) {
+        	status=true;
+        	lock.notifyAll();
+    	}
     }
     public void setInput(String str) {
     	inputArea.setText(str);
@@ -304,13 +333,24 @@ public class AIChatWindow extends JFrame {
     	status=false;
 		inputArea.setEnabled(true);
 		CompletableFuture<String> f=CompletableFuture.supplyAsync(()->{
-			while(!status) {
-				try {
-					Thread.sleep(100);
-				} catch (InterruptedException e) {
-					throw new RuntimeException(e);
+			synchronized(lock) {
+				while(!status) {
+					try {
+						lock.wait();
+					} catch (InterruptedException e) {
+						throw new RuntimeException(e);
+					}
 				}
 			}
+			if(isRegenRequired) {
+				isRegenRequired=isRevertRequired=false;
+				return "<重新生成>";
+			}
+			if(isRevertRequired) {
+				isRegenRequired=isRevertRequired=false;
+				return "<撤回>";
+			}
+			
 			String text=inputArea.getText();
 			inputArea.setText("");
 			return text;

@@ -152,4 +152,5 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
     		hi.setDeleted(true);
     	return hi;
     }
+    public long getContextLimit();
 }

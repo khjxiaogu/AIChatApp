@@ -252,4 +252,15 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 		return null;
 	}
 
+	@Override
+	public long getContextLimit() {
+		long limit=0;
+		for(HistoryMemoryItem hmi:history) {
+			if(hmi.isValidContext()&&!hmi.isDeleted()&&hmi.getRole()==Role.ASSISTANT) {
+				limit++;
+			}
+		}
+		return limit;
+	}
+
 }

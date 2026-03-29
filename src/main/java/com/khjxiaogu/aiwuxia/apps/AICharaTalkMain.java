@@ -277,7 +277,7 @@ public class AICharaTalkMain extends AIApplication {
 				compactor.compactHistory(state.getExtra(), summery.toString(),state::addUsage);
 				state.getExtra().put("lastSummary",compactor.constructHistory(state.getExtra()));
 				his.forEach(t->t.setValidContext(false));
-				state.minDialogRows(removedSpeech);
+				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
 				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
