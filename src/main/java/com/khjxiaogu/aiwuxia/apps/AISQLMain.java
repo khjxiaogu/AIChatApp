@@ -51,6 +51,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AISQLMain extends AIApplication {
 
+	String system;
 	public AISQLMain(File folder){
 		try {
 			system = FileUtil.readString(new File(folder, "prompt.txt")).replace("\r", "");

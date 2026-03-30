@@ -70,7 +70,8 @@ public class AICharaTalkMain extends AIApplication {
 	AttributeValidator validator;
 	Map<String,String> emote2emote;
 	HistoryCompacter compactor;
-	static int cal;
+	String charaset;
+	String system;
 	public AICharaTalkMain(File basePath,File modelFolder,String charaname,JsonObject meta) {
 		super();
 		this.charaname=charaname;
@@ -79,10 +80,10 @@ public class AICharaTalkMain extends AIApplication {
 			File model=modelFolder;
 			
 			String role = readFile(new File(model, "role.txt"));
-			String charaset=readFile(new File(model, "charaset.txt"));
+			charaset=readFile(new File(model, "charaset.txt"));
 			String rules=readFile(new File(model, "rules.txt"));
 			system=role + "\n\n=== 角色设定 ===\n" + charaset +"\n" + rules;
-			compactor=new HistoryCompacter(readFile(new File(model, "summary.txt")), charaset, "1");
+			compactor=new HistoryCompacter(readFile(new File(model, "summary.txt")), "1");
 			//summary = readFile(new File(model, "summary.txt")) + "\n\n=== 角色设定 ===\n" + charaset;
 			prelogue = readFile(new File(model, "prelogue.txt"));
 			if(meta.has("volcappid"))
@@ -225,7 +226,7 @@ public class AICharaTalkMain extends AIApplication {
 				len=0;
 				String str=summery.toString();
 				summery=new StringBuilder();
-				compactor.compactHistory(state.getExtra(), str,state::addUsage);
+				compactor.compactHistory(state.getExtra(), str,charaset,state::addUsage);
 			}
 		}
 		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
@@ -274,7 +275,7 @@ public class AICharaTalkMain extends AIApplication {
 					}
 					
 				}
-				compactor.compactHistory(state.getExtra(), summery.toString(),state::addUsage);
+				compactor.compactHistory(state.getExtra(), summery.toString(),charaset,state::addUsage);
 				state.getExtra().put("lastSummary",compactor.constructHistory(state.getExtra()));
 				his.forEach(t->t.setValidContext(false));
 				state.setDialogRows((int) (history.getContextLimit()-5));

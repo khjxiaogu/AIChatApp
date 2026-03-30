@@ -51,10 +51,13 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.AIWuxiaMain;
+import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
+import com.khjxiaogu.aiwuxia.state.session.WebSocketPaidAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -78,6 +81,7 @@ import com.khjxiaogu.webserver.web.lowlayer.Response;
 import com.khjxiaogu.webserver.wrappers.ResultDTO;
 import com.khjxiaogu.webserver.wrappers.inadapters.DataIn;
 import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
+import com.khjxiaogu.webserver.wrappers.inadapters.JsonIn;
 
 import io.netty.handler.codec.http.HttpHeaderNames;
 
@@ -111,11 +115,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 	/** 可用的AI应用映射，键为应用ID（如"wuxia"），值为对应的AI应用实例 */
 	private Map<String, AIApplication> apps = new HashMap<>();
-	
+	private Map<String, ApplicationAttributes> attrs = new HashMap<>();
 	private Map<String, String> urls = new HashMap<>();
 
 	/** 公测中的AI应用ID集合，对于这些应用，每个用户只能创建一个对话实例 */
 	private Set<String> trial = new HashSet<>();
+	String defaultRule="";
 
 	/** 服务数据根目录 */
 	File parent;
@@ -136,14 +141,17 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * @param path 服务数据根目录
 	 * @throws SQLException           如果数据库初始化失败
 	 * @throws ClassNotFoundException 如果找不到SQLite JDBC驱动
+	 * @throws IOException 
 	 */
-	public AIChatService(File path) throws SQLException, ClassNotFoundException {
+	public AIChatService(File path) throws SQLException, ClassNotFoundException, IOException {
 		try {
 			Class.forName("org.sqlite.JDBC");
 		} catch (ClassNotFoundException e) {
 			logger.severe("SQLITE链接失败！");
 			throw e;
 		}
+		
+		defaultRule=FileUtil.readString(new File(path,"apps/custom/prompt.txt"));
 		logger.info("正在链接SQLITE信息数据库...");
 		try {
 			database = DriverManager.getConnection("jdbc:sqlite:" + new File(path, "messages.db"));
@@ -251,6 +259,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 								trial.add(name);
 							if(meta.has("url"))
 								urls.put(name, meta.get("url").getAsString());
+							ApplicationAttributes apps;
+							attrs.put(name, apps=new ApplicationAttributes());
+							if(meta.has("paidOnly"))
+								apps.paidOnly=meta.get("paidOnly").getAsBoolean();
 							getLogger().info("AI加载成功：" + name);
 						} catch (Throwable e) {
 							e.printStackTrace();
@@ -649,7 +661,18 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO aitrpg() throws IOException {
 		return new ResultDTO(200, new File(parent, "trpg.html"));
 	}
-
+	@HttpMethod("GET")
+	@HttpPath("/agentedit")
+	@Adapter
+	public ResultDTO agentedit() throws IOException {
+		return new ResultDTO(200, new File(parent, "agentedit.html"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/custom")
+	@Adapter
+	public ResultDTO custom() throws IOException {
+		return new ResultDTO(200, new File(parent, "custom.html"));
+	}
 	/**
 	 * HTTP GET端点：删除（隐藏）指定对话。 将对话的attribute字段设置为"hide"，使其在列表中不可见。
 	 *
@@ -769,11 +792,19 @@ public class AIChatService implements ServiceClass, CommandHandler {
 							return new ResultDTO(400, "App does not exist");
 						}
 						File data = new File(saveData, cid + ".json");
+						ApplicationAttributes attr=attrs.get(app);
 						if (data.exists()) {
 							try {
-								state = new WebSocketAISession(this, uid, cid, appx, data,
-									AIWuxiaMain.historyFromJson(data),
-									AIWuxiaMain.dataFromJson(data));
+								if(attr.paidOnly) {
+									
+									state = new WebSocketPaidAISession(this, uid, cid, appx, data,
+										AIWuxiaMain.historyFromJson(data),
+										AIWuxiaMain.dataFromJson(data));
+								}else {
+									state = new WebSocketAISession(this, uid, cid, appx, data,
+											AIWuxiaMain.historyFromJson(data),
+											AIWuxiaMain.dataFromJson(data));
+								}
 							} catch (JsonSyntaxException | IOException e) {
 								e.printStackTrace();
 								logger.info("AI " + cid + " Load Error");
@@ -807,7 +838,152 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return new ResultDTO(401, "Unauthorized");
 	}
-
+	@HttpPath("/chatconfig")
+	@Adapter
+	@HttpMethod("GET")
+	public ResultDTO getChatConfig(@Query("uid") String uid, @Query("chatid") String cid) {
+		if(cid==null) {
+			return new ResultDTO(200,JsonBuilder.object().add("gameSetting", "").add("brief", "新建智能体").add("coreRule", defaultRule).add("contextLimit",50000).end());		
+		}
+		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ? AND app='custom'")) {
+			ps.setString(1, cid);
+			try (ResultSet rs = ps.executeQuery()) {
+				if (rs.next() && rs.getString(1).equals(uid)) {
+					WebSocketAISession state = uidsockets.get(cid);
+					String app = rs.getString(2);
+					AIApplication appx = apps.get(app);
+					ExtraData exd;
+					if (state == null) {
+						if (appx == null) {
+							return new ResultDTO(400, "App does not exist");
+						}
+						File data = new File(saveData, cid + ".json");
+						if (data.exists()) {
+							try {
+								exd = AIWuxiaMain.dataFromJson(data);
+							} catch (JsonSyntaxException | IOException e) {
+								e.printStackTrace();
+								logger.info("AI " + cid + " Load Error");
+								return new ResultDTO(500, "Chat Load Error");
+							}
+						} else
+							return new ResultDTO(404, "Chat does not exist");
+					}else
+						exd=state.getData();
+					return new ResultDTO(200,JsonBuilder.object().add("brief", exd.extraData.get("brief")).add("gameSetting", exd.extraData.get("charaset")).add("coreRule", exd.extraData.get("rules")).add("contextLimit",Integer.parseInt(exd.extraData.get("limit"))).add("url", "custom?chatid="+cid).end());		
+					
+				}
+			}
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		return new ResultDTO(404);
+	}
+	@HttpPath("/chatconfig")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO setChatConfig(@Query("uid") String uid, @GetBy(JsonIn.class) JsonObject obj) {
+		String rcid = null;
+		String app="custom";
+		if(obj.has("chatid"))
+			try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ? AND app='custom'")) {
+				ps.setString(1, obj.get("chatid").getAsString());
+				try (ResultSet rs = ps.executeQuery()) {
+					if (rs.next() && rs.getString(1).equals(uid)) {
+						rcid=obj.get("chatid").getAsString();
+					}
+				}
+			} catch (SQLException e) {
+				getLogger().printStackTrace(e);
+			}
+		if(rcid==null) {
+			rcid=this.getAvailableId();	
+		}
+		WebSocketAISession state = uidsockets.get(rcid);
+		AIApplication appx = apps.get(app);
+		ApplicationAttributes attr=attrs.get(app);
+		if(attr.paidOnly&&!this.hasAnyPaidTokenRemaining(uid)) {
+			return new ResultDTO(403,"补充配额不足，无法创建存档");
+		}
+		File data = new File(saveData, rcid + ".json");
+		if (state == null) {
+			if (data.exists()) {
+				try {
+					if(attr.paidOnly) {
+						
+						state = new WebSocketPaidAISession(this, uid, rcid, appx, data,
+							AIWuxiaMain.historyFromJson(data),
+							AIWuxiaMain.dataFromJson(data));
+					}else {
+						state = new WebSocketAISession(this, uid, rcid, appx, data,
+								AIWuxiaMain.historyFromJson(data),
+								AIWuxiaMain.dataFromJson(data));
+					}
+				} catch (JsonSyntaxException | IOException e) {
+					e.printStackTrace();
+					logger.info("AI " + rcid + " Load Error");
+					return new ResultDTO(500, "Chat Load Error");
+				}
+			}
+		}
+		if (state == null) {
+			if(attr.paidOnly) {
+				state = new WebSocketPaidAISession(this, uid, rcid, appx, data,
+					new MemoryHistory(), new AISession.ExtraData());
+			}else {
+				state = new WebSocketAISession(this, uid, rcid, appx, data,
+					new MemoryHistory(), new AISession.ExtraData());
+			}
+		}
+		if(state.onModifyAttempt()) {
+			try {
+				state.getExtra().put("charaset",obj.get("gameSetting").getAsString());
+				state.getExtra().put("rules",obj.get("coreRule").getAsString());
+				state.getExtra().put("limit",obj.get("contextLimit").getAsString());
+				state.getExtra().put("brief",obj.get("brief").getAsString());
+				if(!data.exists()) {
+					long time = new Date().getTime();
+					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,attribute) VALUES(?,?,?,?,?)")) {
+						ps2.setString(1, uid);
+						ps2.setString(2, rcid);
+						ps2.setString(3, app);
+						ps2.setLong(4, time);
+						ps2.setString(5, "");
+						ps2.executeUpdate();
+					} catch (SQLException e) {
+						e.printStackTrace();
+					}
+					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO price(chatid,price,time) VALUES(?,?,?)")) {
+						ps2.setString(1, rcid);
+						ps2.setString(2, "0.00");
+						ps2.setLong(3, time);
+						ps2.executeUpdate();
+					} catch (SQLException e) {
+						e.printStackTrace();
+					}
+					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chatdata(chatid,remark,selected) VALUES(?,?,?)")) {
+						ps2.setString(1, rcid);
+						ps2.setString(2, "");
+						ps2.setString(3, "1");
+						ps2.executeUpdate();
+					} catch (SQLException e) {
+						e.printStackTrace();
+					}
+				}
+				AIApplication.saveToJson(state, data);
+			} catch (IOException e) {
+				e.printStackTrace();
+				return new ResultDTO(500,"保存失败，内部错误");
+			}finally {
+				state.onModifyComplete();
+			}
+		
+			
+			return new ResultDTO(200,JsonBuilder.object().add("brief", state.getExtra().get("brief")).add("gameSetting", state.getExtra().get("charaset")).add("coreRule", state.getExtra().get("rules")).add("contextLimit",Integer.parseInt(state.getExtra().get("limit"))).add("url", "custom?chatid="+rcid).add("chatid",rcid).end());		
+		}
+		return new ResultDTO(400,"该对话正在生成中，禁止修改");
+	
+	}
 	/**
 	 * WebSocket端点：建立与前端对话页面的WebSocket连接。
 	 * 根据提供的chatid、app和userId进行验证，如果对话不存在且满足创建条件（权限或公测限制），则创建新对话。
@@ -857,12 +1033,19 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				return;
 			}
 			File data = new File(saveData, cid + ".json");
-
+			ApplicationAttributes attr=attrs.get(app);
 			if (data.exists())
 				try {
-					state = new WebSocketAISession(this, uid, cid, appx, data,
+					if(attr.paidOnly) {
+					
+						state = new WebSocketPaidAISession(this, uid, cid, appx, data,
 							AIWuxiaMain.historyFromJson(data),
 							AIWuxiaMain.dataFromJson(data));
+					}else {
+						state = new WebSocketAISession(this, uid, cid, appx, data,
+								AIWuxiaMain.historyFromJson(data),
+								AIWuxiaMain.dataFromJson(data));
+					}
 					state.onLoad();
 					logger.info("AI " + cid + " Loaded");
 				} catch (JsonSyntaxException | IOException e) {
@@ -899,9 +1082,13 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						e.printStackTrace();
 					}
 					
+				}if(attr.paidOnly) {
+					state = new WebSocketPaidAISession(this, uid, cid, appx, data,
+						new MemoryHistory(), new AISession.ExtraData());
+				}else {
+					state = new WebSocketAISession(this, uid, cid, appx, data,
+						new MemoryHistory(), new AISession.ExtraData());
 				}
-				state = new WebSocketAISession(this, uid, cid, appx, data,
-					new MemoryHistory(), new AISession.ExtraData());
 				logger.info("AI " + cid + " Created");
 			}
 		}
@@ -1277,7 +1464,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		int paidRemaining = getPaidBalance(userId);
 		return freeRemaining + paidRemaining > 0;
 	}
-
+	public synchronized boolean hasAnyPaidTokenRemaining(String userId) {
+		int paidRemaining = getPaidBalance(userId);
+		return  paidRemaining > 2000;
+	}
 	/**
 	 * 消耗token（优先消耗免费，不足时消耗付费）
 	 * 
@@ -1354,7 +1544,38 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			e.printStackTrace();
 		}
 	}
+	public synchronized void consumePaidTokens(String userId, int tokens) {
+		if (tokens <= 0) {
+			throw new IllegalArgumentException("消耗数量必须为正数");
+		}
 
+		// 开始事务
+		try {
+			String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+			// 更新daily_usage表（付费消耗）
+			if (tokens > 0) {
+				String upsertPaidSql = "INSERT INTO daily_usage (user_id, date, free_used, paid_used) VALUES (?, ?, 0, ?)"
+					+ " ON CONFLICT(user_id, date) DO UPDATE SET paid_used = paid_used + ?";
+				try (PreparedStatement pstmt = database.prepareStatement(upsertPaidSql)) {
+					pstmt.setString(1, userId);
+					pstmt.setString(2, today);
+					pstmt.setInt(3, tokens);
+					pstmt.setInt(4, tokens);
+					pstmt.executeUpdate();
+				} catch (SQLException e) {
+					e.printStackTrace();
+				}
+				String updatePaidSql = "UPDATE user_paid_balance SET balance = balance - ? WHERE user_id = ?";
+				try (PreparedStatement pstmt = database.prepareStatement(updatePaidSql)) {
+					pstmt.setInt(1, tokens);
+					pstmt.setString(2, userId);
+					pstmt.executeUpdate();
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+	}
 	/**
 	 * 查询指定日期范围内每天的免费和付费token用量
 	 * 

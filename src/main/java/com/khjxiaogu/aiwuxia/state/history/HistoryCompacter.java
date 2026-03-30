@@ -26,10 +26,9 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class HistoryCompacter {
 	String system;
-	String charaset;
 	String version;
 	final Gson json=new GsonBuilder().setPrettyPrinting().create();
-	public void compactHistory(Map<String,String> state,String dialog,Consumer<Usage> usage) throws ModelRouteException, IOException {
+	public void compactHistory(Map<String,String> state,String dialog,String charaset,Consumer<Usage> usage) throws ModelRouteException, IOException {
 		StringBuilder summary=new StringBuilder();
 		summary.append("==故事设定==\n").append(charaset).append("\n");
 		
@@ -182,10 +181,9 @@ public class HistoryCompacter {
 		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
-	public HistoryCompacter(String system, String charaset, String version) {
+	public HistoryCompacter(String system, String version) {
 		super();
 		this.system = system;
-		this.charaset = charaset;
 		this.version = version;
 	}
 }

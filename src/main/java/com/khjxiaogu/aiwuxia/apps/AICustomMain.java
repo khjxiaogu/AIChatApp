@@ -49,29 +49,15 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
-public class AIGalgameMain extends AIApplication {
-	String charaname;
+public class AICustomMain extends AIApplication {
 	HistoryCompacter compactor;
-	String initSelection;
-	String defaultBg;
-	String charaset;
-	String system;
-	public AIGalgameMain(File basePath,String charaname,JsonObject meta) throws IOException {
+	String defaultText;
+	public AICustomMain(File basePath,JsonObject meta) throws IOException {
 		super();
-		this.charaname=charaname;
-		charaset= FileUtil.readString(new File(basePath, "charaset.txt")).replace("\r", "");
-		
-		system ="【核心规则】\n"+FileUtil.readString(new File(basePath, "prompt.txt")).replace("\r", "")+"\n【游戏设定】\n"+ charaset;
 		compactor=new HistoryCompacter(FileUtil.readString(new File(basePath, "summary.txt")).replace("\r", ""), "1");
-		initSelection =FileUtil.readString(new File(basePath, "init.txt")).replace("\r", "");
-		if(meta.has("background"))
-			defaultBg=meta.get("background").getAsString();
-		// naming
 		handlers.add((state, ret) -> {
-			if (state.getStage() == ApplicationStage.NAMING) {
-				this.sendNamingPrompt(state);
-				state.refillChatBox(ret);
-				return null;
+			if (state.getStage() != ApplicationStage.STARTED) {
+				state.setStage(ApplicationStage.STARTED);
 			}
 			return ret;
 		});
@@ -95,12 +81,12 @@ public class AIGalgameMain extends AIApplication {
 		});
 	}
 
-
+	public String constructSystem(AISession state) {
+		return "【核心规则】\n"+state.getExtra().get("rules")+"\n【游戏设定】\n"+ state.getExtra().get("charaset");
+	}
 	@Override
 	public void prepareScene(AISession state) {
 		super.prepareScene(state);
-		if(defaultBg!=null)
-		state.sendSceneContent("back", defaultBg);
 	}
 
 	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
@@ -121,22 +107,9 @@ public class AIGalgameMain extends AIApplication {
 		}
 
 	}
-	public String constructNameState(String name){
-		return "主角姓名为"+name+"，你需要用该名称称呼主角。";
-	}
 	
 	@Override
 	public void onload(AISession state) {
-		if(state.getExtra().containsKey("lastSummary")&&!state.getExtra().containsKey("永久记忆")) {
-			state.onGenerateStart();
-			state.sendNotice("系统正在修复历史记录中，请稍候。");
-			try {
-				runFullCompact(state);
-			} catch (ModelRouteException | IOException e) {
-				e.printStackTrace();
-			}
-			state.onGenComplete();
-		}
 	}
 
 
@@ -158,14 +131,14 @@ public class AIGalgameMain extends AIApplication {
 				len=0;
 				String str=summery.toString();
 				summery=new StringBuilder();
-				compactor.compactHistory(state.getExtra(), str,charaset,state::addUsage);
+				compactor.compactHistory(state.getExtra(), str,state.getExtra().get("charaset"),state::addUsage);
 			}
 		}
 		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", system+constructNameState(state.getExtra().get("name"))).end();
+			.add("role", "system").add("content", constructSystem(state)).end();
 
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
@@ -179,12 +152,16 @@ public class AIGalgameMain extends AIApplication {
 				len+=hi.getContextContent().length();
 				
 			}
-			
-			if(len>=90000) {//more than 100000 text:about 60k context,remove until 20000
+			int num=60000;
+			try {
+				num=Integer.parseInt(state.getExtra().get("limit"))+10000;
+			}catch(Throwable t) {
+				
+			}
+			if(len>=num) {//more than 100000 text:about 60k context,remove until 20000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
-				int removedSpeech=0;
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
 					
@@ -198,7 +175,6 @@ public class AIGalgameMain extends AIApplication {
 					his.add(hi);
 					
 					if(hi.getRole()==Role.ASSISTANT) {
-						removedSpeech++;
 						if(len<=10000) {
 							break;
 						}
@@ -206,7 +182,7 @@ public class AIGalgameMain extends AIApplication {
 					
 					
 				}
-				compactor.compactHistory(state.getExtra(), summery.toString(),charaset,state::addUsage);
+				compactor.compactHistory(state.getExtra(), summery.toString(),state.getExtra().get("charaset"),state::addUsage);
 				state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
 				his.forEach(t->t.setValidContext(false));
 
@@ -242,22 +218,8 @@ public class AIGalgameMain extends AIApplication {
 
 	}
 
-	public void sendNamingPrompt(AISession state) {
-		state.requestUserInput("name", "请输入玩家姓名，名称不得多于6字符",(ret)->{
-			if (state.getStage() == ApplicationStage.NAMING) {
-				if(ret.length()>6) {
-					sendNamingPrompt(state);
-				}else {
-					state.getExtra().put("name", ret);
-					state.setStage(ApplicationStage.STARTED);
-					this.handleSpeech(state, initSelection);
-				}
-			}
-		});
-	}
 	public void provideInitial(AISession state) {
-		state.setStage(ApplicationStage.NAMING);
-		this.sendNamingPrompt(state);
+		state.setStage(ApplicationStage.STARTED);
 
 	}
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
@@ -269,7 +231,6 @@ public class AIGalgameMain extends AIApplication {
 		handleReasonerContent(resp,state);
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
-		int orderIndex=1;
 		while (true) {
 			last=reader.readLine();
 			if(last==null) {
@@ -285,46 +246,12 @@ public class AIGalgameMain extends AIApplication {
 				//System.out.println("\n=================Content===============");
 				isWaiting = false;
 			}
-			if (status == 0) {//处理主要剧情
-				if (last.startsWith("==操作==")) {
-					status = 2;
-					state.appendContextLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "选择你的操作（数字或行动）：", false);
-				} else {
-					if(last.startsWith("==情景剧本=="))
-						state.appendContextLine(Role.ASSISTANT, last);
-					else
-						state.appendLine(Role.ASSISTANT, last, true);
-					int codePoint=0,codePoint2=0;
-					reader.mark(16);
-					while((codePoint=reader.read())!=-1) {
-						if(codePoint!='=') {
-							reader.mark(16);
-							char[] ch=Character.toChars(codePoint);
-							state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
-						}else if((codePoint2=reader.read())=='=') {
-							reader.reset();
-							break;
-						}else {
-							reader.mark(16);
-							char[] ch=Character.toChars(codePoint);
-							state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
-							if(codePoint2!=-1) {
-								ch=Character.toChars(codePoint2);
-								state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
-							}
-						}
-					}
-				}
-			} else {
-				if(status==2) {
-					if(!Character.isDigit(last.charAt(0))) {
-						last=orderIndex+". "+last;
-					}	
-					orderIndex++;
-				}
-					
-				state.appendLine(Role.ASSISTANT, last, true);
+			state.appendLine(Role.ASSISTANT,last, true);
+			int codePoint=0;
+			while((codePoint=reader.read())!=-1) {
+				char[] ch=Character.toChars(codePoint);
+				state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
+				
 			}
 
 		}
@@ -347,20 +274,20 @@ public class AIGalgameMain extends AIApplication {
 	@Override
 	public String getRoleName(AISession state,Role role) {
 		switch(role) {
-		case USER:String brief=getBrief(state);return brief==null?"我":brief ;
-		case ASSISTANT:return "";
+		case USER:return "你" ;
+		case ASSISTANT:return "系统";
 		default:return role.getName();
 		}
 	}
 	@Override
 	public String getName() {
-		return charaname;
+		return "自定义智能体";
 	}
 
 	@Override
 	public String getBrief(AISession state) {
 		if(state.getExtra().isEmpty())
 			return null;
-		return state.getExtra().get("name");
+		return state.getExtra().get("brief");
 	}
 }

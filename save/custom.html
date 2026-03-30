@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI智能对话</title>
+    <script src="feather.min.js"></script>
+    <script src="vue.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            background-color: #000;
+        }
+        .layer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            pointer-events: none;
+        }
+        .layer > * {
+            pointer-events: auto;
+        }
+        .bg-layer {
+            z-index: 0;
+        }
+        .bg-layer .bg-image {
+            width: 100%;
+            height: 100vh;
+            object-fit: cover;
+            object-position: center;
+            display: block;
+        }
+        .fg-layer {
+            z-index: 1;
+        }
+        .fg-layer .fg-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+        }
+        .front-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .front-layer img {
+            height: 100%;
+            width: auto;
+            display: block;
+            flex-shrink: 0;
+        }
+        .side-layer {
+            position: absolute;
+            top: 0;
+            right: 15%;
+            height: 100vh;
+            width: 60%;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            overflow: hidden;
+            transition: width 0.2s;
+        }
+        .side-layer img {
+            height: 100%;
+            width: auto;
+            display: block;
+            flex-shrink: 0;
+        }
+        @media (max-width: 768px) {
+            .side-layer {
+                width: 80%;
+				right: 0;
+                justify-content: flex-start;
+            }
+        }
+		.dialog-layer {
+			top: auto;
+		    z-index: 2;
+		    position: fixed;
+		    left: 0;
+		    width: 100%;
+		    height: 90vh;
+		    min-height: 200px;
+		    background-color: rgba(20, 20, 30, 0.75);
+		    backdrop-filter: blur(3px);
+		    display: flex;
+		    flex-direction: column;
+		    padding: 16px 20px 10px 20px;
+		    color: white;
+		    box-shadow: 0 -2px 10px rgba(0,0,0,0.3);
+		    pointer-events: auto;
+		}
+		@media (min-width: 769px) {
+		    .dialog-layer {
+		        flex-direction: row;
+		    }
+			.dialog-sidebar {
+		        width: 180px;
+		        display: flex;
+		        flex-direction: column;
+		        padding-left: 12px;
+		        margin-left: 12px;
+				flex-wrap: wrap;
+		    }
+		    .typing-area {
+		        margin-top: auto;
+		        text-align: left;
+		        margin-bottom: 16px;
+				
+				bottom: 0px;
+				position: absolute;
+				right: 174px;
+		    }
+		    .button-group {
+		        display: flex;
+		        flex-direction: row;
+				flex-wrap: wrap;
+		        gap: 8px;
+		    }
+		    .messages-container {
+		        flex: 1;
+		        margin-right: 12px;
+		        margin-bottom: 0;
+		    }
+		    .toolbar {
+		        width: 120px;
+		        display: flex;
+		        flex-direction: column;
+		        justify-content: flex-end;
+		        padding-left: 12px;
+		        gap: 16px;
+		    }
+		}
+		@media (max-width: 768px) {
+		    .toolbar {
+		        display: flex;
+		        flex-direction: row;
+		        align-items: center;
+		        justify-content: space-between;
+		        padding-top: 10px;
+		        margin-top: 8px;
+		    }
+			.dialog-layer {
+                height: 90vh;
+            }
+		    .typing-indicator {
+		        font-size: 0.9rem;
+		        margin-right: 8px;
+		    }
+			.dialog-sidebar {
+			    display: flex;
+			    flex-direction: column;
+			}
+			.typing-area {
+			    text-align: left;
+			    margin-bottom: 10px;
+			}
+			.button-group {
+			    display: flex;
+			    gap: 12px;
+			    justify-content: flex-end;
+			}
+		}
+		.toolbar-btn {
+		    background: rgba(255,255,255,0.15);
+		    padding: 8px 12px;
+		    font-size: 0.9rem;
+			max-width:80px;
+		}
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 15px;
+            padding-right: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .messages-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        .messages-container::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+        }
+        .messages-container::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.4);
+            border-radius: 8px;
+        }
+        .message-bubble {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 10px 16px;
+            border-radius: 20px 20px 20px 4px;
+            max-width: 80%;
+            word-break: break-word;
+            align-self: flex-start;
+            backdrop-filter: blur(2px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .message-bubble.own {
+            align-self: flex-end;
+            background: rgba(0, 153, 255, 0.4);
+            border-radius: 20px 20px 4px 20px;
+        }
+        .dialog-footer {
+            display: flex;
+            justify-content: flex-end;
+            border-top: 1px solid rgba(255,255,255,0.2);
+            padding-top: 12px;
+        }
+        .btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 10px 10px;
+            border-radius: 40px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: 0.2s;
+            font-size: 1rem;
+            backdrop-filter: blur(4px);
+			word-break: keep-all;
+        }
+        .btn:hover {
+            background: rgba(255,255,255,0.35);
+        }
+        .btn-primary {
+            background: #2a7fff;
+            border-color: #5c9aff;
+        }
+        .btn-primary:hover {
+            background: #1e6ae0;
+        }
+        .history-layer {
+            z-index: 3;
+            background-color: rgba(10, 10, 20, 0.82);
+            backdrop-filter: blur(5px);
+            top: 0;
+            left: 0;
+            right: 0;
+            width: auto;
+            height: auto;
+            pointer-events: auto;
+            padding: 24px;
+            color: #fff;
+            display: flex;
+            flex-direction: column; 
+        }
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+            padding-bottom: 12px;
+        }
+        .history-content {
+            flex: 1;
+            background: rgba(0,0,0,0.3);
+            border-radius: 24px;
+            padding: 24px;
+            font-size: 1.1rem;
+            line-height: 1.6;
+			overflow-y: auto;
+        }
+        .history-content ul {
+            margin-left: 20px;
+        }
+        .close-history {
+            background: rgba(255,255,255,0.15);
+            border: none;
+            color: white;
+            font-size: 1.3rem;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.2s;
+        }
+		.export-history {
+            background: rgba(255,255,255,0.15);
+            border: none;
+            color: white;
+            font-size: 1.3rem;
+            width: 90px;
+            height: 44px;
+            border-radius: 22px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.2s;
+        }
+        .close-history:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        .bottom-input-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            min-height: 40px;
+            background-color: #111;
+            border-top: 1px solid #333;
+            display: flex;
+            align-items: flex-end;
+            padding: 10px 20px;
+            gap: 12px;
+            z-index: 10;
+            box-shadow: 0 -4px 12px rgba(0,0,0,0.5);
+        }
+        .auto-textarea {
+            flex: 1;
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 24px;
+            padding: 6px 18px;
+            color: white;
+            font-size: 1rem;
+            line-height: 1.5;
+            outline: none;
+            resize: none;
+            overflow: hidden;
+            max-height: 150px;
+            transition: border 0.2s;
+            font-family: inherit;
+        }
+        .auto-textarea:focus {
+            border-color: #2a7fff;
+            background: #1e1e1e;
+        }
+        .bottom-input-bar .send-btn {
+            background: #2a7fff;
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 0 32px;
+            height: 36px;
+            border-radius: 40px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: 0.2s;
+            letter-spacing: 0.5px;
+			position: relative;
+        }
+        .bottom-input-bar .send-btn:hover {
+            background: #0f5fd9;
+        }
+		.typing-area .dot {
+		    animation: blink 1.2s infinite;
+		    animation-fill-mode: both;
+		    margin-left: 2px;
+		}
+		.typing-area .dot:nth-child(1) { animation-delay: 0s; }
+		.typing-area .dot:nth-child(2) { animation-delay: 0.4s; }
+		.typing-area .dot:nth-child(3) { animation-delay: 0.8s; }
+		@keyframes blink {
+		    0% { opacity: 0.2; }
+		    20% { opacity: 1; }
+		    100% { opacity: 0.2; }
+		}
+        .hidden {
+            display: none !important;
+        }
+        img {
+            vertical-align: bottom;
+        }
+
+        /* 侧边栏样式 */
+        .chat-sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            width: 320px;
+            background: rgba(20, 20, 35, 0.95);
+            backdrop-filter: blur(12px);
+            z-index: 100;
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 2px 0 12px rgba(0,0,0,0.3);
+            pointer-events: auto;
+        }
+        .chat-sidebar.open {
+            transform: translateX(0);
+        }
+        .sidebar-header {
+            padding: 20px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .sidebar-header h3 {
+            color: white;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .sidebar-header button {
+            background: rgba(255,255,255,0.15);
+            border: none;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .edit-current-btn {
+            background: rgba(42,127,255,0.7);
+            margin: 12px 16px;
+            padding: 8px;
+            border-radius: 40px;
+            text-align: center;
+            cursor: pointer;
+            color: white;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: 0.2s;
+        }
+        .edit-current-btn:hover {
+            background: #2a7fff;
+        }
+        .chat-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+        .chat-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-item:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        .chat-item.active {
+            background: rgba(42,127,255,0.3);
+            border-left: 3px solid #2a7fff;
+        }
+        .chat-info {
+            flex: 1;
+        }
+        .chat-name {
+            color: white;
+            font-weight: 500;
+            margin-bottom: 4px;
+            word-break: break-word;
+        }
+        .chat-time {
+            color: rgba(255,255,255,0.6);
+            font-size: 0.75rem;
+        }
+        .sidebar-toggle {
+            position: fixed;
+            left: 12px;
+            top: 12px;
+            z-index: 101;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 40px;
+            padding: 8px 12px;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.9rem;
+            pointer-events: auto;
+            transition: 0.2s;
+        }
+        .sidebar-toggle:hover {
+            background: rgba(42,127,255,0.7);
+        }
+        @media (max-width: 768px) {
+            .chat-sidebar {
+                width: 85%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app" @click="showDialog=true;unlockWebAudio();" @contextmenu.prevent="showDialog=false">
+        <!-- 侧边栏切换按钮 -->
+        <div class="sidebar-toggle" @click.stop="toggleSidebar">
+            <i data-feather="menu"></i>
+            <span>对话列表</span>
+        </div>
+
+        <!-- 侧边栏组件 -->
+        <div class="chat-sidebar" :class="{ open: sidebarOpen }">
+            <div class="sidebar-header">
+                <h3><i data-feather="message-square"></i> 历史对话</h3>
+                <button @click.stop="sidebarOpen = false"><i data-feather="x"></i></button>
+            </div>
+            <div class="edit-current-btn" @click="editCurrentChat">
+                <i data-feather="edit-2"></i> 编辑当前对话
+            </div>
+            <div class="chat-list" v-if="chatList.length">
+                <div v-for="chat in chatList" :key="chat.chatid" class="chat-item" :class="{ active: currentChatId === chat.chatid }" @click="selectChat(chat)">
+                    <div class="chat-info">
+                        <div class="chat-name">{{ chat.name || '未命名对话' }}</div>
+                        <div class="chat-time">{{ formatTime(chat.time) }}</div>
+                    </div>
+                    <i data-feather="chevron-right" size="16" style="color:rgba(255,255,255,0.5)"></i>
+                </div>
+            </div>
+            <div v-else style="padding: 20px; text-align:center; color:rgba(255,255,255,0.6);">
+                <i data-feather="inbox"></i> 暂无历史对话
+            </div>
+        </div>
+
+        <div class="layer bg-layer">
+            <img :src="bgurl" alt="背景" class="bg-image" v-if="bgurl">
+        </div>
+        <div class="layer fg-layer">
+            <div class="fg-container">
+                <div class="front-layer">
+                    <img :src="flurl" alt="人物" v-if="flurl">
+                </div>
+                <div class="side-layer">
+                    <img :src="fsurl" alt="人物" v-if="fsurl">
+                </div>
+            </div>
+        </div>
+		<div class="layer dialog-layer" :style="{ bottom: inputBarHeight + 'px' }" v-if="!showHistory&&showDialog">
+		    <div class="messages-container" ref="msgContainer">
+		        <div v-for="(msg, idx) in recentMessages"  :key="idx" >
+					<div v-for="msg2 in msg.text.split('\n')">
+						<template v-if="msg2.length>0"><template v-if="msg.title !== '系统'&&msg.title!=''">【{{ msg.title }}】「</template><span v-html="msg2"></span><template v-if="msg.title !== '系统'&&msg.title!=''">」</template></template>
+					</div>
+				</div>
+		    </div>
+		    <div class="dialog-sidebar">
+		        <div class="typing-area" v-if="typing">
+		            <span class="typing-text">生成中</span>
+		            <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+		        </div>
+		        <div class="button-group">
+		            <button class="btn toolbar-btn" @click="exportHistory"><i data-feather="file"></i>导出</button>
+		            <button class="btn toolbar-btn" @click="refreshMessages"  v-show="prepared&&!typing"><i data-feather="refresh-ccw"></i>重说</button>
+		            <button class="btn toolbar-btn" @click="undoLastOwn"  v-show="prepared&&!typing"><i data-feather="x"></i>撤回</button>
+				</div>
+		    </div>
+		</div>
+
+        <div class="bottom-input-bar" ref="bottomBar" v-if="prepared">
+            <textarea 
+                ref="messageInput"
+                class="auto-textarea" 
+                placeholder="输入消息..." 
+                v-model="newMessage"
+				
+                @input="adjustTextareaHeight"
+                @keydown.enter.exact.prevent="sendUserMessage" 
+                rows="1"></textarea>
+            <button class="send-btn" @click="sendUserMessage">发送</button>
+        </div>
+    </div>
+
+    <script>
+		var pageQueries={};
+		var searchStr = location.toString();
+		searchStr = searchStr.substr(searchStr.indexOf("?")+1);
+		searchStr=searchStr.replace("#","");
+		var searchs = searchStr.split("&");
+		var isFirstSelect=false;
+		for(var i=0;i<searchs.length;i++){
+			var rq = searchs[i].split("=");
+			pageQueries[rq[0]]=rq[1];
+		}
+		feather.replace();
+		let msgs=new Vue({
+		         el: '#app',
+		         data: {
+		             messages: [
+		             ],
+		             newMessage: '',
+		             showHistory: false,
+					 showDialog: true,
+					 typing: false, 
+		             inputBarHeight: 70,
+					 wssocket: undefined,
+					 prepared: false,
+					 isSideLoading: false,
+					 isFrontLoading:false,
+					 isBackLoading:false,
+					 isAnimateBlocking:false,
+					 fsurl:'',
+					 bgurl:'',
+					 flurl:'',
+					 appId:'',
+					 chatId:'',
+					 price:'0.00',
+					 handlerQueue:[],
+					 url:'/aichat',
+					 audioCtx:null,
+					 isUnlocked:false,
+					 isVoiceUsable:false,
+					 isVoiceEnabled:false,
+                     // 侧边栏新增属性
+                     chatList: [],
+                     sidebarOpen: false,
+                     currentChatId: null,
+                     loadingChatList: false,
+		         },
+				 computed: {
+				     recentMessages() {
+				         return this.messages;
+				     }
+				 },
+		         methods: {
+                    // 格式化时间戳 (ms字符串)
+                    formatTime(timestampMs) {
+                        if (!timestampMs) return '';
+                        const date = new Date(parseInt(timestampMs));
+                        return `${date.getMonth()+1}/${date.getDate()} ${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+                    },
+                    // 获取聊天列表
+                    async fetchChatList() {
+                        const uid = pageQueries.userId;
+                        this.loadingChatList = true;
+                        try {
+                            const res = await fetch(`chatlist?uid=${uid}`);
+                            const data = await res.json();
+                            if (Array.isArray(data)) {
+                                this.chatList = data;
+                            } else {
+                                this.chatList = [];
+                            }
+                        } catch(e) {
+                            console.error('获取对话列表失败', e);
+                            this.chatList = [];
+                        } finally {
+                            this.loadingChatList = false;
+                        }
+                    },
+                    // 侧边栏切换
+                    toggleSidebar() {
+                        this.sidebarOpen = !this.sidebarOpen;
+                    },
+                    // 选择对话
+                    selectChat(chat) {
+                        if (!chat.chatid || !chat.appid) return;
+                        if (this.currentChatId === chat.chatid && this.prepared) {
+                            this.sidebarOpen = false;
+                            return;
+                        }
+                        this.sidebarOpen = false;
+                        this.switchToChat(chat.appid, chat.chatid);
+                    },
+                    // 切换对话核心逻辑
+                    switchToChat(appid, chatid) {
+                        if (this.wssocket) {
+                            this.wssocket.onclose = function(){};
+                            this.wssocket.close();
+                        }
+                        this.chatId = chatid;
+                        this.appId = appid;
+                        this.currentChatId = chatid;
+                        this.messages.splice(0, this.messages.length);
+                        // 更新URL参数
+                        const url = new URL(location.href);
+                        url.searchParams.set('chatid', chatid);
+                        window.history.replaceState({}, '', url);
+                        this.open(() => {
+                            // 可选，连接成功后请求历史（ws会自动同步）
+                        });
+                    },
+                    // 编辑当前对话
+                    editCurrentChat() {
+                        const cid = this.currentChatId;
+                        if (!cid) {
+                            alert('请先选择一个对话');
+                            return;
+                        }
+                        window.open(`agentedit?chatid=${cid}`, '_blank');
+                    },
+                    // 原有角色初始化 (无地址栏匹配时使用)
+                    roleBasedInit() {
+                    },
+                    // 整体启动逻辑：先加载列表，再处理url chatid
+                    async startup() {
+                        await this.fetchChatList();
+                        const urlChatId = pageQueries.chatid;
+                        let matched = false;
+                        if (urlChatId && this.chatList.length) {
+                            const target = this.chatList.find(c => c.chatid === urlChatId);
+                            if (target) {
+                                matched = true;
+                                this.switchToChat(target.appid, target.chatid);
+                            }
+                        }
+                        if (!matched) {
+                            // 没有匹配到，执行原有角色初始化
+                            this.roleBasedInit();
+                        }
+                        // 定期刷新列表（可选，每次切换后刷新列表，保持最新）
+                    },
+					initChat(){
+                        // 废弃直接调用，改用startup
+                        this.startup();
+					},
+					speak(sent){
+						if(sent=="")return;
+						this.wssocket.send(JSON.stringify({message:sent}));
+					},
+					setVoiceEnabled(nw){
+						this.wssocket.send(JSON.stringify({operation:"setVoiceEnabled",voiceEnabled:nw}));
+						this.unlockWebAudio();
+					},
+					setSideImage(newSrc) {
+					    if (newSrc === this.fsurl && !this.isSideLoading) return;
+						if (newSrc == ''){
+							this.fsurl = ''
+							return;
+						}
+					    const img = new Image();
+					    img.onload = () => {
+							if(this.isSideLoading){
+								this.isSideLoading = false;
+								this.fsurl = newSrc;
+							}
+							this.notifyProcessQueue();
+					    };
+					    img.onerror = (err) => {
+					        this.isSideLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+						this.isSideLoading = true;
+					    img.src = newSrc;
+					},
+					setFrontImage(newSrc) {
+					    if (newSrc === this.flurl && !this.isFrontLoading) return;
+						if (newSrc == ''){
+							this.flurl = ''
+							return;
+						}
+					    const img = new Image();
+					    img.onload = () => {
+							if(this.isFrontLoading){
+								this.isFrontLoading = false;
+								this.flurl = newSrc;
+							}
+							this.notifyProcessQueue();
+					    };
+					    img.onerror = (err) => {
+					        this.isFrontLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+						this.isFrontLoading = true;
+					    img.src = newSrc;
+					},
+					setBackImage(newSrc) {
+					    if (newSrc === this.bgurl && !this.isBackLoading) return;
+						if (newSrc == ''){
+							this.bgurl = ''
+							return;
+						}
+					    const img = new Image();
+					    img.onload = () => {
+							if(this.isBackLoading){
+								this.isBackLoading = false;
+								this.bgurl = newSrc;
+							}
+							this.notifyProcessQueue();
+					    };
+					    img.onerror = (err) => {
+					        this.isBackLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+						this.isBackLoading = true;
+					    img.src = newSrc;
+					},
+					exportHistory(){
+						const form = document.createElement('form');
+						form.method = 'POST';
+						form.action = "exportChat?app="+this.appId+"&chatid="+this.chatId+"&uid="+pageQueries.userId;
+						form.target = 'downloadFrame';
+						let iframe = document.getElementById('downloadFrame');
+						if (!iframe) {
+						    iframe = document.createElement('iframe');
+						    iframe.id = 'downloadFrame';
+						    iframe.name = 'downloadFrame';
+						    iframe.style.display = 'none';
+						    document.body.appendChild(iframe);
+						}
+						document.body.appendChild(form);
+						form.submit();
+						document.body.removeChild(form);
+					},
+					open(done){
+						this.isSideLoading=false;
+						this.isFrontLoading=false;
+						this.isBackLoading=false;
+						this.isAnimateBlocking=false;
+						this.typing=false;
+						let _this=this;
+						this.wssocket=new WebSocket(this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId);
+						this.wssocket.onopen=function(){
+							_this.prepared=true;
+							window.onbeforeunload = function() {
+							    if(_this.wssocket) _this.wssocket.onclose = function () {};
+							    if(_this.wssocket) _this.wssocket.close();
+							};
+							_this.wssocket.onerror=function(ev){
+								_this.wssocket.onerror=function(){};
+								console.info(ev);
+								setTimeout(()=>_this.open(done),500);
+								_this.prepared=false;
+							}
+							if(done) done();
+							// 刷新侧边栏列表 (确保最新)
+                            _this.fetchChatList();
+							fetch("querychat?appid="+_this.appId)
+								.then(p=>p.json())
+								.then(p=>{
+									if(p.length>0){
+										document.title="AI-"+p[0].app+"-"+p[0].name;
+									}
+								})
+						};
+						this.wssocket.onclose=function(ev){var rev=ev?ev:event;setTimeout(()=>_this.open(done),500);_this.prepared=false;if(rev.reason!="")alert(rev.reason);}
+						this.wssocket.onerror=function(ev){console.info(ev);_this.wssocket.onclose=function(){};_this.prepared=false;alert("连接服务器失败！");};
+						this.wssocket.onmessage = function(ev) {
+							var rev=ev?ev:event;
+							var param=eval("("+rev.data+")");
+							if(param.scene!=undefined){
+								let scene_data='';
+								if(param.scene_data){
+									scene_data="resource/"+param.scene_data;
+								}
+								if(param.scene=='front')
+									_this.setFrontImage(scene_data)
+								if(param.scene=='side')
+									_this.setSideImage(scene_data)
+								if(param.scene=='back')
+									_this.setBackImage(scene_data)
+							}
+							if(param.sendbox!=undefined){
+								_this.newMessage=param.sendbox;
+							}
+							if(param.isVoiceEnabled!=undefined)
+								_this.isVoiceEnabled=param.isVoiceEnabled;
+							if(param.notice!=undefined)
+								alert(param.notice);
+							if(param.input!=undefined){
+								var text=prompt(param.prompt);
+								if(text!=null&&text!="")
+									_this.wssocket.send(JSON.stringify({operation:"prompt",input:param.input,content:text}));
+							}
+							if(param.isVoiceUsable!=undefined){
+								_this.isVoiceUsable=param.isVoiceUsable;
+							}
+							if(param.audioId!=undefined){
+								_this.playSoundWithWebAudio(param.audioId);
+							}
+							if(param.price!=undefined){
+								console.info(param.price)
+								_this.price=param.price.substr(0,param.price.indexOf(".")+3);
+							}
+							_this.handlerQueue.push(param)
+							_this.notifyProcessQueue();
+						};
+					},
+					notifyProcessQueue(){
+						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.isAnimateBlocking){
+							this.processQueue();
+						}
+					},
+					processQueue(){
+						while(this.handlerQueue.length>0){
+							this.handleTextMessage(this.handlerQueue.shift());
+							if(this.isSideLoading||this.isFrontLoading||this.isBackLoading||this.isAnimateBlocking)
+								break;
+						}
+					},
+					handleTextMessage(message){
+						if(message.delta!=undefined){
+							this.appendMsg(message.id,message.delta);
+						}
+						if(message.remove!=undefined){
+							this.removeMessage(message.remove);
+						}
+						if(message.message!=undefined){
+							let messageContent=message.message;
+							let _this=this;
+							var ch=0;
+							this.addMessage(message.id,message.title,"");
+							var func=() => {
+								if(ch>=messageContent.length||!_this.isAnimateBlocking){
+									_this.isAnimateBlocking=false;
+									_this.notifyProcessQueue();
+									return;
+								}
+								_this.appendMsg(message.id,messageContent[ch]);
+								ch++;
+								setTimeout(func,50);
+							}
+							this.isAnimateBlocking=true;
+							func();
+						}
+						if(message.messages!=undefined){
+							this.messages.splice(0,this.messages.length)
+							for(var i=0;i<message.messages.length;i++){
+								this.addMessage(message.messages[i].id,message.messages[i].title,message.messages[i].message,message.messages[i].audioId);
+							}
+						}
+						if(message.audioId!=undefined){
+							this.setAudioId(message.id,message.audioId);
+						}
+						if(message.status!=undefined)
+							this.typing=(message.status==1);
+					},
+					openApp(app,id,done){
+						if(this.wssocket){
+							this.wssocket.onclose=function(){};
+							this.wssocket.close();
+						}
+						this.chatId=id;
+						this.appId=app;
+                        this.currentChatId = id;
+						this.messages.splice(0,this.messages.length);
+                        const url = new URL(location.href);
+                        url.searchParams.set('chatid', id);
+                        window.history.replaceState({}, '', url);
+						this.open(done);
+                        this.fetchChatList(); // 刷新列表，高亮当前
+					},
+					triggerRead(){
+						this.wssocket.send(JSON.stringify({operation:"genVoice"}));
+					},
+					refreshMessages() {
+						this.wssocket.send(JSON.stringify({operation:"regen"}));
+					},
+					undoLastOwn() {
+						this.wssocket.send(JSON.stringify({operation:"revert"}));
+					},
+					toggleTyping() {
+					    this.typing = !this.typing;
+					},
+		             adjustTextareaHeight() {
+		                 this.$nextTick(() => {
+		                     const textarea = this.$refs.messageInput;
+		                     if (!textarea) return;
+		                     textarea.style.height = 'auto';
+		                     textarea.style.height = textarea.scrollHeight + 'px';
+		                     const bottomBar = this.$refs.bottomBar;
+		                     if (bottomBar) {
+		                         this.inputBarHeight = bottomBar.offsetHeight;
+		                     }
+		                 });
+		             },
+		             addMessage(id,title,text,aid) {
+		                 this.messages.push({ text: text, title: title, id: id , audioId:aid });
+		                 this.$nextTick(() => {
+		                     const textarea = this.$refs.messageInput;
+		                     if (textarea) {
+		                         textarea.style.height = 'auto';
+		                         textarea.style.height = textarea.scrollHeight + 'px';
+		                     }
+		                     const bottomBar = this.$refs.bottomBar;
+		                     if (bottomBar) {
+		                         this.inputBarHeight = bottomBar.offsetHeight;
+		                     }
+		                     const container = this.$refs.msgContainer;
+		                     if (container) container.scrollTop = container.scrollHeight;
+		                 });
+		             },
+					 setAudioId(id,audioId){
+						for(var i=0;i<this.messages.length;i++){
+							if(this.messages[i].id==id){
+								this.messages[i].audioId=audioId;
+								break;
+							}
+						}
+					 },
+					 unlockWebAudio() {
+						if (this.audioCtx && this.audioCtx.state === 'running') return;
+						this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+						const buffer = this.audioCtx.createBuffer(1, 1, 22050);
+						const source = this.audioCtx.createBufferSource();
+						source.buffer = buffer;
+						source.connect(this.audioCtx.destination);
+						source.start();
+						if (this.audioCtx.state === 'suspended') {
+							this.audioCtx.resume().then(() => {
+								this.isUnlocked = true;
+							});
+						} else {
+							this.isUnlocked = true;
+						}
+					},
+					playSoundWithWebAudio(url) {
+						if (!this.isUnlocked || !this.audioCtx) return;
+						fetch("voice/"+url+".mp3")
+							.then(response => response.arrayBuffer())
+							.then(arrayBuffer => this.audioCtx.decodeAudioData(arrayBuffer))
+							.then(audioBuffer => {
+								const source = this.audioCtx.createBufferSource();
+								source.buffer = audioBuffer;
+								source.connect(this.audioCtx.destination);
+								source.start();
+							});
+					},
+					 appendMsg(id,msg){
+						for(var i=0;i<this.messages.length;i++){
+							if(this.messages[i].id==id){
+								this.messages[i].text+=msg;
+								break;
+							}
+						}
+						this.$nextTick(() => {
+		                     const textarea = this.$refs.messageInput;
+		                     if (textarea) {
+		                         textarea.style.height = 'auto';
+		                         textarea.style.height = textarea.scrollHeight + 'px';
+		                     }
+		                     const bottomBar = this.$refs.bottomBar;
+		                     if (bottomBar) {
+		                         this.inputBarHeight = bottomBar.offsetHeight;
+		                     }
+		                     const container = this.$refs.msgContainer;
+		                     if (container) container.scrollTop = container.scrollHeight;
+		                 });
+					},
+					 removeMessage(id){
+						for(var i=0;i<this.messages.length;i++){
+							if(this.messages[i].id==id){
+								this.messages.splice(i,1);
+								break;
+							}
+						}
+						if(this.messages.length<4)
+							this.requestHistory();
+					 },
+					 sendMessage(content){
+						if(!this.typing)
+							this.speak(content);
+					 },
+					 sendUserMessage(content){
+						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.typing){
+							if(this.newMessage!=''&&this.wssocket!=undefined&&this.wssocket.readyState==1){
+	 							this.sendMessage(this.newMessage);
+								this.newMessage='';
+							}
+						}
+	 				 },
+					 requestHistory(){
+						var data={requestBackLog:true}
+						this.wssocket.send(JSON.stringify(data));
+					 },
+		             openHistory() {
+		                 this.showHistory = true;
+						  this.$nextTick(() => {
+						    if(this.$refs["histlay"]) this.$refs["histlay"].scrollTop= this.$refs["histlay"].scrollHeight;
+						 });
+		             },
+		             closeHistory() {
+		                 this.showHistory = false;
+		             }
+		         },
+		         watch: {
+		             messages: {
+		                 handler() {
+		                     this.$nextTick(() => {
+		                         const container = this.$refs.msgContainer;
+		                         if (container) container.scrollTop = container.scrollHeight;
+		                     });
+		                 },
+		                 deep: true
+		             }
+		         },
+		         mounted() {
+		             this.$nextTick(() => {
+		                 const container = this.$refs.msgContainer;
+		                 if (container) container.scrollTop = container.scrollHeight;
+		                 this.adjustTextareaHeight();
+		             });
+                     // 启动整体初始化
+                     this.startup();
+		         }
+		     });
+        // 移除旧的 initChat 调用，改为 startup 在 mounted 中调用
+    </script>
+</body>
+</html>

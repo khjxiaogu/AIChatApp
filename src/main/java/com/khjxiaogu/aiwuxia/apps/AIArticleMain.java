@@ -73,7 +73,7 @@ public class AIArticleMain extends AIApplication {
 			return null;
 		});
 	}
-
+	String system;
 	public AIArticleMain(File path) {
 		try {
 			system = FileUtil.readString(new File(path, "prompt.txt")).replace("\r", "");

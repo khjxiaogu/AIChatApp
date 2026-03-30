@@ -57,9 +57,6 @@ public abstract class AIApplication {
     protected static Gson gs = new Gson();
     /** 格式化的Gson实例，用于生成美观的JSON输出（带缩进） */
     protected static Gson ppgs = new GsonBuilder().setPrettyPrinting().create();
-
-    /** 系统提示字符串，可能用于初始化对话上下文 */
-    protected String system;
     /** 简单的日志记录器，用于输出日志信息（标签为"AI智能"） */
     protected SimpleLogger logger = new SimpleLogger("AI智能");
 

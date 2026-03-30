@@ -52,7 +52,7 @@ public class AISession {
 		/** 应用程序的当前状态（如界面状态） */
 		private ApplicationState state = new ApplicationState();
 		/** 额外的自定义数据映射，用于存储会话相关的任意键值对 */
-		protected Map<String, String> extraData = new HashMap<>();
+		public Map<String, String> extraData = new HashMap<>();
 		/** 当前对话的轮次/回合数，从 0 开始递增，表示已进行的对话轮次 */
 		private int row;
 		/** 支持撤回的最早对话轮次，即用户允许撤回的对话起始轮次，早于此轮次的条目不可撤回 */

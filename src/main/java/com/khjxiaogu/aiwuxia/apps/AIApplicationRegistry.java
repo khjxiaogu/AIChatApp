@@ -45,6 +45,7 @@ public class AIApplicationRegistry {
 		register("sql",(base,folder,name,meta)->new AISQLMain(folder));
 		register("trpg",(base,folder,name,meta)->new AITRPGSceneMain(base,folder, name, meta));
 		register("wuxia",(base,folder,name,meta)->new AIWuxiaMain(folder));
+		register("custom",(base,folder,name,meta)->new AICustomMain(folder, meta));
 		
 	}
 	private AIApplicationRegistry() {

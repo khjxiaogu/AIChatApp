@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>智能体配置管理</title>
+    <!-- 引入 Vue2 框架 -->
+    <script src="vue.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+		#app {
+		width:90vw;
+		}
+        body {
+            background: linear-gradient(145deg, #f0f4fc 0%, #e6edf6 100%);
+            font-family: 'Segoe UI', 'Roboto', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 32px 20px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 主卡片容器 */
+        .config-container {
+            width: 100%;
+            background: rgba(255,255,255,0.96);
+            backdrop-filter: blur(0px);
+            border-radius: 2rem;
+            box-shadow: 0 20px 35px -12px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0,0,0,0.05);
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+
+        .config-header {
+            background: #1a2c3e;
+            padding: 1.5rem 2rem;
+            color: white;
+        }
+
+        .config-header h1 {
+            margin: 0;
+            font-weight: 600;
+            font-size: 1.8rem;
+            letter-spacing: -0.3px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .config-header .badge {
+            background: #2c5a7a;
+            padding: 4px 12px;
+            border-radius: 60px;
+            font-size: 0.75rem;
+            font-weight: 400;
+            background: #3a6b8f;
+        }
+
+        .config-body {
+            padding: 2rem 2rem 2rem 2rem;
+        }
+
+        /* 表单样式 */
+        .field-group {
+            margin-bottom: 2rem;
+            border-bottom: 1px solid #eef2f8;
+            padding-bottom: 1rem;
+        }
+
+        .field-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            flex-wrap: wrap;
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+            color: #1e2f3f;
+            font-size: 1.1rem;
+        }
+
+        .label-main {
+            display: flex;
+            gap: 12px;
+            align-items: baseline;
+        }
+
+        .limit-hint {
+            font-size: 0.75rem;
+            font-weight: normal;
+            color: #5c6f87;
+            background: #f0f4fa;
+            padding: 2px 8px;
+            border-radius: 20px;
+        }
+
+        .char-counter {
+            font-size: 0.75rem;
+            color: #5f7d9c;
+            background: #f8fafd;
+            padding: 2px 10px;
+            border-radius: 24px;
+        }
+
+        .counter-warning {
+            color: #c94f4f;
+            font-weight: 500;
+        }
+
+        textarea, input[type="number"] {
+            width: 100%;
+            padding: 0.9rem 1.2rem;
+            font-size: 0.95rem;
+            font-family: 'SF Mono', 'Fira Code', monospace, system-ui;
+            border: 1.5px solid #dce5ef;
+            border-radius: 1.2rem;
+            background: #ffffff;
+            transition: 0.2s;
+            resize: vertical;
+            outline: none;
+            color: #1a2c3e;
+        }
+
+        textarea:focus, input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+        }
+
+        input[type="number"] {
+            font-family: monospace;
+            font-weight: 500;
+        }
+
+        .range-hint {
+            font-size: 0.7rem;
+            color: #4b6b8f;
+            margin-top: 6px;
+            margin-left: 6px;
+        }
+
+        .error-msg {
+            background: #fff0f0;
+            border-left: 5px solid #e5484d;
+            padding: 12px 18px;
+            border-radius: 1rem;
+            margin-bottom: 1.8rem;
+            font-size: 0.85rem;
+            color: #b91c1c;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .success-msg {
+            background: #e6f7ec;
+            border-left: 5px solid #2e7d32;
+            padding: 12px 18px;
+            border-radius: 1rem;
+            margin-bottom: 1.8rem;
+            color: #1f5a2a;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-top: 2rem;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .btn {
+            border: none;
+            font-weight: 600;
+            padding: 0.85rem 2rem;
+            border-radius: 2rem;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #f1f5f9;
+            color: #1e3a5f;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .btn-primary {
+            background: #1e4a76;
+            color: white;
+            box-shadow: 0 4px 8px rgba(30,74,118,0.2);
+        }
+
+        .btn-primary:hover {
+            background: #0f3b5e;
+            transform: translateY(-1px);
+        }
+
+        .btn-game {
+            background: #2c5f2d;
+            color: white;
+            background: linear-gradient(95deg, #2b5e2f, #1f4a22);
+        }
+
+        .btn-game:hover {
+            background: #1d4a20;
+            transform: scale(0.98);
+        }
+
+        .btn:active {
+            transform: translateY(1px);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading-overlay {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #eef2ff;
+            border-top-color: #1e4a76;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .status-area {
+            min-height: 70px;
+        }
+
+        hr {
+            margin: 1rem 0;
+            border: none;
+            border-top: 1px solid #e2edf7;
+        }
+
+        .footer-note {
+            font-size: 0.7rem;
+            text-align: center;
+            color: #7c8ea0;
+            margin-top: 1.2rem;
+        }
+
+        @media (max-width: 680px) {
+            .config-body {
+                padding: 1.5rem;
+            }
+            .action-buttons {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .btn {
+                text-align: center;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="config-container">
+        <div class="config-header">
+            <h1>
+                智能体配置
+                <span class="badge" v-if="chatid">编辑模式 · ID: {{ chatid }}</span>
+                <span class="badge" v-else>新增模式</span>
+            </h1>
+        </div>
+        <div class="config-body">
+            <!-- 全局状态提示区 -->
+            <div class="status-area">
+                <div v-if="loadingGlobal" class="error-msg" style="background:#eef2ff;">
+                    <span class="loading-overlay"></span> 正在同步云端配置...
+                </div>
+                <div v-if="errorMsg" class="error-msg">
+                    {{ errorMsg }}
+                </div>
+                <div v-if="successMsg" class="success-msg">
+                    {{ successMsg }}
+                </div>
+            </div>
+   			<div class="field-group">
+                <div class="field-label">
+                    <div class="label-main">
+                        智能体名称
+                        <span class="limit-hint">上限 20 字</span>
+                    </div>
+                    <div class="char-counter" :class="{'counter-warning': briefLen > 20}">
+                        {{ briefLen }} / 20
+                    </div>
+                </div>
+                <textarea rows="1" v-model="form.brief" placeholder="智能体对话名称" maxlength="20"></textarea>
+            </div>
+            <!-- 核心规则 -->
+            <div class="field-group">
+                <div class="field-label">
+                    <div class="label-main">
+                        核心规则
+                        <span class="limit-hint">上限 5000 字</span>
+                    </div>
+                    <div class="char-counter" :class="{'counter-warning': coreRuleLength > 5000}">
+                        {{ coreRuleLength }} / 5000
+                    </div>
+                </div>
+                <textarea rows="30" v-model="form.coreRule" placeholder="定义智能体的核心行为准则、世界观铁律..." maxlength="5000"></textarea>
+            </div>
+
+            <!-- 游戏设定 -->
+            <div class="field-group">
+                <div class="field-label">
+                    <div class="label-main">
+                        游戏设定
+                        <span class="limit-hint">上限 8000 字</span>
+                    </div>
+                    <div class="char-counter" :class="{'counter-warning': gameSettingLength > 8000}">
+                        {{ gameSettingLength }} / 8000
+                    </div>
+                </div>
+                <textarea rows="30" v-model="form.gameSetting" placeholder="背景故事、阵营设定、角色设定、特殊机制、叙事氛围..." maxlength="8000"></textarea>
+            </div>
+
+            <!-- 上下文字数极限 -->
+            <div class="field-group">
+                <div class="field-label">
+                    <div class="label-main">
+                        上下文极限
+                        <span class="limit-hint">范围 30,000 ~ 100,000</span>
+                    </div>
+                    <div class="char-counter">
+                        建议值 50,000
+                    </div>
+                </div>
+                <input type="number" v-model.number="form.contextLimit" min="30000" max="100000" step="1000">
+                <div class="range-hint">上下文窗口越大，记忆细节越丰富，但会极大提升配额消耗。推荐范围 50000 左右。</div>
+            </div>
+
+            <!-- 开始游戏按钮 (仅当url存在时显示) -->
+            <div v-if="form.url && form.url.trim() !== ''" style="margin: 1rem 0 1.2rem 0;">
+                <button class="btn btn-game" @click="openGame" style="width:100%;">
+                    开始游戏 &nbsp;→
+                </button>
+            </div>
+
+            <hr />
+
+            <!-- 操作按钮组 -->
+            <div class="action-buttons">
+                <button class="btn" @click="resetToLocalDefault" :disabled="saving">重置表单</button>
+                <button class="btn btn-primary" @click="saveConfig" :disabled="saving || loadingGlobal">
+                    <span v-if="saving" class="loading-overlay" style="border-top-color:white;"></span>
+                    {{ saving ? '保存中...' : '💾 保存设置' }}
+                </button>
+            </div>
+            <div class="footer-note">
+                * 保存后配置将同步至云端，并自动刷新游戏入口状态
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 工具函数：获取URL参数
+    function getUrlParam(name) {
+        const params = new URLSearchParams(window.location.search);
+        let ret= params.get(name);
+        if(ret===null)
+        	return undefined;
+        return ret;
+    }
+
+    // 更新浏览器URL参数（不刷新页面），仅用于保存成功后同步chatid显示
+    function updateUrlChatid(chatid) {
+        if (!chatid) return;
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('chatid') !== chatid) {
+            url.searchParams.set('chatid', chatid);
+            window.history.replaceState({}, '', url.toString());
+        }
+    }
+
+    // 移除URL中的chatid参数（新增模式）
+    function removeUrlChatid() {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('chatid')) {
+            url.searchParams.delete('chatid');
+            window.history.replaceState({}, '', url.toString());
+        }
+    }
+
+    new Vue({
+        el: '#app',
+        data: {
+            form: {
+                coreRule: '',
+                gameSetting: '',
+                brief: '',
+                contextLimit: 60000,    // 默认建议值
+                url: ''                 // 游戏入口url，来自后端
+            },
+            chatid: null,              // 当前编辑的id，null表示新增模式
+            loadingGlobal: false,      // 初次加载或获取默认数据loading
+            saving: false,
+            errorMsg: '',
+            successMsg: ''
+        },
+        computed: {
+            coreRuleLength() {
+                return (this.form.coreRule || '').length;
+            },
+            gameSettingLength() {
+                return (this.form.gameSetting || '').length;
+            },
+            briefLen() {
+                return (this.form.brief || '').length;
+            },
+        },
+        watch: {
+            // 保证数值范围合法，如果超出范围自动修正
+            'form.contextLimit': {
+                handler(val) {
+                    if (val !== undefined && val !== null && !isNaN(val)) {
+                        let num = Number(val);
+                        if (num < 30000) this.form.contextLimit = 30000;
+                        if (num > 100000) this.form.contextLimit = 100000;
+                    } else if (val === '' || val === null) {
+                        this.form.contextLimit = 60000;
+                    }
+                },
+                immediate: false
+            }
+        },
+        mounted() {
+            this.initializePage();
+        },
+        methods: {
+            // 初始化: 解析chatid，调用对应接口
+            async initializePage() {
+                this.loadingGlobal = true;
+                this.errorMsg = '';
+                this.successMsg = '';
+                const chatidParam = getUrlParam('chatid');
+                
+                try {
+                    if (chatidParam) {
+                        // 存在chatid参数 => 尝试获取指定配置
+                        await this.loadConfigByChatid(chatidParam);
+                    } else {
+                        // 无chatid参数 => 不带参数获取默认数据 (新增模式预填)
+                        await this.loadDefaultConfigData();
+                    }
+                } catch (err) {
+                    console.warn('初始化异常', err);
+                    // 兜底: 使用本地默认值
+                    this.applyDefaultFormValues();
+                    this.chatid = null;
+                    if (!this.errorMsg) this.errorMsg = '加载配置失败，已使用本地默认值';
+                } finally {
+                    this.loadingGlobal = false;
+                }
+            },
+            async loadConfigByChatid(chatid) {
+                const url = `chatconfig?chatid=${encodeURIComponent(chatid)}&uid=`+getUrlParam("uid");
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                
+                if (response.status === 404) {
+                    // 进入新增模式：清空chatid，然后获取默认数据（不带参数）
+                    this.chatid = null;
+                    removeUrlChatid();  // 同步清除地址栏参数
+                    await this.loadDefaultConfigData();
+                    return;
+                }
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: 获取配置失败`);
+                }
+                
+                const data = await response.json();
+                // 填充表单数据，并保留chatid（编辑模式）
+                this.applyFormData(data, true);
+                this.chatid = chatid;   // 使用地址参数中的chatid作为当前编辑id
+                // 如果后端返回的数据中包含url，直接显示按钮，无额外操作
+                if (data.url !== undefined) {
+                    this.form.url = data.url || '';
+                }
+            },
+            async loadDefaultConfigData() {
+                try {
+                    const response = await fetch('chatconfig', {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    if (!response.ok) {
+                        throw new Error(`默认配置加载失败 ${response.status}`);
+                    }
+                    const defaultData = await response.json();
+                    // 重要: 仅使用字段填充表单，不设置chatid (新增模式强制null)
+                    this.applyFormData(defaultData, false);
+                    this.chatid = null;
+                    // 清除url中的chatid参数
+                    removeUrlChatid();
+                } catch (err) {
+                    console.warn('获取默认配置失败，使用内置默认值', err);
+                    this.applyDefaultFormValues();
+                    this.chatid = null;
+                    this.errorMsg = '无法获取默认配置，当前为本地编辑模式';
+                }
+            },
+
+            // 将后端返回数据应用到表单 (keepChatidFlag: 是否保留返回数据中的chatid字段? 但新增模式下强制忽略id)
+            applyFormData(data, isEditMode = false) {
+                if (!data) return;
+                // 核心规则
+                if (data.coreRule !== undefined) this.form.coreRule = data.coreRule || '';
+                if (data.gameSetting !== undefined) this.form.gameSetting = data.gameSetting || '';
+                // 上下文字数极限: 确保范围
+                let ctxLimit = data.contextLimit;
+                if (ctxLimit !== undefined && ctxLimit !== null) {
+                    let num = Number(ctxLimit);
+                    if (!isNaN(num)) {
+                        if (num < 30000) num = 30000;
+                        if (num > 100000) num = 100000;
+                        this.form.contextLimit = num;
+                    } else {
+                        this.form.contextLimit = 60000;
+                    }
+                } else if (!this.form.contextLimit) {
+                    this.form.contextLimit = 50000;
+                }
+                if (data.brief !== undefined) this.form.brief = data.brief || '';
+                // url字段 (游戏按钮)
+                if (data.url !== undefined) this.form.url = data.url || '';
+                
+                // 注意：编辑模式下如果返回了新的chatid，但是一般我们保留原有chatid，但以防万一
+                if (isEditMode && data.chatid && this.chatid !== data.chatid) {
+                    // 若后端返回不同chatid则同步（极少数情况）
+                    this.chatid = data.chatid;
+                    updateUrlChatid(this.chatid);
+                }
+            },
+            
+            // 本地完全默认值 (离线/异常兜底)
+            applyDefaultFormValues() {
+                this.form.coreRule = '';
+                this.form.gameSetting = '';
+                this.form.contextLimit = 60000;
+                this.form.url = '';
+            },
+
+            // 重置表单为当前模式下的初始本地状态（不清除chatid概念，但重置为空白/建议值）
+            resetToLocalDefault() {
+                if (this.chatid) {
+                    // 编辑模式下重置需要谨慎: 重置为当前加载的初始数据备份？但为了方便，仅清空文字区域并重置上下文极限为60000，
+                    // 但保留url不清除（因为url是游戏入口，重置表单不应清掉游戏链接）但是遵循用户体验，重置核心规则/游戏设定为空，保留url, 极限建议60000
+                    this.form.coreRule = '';
+                    this.form.gameSetting = '';
+                    this.form.contextLimit = 60000;
+                    // 注意: 不清空url，因为url是独立游戏入口，重置规则不重置游戏地址
+                    this.successMsg = '已重置核心规则与游戏设定';
+                    setTimeout(() => { this.successMsg = ''; }, 2000);
+                } else {
+                    // 新增模式重置：清空所有内容，保留默认极限值
+                    this.form.coreRule = '';
+                    this.form.gameSetting = '';
+                    this.form.contextLimit = 60000;
+                    // 新增模式重置时，如果有url字段来源于默认配置，不清除url（因为可能会丢失开始游戏按钮）。但重置时不清除url，仅重置文本字段
+                    this.successMsg = '表单已重置（保留游戏入口）';
+                    setTimeout(() => { this.successMsg = ''; }, 2000);
+                }
+                // 清除错误提示
+                this.errorMsg = '';
+            },
+            
+            async saveConfig() {
+                // 前端校验
+                if (!this.validateForm()) return;
+                
+                this.saving = true;
+                this.errorMsg = '';
+                this.successMsg = '';
+                
+                try {
+                    const payload = {
+                        coreRule: this.form.coreRule || '',
+                        gameSetting: this.form.gameSetting || '',
+                        brief: this.form.brief || '',
+                        contextLimit: Number(this.form.contextLimit)
+                    };
+                    // 编辑模式：存在chatid则携带
+                    if (this.chatid && this.chatid !== null && this.chatid !== '') {
+                        payload.chatid = this.chatid;
+                    }
+                    
+                    const response = await fetch('chatconfig?uid='+getUrlParam("uid"), {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    if (!response.ok) {
+                        let errDetail = '';
+                        try {
+                            const errBody = await response.json();
+                            errDetail = errBody.message || JSON.stringify(errBody);
+                        } catch(e) {}
+                        throw new Error(`保存失败 (${response.status}): ${errDetail}`);
+                    }
+                    
+                    const result = await response.json();
+                    // 利用接口返回值更新表单数据 (包括url, 以及其他字段可能被后端修正)
+                    this.applyFormData(result, true);
+                    
+                    // 关键: 如果返回结果中有chatid字段，并且当前模式为新增（chatid为空），则同步更新chatid并更新地址栏
+                    if (result.chatid && (!this.chatid || this.chatid !== result.chatid)) {
+                        this.chatid = result.chatid;
+                        updateUrlChatid(this.chatid);
+                    } else if (result.chatid && this.chatid && this.chatid !== result.chatid) {
+                        // 编辑模式下后端返回不同chatid（罕见）同步
+                        this.chatid = result.chatid;
+                        updateUrlChatid(this.chatid);
+                    }
+                    
+                    // 确保url字段显示按钮（已经通过applyFormData更新form.url）
+                    this.successMsg = '配置已成功保存！';
+                    setTimeout(() => { this.successMsg = ''; }, 3000);
+                    
+                    // 额外检查数值合法性
+                    if (this.form.contextLimit < 30000 || this.form.contextLimit > 100000) {
+                        this.form.contextLimit = Math.min(100000, Math.max(30000, this.form.contextLimit));
+                    }
+                    
+                } catch (err) {
+                    console.error('保存异常:', err);
+                    this.errorMsg = err.message || '网络错误，保存失败，请稍后重试';
+                } finally {
+                    this.saving = false;
+                }
+            },
+            
+            // 表单验证：字数限制，数值范围
+            validateForm() {
+                // 核心规则字数
+                const coreLen = this.coreRuleLength;
+                if (coreLen > 5000) {
+                    this.errorMsg = `核心规则超出字数限制（最多5000字，当前${coreLen}字）`;
+                    return false;
+                }
+                const gameLen = this.gameSettingLength;
+                if (gameLen > 8000) {
+                    this.errorMsg = `游戏设定超出字数限制（最多8000字，当前${gameLen}字）`;
+                    return false;
+                }
+                const briefLen=this.briefLen;
+                if (briefLen > 20) {
+                    this.errorMsg = `智能体名称超出字数限制（最多20字，当前${briefLen}字）`;
+                    return false;
+                }
+                let ctx = Number(this.form.contextLimit);
+                if (isNaN(ctx)) {
+                    this.errorMsg = '上下文字数极限必须是有效数字';
+                    return false;
+                }
+                if (ctx < 30000 || ctx > 100000) {
+                    this.errorMsg = '上下文字数极限范围必须在 30,000 至 100,000 之间';
+                    return false;
+                }
+                return true;
+            },
+            
+            // 开始游戏：新标签页打开url
+            openGame() {
+                if (this.form.url && this.form.url.trim()) {
+                    let targetUrl = this.form.url.trim();
+                    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                        // 如果是相对路径，补全协议相对或者直接打开，浏览器会自动处理
+                        targetUrl = targetUrl;
+                    }
+                    window.open(targetUrl, '_blank');
+                } else {
+                    this.errorMsg = '游戏入口地址无效，请先保存有效的配置';
+                    setTimeout(() => { if(this.errorMsg === '游戏入口地址无效，请先保存有效的配置') this.errorMsg = ''; }, 2000);
+                }
+            }
+        }
+    });
+</script>
+</body>
+</html>

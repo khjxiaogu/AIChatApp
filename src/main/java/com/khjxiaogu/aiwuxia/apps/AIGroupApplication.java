@@ -50,6 +50,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 public class AIGroupApplication extends AIApplication {
 	String name;
 	String charaName;
+	String system;
 	@Override
 	public void provideInitial(AISession state) {
 	}

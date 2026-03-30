@@ -66,6 +66,7 @@ public class AITRPGSceneMain extends AIApplication {
 	SceneSelector character;
 	AttributeValidator validator;
 	File basePath;
+	String system;
 
 
 	public AITRPGSceneMain(File basePath,File modelFolder,String charaname,JsonObject meta) {

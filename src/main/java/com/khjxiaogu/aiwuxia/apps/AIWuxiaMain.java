@@ -63,6 +63,7 @@ public class AIWuxiaMain extends AIApplication {
 
 	List<String> femalenames;
 	List<String> malenames;
+	String system;
 	{
 		
 		// naming

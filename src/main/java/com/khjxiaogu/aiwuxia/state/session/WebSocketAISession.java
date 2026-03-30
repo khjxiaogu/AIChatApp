@@ -65,7 +65,7 @@ import io.netty.util.concurrent.UnorderedThreadPoolEventExecutor;
 public class WebSocketAISession extends AISession implements WebsocketEvents {
 
 	ChannelGroup conn=new DefaultChannelGroup(new UnorderedThreadPoolEventExecutor(3));
-	private final AIChatService parent;
+	protected final AIChatService parent;
 	private final String chatId;
 	File fn;
 	
@@ -154,6 +154,13 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 				}
 			});
 		});
+	}
+	public boolean onModifyAttempt() {
+		if(isGenerating)return false;
+		return lock.compareAndSet(false, true);
+	}
+	public void onModifyComplete() {
+		lock.set(false);
 	}
 	@Override
 	public void onMessage(Channel conn, String message) {
@@ -279,9 +286,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			uncached_cost+=usage.prompt_tokens;
 		}else {
 			uncached_cost+=usage.prompt_cache_miss_tokens;
-			uncached_cost+=Math.ceil(usage.prompt_cache_hit_tokens/10f);
+			uncached_cost+=usage.prompt_cache_hit_tokens/10f;
 		}
-		uncached_cost+=Math.ceil(usage.completion_tokens*1.5f);
+		uncached_cost+=usage.completion_tokens*1.5f;
 		parent.consumeTokens(user, uncached_cost);
 		
 		super.addUsage(usage);
