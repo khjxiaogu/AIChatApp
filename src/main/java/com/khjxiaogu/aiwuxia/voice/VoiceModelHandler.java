@@ -24,6 +24,7 @@
 package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
 
 public class VoiceModelHandler {
 	private VoiceModelHandler() {
@@ -43,9 +44,9 @@ public class VoiceModelHandler {
 	 * @return 生成的音频数据，以字节数组(byte[])形式返回，格式一般为mp3。
 	 * @throws IOException 当调用音频大模型服务过程中发生输入输出异常时抛出，如网络连接失败、服务响应异常等
 	 */
-	public static byte[] getAudioData(String botid, String uid, String text, String messageId) throws IOException{
+	public static CompletableFuture<VoiceGenerationResult> getAudioData(String botid, String uid, String text, String messageId){
 		if(model==null)
-			throw new IOException("无可用音频大模型");
+			return CompletableFuture.failedFuture(new IOException("无可用音频大模型"));
 		return model.getAudioData(botid, uid, text, messageId);
 	};
 }

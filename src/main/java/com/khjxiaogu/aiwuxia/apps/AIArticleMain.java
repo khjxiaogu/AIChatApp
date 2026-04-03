@@ -28,13 +28,12 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
-import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -84,7 +83,7 @@ public class AIArticleMain extends AIApplication {
 	}
 
 	public ApplicationState sendAndProcessResult(AISession state, JsonObject req) throws IOException {
-		AIOutput resp=LLMConnector.call(AIRequest.builder().taskType(TaskType.STORY).build(req));
+		AIOutput resp=LLMConnector.call(AIRequest.builder(state).taskType(TaskType.STORY).build(req));
 		resp.addUsageListener(state::addUsage);
 		try (BufferedReader sc = new BufferedReader(resp.getContent())) {
 			return precessResponse(sc, state);
@@ -92,7 +91,7 @@ public class AIArticleMain extends AIApplication {
 	}
 
 	public ApplicationState sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		AIOutput resp=LLMConnector.call(AIRequest.builder().taskType(TaskType.STORY).streamed().build(req));
+		AIOutput resp=LLMConnector.call(AIRequest.builder(state).taskType(TaskType.STORY).streamed().build(req));
 		resp.addUsageListener(state::addUsage);
 		try (BufferedReader sc = new BufferedReader(resp.getContent())) {
 			return precessResponse(sc, state);

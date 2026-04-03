@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.llm.providers;
+package com.khjxiaogu.aiwuxia.llm.providers.deepseek;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
@@ -36,7 +36,6 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -69,7 +68,7 @@ public class DeepseekModelProvider implements ModelProvider{
 		//System.out.println(ppgs.toJson(retjs));
 		RespScheme resp = gs.fromJson(retjs, RespScheme.class);
 		logger.info("=================Usage===============");
-		logger.info(resp.usage);
+		logger.info(resp.getUsage());
 		return resp;
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
@@ -80,8 +79,8 @@ public class DeepseekModelProvider implements ModelProvider{
 		logger.info("trigger generation");
 		String tosend = gs.toJson(request.request);
 		StreamedAIOutput readable=new StreamedAIOutput();
-		Usage usage=new Usage();
-		Usage simusage=new Usage();
+		DeepseekUsage usage=new DeepseekUsage();
+		DeepseekUsage simusage=new DeepseekUsage();
 		exec.submit(()->{
 			try {
 				HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
@@ -109,7 +108,7 @@ public class DeepseekModelProvider implements ModelProvider{
 							}
 							//if(readable.isEnded())
 							//	throw new ClientTruncatedException();
-							RespScheme scheme=gs.fromJson(s, RespScheme.class);
+							DeepseekRespScheme scheme=gs.fromJson(s, DeepseekRespScheme.class);
 							Message delta=scheme.choices.get(0).delta;
 							if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
 								simusage.completion_tokens++;
@@ -131,5 +130,10 @@ public class DeepseekModelProvider implements ModelProvider{
 		});
 	
 		return readable;
+	}
+
+	@Override
+	public boolean supportsHinted(AIRequest request) {
+		return "deepseek".equals(request.modelHint);
 	}
 }

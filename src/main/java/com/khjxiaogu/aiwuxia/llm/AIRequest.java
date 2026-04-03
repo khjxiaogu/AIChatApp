@@ -24,6 +24,7 @@
 package com.khjxiaogu.aiwuxia.llm;
 
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
 
 /**
  * 统一请求实体，封装了向 AI 模型发送请求所需的所有参数。
@@ -47,17 +48,35 @@ public class AIRequest {
      */
     public static enum MultimodalType {
         /** 纯文本（默认） */
-        TEXT_ONLY,
+        TEXT_ONLY(true, false, false, false),
         /** 文本 + 图片 */
-        TEXT_IMAGE,
+        TEXT_IMAGE(true, true, false, false),
         /** 文本 + 音频 */
-        TEXT_AUDIO,
+        TEXT_AUDIO(true, false, true, false),
         /** 文本 + 视频 */
-        TEXT_VIDEO,
+        TEXT_VIDEO(true, false, false, true),
         /** 纯图片（用于图生文、图生图等任务） */
-        IMAGE_ONLY,
+        IMAGE_ONLY(false, true, false, false),
         /** 纯音频（用于语音识别、音频理解等） */
-        AUDIO_ONLY
+        AUDIO_ONLY(false, false, true, false);
+
+        public final boolean text, image, audio, video;
+
+        private MultimodalType(boolean text, boolean image, boolean audio, boolean video) {
+            this.text = text;
+            this.image = image;
+            this.audio = audio;
+            this.video = video;
+        }
+
+        public boolean canSupport(boolean text, boolean image, boolean audio, boolean video) {
+            // 如果枚举要求支持某模态，但实际模型不支持，则返回 false
+            if (this.text && !text) return false;
+            if (this.image && !image) return false;
+            if (this.audio && !audio) return false;
+            if (this.video && !video) return false;
+            return true;
+        }
     }
 
     /**
@@ -105,6 +124,10 @@ public class AIRequest {
 
     /** 是否启用流式输出（实时返回生成内容） */
     public final boolean stream;
+    
+    public final String modelHint;
+
+    public final String user;
 
     /**
      * 私有构造函数，通过 Builder 创建实例。
@@ -119,6 +142,8 @@ public class AIRequest {
         this.taskType = builder.taskType;
         this.stream = builder.stream;
         this.multimodal = builder.multimodal;
+        this.modelHint = builder.modelHint;
+        this.user = builder.user;
     }
 
     /**
@@ -126,9 +151,12 @@ public class AIRequest {
      *
      * @return Builder 对象
      */
-    public static Builder builder() {
-        return new Builder();
+    public static Builder builder(AISession session) {
+        return new Builder(session.user).modelHint(session.getData().modelHint);
     }
+	public static Builder builder(String user) {
+		return new Builder(user);
+	}
 
     /**
      * 返回该请求的字符串表示，便于调试。
@@ -155,7 +183,12 @@ public class AIRequest {
         private boolean stream = false;
         /** 多模态类型，默认为 TEXT_ONLY */
         private MultimodalType multimodal = MultimodalType.TEXT_ONLY;
-
+        
+        private String modelHint=null;
+        private String user="";
+        Builder(String user){
+        	this.user=user;
+        }
         /**
          * 设置模型类别。
          *
@@ -201,7 +234,11 @@ public class AIRequest {
             this.stream = stream;
             return this;
         }
-
+        public Builder modelHint(String modelHint) {
+            this.modelHint = modelHint;
+            return this;
+        }
+        
         /**
          * 设置多模态类型。
          *
@@ -247,4 +284,6 @@ public class AIRequest {
             return this;
         }
     }
+
+
 }

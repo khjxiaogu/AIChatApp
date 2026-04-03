@@ -41,7 +41,14 @@ public interface ModelProvider {
      * @return 如果支持该请求则返回 true，否则返回 false
      */
     boolean supports(AIRequest request);
-
+    /**
+     * 判断当前提供者是否支持处理给定的请求。
+     * 可根据请求中的模型类别、多模态类型、推理强度等属性进行判断。
+     *
+     * @param request 待检查的 AI 请求对象
+     * @return 如果支持该请求则返回 true，否则返回 false
+     */
+    boolean supportsHinted(AIRequest request);
     /**
      * 执行 AI 模型调用，并返回输出结果。
      * 该方法可能会阻塞直到模型响应完成或发生 I/O 错误。

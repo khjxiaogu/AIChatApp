@@ -29,8 +29,8 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import com.khjxiaogu.aiwuxia.llm.providers.DeepseekModelProvider;
-import com.khjxiaogu.aiwuxia.llm.providers.VolcanoModelProvider;
+import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekModelProvider;
+import com.khjxiaogu.aiwuxia.llm.providers.volcano.VolcanoModelProvider;
 /**
  * LLM（大语言模型）连接器，提供统一的静态入口来调用 AI 模型。
  * 该类通过 {@link ModelRouter} 路由请求到合适的 {@link ModelProvider}，

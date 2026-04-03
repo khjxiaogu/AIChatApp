@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.voice;
 
+import java.io.IOException;
 import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -159,9 +160,9 @@ public class LocalModelHandshaker implements WebsocketEvents {
      * @param text   要合成的文本内容
      * @return 包含音频字节数组的 {@link CompletableFuture}，如果失败或超时则返回 null
      */
-    public CompletableFuture<byte[]> requireAudio(String chara, String emote, String reqid, String text) {
+    public CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String emote, String reqid, String text) {
         if (pool.isEmpty())
-            return CompletableFuture.completedFuture(null);
+            return CompletableFuture.failedFuture(new IOException("no local voice model found"));
 
         JsonObject request = JsonBuilder.object()
                 .add("chara", chara)
@@ -170,13 +171,14 @@ public class LocalModelHandshaker implements WebsocketEvents {
                 .add("text", text)
                 .add("type", "audiorequest")
                 .end();
-
+    	
         return CompletableFuture.supplyAsync(() -> {
             while (true) {
-                if (pool.isEmpty())
-                    return null;
-                Channel ch = null;
+            	Channel ch = null;
                 try {
+                	if (pool.isEmpty())
+                        throw new IOException("no local voice model found");
+                    
                     // 从池中获取一个连接，最多等待 5 秒
                     ch = pool.poll(5, TimeUnit.SECONDS);
                     if (ch == null) continue; // 超时未获取到连接，重试
@@ -191,17 +193,17 @@ public class LocalModelHandshaker implements WebsocketEvents {
                         while (true) {
                             long currTime = System.currentTimeMillis();
                             if (result.finished) {
-                                return result.data; // 成功接收到数据
+                                return new VoiceGenerationResult(new LocalVoiceUsage(text.length()), result.data,"mp3"); // 成功接收到数据
                             }
                             if (!ch.isActive() || currTime >= endTime)
-                                return null; // 连接断开或超时
+                            	throw new IOException("Connection timeout");
                             
                             // 等待剩余时间，或被唤醒
                             result.wait(endTime - currTime);
                         }
                     }
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    throw new RuntimeException(e);
                 } finally {
                     if (ch != null)
                         pool.offer(ch); // 将连接归还池中

@@ -36,9 +36,12 @@ public class DefaultModelRouter implements ModelRouter {
     public ModelProvider route(AIRequest request) {
         // 简单策略：找第一个支持该请求的 Provider
         // 实际生产中可以做优先级排序、负载均衡、降级策略
-        return providers.stream()
+    	return providers.stream()
+        .filter(p -> p.supportsHinted(request))
+        .filter(p -> p.supports(request))
+        .findFirst()
+        .or(()->providers.stream()
                 .filter(p -> p.supports(request))
-                .findFirst()
-                .orElseThrow(() -> new ModelRouteException("No suitable model found for request: " + request.taskType));
+                .findFirst()).orElseThrow(() -> new ModelRouteException("No suitable model found for request: " + request.taskType));
     }
 }

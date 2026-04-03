@@ -16,10 +16,11 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
-import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
+import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -28,7 +29,7 @@ public class HistoryCompacter {
 	String system;
 	String version;
 	final Gson json=new GsonBuilder().setPrettyPrinting().create();
-	public void compactHistory(Map<String,String> state,String dialog,String charaset,Consumer<Usage> usage) throws ModelRouteException, IOException {
+	public void compactHistory(AISession ostate,Map<String,String> state,String dialog,String charaset,Consumer<UsageIntf> usage) throws ModelRouteException, IOException {
 		StringBuilder summary=new StringBuilder();
 		summary.append("==故事设定==\n").append(charaset).append("\n");
 		
@@ -50,7 +51,7 @@ public class HistoryCompacter {
 		System.out.println(str);
 		int retries=10;
 		while(curSection==null) {
-			curSection=splitSections(LLMConnector.call(constructSummaryrequest(system,str)),usage);
+			curSection=splitSections(LLMConnector.call(constructSummaryrequest(ostate,system,str)),usage);
 			if(curSection==null)
 				try {
 					retries--;
@@ -135,7 +136,7 @@ public class HistoryCompacter {
 		System.out.println();
 		return sb.toString();
 	}
-	public static Map<String,String> splitSections(AIOutput resp,Consumer<Usage> usage) throws IOException {
+	public static Map<String,String> splitSections(AIOutput resp,Consumer<UsageIntf> usage) throws IOException {
 		boolean isWaiting = true;
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
@@ -169,7 +170,7 @@ public class HistoryCompacter {
 			section.put(currentSection, currentContent.toString().trim());
 		return section.isEmpty()?null:section;
 	}
-	public static AIRequest constructSummaryrequest(String prompt,String input) {
+	public static AIRequest constructSummaryrequest(AISession state,String prompt,String input) {
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
 				.add("role", "system").add("content", prompt).end();
 			// if (status != null&&!status.isEmpty())
@@ -178,7 +179,7 @@ public class HistoryCompacter {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+		return AIRequest.builder(state).modelHint("").taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
 	public HistoryCompacter(String system, String version) {

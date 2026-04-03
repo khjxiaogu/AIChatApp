@@ -35,13 +35,14 @@ import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
@@ -56,6 +57,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
+import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 
 public class AICharaTalkMain extends AIApplication {
@@ -226,7 +228,7 @@ public class AICharaTalkMain extends AIApplication {
 				len=0;
 				String str=summery.toString();
 				summery=new StringBuilder();
-				compactor.compactHistory(state.getExtra(), str,charaset,state::addUsage);
+				compactor.compactHistory(state, state.getExtra(), str,charaset,state::addUsage);
 			}
 		}
 		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
@@ -275,7 +277,7 @@ public class AICharaTalkMain extends AIApplication {
 					}
 					
 				}
-				compactor.compactHistory(state.getExtra(), summery.toString(),charaset,state::addUsage);
+				compactor.compactHistory(state ,state.getExtra(), summery.toString(),charaset,state::addUsage);
 				state.getExtra().put("lastSummary",compactor.constructHistory(state.getExtra()));
 				his.forEach(t->t.setValidContext(false));
 				state.setDialogRows((int) (history.getContextLimit()-5));
@@ -293,7 +295,7 @@ public class AICharaTalkMain extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		
-		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).build(b.end().add("temperature", 1.3).add("max_tokens", 1000).end());
+		return AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).build(b.end().add("temperature", 1.3).add("max_tokens", 1000).end());
 
 	}
 
@@ -490,15 +492,17 @@ public class AICharaTalkMain extends AIApplication {
 			(()->{
 				try {
 					logger.info("正在从火山引擎生成语音："+ftext);
-					state.appendVoiceToken(ftext.length());
-					byte[] data=VoiceModelHandler.getAudioData(volcappid,state.user, ftext, faudioId);
 					File aud=new File(basePath,"voice");
 					aud.mkdirs();
+					CompletableFuture<VoiceGenerationResult> data=VoiceModelHandler.getAudioData(volcappid,state.user, ftext, faudioId);
+					
+					VoiceGenerationResult rslt=data.get();
+					state.addUsage(rslt.usage);
 					try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
-						fos.write(data);
+						fos.write(rslt.audioData);
 					};
 					return true;
-				} catch (IOException e) {
+				} catch (Exception e) {
 					e.printStackTrace();
 				}
 				return false;
@@ -509,16 +513,16 @@ public class AICharaTalkMain extends AIApplication {
 					(()->{
 						try {
 							logger.info("正在从本地语音引擎生成语音："+ftext);
-							CompletableFuture<byte[]> dataFuture=LocalVoiceModel.requireAudio(localChara, emote2emote.get(state.getState().perks.get("表情")), faudioId, ftext);
-							byte[] data=dataFuture.get();
-							if(data!=null) {
-								File aud=new File(basePath,"voice");
-								aud.mkdirs();
-								try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
-									fos.write(data);
-								};
-								return true;
-							}
+							File aud=new File(basePath,"voice");
+							aud.mkdirs();
+							CompletableFuture<VoiceGenerationResult> dataFuture=LocalVoiceModel.requireAudio(localChara, emote2emote.get(state.getState().perks.get("表情")), faudioId, ftext);
+							VoiceGenerationResult rslt=dataFuture.get();
+							state.addUsage(rslt.usage);
+							try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
+								fos.write(rslt.audioData);
+							};
+							return true;
+							
 						} catch (IOException | InterruptedException | ExecutionException e) {
 							e.printStackTrace();
 						}

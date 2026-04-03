@@ -24,6 +24,7 @@
 package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
 /**
  * 调用音频大模型接口。
  */
@@ -40,8 +41,7 @@ public interface VoiceModel {
 	 * @param text 待合成的文本内容，即需要转换为音频的文字
 	 * @param messageId 请求消息的全局唯一ID，用于追踪和唯一标识本次音频合成请求
 	 * @return 生成的音频数据，以字节数组(byte[])形式返回，格式一般为mp3
-	 * @throws IOException 当调用音频大模型服务过程中发生输入输出异常时抛出，如网络连接失败、服务响应异常等
 	 */
-	byte[] getAudioData(String botid, String uid, String text, String messageId) throws IOException;
+	CompletableFuture<VoiceGenerationResult> getAudioData(String botid, String uid, String text, String messageId);
 
 }

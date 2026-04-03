@@ -25,6 +25,7 @@ package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.IOException;
 import java.util.Base64;
+import java.util.concurrent.CompletableFuture;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
@@ -34,7 +35,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
  * */
 public class VolcanoVoiceApi implements VoiceModel {
 	@Override
-	public byte[] getAudioData(String botid,String uid,String text,String rid) throws IOException {
+	public CompletableFuture<VoiceGenerationResult> getAudioData(String botid,String uid,String text,String rid){
         String appid = System.getProperty("volcappid");
         String accessToken = System.getProperty("volcsecret");
         JsonObject send=JsonBuilder.object().object("app").add("appid", appid).add("token", accessToken).add("cluster", "volcano_icl").end()
@@ -42,12 +43,20 @@ public class VolcanoVoiceApi implements VoiceModel {
         .object("audio").add("voice_type", botid).add("encoding", "mp3").end()
         .object("request").add("reqid",rid).add("operation", "query").add("text", text).end()
         .end();
-        JsonObject data=new HttpRequestBuilder("https://openspeech.bytedance.com/api/v1/tts")
-        		.header("Authorization", "Bearer;"+accessToken)
-        		.header("Content-Type", "application/json; charset=utf-8")
-        		.post(true).send(send.toString()).readJson();
-        if(data.has("data"))
-        	return Base64.getDecoder().decode(data.get("data").getAsString());
-        throw new IOException("API Returned "+data);
+        JsonObject data;
+		try {
+			data = new HttpRequestBuilder("https://openspeech.bytedance.com/api/v1/tts")
+					.header("Authorization", "Bearer;"+accessToken)
+					.header("Content-Type", "application/json; charset=utf-8")
+					.post(true).send(send.toString()).readJson();
+			 if(data.has("data")) {
+		        	return CompletableFuture.completedFuture(new VoiceGenerationResult(new VolcanoVoiceUsage(text.length()), Base64.getDecoder().decode(data.get("data").getAsString()),"mp3"));
+		     }
+
+		     return CompletableFuture.failedFuture(new IOException("API Returned "+data));
+		} catch (IOException e) {
+			return CompletableFuture.failedFuture(e);
+		}
+       
 	}
 }

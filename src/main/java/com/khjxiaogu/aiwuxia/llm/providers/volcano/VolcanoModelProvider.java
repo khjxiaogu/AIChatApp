@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.llm.providers;
+package com.khjxiaogu.aiwuxia.llm.providers.volcano;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
@@ -34,8 +34,8 @@ import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
+import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekUsage;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.respscheme.Usage;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -45,7 +45,7 @@ public class VolcanoModelProvider implements ModelProvider{
 	SimpleLogger logger=new SimpleLogger("Deepseek");
 	@Override
 	public boolean supports(AIRequest request) {
-		return request.multimodal==MultimodalType.TEXT_ONLY;
+		return request.multimodal.canSupport(true, true, true, false);
 	}
 
 	@Override
@@ -63,12 +63,19 @@ public class VolcanoModelProvider implements ModelProvider{
 		case LOGIC:
 		case ANALYSIS:return "doubao-seed-2-0-pro-260215";
 		case STORY:
-			if(request.multimodal==MultimodalType.TEXT_ONLY)
-				return "doubao-1-5-pro-32k-250115";
-			else 
-				return "doubao-seed-2-0-lite-260215";
+			return "doubao-seed-2-0-lite-260215";
 		}
 		return "doubao-seed-2-0-lite-260215";
+	}
+	public VolcanoUsage getModelUsage(AIRequest request) {
+		switch(request.taskType) {
+		case CODE:
+		case LOGIC:
+		case ANALYSIS:return new VolcanoUsagePro();
+		case STORY:
+		default:break;
+		}
+		return new VolcanoUsageLite();
 	}
 	public String getEffort(AIRequest request) {
 		switch(request.strength) {
@@ -81,6 +88,7 @@ public class VolcanoModelProvider implements ModelProvider{
 	}
 	Gson gs=new Gson();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
+		VolcanoUsage realUsage=getModelUsage(request);
 		request.request.addProperty("model", getModelType(request));
 		request.request.addProperty("reasoning_effort", getEffort(request));
 		request.request.addProperty("service_tier", "default");
@@ -94,16 +102,21 @@ public class VolcanoModelProvider implements ModelProvider{
 	
 				.post(true).send(tosend).readJson();
 		//System.out.println(ppgs.toJson(retjs));
-		RespScheme resp = gs.fromJson(retjs, RespScheme.class);
+		VolcanoRespScheme resp = gs.fromJson(retjs, VolcanoRespScheme.class);
 		if(resp.choices.get(0).message.reasoning_content!=null) {
 			logger.info("=================Reasoner===============");
 			logger.info(resp.choices.get(0).message.reasoning_content);
 		}
 		logger.info("=================Usage===============");
 		logger.info(resp.usage);
+		realUsage.set(resp.usage);
+		realUsage.zoomEquivantly();
+		resp.usage=realUsage;
+		
 		return resp;
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
+		VolcanoUsage usage=getModelUsage(request);
 		request.request.addProperty("model", getModelType(request));
 		request.request.addProperty("reasoning_effort", getEffort(request));
 		request.request.addProperty("stream", true);
@@ -113,7 +126,6 @@ public class VolcanoModelProvider implements ModelProvider{
 		logger.info("trigger generation");
 		String tosend = gs.toJson(request.request);
 		StreamedAIOutput readable=new StreamedAIOutput();
-		Usage usage=new Usage();
 		exec.submit(()->{
 		try {
 			HttpRequestBuilder.create("ark.cn-beijing.volces.com").url("/api/v3/chat/completions")
@@ -122,7 +134,10 @@ public class VolcanoModelProvider implements ModelProvider{
 
 					.post(true).send(tosend).readSSE((ev,s)->{
 						if(readable.isInterrupted()) {
+							logger.info("=================Usage===============");
+							logger.info(usage);
 							logger.info("interrupted generation");
+							usage.zoomEquivantly();
 							readable.setUsage(usage);
 							readable.endContent();
 							return false;
@@ -132,13 +147,14 @@ public class VolcanoModelProvider implements ModelProvider{
 							logger.info("=================Usage===============");
 							logger.info(usage);
 							logger.info("finish generation");
+							usage.zoomEquivantly();
 							readable.setUsage(usage);
 							readable.endContent();
 							return false;
 						}
 						//if(readable.isEnded())
 						//	throw new ClientTruncatedException();
-						RespScheme scheme=gs.fromJson(s, RespScheme.class);
+						VolcanoRespScheme scheme=gs.fromJson(s, VolcanoRespScheme.class);
 						Message delta=scheme.choices.get(0).delta;
 						if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
 							readable.putReasoner(delta.reasoning_content);
@@ -158,5 +174,10 @@ public class VolcanoModelProvider implements ModelProvider{
 		});
 	
 		return readable;
+	}
+
+	@Override
+	public boolean supportsHinted(AIRequest request) {
+		return "doubao".equals(request.modelHint);
 	}
 }

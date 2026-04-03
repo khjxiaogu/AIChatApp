@@ -39,19 +39,17 @@ import java.util.regex.Pattern;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.status.MemoryAttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
+import com.khjxiaogu.aiwuxia.state.status.MemoryAttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -209,7 +207,7 @@ public class AIWuxiaMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		Builder builder=AIRequest.builder().taskType(TaskType.STORY);
+		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY);
 		return builder.build(b.end().add("temperature", 1.6).add("frequency_penalty", 0.3).add("max_tokens", 8192).end());
 
 	}

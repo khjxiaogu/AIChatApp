@@ -157,7 +157,7 @@ public class AIGroupApplication extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		//头几次用思维链版本构建格式
-		Builder builder=AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.WEAK);
+		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK);
 		
 		return builder.build(b.end().add("temperature", 1.3).add("max_tokens", 500).end());
 
@@ -178,7 +178,7 @@ public class AIGroupApplication extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+		return AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
 	public String makeSummaryrequest(AISession state,String summary) throws IOException {

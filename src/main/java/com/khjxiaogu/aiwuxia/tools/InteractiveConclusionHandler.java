@@ -35,6 +35,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -51,7 +52,7 @@ public class InteractiveConclusionHandler {
 		try(PrintStream fos=new PrintStream(output,"UTF-8")){
 			for(File f:workingPath.listFiles()) {
 				String in=new String(FileUtil.readAll(f),"UTF-16LE");
-				AIRequest ar=AIRequest.builder().enableDeepThink().taskType(TaskType.ANALYSIS).strength(ReasoningStrength.STRONG).streamed()
+				AIRequest ar=AIRequest.builder("admin").enableDeepThink().taskType(TaskType.ANALYSIS).strength(ReasoningStrength.STRONG).streamed()
 				.build(conclusionRequest(system,in));
 				AIOutput ao=LLMConnector.call(ar);
 				printAndCollectContent(ao.getReasoner());

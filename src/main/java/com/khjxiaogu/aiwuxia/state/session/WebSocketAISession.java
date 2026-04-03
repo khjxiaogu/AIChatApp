@@ -43,7 +43,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
-import com.khjxiaogu.aiwuxia.respscheme.Usage;
+import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -280,16 +280,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		return chatId;
 	}
 	@Override
-	public void addUsage(Usage usage) {
-		int uncached_cost=0;
-		if(usage.prompt_cache_hit_tokens==0&&usage.prompt_cache_miss_tokens==0) {
-			uncached_cost+=usage.prompt_tokens;
-		}else {
-			uncached_cost+=usage.prompt_cache_miss_tokens;
-			uncached_cost+=usage.prompt_cache_hit_tokens/10f;
-		}
-		uncached_cost+=usage.completion_tokens*1.5f;
-		parent.consumeTokens(user, uncached_cost);
+	public void addUsage(UsageIntf usage) {
+
+		parent.consumeTokens(user, (int) Math.floor(usage.getEquivantTokens()));
 		
 		super.addUsage(usage);
 	}

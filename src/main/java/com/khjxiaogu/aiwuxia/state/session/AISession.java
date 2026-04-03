@@ -33,9 +33,10 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
-import com.khjxiaogu.aiwuxia.respscheme.Usage;
+import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
@@ -60,9 +61,10 @@ public class AISession {
 		/** 当前对话阶段（如初始化、进行中、结束等） */
 		private ApplicationStage stage = ApplicationStage.INITIALIZE;
 		/** 会话的使用量统计（如 token 消耗、费用等） */
-		private Usage usage = new Usage();
+		private UsageTracker usage = new UsageTracker();
 		/** 标记是否为音频会话，影响处理逻辑（如语音识别、语音合成） */
 		public boolean isAudioSession = false;
+		public String modelHint="";
 	}
 
 	/** 保存对话历史条目的容器，提供对历史记录的增删改查 */
@@ -356,9 +358,9 @@ public class AISession {
 	/**
 	 * 累加使用量统计。
 	 *
-	 * @param usage 要累加的 {@link Usage} 对象
+	 * @param usage 要累加的 {@link GrokUsage} 对象
 	 */
-	public void addUsage(Usage usage) {
+	public void addUsage(UsageIntf usage) {
 		data.usage.add(usage);
 	}
 	public boolean canGenerate() {
@@ -530,16 +532,6 @@ public class AISession {
 	public void postAudioComplete(int id, String audioId) {
 		// 默认空实现，子类可覆盖
 	}
-
-	/**
-	 * 追加语音识别的 token 长度到使用量统计中。
-	 *
-	 * @param length 语音 token 长度
-	 */
-	public void appendVoiceToken(int length) {
-		data.usage.appendVoiceTokens(length);
-	}
-
 	/**
 	 * 提供初始提示（例如在会话开始时由 AI 应用触发）。 通过 {@link #commandExec} 提交任务以确保顺序执行。
 	 */

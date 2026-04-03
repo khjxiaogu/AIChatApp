@@ -31,18 +31,15 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.Map.Entry;
-import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
@@ -254,7 +251,7 @@ public class AITRPGSceneMain extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		//头几次用思维链版本构建格式
-		Builder builder=AIRequest.builder().taskType(TaskType.CODE).strength(ReasoningStrength.WEAK).streamed();
+		Builder builder=AIRequest.builder(state).taskType(TaskType.CODE).strength(ReasoningStrength.WEAK).streamed();
 		return builder.build(b.end().add("temperature", 1.3).add("max_tokens", 4000).end());
 
 	}
@@ -274,7 +271,7 @@ public class AITRPGSceneMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return AIRequest.builder().taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+		return AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
 	public String makeSummaryrequest(AISession state,String summary) throws IOException {

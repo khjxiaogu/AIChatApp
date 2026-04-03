@@ -21,17 +21,15 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.respscheme;
+package com.khjxiaogu.aiwuxia.llm.providers.volcano;
 
-import java.util.List;
+public class VolcanoUsageLite extends VolcanoUsage {
 
-import com.khjxiaogu.aiwuxia.llm.AIOutput;
-
-public abstract class RespScheme {
-	public List<Choice> choices;
-	public abstract UsageIntf getUsage();
-	public AIOutput toOutput(){
-		return new AIOutput.FilledAIOutput(choices.get(0).message.reasoning_content,choices.get(0).message.content,getUsage());
-
+	@Override
+	public double getEquivantTokens() {//0.6 0.9 1.8 /3.6 5.4 10.8
+		long uncached=prompt_tokens-prompt_tokens_details.cached_tokens;
+		long cached=prompt_tokens_details.cached_tokens;
+		return completion_tokens*1.8d+(cached/5d+uncached)*0.3d;
 	}
+
 }

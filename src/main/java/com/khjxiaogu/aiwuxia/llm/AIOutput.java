@@ -30,7 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-import com.khjxiaogu.aiwuxia.respscheme.Usage;
+import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
@@ -95,17 +95,17 @@ public interface AIOutput {
 
     /**
      * 添加一个监听器，用于接收输出完成后的总使用情况信息。
-     * 使用情况通常包括token消耗数量、API调用成本等指标，具体由{@link Usage}类定义。
+     * 使用情况通常包括token消耗数量、API调用成本等指标，具体由{@link GrokUsage}类定义。
      *
-     * @param listener 一个{@link Consumer}，用于处理{@link Usage}对象。当有新的使用数据可用时会被调用。
+     * @param listener 一个{@link Consumer}，用于处理{@link GrokUsage}对象。当有新的使用数据可用时会被调用。
      */
-    public void addUsageListener(Consumer<Usage> listener);
+    public void addUsageListener(Consumer<UsageIntf> listener);
 	public static class StreamedAIOutput implements AIOutput{
 		public final BlockingReader reasoner;
 		public final BlockingReader content;
-		private Usage usage;
+		private UsageIntf usage;
 		private boolean interrupted;
-		private List<Consumer<Usage>> usageListener=new ArrayList<>();
+		private List<Consumer<UsageIntf>> usageListener=new ArrayList<>();
 		public StreamedAIOutput() {
 			reasoner=new BlockingReader();
 			content=new BlockingReader();
@@ -137,13 +137,13 @@ public interface AIOutput {
 		public Reader getContent() {
 			return content;
 		}
-		public void setUsage(Usage usage) {
+		public void setUsage(UsageIntf usage) {
 			this.usage=usage;
 			synchronized(usageListener) {
 				usageListener.forEach(t->t.accept(usage));
 			}
 		}
-		public void addUsageListener(Consumer<Usage> listener) {
+		public void addUsageListener(Consumer<UsageIntf> listener) {
 			if(this.usage!=null)
 				listener.accept(usage);
 			else
@@ -164,8 +164,8 @@ public interface AIOutput {
 	public static class FilledAIOutput implements AIOutput{
 		public final Reader reasoner;
 		public final Reader content;
-		private final Usage usage;
-		public FilledAIOutput(String reasoning,String content,Usage usage) {
+		private final UsageIntf usage;
+		public FilledAIOutput(String reasoning,String content,UsageIntf usage) {
 			this.reasoner=new StringReader(reasoning);
 			this.content=new StringReader(content);
 			this.usage=usage;
@@ -182,7 +182,7 @@ public interface AIOutput {
 			return true;
 		}
 		@Override
-		public void addUsageListener(Consumer<Usage> listener) {
+		public void addUsageListener(Consumer<UsageIntf> listener) {
 			listener.accept(usage);
 		}
 		@Override

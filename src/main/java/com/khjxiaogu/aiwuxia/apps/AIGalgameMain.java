@@ -158,7 +158,7 @@ public class AIGalgameMain extends AIApplication {
 				len=0;
 				String str=summery.toString();
 				summery=new StringBuilder();
-				compactor.compactHistory(state.getExtra(), str,charaset,state::addUsage);
+				compactor.compactHistory(state, state.getExtra(), str,charaset,state::addUsage);
 			}
 		}
 		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
@@ -206,7 +206,7 @@ public class AIGalgameMain extends AIApplication {
 					
 					
 				}
-				compactor.compactHistory(state.getExtra(), summery.toString(),charaset,state::addUsage);
+				compactor.compactHistory(state, state.getExtra(), summery.toString(),charaset,state::addUsage);
 				state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
 				his.forEach(t->t.setValidContext(false));
 
@@ -227,7 +227,7 @@ public class AIGalgameMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return AIRequest.builder().taskType(TaskType.STORY).streamed().build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+		return AIRequest.builder(state).taskType(TaskType.STORY).streamed().build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
 
 	}
 

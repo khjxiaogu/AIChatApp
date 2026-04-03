@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.voice;
 
+import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
 /**
  * 本地部署语音模型的交互器，提供对本地语音合成服务的静态访问入口。
@@ -57,7 +58,8 @@ public class LocalVoiceModel {
      * @return 包含音频字节数组的 CompletableFuture；如果服务不可用或请求失败，可能返回 null
      * @see LocalModelHandshaker#requireAudio(String, String, String, String)
      */
-    public static CompletableFuture<byte[]> requireAudio(String chara, String emote, String reqid, String text) {
-        return lhs.requireAudio(chara, emote, reqid, text);
+    public static CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String emote, String reqid, String text) {
+    	
+    	return lhs.requireAudio(chara, emote, reqid, text);
     }
 }

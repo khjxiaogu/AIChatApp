@@ -28,6 +28,7 @@ public class Choice{
 		public String content;
 		public String reasoning_content;
 		public String role;
+		public String refusal;
 	}
 	public String finish_reason;
 	public int index;
