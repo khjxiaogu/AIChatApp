@@ -134,7 +134,7 @@ public class VolcanoModelProvider implements ModelProvider{
 
 					.post(true).send(tosend).readSSE((ev,s)->{
 						if(readable.isInterrupted()) {
-							logger.info("=================Usage===============");
+							logger.info("=================Usage===============\n");
 							logger.info(usage);
 							logger.info("interrupted generation");
 							usage.zoomEquivantly();
@@ -144,7 +144,7 @@ public class VolcanoModelProvider implements ModelProvider{
 						}
 						if(s==null||"[DONE]".equals(s)) {
 							System.out.println();
-							logger.info("=================Usage===============");
+							logger.info("=================Usage===============\n");
 							logger.info(usage);
 							logger.info("finish generation");
 							usage.zoomEquivantly();

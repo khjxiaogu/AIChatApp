@@ -137,7 +137,7 @@ public class GrokModelProvider implements ModelProvider{
 					}
 					if(s==null||"[DONE]".equals(s)) {
 						System.out.println();
-						logger.info("=================Usage===============");
+						logger.info("=================Usage===============\n");
 						logger.info(usage);
 						logger.info("finish generation");
 						readable.setUsage(usage);
@@ -162,7 +162,7 @@ public class GrokModelProvider implements ModelProvider{
 						}
 					}
 					if(scheme.usage!=null)
-						usage.add(scheme.usage);
+						usage.set(scheme.usage);
 					return true;
 				};
     			try(InputStream is=connection.getInputStream();Scanner scan=new Scanner(is,StandardCharsets.UTF_8)){
