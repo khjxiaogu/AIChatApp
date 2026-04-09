@@ -19,7 +19,7 @@ public class WebSocketPaidAISession extends WebSocketAISession {
 		parent.getLogger().info("已消费："+actualCost);
 		parent.consumePaidTokens(user, actualCost);
 		
-		super.addUsage(usage);
+		super.addStatUsage(usage);
 	}
 	@Override
 	public boolean canGenerate() {

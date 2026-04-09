@@ -361,6 +361,9 @@ public class AISession {
 	 * @param usage 要累加的 {@link GrokUsage} 对象
 	 */
 	public void addUsage(UsageIntf usage) {
+		addStatUsage(usage);
+	}
+	public void addStatUsage(UsageIntf usage) {
 		data.usage.add(usage);
 	}
 	public boolean canGenerate() {

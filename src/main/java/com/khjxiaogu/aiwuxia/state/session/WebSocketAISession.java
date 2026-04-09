@@ -313,7 +313,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		parent.getLogger().info("已消费："+actualCost);
 		parent.consumeTokens(user, actualCost);
 		
-		super.addUsage(usage);
+		super.addStatUsage(usage);
 	}
 	@Override
 	public boolean canGenerate() {
