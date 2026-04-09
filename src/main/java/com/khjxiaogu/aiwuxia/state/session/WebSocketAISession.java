@@ -25,6 +25,7 @@ package com.khjxiaogu.aiwuxia.state.session;
 
 import java.io.File;
 import java.io.IOException;
+import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -144,6 +145,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		operations.put("prompt", (jo,state)->{
 			state.getCommandExec().submit(()->{
 				state.handleUserInput(jo.get("input").getAsString(), jo.get("content").getAsString());
+				state.save();
 			});
 		});
 		operations.put("model", (jo,state)->{
@@ -322,4 +324,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public void refillChatBox(String text) {
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("sendbox",text).end().toString()));
 	}
+
+
+
+
+
+
 }

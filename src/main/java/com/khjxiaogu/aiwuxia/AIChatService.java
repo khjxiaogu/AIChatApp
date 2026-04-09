@@ -116,9 +116,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	protected Map<String, WebSocketAISession> uidsockets = new ConcurrentHashMap<>();
 
 	/** 可用的AI应用映射，键为应用ID（如"wuxia"），值为对应的AI应用实例 */
-	private Map<String, AIApplication> apps = new HashMap<>();
-	private Map<String, ApplicationAttributes> attrs = new HashMap<>();
-	private Map<String, String> urls = new HashMap<>();
+	private Map<String, ApplicationAttributes> apps = new HashMap<>();
 
 	/** 公测中的AI应用ID集合，对于这些应用，每个用户只能创建一个对话实例 */
 	private Set<String> trial = new HashSet<>();
@@ -250,27 +248,27 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			try {
 				String name = fn.getName();
 				File metaFile = new File(fn, "meta.json");
-				boolean isSucceed = false;
 				if (metaFile.exists()) {
 					JsonObject meta = JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 					if (meta.has("name") && (!meta.has("enabled") || meta.get("enabled").getAsBoolean())) {
 						getLogger().info("正在加载AI：" + name);
 
 						try {
-							apps.put(name, AIApplicationRegistry.createInstance(parent, fn, meta));
+							ApplicationAttributes attr;
+							apps.put(name, attr=new ApplicationAttributes(AIApplicationRegistry.createInstance(parent, fn, meta),name));
 							if (meta.has("trial") && meta.get("trial").getAsBoolean())
 								trial.add(name);
-							if(meta.has("url"))
-								urls.put(name, meta.get("url").getAsString());
-							ApplicationAttributes apps;
-							attrs.put(name, apps=new ApplicationAttributes());
+							
+							
 							if(meta.has("paidOnly"))
-								apps.paidOnly=meta.get("paidOnly").getAsBoolean();
+								attr.paidOnly=meta.get("paidOnly").getAsBoolean();
 							if(meta.has("models"))
-								apps.models=gson.fromJson(meta.get("models"), List.class);
+								attr.models=gson.fromJson(meta.get("models"), List.class);
+							if(meta.has("url"))
+								attr.url=meta.get("url").getAsString();
 							getLogger().info("AI加载成功：" + name);
 						} catch (Throwable e) {
-							e.printStackTrace();
+							getLogger().printStackTrace(e);
 							getLogger().info("AI加载失败：" + name);
 						}
 					} else {
@@ -300,12 +298,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			ResultSet rs = ps.executeQuery();
 			while (rs.next()) {
 				String appName = rs.getString(1);
-				AIApplication ent = apps.get(appName);
+				ApplicationAttributes ent = apps.get(appName);
 				if (ent != null)
 					ja.add(JsonBuilder.object().add("name", ent.getName()).add("appid", appName).end());
 			}
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 		return ja;
 	}
@@ -327,7 +325,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					return true;
 			}
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 		return false;
 	}
@@ -345,7 +343,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			JsonArray ja = new JsonArray();
 			while (rs.next()) {
 				String appid = rs.getString(4);
-				AIApplication ent = apps.get(appid);
+				ApplicationAttributes ent = apps.get(appid);
 				if (ent != null)
 					ja.add(JsonBuilder.object()
 						.add("chatid", rs.getString(1))
@@ -377,7 +375,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			JsonArray ja = new JsonArray();
 			while (rs.next()) {
 				String appid = rs.getString(4);
-				AIApplication ent = apps.get(appid);
+				ApplicationAttributes ent = apps.get(appid);
 				if (ent != null)
 					ja.add(JsonBuilder.object()
 						.add("chatid", rs.getString(1))
@@ -497,24 +495,24 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				
 				String appName = rs.getString(1);
 				curApps.add(appName);
-				AIApplication ent = apps.get(appName);
-				String url=urls.get(appName);
-				if (ent != null) {
-					JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", ent.getName()).add("appid", appName);
+				ApplicationAttributes attr = apps.get(appName);
+				if(attr!=null) {
+					String url=attr.url;
+					JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", attr.getName()).add("appid", appName);
 					if(url!=null)
 						jb.add("url", url);
 					ja.add(jb.end());
 				}
 			}
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 		for(String s:trial) {
 			if(curApps.add(s)) {
-				AIApplication ent = apps.get(s);
-				String url=urls.get(s);
-				if (ent != null) {
-					JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", ent.getName()).add("appid", s);
+				ApplicationAttributes attr=apps.get(s);
+				if(attr!=null) {
+					String url=attr.url;
+					JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", attr.getName()).add("appid", s);
 					if(url!=null)
 						jb.add("url", url);
 					ja.add(jb.end());
@@ -695,7 +693,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			ps2.setString(3, chatid);
 			ps2.executeUpdate();
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 		return new ResultDTO(200, "true");
 	}
@@ -712,7 +710,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			ps2.setString(2, chatid);
 			ps2.executeUpdate();
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 	}
 
@@ -729,7 +727,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			ps2.setString(2, id);
 			ps2.executeUpdate();
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 	}
 
@@ -771,7 +769,36 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return new ResultDTO(404);
 	}
+	public WebSocketAISession getOrLoadSession(String cid,String uid) throws SQLException{
+		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ?")) {
+			ps.setString(1, cid);
+			try (ResultSet rs = ps.executeQuery()) {
+				if (rs.next() && rs.getString(1).equals(uid)) {
+					WebSocketAISession state = uidsockets.get(cid);
+					String app = rs.getString(2);
+					ApplicationAttributes attr = apps.get(app);
+					if (state == null) {
+						if (attr == null) {
+							return null;
+						}
+						File data = new File(saveData, cid + ".json");
+						if (data.exists()) {
+							try {
+								state=loadSession(uid, cid,attr, data);
+							} catch (JsonSyntaxException | IOException e) {
+								getLogger().printStackTrace(e);
+								logger.info("AI " + cid + " Load Error");
+							}
+						} else
+							return null;
+					}
 
+					return state;
+				}
+			}
+		}
+		return null;
+	}
 	/**
 	 * HTTP POST端点：导出指定对话的历史记录为UTF-8文本文件（带BOM头）。
 	 * 文件内容由AI应用提供的{@link AIApplication#constructBackLog(AISession)}生成。
@@ -785,52 +812,32 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@Adapter
 	@HttpMethod("POST")
 	public ResultDTO export(@Query("uid") String uid, @Query("chatid") String cid) {
-		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ?")) {
-			ps.setString(1, cid);
-			try (ResultSet rs = ps.executeQuery()) {
-				if (rs.next() && rs.getString(1).equals(uid)) {
-					WebSocketAISession state = uidsockets.get(cid);
-					String app = rs.getString(2);
-					AIApplication appx = apps.get(app);
-					if (state == null) {
-						if (appx == null) {
-							return new ResultDTO(400, "App does not exist");
-						}
-						File data = new File(saveData, cid + ".json");
-						ApplicationAttributes attr=attrs.get(app);
-						if (data.exists()) {
-							try {
-								state=loadSession(uid, cid, appx,attr, data);
-							} catch (JsonSyntaxException | IOException e) {
-								e.printStackTrace();
-								logger.info("AI " + cid + " Load Error");
-							}
-						} else
-							return new ResultDTO(404, "Chat does not exist");
-					}
-					ByteArrayOutputStream baos = new ByteArrayOutputStream();
-					try {
-						baos.write(0xEF);
-						baos.write(0xBB);
-						baos.write(0xBF); // UTF-8 BOM
-						baos.write(appx.constructBackLog(state).getBytes(StandardCharsets.UTF_8));
-					} catch (IOException e) {
-						e.printStackTrace();
-						return new ResultDTO(500, "内部服务器错误");
-					}
-					ResultDTO res = new ResultDTO(200, baos.toByteArray());
-					res.addHeader(HttpHeaderNames.CONTENT_DISPOSITION,
-						"attachment; filename=\"" + new String(("故事导出-" + appx.getBrief(state) + ".txt")
-							.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1) + "\"");
-					res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
-					res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
-					res.addHeader(HttpHeaderNames.PRAGMA, "no-cache");
-					res.addHeader(HttpHeaderNames.EXPIRES, "0");
-					return res;
+		try {
+			WebSocketAISession state = this.getOrLoadSession(cid, uid);
+			if(state!=null) {
+				ByteArrayOutputStream baos = new ByteArrayOutputStream();
+				try {
+					baos.write(0xEF);
+					baos.write(0xBB);
+					baos.write(0xBF); // UTF-8 BOM
+					baos.write(state.constructBackLog().getBytes(StandardCharsets.UTF_8));
+				} catch (IOException e) {
+					getLogger().printStackTrace(e);
+					return new ResultDTO(500, "内部服务器错误");
 				}
+				ResultDTO res = new ResultDTO(200, baos.toByteArray());
+				res.addHeader(HttpHeaderNames.CONTENT_DISPOSITION,
+					"attachment; filename=\"" + new String(("故事导出-" + state.getBrief() + ".txt")
+						.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1) + "\"");
+				res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
+				res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
+				res.addHeader(HttpHeaderNames.PRAGMA, "no-cache");
+				res.addHeader(HttpHeaderNames.EXPIRES, "0");
+				return res;
 			}
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
+			return new ResultDTO(500, "Internal Server Error");
 		}
 		return new ResultDTO(401, "Unauthorized");
 	}
@@ -847,10 +854,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				if (rs.next() && rs.getString(1).equals(uid)) {
 					WebSocketAISession state = uidsockets.get(cid);
 					String app = rs.getString(2);
-					AIApplication appx = apps.get(app);
+					ApplicationAttributes attr = apps.get(app);
 					ExtraData exd;
 					if (state == null) {
-						if (appx == null) {
+						if (attr == null) {
 							return new ResultDTO(400, "App does not exist");
 						}
 						File data = new File(saveData, cid + ".json");
@@ -858,7 +865,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 							try {
 								exd = AIWuxiaMain.dataFromJson(data);
 							} catch (JsonSyntaxException | IOException e) {
-								e.printStackTrace();
+								getLogger().printStackTrace(e);
 								logger.info("AI " + cid + " Load Error");
 								return new ResultDTO(500, "Chat Load Error");
 							}
@@ -876,24 +883,54 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return new ResultDTO(404);
 	}
 	public ApplicationAttributes getAttribute(String app) {
-		return attrs.get(app);
+		return apps.get(app);
 	}
-	public WebSocketAISession loadSession(String uid, String rcid, AIApplication appx,ApplicationAttributes attribute, File data) throws IOException {
+	public WebSocketAISession loadSession(String uid, String rcid, ApplicationAttributes attribute, File data) throws IOException {
 		if(attribute.paidOnly) {
-			return new WebSocketPaidAISession(this, uid, rcid, appx,attribute, data,
+			return new WebSocketPaidAISession(this, uid, rcid, attribute.app,attribute, data,
 				AIApplication.historyFromJson(data),
 				AIApplication.dataFromJson(data));
 		}
-		return new WebSocketAISession(this, uid, rcid, appx,attribute, data,
+		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
 				AIApplication.historyFromJson(data),
 				AIApplication.dataFromJson(data));
 	}
-	public WebSocketAISession createSession(String uid, String rcid, AIApplication appx,ApplicationAttributes attribute, File data){
+	public WebSocketAISession createSession(String uid, String rcid,ApplicationAttributes attribute, File data,String visibility){
+		long time = new Date().getTime();
+		try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,attribute) VALUES(?,?,?,?,?)")) {
+			ps2.setString(1, uid);
+			ps2.setString(2, rcid);
+			ps2.setString(3, attribute.appid);
+			ps2.setLong(4, time);
+			ps2.setString(5, visibility);
+			ps2.executeUpdate();
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO price(chatid,price,time) VALUES(?,?,?)")) {
+			ps2.setString(1, rcid);
+			ps2.setString(2, "0.00");
+			ps2.setLong(3, time);
+			ps2.executeUpdate();
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chatdata(chatid,remark,selected) VALUES(?,?,?)")) {
+			ps2.setString(1, rcid);
+			ps2.setString(2, "");
+			ps2.setString(3, "1");
+			ps2.executeUpdate();
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		return createRawSession(uid,rcid,attribute,data);
+	}
+	public WebSocketAISession createRawSession(String uid, String rcid,ApplicationAttributes attribute, File data){
 		if(attribute.paidOnly) {
-			return new WebSocketPaidAISession(this, uid, rcid, appx,attribute, data,
+			return new WebSocketPaidAISession(this, uid, rcid, attribute.app,attribute, data,
 				new MemoryHistory(), new AISession.ExtraData());
 		}
-		return new WebSocketAISession(this, uid, rcid, appx,attribute, data,
+		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
 			new MemoryHistory(), new AISession.ExtraData());
 	}
 	@HttpPath("/chatconfig")
@@ -916,26 +953,20 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		if(rcid==null) {
 			rcid=this.getAvailableId();	
 		}
-		WebSocketAISession state = uidsockets.get(rcid);
-		AIApplication appx = apps.get(app);
-		ApplicationAttributes attr=attrs.get(app);
+		WebSocketAISession state =null;
+		try {
+			state = this.getOrLoadSession(rcid, uid);
+		} catch (SQLException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		ApplicationAttributes attr=apps.get(app);
 		if(attr.paidOnly&&!this.hasAnyPaidTokenRemaining(uid)) {
 			return new ResultDTO(403,"补充配额不足，无法创建存档");
 		}
 		File data = new File(saveData, rcid + ".json");
 		if (state == null) {
-			if (data.exists()) {
-				try {
-					state=loadSession(uid,rcid,appx,attr,data);
-				} catch (JsonSyntaxException | IOException e) {
-					e.printStackTrace();
-					logger.info("AI " + rcid + " Load Error");
-					return new ResultDTO(500, "Chat Load Error");
-				}
-			}
-		}
-		if (state == null) {
-			state=createSession(uid,rcid,appx,attr,data);
+			state=createSession(uid,rcid,attr,data,"");
 		}
 		if(state.onModifyAttempt()) {
 			try {
@@ -943,39 +974,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				state.getExtra().put("rules",obj.get("coreRule").getAsString());
 				state.getExtra().put("limit",obj.get("contextLimit").getAsString());
 				state.getExtra().put("brief",obj.get("brief").getAsString());
-				if(!data.exists()) {
-					long time = new Date().getTime();
-					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,attribute) VALUES(?,?,?,?,?)")) {
-						ps2.setString(1, uid);
-						ps2.setString(2, rcid);
-						ps2.setString(3, app);
-						ps2.setLong(4, time);
-						ps2.setString(5, "");
-						ps2.executeUpdate();
-					} catch (SQLException e) {
-						e.printStackTrace();
-					}
-					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO price(chatid,price,time) VALUES(?,?,?)")) {
-						ps2.setString(1, rcid);
-						ps2.setString(2, "0.00");
-						ps2.setLong(3, time);
-						ps2.executeUpdate();
-					} catch (SQLException e) {
-						e.printStackTrace();
-					}
-					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chatdata(chatid,remark,selected) VALUES(?,?,?)")) {
-						ps2.setString(1, rcid);
-						ps2.setString(2, "");
-						ps2.setString(3, "1");
-						ps2.executeUpdate();
-					} catch (SQLException e) {
-						e.printStackTrace();
-					}
-				}
-				AIApplication.saveToJson(state, data);
-			} catch (IOException e) {
-				e.printStackTrace();
-				return new ResultDTO(500,"保存失败，内部错误");
+				state.save();
 			}finally {
 				state.onModifyComplete();
 			}
@@ -1029,55 +1028,28 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		WebSocketAISession state = uidsockets.get(cid);
 		if (state == null) {
-			AIApplication appx = apps.get(app);
-			if (appx == null) {
+			ApplicationAttributes attr = apps.get(app);
+			if (attr == null) {
 				res.write(400, "App does not exist");
 				return;
 			}
 			File data = new File(saveData, cid + ".json");
-			ApplicationAttributes attr=attrs.get(app);
 			if (data.exists())
 				try {
-					state = loadSession( uid, cid, appx, attr, data);
+					state = loadSession( uid, cid, attr, data);
 					state.onLoad();
 					logger.info("AI " + cid + " Loaded");
 				} catch (JsonSyntaxException | IOException e) {
-					e.printStackTrace();
+					getLogger().printStackTrace(e);
 					logger.info("AI " + cid + " Load Error");
 				}
 			if (state == null) {
 				if (isCreate) {
-					long time = new Date().getTime();
-					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,attribute) VALUES(?,?,?,?,?)")) {
-						ps2.setString(1, uid);
-						ps2.setString(2, cid);
-						ps2.setString(3, app);
-						ps2.setLong(4, time);
-						ps2.setString(5, attribute);
-						ps2.executeUpdate();
-					} catch (SQLException e) {
-						e.printStackTrace();
-					}
-					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO price(chatid,price,time) VALUES(?,?,?)")) {
-						ps2.setString(1, cid);
-						ps2.setString(2, "0.00");
-						ps2.setLong(3, time);
-						ps2.executeUpdate();
-					} catch (SQLException e) {
-						e.printStackTrace();
-					}
-					try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chatdata(chatid,remark,selected) VALUES(?,?,?)")) {
-						ps2.setString(1, cid);
-						ps2.setString(2, "");
-						ps2.setString(3, "1");
-						ps2.executeUpdate();
-					} catch (SQLException e) {
-						e.printStackTrace();
-					}
-					
+					state = createSession( uid, cid, attr, data,attribute);
+					state.save();
+					logger.info("AI " + cid + " Created");
 				}
-				state = createSession( uid, cid, appx, attr, data);
-				logger.info("AI " + cid + " Created");
+				
 			}
 		}
 		uidsockets.put(cid, state);
@@ -1102,7 +1074,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	            }
 	        }
 	    } catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 			return new ResultDTO(500,"内部错误");
 		}
 
@@ -1115,7 +1087,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	            exists = rs.next();
 	        }
 	    } catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 
 			return new ResultDTO(500,"内部错误");
 		}
@@ -1128,7 +1100,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	            ps.setString(2, chatId);
 	            ps.executeUpdate();
 	        } catch (SQLException e) {
-				e.printStackTrace();
+				getLogger().printStackTrace(e);
 
 				return new ResultDTO(500,"内部错误");
 			}
@@ -1140,7 +1112,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	            ps.setString(3, "");   // selected默认为空字符串
 	            ps.executeUpdate();
 	        } catch (SQLException e) {
-				e.printStackTrace();
+				getLogger().printStackTrace(e);
 				return new ResultDTO(500,"内部错误");
 			}
 	    }
@@ -1153,7 +1125,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	            }
 	        }
 	    } catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 			return new ResultDTO(500,"内部错误");
 	    }
 	    return new ResultDTO(404,"对话不存在或已被移除");
@@ -1171,8 +1143,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	    try {
 			database.setAutoCommit(false);
 		} catch (SQLException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 	    try {
 	        // 1. 获取该用户该智能体所有未移除的对话ID
@@ -1254,16 +1225,14 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	        try {
 				database.rollback();
 			} catch (SQLException e1) {
-				// TODO Auto-generated catch block
-				e1.printStackTrace();
+				getLogger().printStackTrace(e1);
 			}
 	        return new ResultDTO(500,"内部错误");
 	    }catch(IllegalStateException ex) {
 	    	 try {
 					database.rollback();
 				} catch (SQLException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
+					getLogger().printStackTrace(e1);
 				}
 		        return new ResultDTO(400,ex.getMessage());
 	    	
@@ -1271,8 +1240,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	        try {
 				database.setAutoCommit(true);
 			} catch (SQLException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
+				getLogger().printStackTrace(e);
 			}
 	    }
 	    return new ResultDTO(200,chatId);
@@ -1294,8 +1262,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 	    JsonArray ja = new JsonArray();
 
-		AIApplication ent = apps.get(appName);
-		if(ent==null)
+	    ApplicationAttributes attr = apps.get(appName);
+		if(attr==null)
 			return new ResultDTO(400,"应用不存在");
 	    try (PreparedStatement ps = database.prepareStatement(sql)) {
 	        ps.setString(1, uid);
@@ -1358,7 +1326,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				pstmt.setInt(3, freeLimit);
 				pstmt.executeUpdate();
 			} catch (SQLException e) {
-				e.printStackTrace();
+				getLogger().printStackTrace(e);
 			}
 		} else {
 			String sql = "DELETE FROM user_free_limit_override WHERE user_id = ?";
@@ -1366,7 +1334,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				pstmt.setString(1, userId);
 				pstmt.executeUpdate();
 			} catch (SQLException e) {
-				e.printStackTrace();
+				getLogger().printStackTrace(e);
 			}
 		}
 	}
@@ -1387,7 +1355,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				return rs.getInt("free_limit");
 			}
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 		return DEFAULT_FREE_DAILY_LIMIT;
 	}
@@ -1411,7 +1379,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			pstmt.setInt(3, amount);
 			pstmt.executeUpdate();
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 	}
 
@@ -1500,7 +1468,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					pstmt.setInt(4, freeConsume);
 					pstmt.executeUpdate();
 				} catch (SQLException e) {
-					e.printStackTrace();
+					getLogger().printStackTrace(e);
 				}
 			}
 
@@ -1515,7 +1483,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					pstmt.setInt(4, paidConsume);
 					pstmt.executeUpdate();
 				} catch (SQLException e) {
-					e.printStackTrace();
+					getLogger().printStackTrace(e);
 				}
 			}
 
@@ -1529,7 +1497,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				}
 			}
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 	}
 	public synchronized void consumePaidTokens(String userId, int tokens) {
@@ -1551,7 +1519,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					pstmt.setInt(4, tokens);
 					pstmt.executeUpdate();
 				} catch (SQLException e) {
-					e.printStackTrace();
+					getLogger().printStackTrace(e);
 				}
 				String updatePaidSql = "UPDATE user_paid_balance SET balance = balance - ? WHERE user_id = ?";
 				try (PreparedStatement pstmt = database.prepareStatement(updatePaidSql)) {
@@ -1561,7 +1529,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				}
 			}
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 	}
 	/**
@@ -1600,7 +1568,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			}
 			// 填充所有日期（没有记录的用量为0）
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 			return new ResultDTO(500,"内部错误");
 		}
 		return new ResultDTO(200,ja);
@@ -1622,7 +1590,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			}
 			return 0;
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 		return 0;
 	}
@@ -1638,7 +1606,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			}
 			return 0;
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 		return 0;
 	}
@@ -1655,7 +1623,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			}
 			return 0;
 		} catch (SQLException e) {
-			e.printStackTrace();
+			getLogger().printStackTrace(e);
 		}
 		return 0;
 	}
@@ -1727,8 +1695,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
                 pstmt.setInt(3, nuses);
                 pstmt.executeUpdate();
             } catch (SQLException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
+				getLogger().printStackTrace(e);
 				 return new ResultDTO(500,e.getMessage());
 			}
 
@@ -1766,8 +1733,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
                     }
                 }
             } catch (SQLException e3) {
-				// TODO Auto-generated catch block
-				e3.printStackTrace();
+				getLogger().printStackTrace(e3);
 				return new ResultDTO(500,"CDK兑换失败，系统错误，请稍后再试");
 			}
 
@@ -1782,7 +1748,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
                     }
                 }
             } catch (SQLException e2) {
-				e2.printStackTrace();
+				getLogger().printStackTrace(e2);
 				return new ResultDTO(500,"CDK兑换失败，系统错误，请稍后再试");
 			}
 
@@ -1793,8 +1759,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
                 pstmt.setString(1, code);
                 rowsUpdated = pstmt.executeUpdate();
             } catch (SQLException e1) {
-				// TODO Auto-generated catch block
-				e1.printStackTrace();
+				getLogger().printStackTrace(e1);
 			}
             if (rowsUpdated != 1) {
             	return new ResultDTO(400,"CDK已失效");
@@ -1812,7 +1777,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
                 pstmt.setInt(3, cost);
                 pstmt.executeUpdate();
             } catch (SQLException e) {
-                e.printStackTrace();
+                getLogger().printStackTrace(e);
                 
             }
 

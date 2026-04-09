@@ -587,4 +587,10 @@ public class AISession {
 	public Future<?> onLoad() {
 		return getCommandExec().submit(()->this.aiapp.onload(this));
 	}
+	public String constructBackLog() {
+		return aiapp.constructBackLog(this);
+	}
+	public String getBrief() {
+		return aiapp.getBrief(this);
+	}
 }
