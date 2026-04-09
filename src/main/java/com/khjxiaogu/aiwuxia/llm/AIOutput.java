@@ -139,9 +139,11 @@ public interface AIOutput {
 		}
 		public void setUsage(UsageIntf usage) {
 			this.usage=usage;
-			synchronized(usageListener) {
-				usageListener.forEach(t->t.accept(usage));
-			}
+			if(usage!=null)
+				synchronized(usageListener) {
+					usageListener.forEach(t->t.accept(usage));
+					usageListener.clear();
+				}
 		}
 		public void addUsageListener(Consumer<UsageIntf> listener) {
 			if(this.usage!=null)

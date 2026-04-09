@@ -15,8 +15,9 @@ public class WebSocketPaidAISession extends WebSocketAISession {
 	}
 	@Override
 	public void addUsage(UsageIntf usage) {
-
-		parent.consumePaidTokens(user, (int) Math.ceil(usage.getEquivantTokens()));
+		int actualCost=(int) Math.ceil(usage.getEquivantTokens());
+		parent.getLogger().info("已消费："+actualCost);
+		parent.consumePaidTokens(user, actualCost);
 		
 		super.addUsage(usage);
 	}

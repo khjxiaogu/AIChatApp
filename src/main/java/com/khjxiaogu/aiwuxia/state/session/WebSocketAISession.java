@@ -309,8 +309,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	}
 	@Override
 	public void addUsage(UsageIntf usage) {
-
-		parent.consumeTokens(user, (int) Math.floor(usage.getEquivantTokens()));
+		int actualCost=(int) Math.floor(usage.getEquivantTokens());
+		parent.getLogger().info("已消费："+actualCost);
+		parent.consumeTokens(user, actualCost);
 		
 		super.addUsage(usage);
 	}

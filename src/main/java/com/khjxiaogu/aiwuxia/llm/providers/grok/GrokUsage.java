@@ -78,9 +78,10 @@ public class GrokUsage implements UsageIntf<GrokUsage> {
     }
 	@Override
 	public double getEquivantTokens() {
-		long uncached=prompt_tokens-prompt_tokens_details.cached_tokens;
 		long cached=prompt_tokens_details.cached_tokens;
-		return ((completion_tokens+completion_tokens_details.reasoning_tokens)*.5d+(cached/4f+uncached)*.2d)*(7d/2d);
+		long uncached=prompt_tokens-cached;
+		
+		return ((completion_tokens+completion_tokens_details.reasoning_tokens)*.5d+cached*.05d+uncached*.2d)*(7d/2d);
 	}
 
 
