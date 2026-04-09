@@ -39,11 +39,13 @@ import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -242,6 +244,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public void reload() {
 		apps.clear();
 		trial.clear();
+		Gson gson=new Gson();
 		// apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
 		for (File fn : new File(parent, "apps").listFiles(File::isDirectory)) {
 			try {
@@ -263,6 +266,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 							attrs.put(name, apps=new ApplicationAttributes());
 							if(meta.has("paidOnly"))
 								apps.paidOnly=meta.get("paidOnly").getAsBoolean();
+							if(meta.has("models"))
+								apps.models=gson.fromJson(meta.get("models"), List.class);
 							getLogger().info("AI加载成功：" + name);
 						} catch (Throwable e) {
 							e.printStackTrace();
@@ -795,16 +800,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						ApplicationAttributes attr=attrs.get(app);
 						if (data.exists()) {
 							try {
-								if(attr.paidOnly) {
-									
-									state = new WebSocketPaidAISession(this, uid, cid, appx, data,
-										AIWuxiaMain.historyFromJson(data),
-										AIWuxiaMain.dataFromJson(data));
-								}else {
-									state = new WebSocketAISession(this, uid, cid, appx, data,
-											AIWuxiaMain.historyFromJson(data),
-											AIWuxiaMain.dataFromJson(data));
-								}
+								state=loadSession(uid, cid, appx,attr, data);
 							} catch (JsonSyntaxException | IOException e) {
 								e.printStackTrace();
 								logger.info("AI " + cid + " Load Error");
@@ -879,6 +875,27 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return new ResultDTO(404);
 	}
+	public ApplicationAttributes getAttribute(String app) {
+		return attrs.get(app);
+	}
+	public WebSocketAISession loadSession(String uid, String rcid, AIApplication appx,ApplicationAttributes attribute, File data) throws IOException {
+		if(attribute.paidOnly) {
+			return new WebSocketPaidAISession(this, uid, rcid, appx,attribute, data,
+				AIApplication.historyFromJson(data),
+				AIApplication.dataFromJson(data));
+		}
+		return new WebSocketAISession(this, uid, rcid, appx,attribute, data,
+				AIApplication.historyFromJson(data),
+				AIApplication.dataFromJson(data));
+	}
+	public WebSocketAISession createSession(String uid, String rcid, AIApplication appx,ApplicationAttributes attribute, File data){
+		if(attribute.paidOnly) {
+			return new WebSocketPaidAISession(this, uid, rcid, appx,attribute, data,
+				new MemoryHistory(), new AISession.ExtraData());
+		}
+		return new WebSocketAISession(this, uid, rcid, appx,attribute, data,
+			new MemoryHistory(), new AISession.ExtraData());
+	}
 	@HttpPath("/chatconfig")
 	@Adapter
 	@HttpMethod("POST")
@@ -909,16 +926,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		if (state == null) {
 			if (data.exists()) {
 				try {
-					if(attr.paidOnly) {
-						
-						state = new WebSocketPaidAISession(this, uid, rcid, appx, data,
-							AIWuxiaMain.historyFromJson(data),
-							AIWuxiaMain.dataFromJson(data));
-					}else {
-						state = new WebSocketAISession(this, uid, rcid, appx, data,
-								AIWuxiaMain.historyFromJson(data),
-								AIWuxiaMain.dataFromJson(data));
-					}
+					state=loadSession(uid,rcid,appx,attr,data);
 				} catch (JsonSyntaxException | IOException e) {
 					e.printStackTrace();
 					logger.info("AI " + rcid + " Load Error");
@@ -927,13 +935,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			}
 		}
 		if (state == null) {
-			if(attr.paidOnly) {
-				state = new WebSocketPaidAISession(this, uid, rcid, appx, data,
-					new MemoryHistory(), new AISession.ExtraData());
-			}else {
-				state = new WebSocketAISession(this, uid, rcid, appx, data,
-					new MemoryHistory(), new AISession.ExtraData());
-			}
+			state=createSession(uid,rcid,appx,attr,data);
 		}
 		if(state.onModifyAttempt()) {
 			try {
@@ -1036,16 +1038,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			ApplicationAttributes attr=attrs.get(app);
 			if (data.exists())
 				try {
-					if(attr.paidOnly) {
-					
-						state = new WebSocketPaidAISession(this, uid, cid, appx, data,
-							AIWuxiaMain.historyFromJson(data),
-							AIWuxiaMain.dataFromJson(data));
-					}else {
-						state = new WebSocketAISession(this, uid, cid, appx, data,
-								AIWuxiaMain.historyFromJson(data),
-								AIWuxiaMain.dataFromJson(data));
-					}
+					state = loadSession( uid, cid, appx, attr, data);
 					state.onLoad();
 					logger.info("AI " + cid + " Loaded");
 				} catch (JsonSyntaxException | IOException e) {
@@ -1082,13 +1075,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						e.printStackTrace();
 					}
 					
-				}if(attr.paidOnly) {
-					state = new WebSocketPaidAISession(this, uid, cid, appx, data,
-						new MemoryHistory(), new AISession.ExtraData());
-				}else {
-					state = new WebSocketAISession(this, uid, cid, appx, data,
-						new MemoryHistory(), new AISession.ExtraData());
 				}
+				state = createSession( uid, cid, appx, attr, data);
 				logger.info("AI " + cid + " Created");
 			}
 		}

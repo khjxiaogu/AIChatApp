@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Proxy;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -42,9 +43,11 @@ import com.google.gson.JsonParser;
 public class HttpRequestBuilder {
 	private StringBuilder url;
 	List<String[]> headers=new ArrayList<>();
+	Proxy px;
 	boolean followRedirect=true;
 	public HttpRequestBuilder(String ourl) {
 		url=new StringBuilder(ourl);
+		headers.add(new String[] {"Accept","*/*"});
 	}
 	public static HttpRequestBuilder create(String host) {
 		return new HttpRequestBuilder("https://"+host).host(host);
@@ -62,6 +65,10 @@ public class HttpRequestBuilder {
 	}
 	public HttpRequestBuilder url(char v) {
 		url.append(v);
+		return this;
+	}
+	public HttpRequestBuilder proxy(Proxy px) {
+		this.px=px;
 		return this;
 	}
 	public HttpRequestBuilder header(String k,String v) {
@@ -84,6 +91,8 @@ public class HttpRequestBuilder {
 		headers.add(new String[] {"Host",v});
 		return this;
 	}
+	
+	
 	public HttpRequestBuilder defUA() {
 		headers.add(new String[] {"User-Agent",
 				"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36"});
@@ -154,6 +163,9 @@ public class HttpRequestBuilder {
 		}
 		public JsonObject readJson() throws IOException {
 			closeOutput();
+			if(huc.getResponseCode()>=300) {
+				throw new IOException(huc.getResponseMessage());
+			}
 			try(InputStream is=huc.getInputStream()){
 				JsonObject json= JsonParser.parseString(FileUtil.readString(is)).getAsJsonObject();
 				return json;
@@ -171,7 +183,7 @@ public class HttpRequestBuilder {
 			}
 		}
 		public void readSSE(SSEListener listener) throws IOException {
-			closeOutput();
+			
 			try(InputStream is=huc.getInputStream();Scanner scan=new Scanner(is,StandardCharsets.UTF_8)){
 				
 				try{
@@ -194,6 +206,7 @@ public class HttpRequestBuilder {
 			}catch(IOException ex){
 				generateExceptionFromError(ex);
 			}finally{
+				closeOutput();
 				close();
 			}
 			
@@ -201,11 +214,16 @@ public class HttpRequestBuilder {
 	}
 	private HttpURLConnection openConn() throws IOException {
 		URL url = new URL(this.url.toString());
-		HttpURLConnection huc = (HttpURLConnection) url.openConnection();
+		System.out.println(this.url.toString());
+		HttpURLConnection huc = null;
+		if(px==null)
+			huc=(HttpURLConnection) url.openConnection();
+		else
+			huc=(HttpURLConnection) url.openConnection(px);
 		huc.setInstanceFollowRedirects(followRedirect);
 		
-		huc.setConnectTimeout(5000);
-		huc.setReadTimeout(5000);
+		huc.setConnectTimeout(30000);
+		huc.setReadTimeout(30000);
 		for(String[] header:headers) {
 			huc.setRequestProperty(header[0], header[1]);
 		}

@@ -39,10 +39,12 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -71,13 +73,15 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	
 
 	AtomicBoolean lock=new AtomicBoolean();
+	ApplicationAttributes attributes;
 	boolean isClientAudioEnabled=false;
 	boolean isLocalAudioEnabled=false;
-	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,File fn, HistoryHolder history, ExtraData data) {
+	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,ApplicationAttributes attr,File fn, HistoryHolder history, ExtraData data) {
 		super(uid,history, data,aiapp);
 		this.fn = fn;
 		this.parent=par;
 		this.chatId=chatid;
+		this.attributes=attr;
 	}
 
 
@@ -92,7 +96,14 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			provideInitialHint();
 		}
 		getAiapp().prepareScene(this);
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating()?1:0).add("price", this.getPrice()).add("isVoiceUsable",super.isAudioSession()||(getAiapp().isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService())).end().toString()));
+		JsonArray models=new JsonArray();
+		for(String s:attributes.models)
+			models.add(s);
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating()?1:0)
+				.add("price", this.getPrice())
+				.add("isVoiceUsable",super.isAudioSession()||(getAiapp().isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService()))
+				.add("models", models)
+				.add("model", getData().modelHint).end().toString()));
 
 	}
 	
@@ -135,6 +146,18 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 				state.handleUserInput(jo.get("input").getAsString(), jo.get("content").getAsString());
 			});
 		});
+		operations.put("model", (jo,state)->{
+			final String model=jo.get("model").getAsString();
+			if(model.isEmpty()||state.attributes.models.contains(model)) {
+				state.getCommandExec().submit(()->{
+					state.getData().modelHint=model;
+					state.save();
+				});
+				state.sendFrame(JsonBuilder.object().add("model", model).end().toString());
+			}else {
+				state.sendFrame(JsonBuilder.object().add("model", state.getData().modelHint).end().toString());
+			}
+		});
 		operations.put("genVoice", (jo,state)->{
 			state.getCommandExec().submit(()->{
 				HistoryItem last=state.getLast();
@@ -167,6 +190,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		JsonObject jo=JsonParser.parseString(message).getAsJsonObject();
 		if(jo.has("message")) {
 			if(lock.compareAndSet(false, true)) {
+				refillChatBox("");
 				getCommandExec().submit(()->{
 					try {
 						getAiapp().handleSpeech(this, jo.get("message").getAsString());
@@ -252,17 +276,19 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 
 		sendFrame(JsonBuilder.object().add("scene", type).add("scene_data", value).end().toString());
 	}
-
-	@Override
-	public void onGenComplete() {
-		
-		
-		parent.updateBrief(chatId, getAiapp().getBrief(this));
+	public void save() {
 		try {
 			AIApplication.saveToJson(this, fn);
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	}
+	@Override
+	public void onGenComplete() {
+		
+		
+		parent.updateBrief(chatId, getAiapp().getBrief(this));
+		save();
 		String price=getPrice();
 		
 		parent.setPrice(chatId, price);

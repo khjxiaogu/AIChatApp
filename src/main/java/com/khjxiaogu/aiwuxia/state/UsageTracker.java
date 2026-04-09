@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonDeserializationContext;
@@ -87,5 +88,13 @@ public class UsageTracker {
 	public String calculatePrice() {
 		DecimalFormat format = new DecimalFormat("#0.00###");
 		return format.format(getTotalTokenPrice() * 2 / 1000000d);
+	}
+	public String toString() {
+		StringBuilder sb=new StringBuilder();
+		for(Entry<Class<?>, UsageIntf> i:usages.entrySet()) {
+			sb.append(i.getKey().getSimpleName()).append(":").append(i.getValue()).append("\n");
+		}
+		sb.append(calculatePrice());
+		return sb.toString();
 	}
 }

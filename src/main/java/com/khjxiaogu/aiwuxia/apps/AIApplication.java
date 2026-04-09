@@ -39,6 +39,7 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
@@ -55,9 +56,9 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
  */
 public abstract class AIApplication {
     /** 默认的Gson实例，用于JSON序列化/反序列化（紧凑格式） */
-    protected static Gson gs = new Gson();
+    protected static Gson gs = new GsonBuilder().registerTypeAdapter(UsageTracker.class, new UsageTracker.Serilizer()).create();
     /** 格式化的Gson实例，用于生成美观的JSON输出（带缩进） */
-    protected static Gson ppgs = new GsonBuilder().setPrettyPrinting().create();
+    protected static Gson ppgs = new GsonBuilder().registerTypeAdapter(UsageTracker.class, new UsageTracker.Serilizer()).setPrettyPrinting().create();
     /** 简单的日志记录器，用于输出日志信息（标签为"AI智能"） */
     protected SimpleLogger logger = new SimpleLogger("AI智能");
 

@@ -34,8 +34,6 @@ public class DeepseekUsage implements UsageIntf<DeepseekUsage> {
 	public long prompt_cache_miss_tokens;
 	public long total_tokens; // 新增字段
 	public CompletionTokenDetail completion_tokens_details; // 新增字段
-	// 建议添加构造方法完成初始化
-
 	public DeepseekUsage() {
 		this.completion_tokens_details = new CompletionTokenDetail();
 	}

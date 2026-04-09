@@ -34,7 +34,10 @@ public class VolcanoUsage implements UsageIntf<VolcanoUsage> {
 	public TokenDetail prompt_tokens_details;
 	public long completion_tokens;
 	public CompletionTokenDetail completion_tokens_details;
-	// 建议添加构造方法完成初始化
+	public VolcanoUsage() {
+		prompt_tokens_details=new TokenDetail();
+		completion_tokens_details=new CompletionTokenDetail();
+	}
     @Override
     public String toString() {
         return "总token数 " + total_tokens +

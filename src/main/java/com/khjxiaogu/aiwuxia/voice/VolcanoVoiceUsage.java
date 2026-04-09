@@ -21,5 +21,9 @@ public class VolcanoVoiceUsage implements UsageIntf<VolcanoVoiceUsage> {
 	public double getEquivantTokens() {
 		return len*150; //*1000000*3/2/10000
 	}
+    @Override
+    public String toString() {
+        return "语音字数 " + len;
+    }
 
 }

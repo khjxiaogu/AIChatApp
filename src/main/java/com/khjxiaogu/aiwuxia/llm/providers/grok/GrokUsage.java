@@ -34,6 +34,11 @@ public class GrokUsage implements UsageIntf<GrokUsage> {
 	public TokenDetail prompt_tokens_details;
 	public long completion_tokens;
 	public CompletionTokenDetail completion_tokens_details;
+	public GrokUsage() {
+		prompt_tokens_details=new TokenDetail();
+		completion_tokens_details=new CompletionTokenDetail();
+	}
+	
 	// 建议添加构造方法完成初始化
     @Override
     public String toString() {
