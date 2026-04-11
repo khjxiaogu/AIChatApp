@@ -29,7 +29,7 @@ public class VolcanoUsagePro extends VolcanoUsage {
 	public double getEquivantTokens() {//3.2 4.8 9.6/16 24 48
 		long uncached=prompt_tokens-prompt_tokens_details.cached_tokens;
 		long cached=prompt_tokens_details.cached_tokens;
-		return completion_tokens*8d+(cached/5f+uncached)*1.6d;
+		return completion_tokens*8d+cached*0.32d+uncached*1.6d;
 	}
 
 }

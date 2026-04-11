@@ -187,6 +187,10 @@ public class AISQLMain extends AIApplication {
 		}
 	}
 
+	@Override
+	public String getMemory(AISession state) {
+		return null;
+	}
 	public String constructSystem(ApplicationState state) {
 		if (state == null || state.extras.isEmpty())
 			return "";

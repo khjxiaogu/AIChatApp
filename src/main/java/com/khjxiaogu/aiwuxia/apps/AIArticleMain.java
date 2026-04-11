@@ -214,4 +214,9 @@ public class AIArticleMain extends AIApplication {
 		CharSequence content=state.getState().extras.get(0);
 		return content.subSequence(1, Math.min(10, content.length())).toString();
 	}
+
+	@Override
+	public String getMemory(AISession state) {
+		return constructSystem(state.getState());
+	}
 }

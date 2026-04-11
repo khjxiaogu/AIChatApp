@@ -57,7 +57,12 @@ public class DeepseekModelProvider implements ModelProvider{
 	}
 	Gson gs=new Gson();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
-		request.request.addProperty("model", request.category==ModelCategory.REASONING?"deepseek-reasoner":"deepseek-chat");
+		ModelCategory category=request.category;
+		if("deepseek/reasoning".equals(request.modelHint))
+			category=ModelCategory.REASONING;
+		else if("deepseek/non-reasoning".equals(request.modelHint))
+			category=ModelCategory.NON_REASONING;
+		request.request.addProperty("model", category==ModelCategory.REASONING?"deepseek-reasoner":"deepseek-chat");
 		String tosend = gs.toJson(request.request);
 		logger.info("trigger generation");
 		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
@@ -72,8 +77,12 @@ public class DeepseekModelProvider implements ModelProvider{
 		return resp;
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
-
-		request.request.addProperty("model", request.category==ModelCategory.REASONING?"deepseek-reasoner":"deepseek-chat");
+		ModelCategory category=request.category;
+		if("deepseek/reasoning".equals(request.modelHint))
+			category=ModelCategory.REASONING;
+		else if("deepseek/non-reasoning".equals(request.modelHint))
+			category=ModelCategory.NON_REASONING;
+		request.request.addProperty("model", category==ModelCategory.REASONING?"deepseek-reasoner":"deepseek-chat");
 		request.request.addProperty("stream", true);
 		request.request.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		logger.info("trigger generation");
@@ -134,6 +143,6 @@ public class DeepseekModelProvider implements ModelProvider{
 
 	@Override
 	public boolean supportsHinted(AIRequest request) {
-		return "deepseek".equals(request.modelHint);
+		return request.modelHint.startsWith("deepseek");
 	}
 }

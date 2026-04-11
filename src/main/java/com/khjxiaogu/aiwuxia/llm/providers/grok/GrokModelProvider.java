@@ -69,7 +69,12 @@ public class GrokModelProvider implements ModelProvider{
 	}
 	Gson gs=new Gson();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
-		request.request.addProperty("model", request.category==ModelCategory.REASONING?"grok-4-1-fast-reasoning":"grok-4-1-fast-non-reasoning");
+		ModelCategory category=request.category;
+		if("grok/reasoning".equals(request.modelHint))
+			category=ModelCategory.REASONING;
+		else if("grok/non-reasoning".equals(request.modelHint))
+			category=ModelCategory.NON_REASONING;
+		request.request.addProperty("model", category==ModelCategory.REASONING?"grok-4-1-fast-reasoning":"grok-4-1-fast-non-reasoning");
 		byte[] tosend = gs.toJson(request.request).getBytes(StandardCharsets.UTF_8);
 		logger.info("trigger generation");
 		JsonObject retjs = HttpRequestBuilder.create("api.x.ai").url("/v1/chat/completions")
@@ -86,8 +91,12 @@ public class GrokModelProvider implements ModelProvider{
 		return resp;
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
-
-		request.request.addProperty("model", request.category==ModelCategory.REASONING?"grok-4-1-fast-reasoning":"grok-4-1-fast-non-reasoning");
+		ModelCategory category=request.category;
+		if("grok/reasoning".equals(request.modelHint))
+			category=ModelCategory.REASONING;
+		else if("grok/non-reasoning".equals(request.modelHint))
+			category=ModelCategory.NON_REASONING;
+		request.request.addProperty("model", category==ModelCategory.REASONING?"grok-4-1-fast-reasoning":"grok-4-1-fast-non-reasoning");
 		request.request.addProperty("stream", true);
 		request.request.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		logger.info("trigger generation");
@@ -244,6 +253,6 @@ public class GrokModelProvider implements ModelProvider{
 
 	@Override
 	public boolean supportsHinted(AIRequest request) {
-		return "grok".equals(request.modelHint);
+		return request.modelHint.startsWith("grok");
 	}
 }

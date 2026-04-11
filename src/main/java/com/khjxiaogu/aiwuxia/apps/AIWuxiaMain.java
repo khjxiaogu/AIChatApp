@@ -404,6 +404,10 @@ public class AIWuxiaMain extends AIApplication {
 	}
 
 	@Override
+	public String getMemory(AISession state) {
+		return constructSystem(state.getState());
+	}
+	@Override
 	public String getName() {
 		return "武侠模拟器";
 	}

@@ -23,13 +23,29 @@
  */
 package com.khjxiaogu.aiwuxia.llm.providers.volcano;
 
-public class VolcanoUsageLite extends VolcanoUsage {
+public class VolcanoUsageMini extends VolcanoUsage {
 
 	@Override
 	public double getEquivantTokens() {//0.6 0.9 1.8 /3.6 5.4 10.8
 		long uncached=prompt_tokens-prompt_tokens_details.cached_tokens;
 		long cached=prompt_tokens_details.cached_tokens;
-		return completion_tokens*1.8d+cached*0.06d+uncached*0.3d;
+		return completion_tokens*1d+cached*0.02d+uncached*0.1d;
 	}
-
+    public void zoomEquivantly() {
+    	if(prompt_tokens>128000) {
+    		total_tokens*=4;
+    		prompt_tokens*=4;
+    		completion_tokens*=4;
+    		completion_tokens_details.multiply(4f);
+    		prompt_tokens_details.multiply(4f);
+    	}else if(prompt_tokens>32000) {
+    		total_tokens*=2;
+    		prompt_tokens*=2;
+    		completion_tokens*=2;
+    		completion_tokens_details.multiply(2);
+    		prompt_tokens_details.multiply(2);
+    	}
+    	
+    		
+    }
 }

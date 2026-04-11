@@ -283,7 +283,10 @@ public class AICustomMain extends AIApplication {
 	public String getName() {
 		return "自定义智能体";
 	}
-
+	@Override
+	public String getMemory(AISession state) {
+		return state.getExtra().get("lastSummary");
+	}
 	@Override
 	public String getBrief(AISession state) {
 		if(state.getExtra().isEmpty())

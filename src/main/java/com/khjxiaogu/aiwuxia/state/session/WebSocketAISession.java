@@ -25,7 +25,6 @@ package com.khjxiaogu.aiwuxia.state.session;
 
 import java.io.File;
 import java.io.IOException;
-import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -35,8 +34,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -51,7 +48,7 @@ import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
+import com.khjxiaogu.aiwuxia.tools.NameTranslator;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -98,8 +95,14 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		}
 		getAiapp().prepareScene(this);
 		JsonArray models=new JsonArray();
-		for(String s:attributes.models)
-			models.add(s);
+		for(String s:attributes.models) {
+			NameTranslator helper=parent.modelTranslations.get(s.split("/")[0]);
+			String translate=s;
+			if(helper!=null)
+				translate=helper.translate(s);
+			
+			models.add(JsonBuilder.object().add("key", s).add("name", translate).end());
+		}
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating()?1:0)
 				.add("price", this.getPrice())
 				.add("isVoiceUsable",super.isAudioSession()||(getAiapp().isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService()))
@@ -325,6 +328,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public void refillChatBox(String text) {
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("sendbox",text).end().toString()));
 	}
+
+
 
 
 

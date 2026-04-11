@@ -34,6 +34,7 @@ import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekUsage;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
@@ -58,6 +59,14 @@ public class VolcanoModelProvider implements ModelProvider{
 
 
 	public String getModelType(AIRequest request) {
+		if(request.modelHint.contains("lite"))
+			return "doubao-seed-2-0-lite-260215";
+		else if(request.modelHint.contains("pro"))
+			return "doubao-seed-2-0-pro-260215";
+		else if(request.modelHint.contains("code"))
+			return "doubao-seed-2-0-code-260215";
+		else if(request.modelHint.contains("mini"))
+			return "doubao-seed-2-0-mini-260215";
 		switch(request.taskType) {
 		case CODE:return "doubao-seed-2-0-code-260215";
 		case LOGIC:
@@ -68,6 +77,12 @@ public class VolcanoModelProvider implements ModelProvider{
 		return "doubao-seed-2-0-lite-260215";
 	}
 	public VolcanoUsage getModelUsage(AIRequest request) {
+		if(request.modelHint.contains("mini"))
+			return new VolcanoUsageMini();
+		else if(request.modelHint.contains("lite"))
+			return new VolcanoUsageLite();
+		else if(request.modelHint.contains("pro")||request.modelHint.contains("code"))
+			return new VolcanoUsagePro();
 		switch(request.taskType) {
 		case CODE:
 		case LOGIC:
@@ -78,7 +93,21 @@ public class VolcanoModelProvider implements ModelProvider{
 		return new VolcanoUsageLite();
 	}
 	public String getEffort(AIRequest request) {
-		switch(request.strength) {
+		ReasoningStrength strengh=request.strength;
+		for(String s:request.modelHint.split("/")) {
+			if(s.endsWith("-strength")) {
+				try {
+					ReasoningStrength rs=ReasoningStrength.valueOf(s.split("-")[0].toUpperCase());
+					strengh=rs;
+					break;
+				}catch(IllegalArgumentException ex) {
+					
+				}
+				
+			}
+			
+		}
+		switch(strengh) {
 		case NONE:return "minimal";   // 不需要思维链
 		case WEAK:return "low";   // 简单推理
 		case MEDIUM:return "medium"; // 中等推理
@@ -92,7 +121,12 @@ public class VolcanoModelProvider implements ModelProvider{
 		request.request.addProperty("model", getModelType(request));
 		request.request.addProperty("reasoning_effort", getEffort(request));
 		request.request.addProperty("service_tier", "default");
-		request.request.add("thinking", JsonBuilder.object().add("type", request.category==ModelCategory.REASONING?"enabled":"disabled").end());
+		ModelCategory category=request.category;
+		if(request.modelHint.contains("reasoning"))
+			category=ModelCategory.REASONING;
+		else if(request.modelHint.contains("non-reasoning"))
+			category=ModelCategory.NON_REASONING;
+		request.request.add("thinking", JsonBuilder.object().add("type", category==ModelCategory.REASONING?"enabled":"disabled").end());
 		String tosend = gs.toJson(request.request);
 		
 		logger.info("trigger generation");
@@ -121,7 +155,12 @@ public class VolcanoModelProvider implements ModelProvider{
 		request.request.addProperty("reasoning_effort", getEffort(request));
 		request.request.addProperty("stream", true);
 		request.request.addProperty("service_tier", "default");
-		request.request.add("thinking", JsonBuilder.object().add("type", request.category==ModelCategory.REASONING?"enabled":"disabled").end());
+		ModelCategory category=request.category;
+		if(request.modelHint.contains("reasoning"))
+			category=ModelCategory.REASONING;
+		else if(request.modelHint.contains("non-reasoning"))
+			category=ModelCategory.NON_REASONING;
+		request.request.add("thinking", JsonBuilder.object().add("type", category==ModelCategory.REASONING?"enabled":"disabled").end());
 		request.request.add("stream_options", JsonBuilder.object().add("include_usage", true).add("chunk_include_usage", true).end());
 		logger.info("trigger generation");
 		String tosend = gs.toJson(request.request);
@@ -155,13 +194,19 @@ public class VolcanoModelProvider implements ModelProvider{
 						//if(readable.isEnded())
 						//	throw new ClientTruncatedException();
 						VolcanoRespScheme scheme=gs.fromJson(s, VolcanoRespScheme.class);
-						Message delta=scheme.choices.get(0).delta;
-						if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-							readable.putReasoner(delta.reasoning_content);
-						}
-						if(delta.content!=null&&!delta.content.isEmpty()) {
-							
-							readable.putContent(delta.content);
+						if(scheme.choices.size()>0) {
+							Message delta=scheme.choices.get(0).delta;
+							if(delta!=null) {
+								if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
+									readable.putReasoner(delta.reasoning_content);
+								}
+								if(delta.content!=null&&!delta.content.isEmpty()) {
+									readable.putContent(delta.content);
+								}
+							}
+							if("content_filter".equals(scheme.choices.get(0).finish_reason)) {
+								readable.putContent("【该回答已被审核截断】");
+							}
 						}
 						if(scheme.usage!=null)
 							usage.set(scheme.usage);
@@ -178,6 +223,6 @@ public class VolcanoModelProvider implements ModelProvider{
 
 	@Override
 	public boolean supportsHinted(AIRequest request) {
-		return "doubao".equals(request.modelHint);
+		return request.modelHint.startsWith("volces");
 	}
 }

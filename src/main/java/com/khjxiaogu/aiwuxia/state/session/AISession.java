@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
+import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -595,5 +596,9 @@ public class AISession {
 	}
 	public String getBrief() {
 		return aiapp.getBrief(this);
+	}
+
+	public String getMemory() {
+		return aiapp.getMemory(this);
 	}
 }

@@ -195,6 +195,11 @@ public class AIGroupApplication extends AIApplication {
 	public String getRoleName(AISession state, Role role) {
 		return role==Role.ASSISTANT?charaName:super.getRoleName(state, role);
 	}
+
+	@Override
+	public String getMemory(AISession state) {
+		return state.getExtra().get("lastSummary");
+	}
 	String summary;
 	public AIGroupApplication(File path,String name,JsonObject meta) throws IOException {
 		super();

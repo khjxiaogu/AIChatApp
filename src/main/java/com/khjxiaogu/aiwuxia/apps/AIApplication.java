@@ -333,6 +333,8 @@ public abstract class AIApplication {
      * @return 简要描述字符串
      */
     public abstract String getBrief(AISession state);
+    
+    public abstract String getMemory(AISession state);
 
     /**
      * 准备场景数据，例如根据当前会话状态加载或构建场景信息。

@@ -58,6 +58,7 @@ import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
+import com.khjxiaogu.aiwuxia.tools.NameTranslator;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketPaidAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -120,6 +121,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 	/** 公测中的AI应用ID集合，对于这些应用，每个用户只能创建一个对话实例 */
 	private Set<String> trial = new HashSet<>();
+	
+	public Map<String,NameTranslator> modelTranslations=new HashMap<>();
 	String defaultRule="";
 
 	/** 服务数据根目录 */
@@ -135,6 +138,19 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private FilePageService voice;
 	// 默认每个用户每天的免费token额度
 	private static final int DEFAULT_FREE_DAILY_LIMIT = 500_000;
+	public void initModelNames() {
+		modelTranslations.put("deepseek",new NameTranslator().add("deepseek", "Deepseek")
+				.add("reasoning", "推理型").add("non-reasoning", "对话型")
+				);
+		modelTranslations.put("grok",new NameTranslator().add("grok", "Grok")
+				.add("reasoning", "推理型").add("non-reasoning", "对话型")
+				);
+		modelTranslations.put("volces",new NameTranslator().add("volces", "").add("seed2.0", "豆包Seed2.0")
+				.add("reasoning", "推理型").add("non-reasoning", "对话型")
+				.add("pro", "专业").add("lite", "普通").add("code", "代码").add("mini", "轻量")
+				.add("none-strength", "（最简推理）").add("weak-strength", "（轻度推理）").add("medium-strength", "（中度推理）").add("strong-strength", "（重度推理）")
+				);
+	}
 	/**
 	 * 构造AI对话服务，初始化数据库连接、文件目录和AI应用。
 	 *
@@ -150,7 +166,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			logger.severe("SQLITE链接失败！");
 			throw e;
 		}
-		
+		initModelNames();
 		defaultRule=FileUtil.readString(new File(path,"apps/custom/prompt.txt"));
 		logger.info("正在链接SQLITE信息数据库...");
 		try {
@@ -638,7 +654,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO chat() throws IOException {
 		return new ResultDTO(200, new File(parent, "chat.html"));
 	}
-
+	@HttpMethod("GET")
+	@HttpPath("/pricing")
+	@Adapter
+	public ResultDTO pricing() throws IOException {
+		return new ResultDTO(200, new File(parent, "pricing.html"));
+	}
 	/**
 	 * HTTP GET端点：返回galgame.html文件（Galgame风格页面）。
 	 *
@@ -828,6 +849,48 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				ResultDTO res = new ResultDTO(200, baos.toByteArray());
 				res.addHeader(HttpHeaderNames.CONTENT_DISPOSITION,
 					"attachment; filename=\"" + new String(("故事导出-" + state.getBrief() + ".txt")
+						.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1) + "\"");
+				res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
+				res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
+				res.addHeader(HttpHeaderNames.PRAGMA, "no-cache");
+				res.addHeader(HttpHeaderNames.EXPIRES, "0");
+				return res;
+			}
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+			return new ResultDTO(500, "Internal Server Error");
+		}
+		return new ResultDTO(401, "Unauthorized");
+	}
+	@HttpPath("/exportMemory")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO exportMemory(@Query("uid") String uid, @Query("chatid") String cid) {
+		try {
+			WebSocketAISession state = this.getOrLoadSession(cid, uid);
+			if(state!=null) {
+				String memory=state.getMemory();
+				if(memory==null) {
+					ResultDTO res = new ResultDTO(200, "<html><head></head><body><script>alert('暂无记忆')</script></body>");
+					res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/html; charset=utf-8");
+					res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
+					res.addHeader(HttpHeaderNames.PRAGMA, "no-cache");
+					res.addHeader(HttpHeaderNames.EXPIRES, "0");
+					return res;
+				}
+				ByteArrayOutputStream baos = new ByteArrayOutputStream();
+				try {
+					baos.write(0xEF);
+					baos.write(0xBB);
+					baos.write(0xBF); // UTF-8 BOM
+					baos.write(memory.getBytes(StandardCharsets.UTF_8));
+				} catch (IOException e) {
+					getLogger().printStackTrace(e);
+					return new ResultDTO(500, "内部服务器错误");
+				}
+				ResultDTO res = new ResultDTO(200, baos.toByteArray());
+				res.addHeader(HttpHeaderNames.CONTENT_DISPOSITION,
+					"attachment; filename=\"" + new String(("记忆导出-" + state.getBrief() + ".txt")
 						.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1) + "\"");
 				res.addHeader(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
 				res.addHeader(HttpHeaderNames.CACHE_CONTROL, "private, no-store, no-cache, must-revalidate");
@@ -1046,6 +1109,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			if (state == null) {
 				if (isCreate) {
 					state = createSession( uid, cid, attr, data,attribute);
+					state.save();
+					logger.info("AI " + cid + " Created");
+				}else {
+					state = createRawSession(uid,cid,attr,data);
 					state.save();
 					logger.info("AI " + cid + " Created");
 				}

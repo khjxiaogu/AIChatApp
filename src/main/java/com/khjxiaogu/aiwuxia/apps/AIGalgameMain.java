@@ -345,6 +345,10 @@ public class AIGalgameMain extends AIApplication {
 	}
 
 	@Override
+	public String getMemory(AISession state) {
+		return state.getExtra().get("lastSummary");
+	}
+	@Override
 	public String getRoleName(AISession state,Role role) {
 		switch(role) {
 		case USER:String brief=getBrief(state);return brief==null?"我":brief ;

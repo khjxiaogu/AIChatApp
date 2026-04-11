@@ -400,21 +400,20 @@ public class AITRPGSceneMain extends AIApplication {
 					}
 					
 					continue;
-				} else {
-					if(last.contains("=")) {
-						String[] lasts=last.split("=");
-						if(lasts.length==2) {
-							String key=lasts[0].trim();
-							String value=lasts[1].trim();
-							if(validator!=null) {
-								if(!validator.validate(key, value)) {
-									continue;
-								}
+				}
+				if(last.contains("=")) {
+					String[] lasts=last.split("=");
+					if(lasts.length==2) {
+						String key=lasts[0].trim();
+						String value=lasts[1].trim();
+						if(validator!=null) {
+							if(!validator.validate(key, value)) {
+								continue;
 							}
-							scene.put(key,value);
 						}
-						continue;
+						scene.put(key,value);
 					}
+					continue;
 				}
 			} else if (status == 2) {	
 				if (last.startsWith("==角色==")) {
@@ -520,6 +519,10 @@ public class AITRPGSceneMain extends AIApplication {
 
 	}
 
+	@Override
+	public String getMemory(AISession state) {
+		return state.getExtra().get("lastSummary");
+	}
 	@Override
 	public String getName() {
 		return charaname;

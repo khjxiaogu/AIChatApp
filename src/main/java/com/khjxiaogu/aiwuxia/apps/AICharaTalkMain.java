@@ -587,7 +587,10 @@ public class AICharaTalkMain extends AIApplication {
 	public String getName() {
 		return charaname;
 	}
-
+	@Override
+	public String getMemory(AISession state) {
+		return state.getExtra().get("lastSummary");
+	}
 	@Override
 	public String getBrief(AISession state) {
 		if(state.getExtra().isEmpty())
