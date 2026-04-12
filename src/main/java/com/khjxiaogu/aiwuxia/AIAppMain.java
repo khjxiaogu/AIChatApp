@@ -65,7 +65,7 @@ public class AIAppMain {
 		return sb.toString();
 	}
 	public static void main(String[] args) throws Throwable {
-		String name="cstgal";
+		String name="muxintalk";
 		int idx=0;
 		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
 		try {

@@ -56,6 +56,7 @@ import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
+import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
@@ -220,7 +221,11 @@ public class AICharaTalkMain extends AIApplication {
 		compactor.clearHistoryState(state.getExtra());
 		while(it.hasNext()) {
 			HistoryItem hi=it.next();
-			len+=hi.getContextContent().length();
+			long tokenLen=hi.getTokenLength();
+			if(tokenLen==0) {
+				hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+			}
+			len+=tokenLen;
 			if(hi.getRole()!=Role.SYSTEM) {
 				summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getDisplayContent()).append("\n");
 			}
@@ -253,7 +258,11 @@ public class AICharaTalkMain extends AIApplication {
 				if(hi.getRole()==Role.ASSISTANT) {
 					i++;
 				}
-				len+=hi.getContextContent().length();
+				long tokenLen=hi.getTokenLength();
+				if(tokenLen==0) {
+					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				}
+				len+=tokenLen;
 				
 			}
 			if(len>=70000) {//more than 100000 text:about 60k context,remove until 10000
@@ -263,7 +272,7 @@ public class AICharaTalkMain extends AIApplication {
 				int removedSpeech=0;
 				while(it.hasNext()) {//calculate total dialog rows
 					HistoryItem hi=it.next();
-					len-=hi.getContextContent().length();
+					len-=hi.getTokenLength();
 					
 					if(hi.getRole()!=Role.SYSTEM) {
 						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getContextContent()).append("\n");

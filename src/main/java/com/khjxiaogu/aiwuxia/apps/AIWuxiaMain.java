@@ -52,6 +52,7 @@ import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.MemoryAttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
@@ -174,15 +175,19 @@ public class AIWuxiaMain extends AIApplication {
 			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				len+=hi.getContextContent().length();
+				long tokenLen=hi.getTokenLength();
+				if(tokenLen==0) {
+					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				}
+				len+=tokenLen;
 			}
 			
-			if(len>=140000) {//more than 140000 text:about 100k context,remove until 60000
+			if(len>=100000) {//more than 140000 text:about 100k context,remove until 60000
 				HistoryItem lasthi=null;
 				it=history.validContextIterator();
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
-					len-=hi.getContextContent().length();
+					len-=hi.getTokenLength();
 					hi.setValidContext(false);
 					if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
 						lasthi=hi;

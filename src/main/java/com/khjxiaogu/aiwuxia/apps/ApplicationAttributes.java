@@ -5,6 +5,7 @@ import java.util.List;
 
 public class ApplicationAttributes {
 	public boolean paidOnly=false;
+	public boolean freeNow=false;
 	public List<String> models=new ArrayList<>();
 	public String url=null;
 	public AIApplication app;

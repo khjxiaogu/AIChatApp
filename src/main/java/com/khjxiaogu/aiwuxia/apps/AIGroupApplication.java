@@ -44,6 +44,7 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
@@ -118,8 +119,11 @@ public class AIGroupApplication extends AIApplication {
 				if(hi.getRole()==Role.ASSISTANT) {
 					i++;
 				}
-				len+=hi.getContextContent().length();
-				
+				long tokenLen=hi.getTokenLength();
+				if(tokenLen==0) {
+					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				}
+				len+=tokenLen;
 			}
 			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
 				StringBuilder summery=new StringBuilder();
@@ -127,7 +131,7 @@ public class AIGroupApplication extends AIApplication {
 				it=history.validContextIterator();
 				while(it.hasNext()) {//calculate total dialog rows
 					HistoryItem hi=it.next();
-					len-=hi.getContextContent().length();
+					len-=hi.getTokenLength();
 					
 					if(hi.getRole()!=Role.SYSTEM) {
 						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getContextContent()).append("\n");

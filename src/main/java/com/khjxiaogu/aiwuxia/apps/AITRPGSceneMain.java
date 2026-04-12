@@ -52,6 +52,7 @@ import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
@@ -205,7 +206,11 @@ public class AITRPGSceneMain extends AIApplication {
 				if(hi.getRole()==Role.ASSISTANT) {
 					i++;
 				}
-				len+=hi.getContextContent().length();
+				long tokenLen=hi.getTokenLength();
+				if(tokenLen==0) {
+					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				}
+				len+=tokenLen;
 				
 			}
 			if(len>=60000) {//more than 100000 text:about 60k context,remove until 20000
@@ -216,7 +221,7 @@ public class AITRPGSceneMain extends AIApplication {
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
 					if(hi.isValidContext()) {
-						len-=hi.getContextContent().length();
+						len-=hi.getTokenLength();
 						
 						if(hi.getRole()!=Role.SYSTEM) {
 							if(hi.getRole()==Role.USER)

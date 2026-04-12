@@ -166,4 +166,10 @@ public interface HistoryItem {
     void setLastState(ApplicationState lastState);
 	int getPrevIdentifier();
 	void setPrevIdentifier(int prevIdentifier);
+
+	void setReasonContent(String reasonContent);
+
+	long getTokenLength();
+
+	void setTokenLength(long tokenLength);
 }

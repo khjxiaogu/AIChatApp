@@ -35,6 +35,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	private static final long serialVersionUID = -2560643964648148908L;
 	private int identifier = -1;
 	private int prevIdentifier = -1;
+	private transient long tokenLength=0;
 	private Role role;
 	private StringBuilder content;
 	private StringBuilder sendContent;
@@ -216,7 +217,16 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	public void setDeleted(boolean sendable) {
 		deleted=sendable;
 	}
+	@Override
     public void setReasonContent(String reasonContent) {
 		this.reasonContent=new StringBuilder(reasonContent);
+	}
+	@Override
+	public long getTokenLength() {
+		return tokenLength;
+	}
+	@Override
+	public void setTokenLength(long tokenLength) {
+		this.tokenLength = tokenLength;
 	}
 }

@@ -249,6 +249,7 @@ public class HistoryItemDAO {
         private boolean lastStateLoaded = false;
         private String reasonContentCache;
         private ApplicationState lastStateCache;
+        private long tokenLength;
 
         PersistentHistoryItem(HistoryMemoryItem delegate, HistoryItemDAO dao) {
             this.delegate = delegate;
@@ -384,5 +385,19 @@ public class HistoryItemDAO {
             delegate.setPrevIdentifier(prevIdentifier);
             // prevIdentifier 不立即入库，等待 flush
         }
+
+		@Override
+		public void setReasonContent(String reasonContent) {
+		}
+
+		@Override
+		public long getTokenLength() {
+			return tokenLength;
+		}
+
+		@Override
+		public void setTokenLength(long tokenLength) {
+			this.tokenLength=tokenLength;
+		}
     }
 }

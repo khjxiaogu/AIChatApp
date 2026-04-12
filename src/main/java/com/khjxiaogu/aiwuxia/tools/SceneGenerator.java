@@ -40,9 +40,9 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
 public class SceneGenerator {
 
 	public static void main(String[] args) throws IOException {
-		// TODO Auto-generated method stub
-		buildTLCM();
-		buildCFS();
+		//buildTLCM();
+		//buildCFS();
+		buildGaokao100();
 	}
 	public static void buildCFS() throws IOException {
 		//哀伤///严肃//笑/生气
@@ -384,7 +384,7 @@ public class SceneGenerator {
 			.withAlt().time().sunset().end().withScene("nanzhuwoshihun.jpg").end()
 			.withAlt().time().evening().end().withScene("nanzhuwoshiye.jpg").end().end().end()
 		.end();
-;
+
 
 		back.withAlt().addPrefix("十字路口").location().withValue("十字路口").end()
 		.withScene("lukouri.jpg")
@@ -397,7 +397,6 @@ public class SceneGenerator {
 			.withAlt().time().sunset().end().withScene("fengxiwoshihun.jpg").end()
 			.withAlt().time().evening().end().withScene("fengxiwoshiye.jpg").end().end().end()
 		.end();
-;
 
 		back.withAlt().location().withValue("姚枫怡卧室").end()
 		.withScene("姚枫茜卧室/fengxiwoshiri.jpg")//notimpl
@@ -585,8 +584,182 @@ public class SceneGenerator {
 		checkSave(savePath,"fengxitalk","back",back.build());
 		checkSave(savePath,"haiyintalk","back",back.build());
 	}
+	public static void buildGaokao100() throws IOException {
+
+
+		File savePath=new File("save/");
+		AICharaSceneBuilder<Endable> chara=AICharaSceneBuilder.builder().addPrefix("gaokao100/fgimage/mx");
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> school=chara.withAlt().cloth().withValue("校服毛衣").end();
+		school.withAlt().emote().withValue("微笑").end().withScene("figpic01111000.png").end();
+		school.withAlt().emote().withValue("普通").end().withScene("figpic01111001.png").end();
+		school.withAlt().emote().withValue("惊讶").end().withScene("figpic01111002.png").end();
+		school.withAlt().emote().withValue("大笑").end().withScene("figpic01111012.png").end();
+		school.withAlt().emote().withValue("难受").end().withScene("figpic01111017.png").end();
+		school.withAlt().emote().withValue("担忧").end().withScene("figpic01111020.png").end();
+		school.withAlt().emote().withValue("尴尬").end().withScene("figpic01111021.png").end();
+		school.withAlt().emote().withValue("害羞").end().withScene("figpic01111051.png").end();
+		school.withAlt().emote().withValue("生气").end().withScene("figpic01111065.png").end();
+		school.withAlt().emote().withValue("低落").end().withScene("figpic01111069.png").end();
+		school.end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> school2=chara.withAlt().cloth().withValue("校服衬衫").end();
+		school2.withAlt().emote().withValue("微笑").end().withScene("figpic01211000.png").end();
+		school2.withAlt().emote().withValue("普通").end().withScene("figpic01211001.png").end();
+		school2.withAlt().emote().withValue("惊讶").end().withScene("figpic01211002.png").end();
+		school2.withAlt().emote().withValue("大笑").end().withScene("figpic01211008.png").end();
+		school2.withAlt().emote().withValue("难受").end().withScene("figpic01211017.png").end();
+		school2.withAlt().emote().withValue("担忧").end().withScene("figpic01211020.png").end();
+		school2.withAlt().emote().withValue("尴尬").end().withScene("figpic01211019.png").end();
+		school2.withAlt().emote().withValue("害羞").end().withScene("figpic01211038.png").end();
+		school2.withAlt().emote().withValue("生气").end().withScene("figpic01221065.png").end();
+		school2.withAlt().emote().withValue("低落").end().withScene("figpic01211069.png").end();
+		school2.end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> normal=chara.withAlt().cloth().withValue("长袖常服").end();
+		normal.withAlt().emote().withValue("微笑").end().withScene("figpic01411000.png").end();
+		normal.withAlt().emote().withValue("普通").end().withScene("figpic01411058.png").end();
+		normal.withAlt().emote().withValue("惊讶").end().withScene("figpic01411002.png").end();
+		normal.withAlt().emote().withValue("大笑").end().withScene("figpic01411012.png").end();
+		normal.withAlt().emote().withValue("难受").end().withScene("figpic01411078.png").end();
+		normal.withAlt().emote().withValue("担忧").end().withScene("figpic01411020.png").end();
+		normal.withAlt().emote().withValue("尴尬").end().withScene("figpic01411025.png").end();
+		normal.withAlt().emote().withValue("害羞").end().withScene("figpic01411051.png").end();
+		normal.withAlt().emote().withValue("生气").end().withScene("figpic01411054.png").end();
+		normal.withAlt().emote().withValue("低落").end().withScene("figpic01411079.png").end();
+		normal.end();
+		
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> normal2=chara.withAlt().cloth().withValue("短袖常服").end();
+		normal2.withAlt().emote().withValue("微笑").end().withScene("figpic01311000.png").end();
+		normal2.withAlt().emote().withValue("普通").end().withScene("figpic01311001.png").end();
+		normal2.withAlt().emote().withValue("惊讶").end().withScene("figpic01311002.png").end();
+		normal2.withAlt().emote().withValue("大笑").end().withScene("figpic01311012.png").end();
+		normal2.withAlt().emote().withValue("难受").end().withScene("figpic01311060.png").end();
+		normal2.withAlt().emote().withValue("担忧").end().withScene("figpic01311020.png").end();
+		normal2.withAlt().emote().withValue("尴尬").end().withScene("figpic01311029.png").end();
+		normal2.withAlt().emote().withValue("害羞").end().withScene("figpic01311077.png").end();
+		normal2.withAlt().emote().withValue("生气").end().withScene("figpic01321046.png").end();
+		normal2.withAlt().emote().withValue("低落").end().withScene("figpic01311079.png").end();
+		normal2.end();
+		checkSave(savePath,"muxintalk","chara",chara.build());
+
+		AICharaSceneBuilder<Endable> back=AICharaSceneBuilder.builder().addPrefix("gaokao100/bgimage");
+		AICharaSceneBuilder<AICharaSceneBuilder<Endable>> cur;
+		// 主角卧室 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("主角卧室").location().withValue("主角卧室").end();
+		cur.withScene("background015a.png");
+		cur.withAlt().time().sunset().end().withScene("background015b.png").end();
+		cur.withAlt().time().evening().end().withScene("background015c.png").end();
+		cur.end();
+
+		// 主角小区 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("主角小区").location().withValue("主角小区").end();
+		cur.withScene("background017a.png");
+		cur.withAlt().time().sunset().end().withScene("background017b.png").end();
+		cur.withAlt().time().evening().end().withScene("background017c.png").end();
+		cur.end();
+
+		// 公园 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("公园").location().withValue("公园").end();
+		cur.withScene("background021a.png");
+		cur.withAlt().time().sunset().end().withScene("background021b.png").end();
+		cur.withAlt().time().evening().end().withScene("background021c.png").end();
+		cur.end();
+
+		// 图书馆 (仅 a 存在)
+		cur = back.withAlt().addPrefix("图书馆").location().withValue("图书馆").end();
+		cur.withScene("background025a.png");
+		cur.end();
+
+		// 学校楼梯 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("学校楼梯").location().withValue("学校楼梯").end();
+		cur.withScene("background006a.png");
+		cur.withAlt().time().sunset().end().withScene("background006b.png").end();
+		cur.withAlt().time().evening().end().withScene("background006c.png").end();
+		cur.end();
+
+		// 学校自行车棚 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("学校自行车棚").location().withValue("学校自行车棚").end();
+		cur.withScene("background013a.png");
+		cur.withAlt().time().sunset().end().withScene("background013b.png").end();
+		cur.withAlt().time().evening().end().withScene("background013c.png").end();
+		cur.end();
+
+		// 操场 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("操场").location().withValue("操场").end();
+		cur.withScene("background010a.png");
+		cur.withAlt().time().sunset().end().withScene("background010b.png").end();
+		cur.withAlt().time().evening().end().withScene("background010c.png").end();
+		cur.end();
+
+		// 教学楼下 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("教学楼下").location().withValue("教学楼下").end();
+		cur.withScene("background014a.png");
+		cur.withAlt().time().sunset().end().withScene("background014b.png").end();
+		cur.withAlt().time().evening().end().withScene("background014c.png").end();
+		cur.end();
+
+		// 教师办公室 (仅 a 存在)
+		cur = back.withAlt().addPrefix("教师办公室").location().withValue("教师办公室").end();
+		cur.withScene("background024a.png");
+		cur.end();
+
+		// 木馨小区 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("木馨小区").location().withValue("木馨小区").end();
+		cur.withScene("background020a.png");
+		cur.withAlt().time().sunset().end().withScene("background020b.png").end();
+		cur.withAlt().time().evening().end().withScene("background020c.png").end();
+		cur.end();
+
+		// 校外道路 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("校外道路").location().withValue("校外道路").end();
+		cur.withScene("background016a.png");
+		cur.withAlt().time().sunset().end().withScene("background016b.png").end();
+		cur.withAlt().time().evening().end().withScene("background016c.png").end();
+		cur.end();
+
+		// 校门口 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("校门口").location().withValue("校门口").end();
+		cur.withScene("background004a.png");
+		cur.withAlt().time().sunset().end().withScene("background004b.png").end();
+		cur.withAlt().time().evening().end().withScene("background004c.png").end();
+		cur.end();
+
+		// 校门广场 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("校门广场").location().withValue("校门广场").end();
+		cur.withScene("background003a.png");
+		cur.withAlt().time().sunset().end().withScene("background003b.png").end();
+		cur.withAlt().time().evening().end().withScene("background003c.png").end();
+		cur.end();
+
+		// 水族馆内 (仅 a 存在)
+		cur = back.withAlt().addPrefix("水族馆内").location().withValue("水族馆内").end();
+		cur.withScene("background028a.png");
+		cur.end();
+
+		// 老东方英语 (有 a, b；c 不存在，用 b 代替 evening)
+		cur = back.withAlt().addPrefix("老东方英语").location().withValue("老东方英语").end();
+		cur.withScene("background019a.png");
+		cur.withAlt().time().sunset().end().withScene("background019b.png").end();
+		cur.withAlt().time().evening().end().withScene("background019b.png").end();
+		cur.end();
+
+		// 课室 (a, b, c 均存在)
+		cur = back.withAlt().addPrefix("课室").location().withValue("课室").end();
+		cur.withScene("background008a.png");
+		cur.withAlt().time().sunset().end().withScene("background008b.png").end();
+		cur.withAlt().time().evening().end().withScene("background008c.png").end();
+		cur.end();
+
+		// 食堂 (有 a, b；c 不存在，用 b 代替 evening)
+		cur = back.withAlt().addPrefix("食堂").location().withValue("食堂").end();
+		cur.withScene("background011a.png");
+		cur.withAlt().time().sunset().end().withScene("background011b.png").end();
+		cur.withAlt().time().evening().end().withScene("background011b.png").end();
+		cur.end();
+		checkSave(savePath,"muxintalk","back",back.build());
+	}
 	public static void checkSave(File fn,String ai,String type,SceneSelector selector) throws IOException {
-		File save=new File(fn,ai+"/"+type+".json");
+		File save=new File(fn,"apps/"+ai+"/"+type+".json");
 		List<File> files=new ArrayList<>();
 		visit(selector,files,new File(fn,"resource"));
 		AtomicBoolean err=new AtomicBoolean();

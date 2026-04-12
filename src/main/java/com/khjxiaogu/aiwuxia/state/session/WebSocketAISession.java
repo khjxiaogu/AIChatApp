@@ -312,18 +312,28 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	}
 	@Override
 	public void addUsage(UsageIntf usage) {
-		int actualCost=(int) Math.floor(usage.getEquivantTokens());
-		parent.getLogger().info("已消费："+actualCost);
-		parent.consumeTokens(user, actualCost);
+		if(attributes.paidOnly) {
+			int actualCost=(int) Math.ceil(usage.getEquivantTokens());
+			parent.getLogger().info("已消费："+actualCost);
+			parent.consumePaidTokens(user, actualCost);
+			
+		}
+		if(!attributes.freeNow) {
+			int actualCost=(int) Math.floor(usage.getEquivantTokens());
+			parent.getLogger().info("已消费："+actualCost);
+			parent.consumeTokens(user, actualCost);
+		}
 		
 		super.addStatUsage(usage);
 	}
 	@Override
 	public boolean canGenerate() {
-		return parent.hasAnyTokenRemaining(user);
+		if(attributes.paidOnly)
+			return parent.hasAnyPaidTokenRemaining(user);
+		if(!attributes.freeNow)
+			return parent.hasAnyTokenRemaining(user);
+		return true;
 	}
-
-
 	@Override
 	public void refillChatBox(String text) {
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("sendbox",text).end().toString()));

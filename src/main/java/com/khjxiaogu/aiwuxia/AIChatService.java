@@ -60,7 +60,6 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
-import com.khjxiaogu.aiwuxia.state.session.WebSocketPaidAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -282,6 +281,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 								attr.models=gson.fromJson(meta.get("models"), List.class);
 							if(meta.has("url"))
 								attr.url=meta.get("url").getAsString();
+							if(meta.has("freeNow"))
+								attr.freeNow=meta.get("freeNow").getAsBoolean();
 							getLogger().info("AI加载成功：" + name);
 						} catch (Throwable e) {
 							getLogger().printStackTrace(e);
@@ -949,11 +950,6 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return apps.get(app);
 	}
 	public WebSocketAISession loadSession(String uid, String rcid, ApplicationAttributes attribute, File data) throws IOException {
-		if(attribute.paidOnly) {
-			return new WebSocketPaidAISession(this, uid, rcid, attribute.app,attribute, data,
-				AIApplication.historyFromJson(data),
-				AIApplication.dataFromJson(data));
-		}
 		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
 				AIApplication.historyFromJson(data),
 				AIApplication.dataFromJson(data));
@@ -989,10 +985,6 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return createRawSession(uid,rcid,attribute,data);
 	}
 	public WebSocketAISession createRawSession(String uid, String rcid,ApplicationAttributes attribute, File data){
-		if(attribute.paidOnly) {
-			return new WebSocketPaidAISession(this, uid, rcid, attribute.app,attribute, data,
-				new MemoryHistory(), new AISession.ExtraData());
-		}
 		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
 			new MemoryHistory(), new AISession.ExtraData());
 	}

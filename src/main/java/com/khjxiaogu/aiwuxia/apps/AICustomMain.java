@@ -46,6 +46,7 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
@@ -121,7 +122,11 @@ public class AICustomMain extends AIApplication {
 		compactor.clearHistoryState(state.getExtra());
 		while(it.hasNext()) {
 			HistoryItem hi=it.next();
-			len+=hi.getContextContent().length();
+			long tokenLen=hi.getTokenLength();
+			if(tokenLen==0) {
+				hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+			}
+			len+=tokenLen;
 			if(hi.getRole()!=Role.SYSTEM) {
 				if(hi.getRole()==Role.USER)
 					summery.append("【"+getRoleName(state,hi.getRole())+"】").append("：");
@@ -149,7 +154,11 @@ public class AICustomMain extends AIApplication {
 			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				len+=hi.getContextContent().length();
+				long tokenLen=hi.getTokenLength();
+				if(tokenLen==0) {
+					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				}
+				len+=tokenLen;
 				
 			}
 			int num=60000;
@@ -165,7 +174,7 @@ public class AICustomMain extends AIApplication {
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
 					
-					len-=hi.getContextContent().length();
+					len-=hi.getTokenLength();
 					
 					if(hi.getRole()!=Role.SYSTEM) {
 						if(hi.getRole()==Role.USER)
