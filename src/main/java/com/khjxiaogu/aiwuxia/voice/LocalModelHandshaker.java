@@ -31,6 +31,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -160,15 +163,14 @@ public class LocalModelHandshaker implements WebsocketEvents {
      * @param text   要合成的文本内容
      * @return 包含音频字节数组的 {@link CompletableFuture}，如果失败或超时则返回 null
      */
-    public CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String emote, String reqid, String text) {
+    public CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String reqid, JsonArray content) {
         if (pool.isEmpty())
             return CompletableFuture.failedFuture(new IOException("no local voice model found"));
 
         JsonObject request = JsonBuilder.object()
                 .add("chara", chara)
-                .add("emote", emote)
                 .add("reqid", reqid)
-                .add("text", text)
+                .add("content", content)
                 .add("type", "audiorequest")
                 .end();
     	
@@ -186,14 +188,21 @@ public class LocalModelHandshaker implements WebsocketEvents {
                     Result result = new Result();
                     ars.put(reqid, result);
                     ch.writeAndFlush(new TextWebSocketFrame(request.toString()));
-
+                    int len=0;
+                    for(JsonElement je:content) {
+                    	if(je.isJsonObject()) {
+                    		JsonObject jo=je.getAsJsonObject();
+                    		if(jo.has("text"))
+                    			len+=jo.get("text").getAsString().length();
+                    	}
+                    }
                     synchronized (result) {
                         long beginTime = System.currentTimeMillis();
                         long endTime = beginTime + 1000 * 60 * 3; // 3 分钟超时
                         while (true) {
                             long currTime = System.currentTimeMillis();
                             if (result.finished) {
-                                return new VoiceGenerationResult(new LocalVoiceUsage(text.length()), result.data,"mp3"); // 成功接收到数据
+                                return new VoiceGenerationResult(new LocalVoiceUsage(len), result.data,"mp3"); // 成功接收到数据
                             }
                             if (!ch.isActive() || currTime >= endTime)
                             	throw new IOException("Connection timeout");

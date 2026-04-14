@@ -60,6 +60,7 @@ import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
+import com.khjxiaogu.aiwuxia.voice.VoiceTagger;
 
 public class AICharaTalkMain extends AIApplication {
 	String charaname;
@@ -71,14 +72,16 @@ public class AICharaTalkMain extends AIApplication {
 	String volcappid;
 	String localChara;
 	AttributeValidator validator;
-	Map<String,String> emote2emote;
 	HistoryCompacter compactor;
 	String charaset;
 	String system;
+	VoiceTagger vtg;
 	public AICharaTalkMain(File basePath,File modelFolder,String charaname,JsonObject meta) {
 		super();
+		
 		this.charaname=charaname;
 		try {
+			vtg=new VoiceTagger(basePath);
 			this.basePath=basePath;
 			File model=modelFolder;
 			
@@ -93,7 +96,6 @@ public class AICharaTalkMain extends AIApplication {
 				volcappid = meta.get("volcappid").getAsString();
 			if(meta.has("localChara")) {
 				localChara = meta.get("localChara").getAsString();
-				emote2emote = gs.fromJson(meta.get("localEmote"), Map.class);
 			}
 			File validfile=new File(model, "validator.json");
 			if(validfile.exists())
@@ -500,10 +502,11 @@ public class AICharaTalkMain extends AIApplication {
 			return CompletableFuture.supplyAsync
 			(()->{
 				try {
-					logger.info("正在从火山引擎生成语音："+ftext);
+					String nftext=ftext.replaceAll("（[^）]+）", ftext);
+					logger.info("正在从火山引擎生成语音："+nftext);
 					File aud=new File(basePath,"voice");
 					aud.mkdirs();
-					CompletableFuture<VoiceGenerationResult> data=VoiceModelHandler.getAudioData(volcappid,state.user, ftext, faudioId);
+					CompletableFuture<VoiceGenerationResult> data=VoiceModelHandler.getAudioData(volcappid,state.user, nftext, faudioId);
 					
 					VoiceGenerationResult rslt=data.get();
 					state.addUsage(rslt.usage);
@@ -524,7 +527,7 @@ public class AICharaTalkMain extends AIApplication {
 							logger.info("正在从本地语音引擎生成语音："+ftext);
 							File aud=new File(basePath,"voice");
 							aud.mkdirs();
-							CompletableFuture<VoiceGenerationResult> dataFuture=LocalVoiceModel.requireAudio(localChara, emote2emote.get(state.getState().perks.get("表情")), faudioId, ftext);
+							CompletableFuture<VoiceGenerationResult> dataFuture=vtg.extractTalkContent( ftext,state).thenCompose(t->LocalVoiceModel.requireAudio(localChara, faudioId, t));
 							VoiceGenerationResult rslt=dataFuture.get();
 							state.addUsage(rslt.usage);
 							try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){

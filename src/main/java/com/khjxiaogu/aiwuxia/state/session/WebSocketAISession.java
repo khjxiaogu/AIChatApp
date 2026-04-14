@@ -314,14 +314,19 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public void addUsage(UsageIntf usage) {
 		if(attributes.paidOnly) {
 			int actualCost=(int) Math.ceil(usage.getEquivantTokens());
-			parent.getLogger().info("已消费："+actualCost);
-			parent.consumePaidTokens(user, actualCost);
+		
+			if(actualCost>0) {
+				parent.getLogger().info("已消费："+actualCost);
+				parent.consumePaidTokens(user, actualCost);
+			}
 			
 		}
 		if(!attributes.freeNow) {
 			int actualCost=(int) Math.floor(usage.getEquivantTokens());
-			parent.getLogger().info("已消费："+actualCost);
-			parent.consumeTokens(user, actualCost);
+			if(actualCost>0) {
+				parent.getLogger().info("已消费："+actualCost);
+				parent.consumeTokens(user, actualCost);
+			}
 		}
 		
 		super.addStatUsage(usage);

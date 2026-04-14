@@ -27,6 +27,9 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -36,6 +39,8 @@ import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AppAISession;
@@ -164,7 +169,27 @@ public class AIAppMain {
 					aistate.getAiapp().doRegen(cstate);
 				else if("<撤回>".equals(ret))
 					aistate.getAiapp().doRevert(cstate);
-				else
+				else if("<朗读>".equals(ret)) {
+					final AISession state=aistate;
+					aistate.getCommandExec().submit(()->{
+						HistoryItem last=state.getLast();
+						if(last.getRole()==Role.ASSISTANT) {
+							if(last.getAudioId()==null) {
+								String audioId=UUID.randomUUID().toString();
+								
+								CompletableFuture<Boolean> cf=state.getAiapp().generateVoice(state, last.getDisplayContent().toString(), audioId);
+								try {
+									if(cf.get()) {
+										last.setAudioId(audioId);
+										state.postAudioComplete(last.getIdentifier(),audioId);
+									}
+								} catch (InterruptedException | ExecutionException e) {
+									e.printStackTrace();
+								}
+							}
+						}
+					});
+				}else
 					aistate.handleUserSpeech(ret).get();
 				while(aistate.isGenerating()) {
 					Thread.sleep(100);

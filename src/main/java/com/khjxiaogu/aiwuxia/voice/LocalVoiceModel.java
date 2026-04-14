@@ -25,6 +25,8 @@ package com.khjxiaogu.aiwuxia.voice;
 
 import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
+
+import com.google.gson.JsonArray;
 /**
  * 本地部署语音模型的交互器，提供对本地语音合成服务的静态访问入口。
  * 该类封装了 {@link LocalModelHandshaker} 的单例实例，并通过静态方法
@@ -58,8 +60,8 @@ public class LocalVoiceModel {
      * @return 包含音频字节数组的 CompletableFuture；如果服务不可用或请求失败，可能返回 null
      * @see LocalModelHandshaker#requireAudio(String, String, String, String)
      */
-    public static CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String emote, String reqid, String text) {
+    public static CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String reqid, JsonArray content) {
     	
-    	return lhs.requireAudio(chara, emote, reqid, text);
+    	return lhs.requireAudio(chara, reqid, content);
     }
 }
