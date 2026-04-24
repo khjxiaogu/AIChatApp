@@ -16,6 +16,7 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
@@ -171,15 +172,15 @@ public class HistoryCompacter {
 		return section.isEmpty()?null:section;
 	}
 	public static AIRequest constructSummaryrequest(AISession state,String prompt,String input) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-				.add("role", "system").add("content", prompt).end();
+		Builder b=AIRequest.builder(state).modelHint("").taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).temperature(1.3f).maxTokens(16384);
+		b.addHistoryItem(Role.SYSTEM, prompt);
 			// if (status != null&&!status.isEmpty())
-			b.object().add("role",Role.USER.getRoleName()).add("content", input).end();
+		b.addHistoryItem(Role.USER, input);
 
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return AIRequest.builder(state).modelHint("").taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+		return b.build();
 
 	}
 	public HistoryCompacter(String system, String version) {

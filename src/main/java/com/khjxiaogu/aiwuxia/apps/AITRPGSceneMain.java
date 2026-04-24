@@ -258,6 +258,7 @@ public class AITRPGSceneMain extends AIApplication {
 		// true);
 		//头几次用思维链版本构建格式
 
+		builder.prefix("==场景==");
 		return builder.temperature(1.6f).maxTokens(8192).build();
 
 	}

@@ -27,15 +27,19 @@ import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -57,10 +61,9 @@ public class DeepseekModelProvider implements ModelProvider{
 	}
 	Gson gs=new Gson();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
-		ModelCategory category=request.category;
-		request.request.addProperty("model", category==ModelCategory.REASONING?"deepseek-reasoner":"deepseek-chat");
-		String tosend = gs.toJson(request.request);
-		logger.info("trigger generation");
+		JsonObject jo=createRequest(request);
+		jo.addProperty("stream", true);
+		String tosend = gs.toJson(jo);
 		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
@@ -72,21 +75,58 @@ public class DeepseekModelProvider implements ModelProvider{
 		logger.info(resp.getUsage());
 		return resp;
 	}
+	private static JsonObject createRequest(AIRequest request) {
+		JsonArray messages=new JsonArray();
+		for(HistoryItem hi:request.history) {
+			JsonObject msg=new JsonObject();
+			msg.addProperty("role", hi.getRole().getRoleName());
+			msg.addProperty("content", hi.getContextContent().toString());
+			messages.add(msg);
+		}
+		
+		if(request.prefix!=null&&request.category!=ModelCategory.REASONING) {
+			JsonObject msg=new JsonObject();
+			msg.addProperty("role", "assistant");
+			msg.addProperty("content", request.prefix);
+			msg.addProperty("prefix", true);
+			messages.add(msg);
+		}
+			
+		JsonObject jo=new JsonObject();
+		
+		jo.add("messages", messages);
+		if(request.hasModelProperty("pro"))
+			jo.addProperty("model", "deepseek-v4-pro");
+		else
+			jo.addProperty("model", "deepseek-v4-flash");
+		
+		
+		jo.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
+		if(request.format==ResponseFormat.JSON)
+			jo.add("response_format", JsonBuilder.object("type", "json_object"));
+		if(request.category==ModelCategory.REASONING) {
+			jo.add("thinking", JsonBuilder.object("type","enabled"));
+			if(request.strength==ReasoningStrength.STRONG)
+				jo.addProperty("reasoning_effort", "max");
+			else
+				jo.addProperty("reasoning_effort", "high");
+		}
+		jo.addProperty("temperature", request.temperature);
+		jo.addProperty("max_tokens", request.maxToken);
+		return jo;
+	}
+	private static DeepseekUsage createUsage(AIRequest request) {
+		if(request.hasModelProperty("pro"))
+			return new DeepseekProUsage();
+		return new DeepseekUsage();
+		
+	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
-		ModelCategory category=request.category;
-		if(request.hasModelProperty("reasoning"))
-			category=ModelCategory.REASONING;
-		else if(request.hasModelProperty("non-reasoning"))
-			category=ModelCategory.NON_REASONING;
-		request.request.addProperty("model", "deepseek-v4-flash");
-		request.request.addProperty("stream", true);
-		request.request.add("thinking", JsonBuilder.object().add("type", category==ModelCategory.REASONING?"enabled":"disabled").end());
-		request.request.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
-		logger.info("trigger generation");
-		String tosend = gs.toJson(request.request);
+		JsonObject jo=createRequest(request);
+		jo.addProperty("stream", true);
+		String tosend = gs.toJson(jo);
 		StreamedAIOutput readable=new StreamedAIOutput();
-		DeepseekUsage usage=new DeepseekUsage();
-		DeepseekUsage simusage=new DeepseekUsage();
+		DeepseekUsage usage=createUsage(request);
 		exec.submit(()->{
 			try {
 				HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
@@ -96,10 +136,7 @@ public class DeepseekModelProvider implements ModelProvider{
 						.post(true).send(tosend).readSSE((ev,s)->{
 							if(readable.isInterrupted()) {
 								logger.info("interrupted generation");
-								if(usage.completion_tokens>0)
-									readable.setUsage(usage);
-								else
-									readable.setUsage(simusage);
+								readable.setUsage(usage);
 								readable.endContent();
 								return false;
 							}
@@ -117,11 +154,9 @@ public class DeepseekModelProvider implements ModelProvider{
 							DeepseekRespScheme scheme=gs.fromJson(s, DeepseekRespScheme.class);
 							Message delta=scheme.choices.get(0).delta;
 							if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-								simusage.completion_tokens++;
 								readable.putReasoner(delta.reasoning_content);
 							}
 							if(delta.content!=null&&!delta.content.isEmpty()) {
-								simusage.completion_tokens++;
 								readable.putContent(delta.content);
 							}
 							

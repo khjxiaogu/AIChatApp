@@ -34,7 +34,6 @@ import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.Scanner;
 import java.util.function.Consumer;
 
 import javax.swing.JFileChooser;

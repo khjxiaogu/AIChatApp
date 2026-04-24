@@ -33,6 +33,7 @@ import java.util.List;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
@@ -43,12 +44,8 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
-import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AICustomMain extends AIApplication {
 	HistoryCompacter compactor;
@@ -142,8 +139,8 @@ public class AICustomMain extends AIApplication {
 		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", constructSystem(state)).end();
+		Builder b = AIRequest.builder(state).taskType(TaskType.STORY).streamed().temperature(1.3f).maxTokens(8192);
+		b.addHistoryItem(Role.SYSTEM,constructSystem(state));
 
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
@@ -198,13 +195,13 @@ public class AICustomMain extends AIApplication {
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
-				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
+				b.addHistoryItem(Role.SYSTEM, state.getExtra().get("lastSummary"));
 			}
 			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
 					
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
+				b.addHistoryItem(hi);
 				
 			}
 				
@@ -212,7 +209,7 @@ public class AICustomMain extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return AIRequest.builder(state).taskType(TaskType.STORY).streamed().build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+		return b.build();
 
 	}
 
@@ -233,7 +230,6 @@ public class AICustomMain extends AIApplication {
 	}
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
-		int status = 0;
 
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		boolean nstateModified = false;
@@ -266,14 +262,6 @@ public class AICustomMain extends AIApplication {
 		}
 
 		return nstateModified ? oldstate : null;
-	}
-	private String buildAttrStr(AISession state) {
-		if (state == null || state.getState().intfs.isEmpty())
-			return "";
-		StringBuilder sb = new StringBuilder("");
-		for (AttributeSet intf : state.getState().intfs.values())
-			sb.append(intf.toString());
-		return sb.toString();
 	}
 	public String constructSystem(ApplicationState state) {
 		return "";

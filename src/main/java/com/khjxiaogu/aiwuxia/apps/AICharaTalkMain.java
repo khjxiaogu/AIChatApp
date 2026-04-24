@@ -39,6 +39,7 @@ import java.util.concurrent.ExecutionException;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
@@ -244,8 +245,8 @@ public class AICharaTalkMain extends AIApplication {
 		return "用户是主角，姓名为"+name+"，请直接用姓名称呼主角，不要用“主角”二字指代主角。";
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", system+constructNameState(state.getExtra().get("name"))).end();
+		Builder b=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).temperature(1.3f).maxTokens(1000);
+		b.addHistoryItem(Role.SYSTEM, system+constructNameState(state.getExtra().get("name")));
 
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
@@ -294,19 +295,20 @@ public class AICharaTalkMain extends AIApplication {
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
-				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
+				b.addHistoryItem(Role.SYSTEM, state.getExtra().get("lastSummary"));
 			}
 			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
+				b.addHistoryItem(hi);
 			}
 				
 		}
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		
-		return AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).build(b.end().add("temperature", 1.3).add("max_tokens", 1000).end());
+
+		b.prefix("==对话==");
+		return b.build();
 
 	}
 
@@ -385,6 +387,7 @@ public class AICharaTalkMain extends AIApplication {
 				if(last.startsWith("==对话==")) {
 					status=1;
 				}else{//对话部分错误，督促AI重新生成一份
+					System.out.println(last);
 					logger.info("retry because header error");
 					throw new RegenerateNeededException(oldstate);
 				}

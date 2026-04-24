@@ -139,6 +139,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private static final int DEFAULT_FREE_DAILY_LIMIT = 500_000;
 	public void initModelNames() {
 		modelTranslations.put("deepseek",new NameTranslator().add("deepseek", "Deepseek")
+				.add("pro", "专家").add("flash", "对话")
 				.add("reasoning", "推理型").add("non-reasoning", "对话型")
 				);
 		modelTranslations.put("grok",new NameTranslator().add("grok", "Grok")

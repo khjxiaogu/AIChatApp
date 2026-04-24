@@ -14,14 +14,14 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class VoiceTagger {
 	File curPath;
@@ -67,14 +67,14 @@ public class VoiceTagger {
 			prompt.append(s);*/
 		prompt.append("**待处理角色话语**\n");
 		prompt.append(lastText);
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-				.add("role", "system").add("content", sysprompt).end();
+		Builder b=AIRequest.builder(state).taskType(TaskType.STORY).format(ResponseFormat.JSON).temperature(0.2f).maxTokens(1000);
+		b.addHistoryItem(Role.SYSTEM, sysprompt);
 
-		b.object().add("role", "user").add("content", prompt.toString());
+		b.addHistoryItem(Role.USER, prompt.toString());
 			// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 			// true);
-			
-		AIRequest request=AIRequest.builder(state).taskType(TaskType.STORY).build(b.end().object("response_format").add("type", "json_object").end().add("temperature", 0.2).add("max_tokens", 1000).end());
+			//
+		AIRequest request=b.build();
 		return CompletableFuture.supplyAsync(()->{
 			for(int i=0;i<5;i++) {
 				try {

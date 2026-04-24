@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
@@ -34,8 +35,10 @@ import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -101,18 +104,41 @@ public class VolcanoModelProvider implements ModelProvider{
 		}
 		return "low";
 	}
+	private JsonObject createRequest(AIRequest request) {
+		JsonArray messages=new JsonArray();
+		for(HistoryItem hi:request.history) {
+			JsonObject msg=new JsonObject();
+			msg.addProperty("role", hi.getRole().getRoleName());
+			msg.addProperty("content", hi.getContextContent().toString());
+			messages.add(msg);
+		}
+		
+		if(request.prefix!=null&&request.category!=ModelCategory.REASONING) {
+			JsonObject msg=new JsonObject();
+			msg.addProperty("role", "assistant");
+			msg.addProperty("content", request.prefix);
+			messages.add(msg);
+		}
+		
+		JsonObject jo=new JsonObject();
+		jo.addProperty("model", getModelType(request));
+		jo.addProperty("service_tier", "default");
+		if(request.category==ModelCategory.REASONING) {
+			jo.add("thinking", JsonBuilder.object("type","enabled"));
+			jo.addProperty("reasoning_effort", getEffort(request));
+		}
+		jo.add("messages", messages);
+		if(request.format==ResponseFormat.JSON)
+			jo.add("response_format", JsonBuilder.object("type", "json_object"));
+		jo.addProperty("temperature", request.temperature);
+		jo.addProperty("max_tokens", request.maxToken);
+		return jo;
+	}
 	Gson gs=new Gson();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
 		VolcanoUsage realUsage=getModelUsage(request);
-		request.request.addProperty("model", getModelType(request));
-		request.request.addProperty("reasoning_effort", getEffort(request));
-		request.request.addProperty("service_tier", "default");
-		ModelCategory category=request.category;
-
-		request.request.add("thinking", JsonBuilder.object().add("type", category==ModelCategory.REASONING?"enabled":"disabled").end());
-		String tosend = gs.toJson(request.request);
-		
-		logger.info("trigger generation");
+		JsonObject jo=createRequest(request);
+		String tosend = gs.toJson(jo);
 		JsonObject retjs = HttpRequestBuilder.create("ark.cn-beijing.volces.com").url("/api/v3/chat/completions")
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("volcmodeltoken"))
@@ -134,15 +160,10 @@ public class VolcanoModelProvider implements ModelProvider{
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
 		VolcanoUsage usage=getModelUsage(request);
-		request.request.addProperty("model", getModelType(request));
-		request.request.addProperty("reasoning_effort", getEffort(request));
-		request.request.addProperty("stream", true);
-		request.request.addProperty("service_tier", "default");
-		ModelCategory category=request.category;
-		request.request.add("thinking", JsonBuilder.object().add("type", category==ModelCategory.REASONING?"enabled":"disabled").end());
-		request.request.add("stream_options", JsonBuilder.object().add("include_usage", true).add("chunk_include_usage", true).end());
-		logger.info("trigger generation");
-		String tosend = gs.toJson(request.request);
+		JsonObject jo=createRequest(request);
+		jo.addProperty("stream", true);
+		jo.add("stream_options", JsonBuilder.object().add("include_usage", true).add("chunk_include_usage", true).end());
+		String tosend = gs.toJson(jo);
 		StreamedAIOutput readable=new StreamedAIOutput();
 		exec.submit(()->{
 		try {

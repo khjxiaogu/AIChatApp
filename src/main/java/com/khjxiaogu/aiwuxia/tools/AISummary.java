@@ -191,15 +191,9 @@ public class AISummary {
 		return section.isEmpty()?null:section;
 	}
 	public static AIRequest constructSummaryrequest(String prompt,String input) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-				.add("role", "system").add("content", prompt).end();
-			// if (status != null&&!status.isEmpty())
-			b.object().add("role",Role.USER.getRoleName()).add("content", input).end();
-
-
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return AIRequest.builder("admin").taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+		return AIRequest.builder("admin").taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).temperature(1.3f).maxTokens(16384).addHistoryItem(Role.SYSTEM,prompt).addHistoryItem(Role.USER,input).build();
 
 	}
 	public static String printAndCollectContent(Reader output) throws IOException {

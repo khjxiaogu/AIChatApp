@@ -32,9 +32,11 @@ import java.io.Reader;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -51,9 +53,10 @@ public class InteractiveConclusionHandler {
 		try(PrintStream fos=new PrintStream(output,"UTF-8")){
 			for(File f:workingPath.listFiles()) {
 				String in=new String(FileUtil.readAll(f),"UTF-16LE");
-				AIRequest ar=AIRequest.builder("admin").enableDeepThink().taskType(TaskType.ANALYSIS).strength(ReasoningStrength.STRONG).streamed()
-				.build(conclusionRequest(system,in));
-				AIOutput ao=LLMConnector.call(ar);
+				Builder ar=AIRequest.builder("admin").enableDeepThink().taskType(TaskType.ANALYSIS).strength(ReasoningStrength.STRONG).streamed().temperature(1f).maxTokens(8192);
+				ar.addHistoryItem(Role.SYSTEM,system);
+				ar.addHistoryItem(Role.USER,in);
+				AIOutput ao=LLMConnector.call(ar.build());
 				printAndCollectContent(ao.getReasoner());
 				System.out.println();
 				System.out.println("==========begin content==========");
@@ -79,16 +82,5 @@ public class InteractiveConclusionHandler {
 			}
 		}
 		return sb.toString();
-	}
-	public static JsonObject conclusionRequest(String system,String text) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", system).end();
-			b.object().add("role", "user").add("content", text).end();
-		// if (status != null&&!status.isEmpty())
-		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
-		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
-		// true);
-		return b.end().add("model", "deepseek-chat").add("temperature", 1.0).add("stream", true).add("max_tokens", 8192).add("presence_penalty", 1).end();
-
 	}
 }

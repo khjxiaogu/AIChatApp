@@ -32,6 +32,7 @@ import java.util.List;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
@@ -82,16 +83,16 @@ public class AIArticleMain extends AIApplication {
 		}
 	}
 
-	public ApplicationState sendAndProcessResult(AISession state, JsonObject req) throws IOException {
-		AIOutput resp=LLMConnector.call(AIRequest.builder(state).taskType(TaskType.STORY).build(req));
+	public ApplicationState sendAndProcessResult(AISession state, Builder req) throws IOException {
+		AIOutput resp=LLMConnector.call(req.build());
 		resp.addUsageListener(state::addUsage);
 		try (BufferedReader sc = new BufferedReader(resp.getContent())) {
 			return precessResponse(sc, state);
 		}
 	}
 
-	public ApplicationState sendAndProcessResultStreamed(AISession state, JsonObject req) throws IOException {
-		AIOutput resp=LLMConnector.call(AIRequest.builder(state).taskType(TaskType.STORY).streamed().build(req));
+	public ApplicationState sendAndProcessResultStreamed(AISession state, Builder req) throws IOException {
+		AIOutput resp=LLMConnector.call(req.streamed().build());
 		resp.addUsageListener(state::addUsage);
 		try (BufferedReader sc = new BufferedReader(resp.getContent())) {
 			return precessResponse(sc, state);
@@ -110,11 +111,11 @@ public class AIArticleMain extends AIApplication {
 
 	}
 
-	public JsonObject constructAIrequest(AISession state, String status) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", system).end();
+	public Builder constructAIrequest(AISession state, String status) {
+		Builder b = AIRequest.builder(state).taskType(TaskType.STORY).temperature(1.7f).maxTokens(8192);
+		b.addHistoryItem(Role.SYSTEM,system);
 		if (status != null && !status.isEmpty())
-			b.object().add("role", "system").add("content", status).end();
+			b.addHistoryItem(Role.SYSTEM,status);
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
@@ -122,14 +123,12 @@ public class AIArticleMain extends AIApplication {
 			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
+				b.addHistoryItem(hi);
 				
 			}
 		}
-
-		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
-		// true);
-		return b.end().add("model", "deepseek-chat").add("temperature", 1.7).add("stream", false).add("max_tokens", 8192).add("presence_penalty", 1).end();
+		b.prefix("==大纲==");
+		return b;
 
 	}
 

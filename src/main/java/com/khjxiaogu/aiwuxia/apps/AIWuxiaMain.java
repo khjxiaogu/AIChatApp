@@ -204,6 +204,7 @@ public class AIWuxiaMain extends AIApplication {
 				
 		}
 
+		builder.prefix("你选择：");
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		

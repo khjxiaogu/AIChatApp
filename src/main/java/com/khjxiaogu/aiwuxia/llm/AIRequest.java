@@ -111,6 +111,9 @@ public class AIRequest {
         /** 故事创作任务 */
         STORY
     }
+    public static enum ResponseFormat{
+    	TEXT,JSON
+    }
 
 
     /** 模型类别（推理型/非推理型） */
@@ -125,6 +128,8 @@ public class AIRequest {
     /** 任务类型，帮助模型调整生成风格 */
     public final TaskType taskType;
 
+    public final ResponseFormat format;
+    
     /** 是否启用流式输出（实时返回生成内容） */
     public final boolean stream;
     
@@ -134,6 +139,8 @@ public class AIRequest {
     public final String user;
     public final int maxToken;
     public final float temperature;
+    public final String prefix;
+    
     public final List<HistoryItem> history;
     /**
      * 私有构造函数，通过 Builder 创建实例。
@@ -152,6 +159,8 @@ public class AIRequest {
         this.maxToken=builder.max_tokens;
         this.temperature=builder.temperature;
         this.history=builder.history;
+        this.format=builder.format;
+        this.prefix=builder.prefix;
         if(hasModelProperty("reasoning"))
 			category=ModelCategory.REASONING;
 		else if(hasModelProperty("non-reasoning"))
@@ -220,11 +229,13 @@ public class AIRequest {
         private boolean stream = false;
         /** 多模态类型，默认为 TEXT_ONLY */
         private MultimodalType multimodal = MultimodalType.TEXT_ONLY;
+        private ResponseFormat format = ResponseFormat.TEXT;
         private List<HistoryItem> history=new ArrayList<>(200);
         private int max_tokens=1024;
         private float temperature=2.0f;
         private String modelHint=null;
         private String user="";
+        private String prefix;
         Builder(String user){
         	this.user=user;
         }
@@ -307,7 +318,14 @@ public class AIRequest {
             this.strength = ReasoningStrength.STRONG;
             return this;
         }
-
+        public Builder format(ResponseFormat format) {
+            this.format = format;
+            return this;
+        }
+        public Builder prefix(String prefix) {
+            this.prefix = prefix;
+            return this;
+        }
         /**
          * 构建 AIRequest 实例。
          *

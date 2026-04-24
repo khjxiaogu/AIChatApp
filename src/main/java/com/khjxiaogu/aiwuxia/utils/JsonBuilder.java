@@ -37,6 +37,11 @@ public class JsonBuilder {
 	public static JsonObjectBuilder<JsonObject> object(){
 		return new JsonObjectBuilder<>(null);
 	}
+	public static JsonObject object(String key,String value){
+		JsonObject jo=new JsonObject();
+		jo.addProperty(key, value);
+		return jo;
+	}
 	public static class JsonArrayBuilder<T> {
 		private JsonArray jo=new JsonArray();
 		private T parent;
