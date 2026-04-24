@@ -2,10 +2,9 @@ package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -18,9 +17,6 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
-import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -53,8 +49,8 @@ public class VoiceTagger {
 		}else {
 			return CompletableFuture.failedFuture(new IllegalArgumentException("No history found"));
 		}*/
-		
-		if(lastText.replaceAll("（[^）]+）", "").trim().isEmpty())
+		String unifiedLastText=lastText.replaceAll("（[^）]+）", "").trim();
+		if(unifiedLastText.isEmpty())
 			return CompletableFuture.completedFuture(new JsonArray());
 		StringBuilder prompt=new StringBuilder();
 		/*
@@ -84,8 +80,10 @@ public class VoiceTagger {
 				try {
 					AIOutput output=LLMConnector.call(request);
 					output.addUsageListener(state::addUsage);
+					System.out.println(output.getReasonerText());
 					String speech=output.getContentText();
 					try {
+						System.out.println(speech);
 						JsonArray ja=JsonParser.parseString(speech).getAsJsonArray();
 						for(JsonElement je:ja) {
 							if(je.isJsonObject()) {
@@ -99,6 +97,8 @@ public class VoiceTagger {
 									
 							}
 						}
+						if(ja.size()==0&&unifiedLastText.length()>3)
+							continue;
 						return ja;
 					}catch(JsonSyntaxException ex) {
 						System.out.println("output is not a json");
@@ -122,5 +122,10 @@ public class VoiceTagger {
 			}
 			throw new RuntimeException("Could not generate response");
 		});
+	}
+	public static void main(String[] args) throws IOException, InterruptedException, ExecutionException {
+		VoiceTagger vt=new VoiceTagger(new File("save"));
+		LLMConnector.initDefault();
+		System.out.println(vt.extractTalkContent("没什么好说的", new AISession("test",null)).get());
 	}
 }

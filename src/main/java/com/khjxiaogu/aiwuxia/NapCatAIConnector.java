@@ -27,8 +27,12 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.util.Base64;
 import java.util.Date;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.framing.CloseFrame;
@@ -47,6 +51,11 @@ import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
+import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
+import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
+import com.khjxiaogu.aiwuxia.voice.VoiceTagger;
+import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 
 public class NapCatAIConnector  extends WebSocketClient {
 	AIGroupSession state;
@@ -56,7 +65,8 @@ public class NapCatAIConnector  extends WebSocketClient {
 	String token;
 	String url;
 	Object lock=new Object();
-	public NapCatAIConnector(AIGroupSession state, File saveData, long botId, long groupId,String url, String token) {
+	VoiceTagger vt;
+	public NapCatAIConnector(File dataFolder,AIGroupSession state, File saveData, long botId, long groupId,String url, String token) {
 		super(URI.create(url),Map.of("Authorization", "Bearer "+token));
 		this.state = state;
 		this.saveData = saveData;
@@ -64,6 +74,12 @@ public class NapCatAIConnector  extends WebSocketClient {
 		this.groupId = groupId;
 		this.token = token;
 		this.url = url;
+		try {
+			vt=new VoiceTagger(dataFolder);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 	}
 	@Override
     public void onMessage(ByteBuffer bytes) {
@@ -139,9 +155,9 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    					containsAtMe=true;
 			    				state.addMessage(messageLine);
 			    			}
-			    			int hours=new Date().getHours();
-			    			if(hours<6)
-			    				containsAtMe=false;
+			    			//int hours=new Date().getHours();
+			    			//if(hours<6)
+			    			//	containsAtMe=false;
 			    			if(containsAtMe) {
 			    				state.getCommandExec().submit(()->{
 		    						state.getAiapp().handleSpeech(state,state.getPrompt());
@@ -152,9 +168,19 @@ public class NapCatAIConnector  extends WebSocketClient {
 									}
 		    						HistoryItem hi=state.getLast();
 		    						if(hi.getRole()==Role.ASSISTANT) {
-
-		    							this.send(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", groupId).add("message", state.getLast().getDisplayContent().toString().trim()).end().end().toString());
-		    						}
+		    							
+		    							
+		    							try {
+		    								CompletableFuture<VoiceGenerationResult> dataFuture=vt.extractTalkContent(state.getLast().getDisplayContent().toString().trim(), state).thenCompose(t->LocalVoiceModel.requireAudio("mx", UUID.randomUUID().toString(), t));
+		    								this.send(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", groupId).object("message").add("type", "record").object("data").add("file", toDataUrl(dataFuture.get().audioData)).end().end().end().end().toString());
+										} catch (InterruptedException | ExecutionException e) {
+											// TODO Auto-generated catch block
+											e.printStackTrace();
+											this.send(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", groupId).add("message", state.getLast().getDisplayContent().toString().trim()).end().end().toString());
+				    						
+										}
+		    							
+		    							}
 		    						
 		    					});
 			    			}
@@ -169,6 +195,13 @@ public class NapCatAIConnector  extends WebSocketClient {
     	}
         System.out.println("received message: " + message);
     }
+    public static String toDataUrl(byte[] data) {
+        if (data == null) {
+            throw new IllegalArgumentException("字节数组不能为 null");
+        }
+        String base64 = Base64.getEncoder().encodeToString(data);
+        return "data:;base64," + base64;
+    }
 
     @Override
     public void onClose(int code, String reason, boolean remote) {
@@ -181,7 +214,7 @@ public class NapCatAIConnector  extends WebSocketClient {
     public static void main(String[] args) throws Throwable {
     	try {
     		LLMConnector.initDefault();
-    		String name="fengyiirc";
+    		String name="xinghanirc";
     		File dataFolder=new File("save");
     		File saveData = new File(new File(dataFolder,"saveData"), "savegroup-"+name+".json");
     		File modelFolder = new File(dataFolder,"apps/"+name);
@@ -196,8 +229,22 @@ public class NapCatAIConnector  extends WebSocketClient {
     			aistate = new AIGroupSession("appuser",new MemoryHistory(), new AISession.ExtraData(),main);
     			aistate.provideInitialHint();
     		}
-    	
-			new NapCatAIConnector(aistate,saveData,Long.parseLong(System.getProperty("bot")),Long.parseLong(System.getProperty("group")),System.getProperty("napcat_url"),System.getProperty("napcat_token")).connectBlocking();
+    		new Thread(()->{
+    			try {
+    				BasicWebServerBuilder.build().createURIRoot()
+    				.createWrapper(new VoiceModelLocalServer()).rule("/aichat")
+    				.complete()
+    				.complete()
+    				.setNotFound(new File(new File("save"), "404.html"))
+    				.compile()
+    				.serverHttp(8998)
+    				.info("http服务端已开启");
+    			} catch (InterruptedException e) {
+    				// TODO Auto-generated catch block
+    				e.printStackTrace();
+    			}
+    		}).start();
+			new NapCatAIConnector(dataFolder,aistate,saveData,Long.parseLong(System.getProperty("bot")),Long.parseLong(System.getProperty("group")),System.getProperty("napcat_url"),System.getProperty("napcat_token")).connectBlocking();
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();

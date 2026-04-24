@@ -166,7 +166,8 @@ public class LocalModelHandshaker implements WebsocketEvents {
     public CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String reqid, JsonArray content) {
         if (pool.isEmpty())
             return CompletableFuture.failedFuture(new IOException("no local voice model found"));
-
+        if(content.size()==0)
+        	return CompletableFuture.failedFuture(new IOException("Empty input"));
         JsonObject request = JsonBuilder.object()
                 .add("chara", chara)
                 .add("reqid", reqid)

@@ -23,7 +23,6 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
-import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,12 +33,14 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
 /**
@@ -97,6 +98,13 @@ public class AISession {
 		super();
 		this.history = historym;
 		this.data = data;
+		this.user = user;
+		this.aiapp = aiapp;
+	}
+	public AISession(String user, AIApplication aiapp) {
+		super();
+		this.history = new MemoryHistory();
+		this.data = new ExtraData();
 		this.user = user;
 		this.aiapp = aiapp;
 	}
