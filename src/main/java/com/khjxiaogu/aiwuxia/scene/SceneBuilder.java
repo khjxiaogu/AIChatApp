@@ -24,10 +24,7 @@
 package com.khjxiaogu.aiwuxia.scene;
 
 import java.util.ArrayList;
-
 import java.util.List;
-
-import com.khjxiaogu.aiwuxia.scene.SceneSelector.Predicate;
 
 /**
  * 场景构建器的抽象基类，用于以流式方式构建 {@link SceneSelector} 对象。

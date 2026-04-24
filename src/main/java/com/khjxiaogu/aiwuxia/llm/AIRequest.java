@@ -23,7 +23,12 @@
  */
 package com.khjxiaogu.aiwuxia.llm;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 
 /**
@@ -107,8 +112,6 @@ public class AIRequest {
         STORY
     }
 
-    /** 请求的完整 JSON 数据，包含具体参数（如 prompt、max_tokens 等） */
-    public final JsonObject request;
 
     /** 模型类别（推理型/非推理型） */
     public final ModelCategory category;
@@ -125,27 +128,61 @@ public class AIRequest {
     /** 是否启用流式输出（实时返回生成内容） */
     public final boolean stream;
     
-    public final String modelHint;
+    public final String[] modelHint;
+    
 
     public final String user;
-
+    public final int maxToken;
+    public final float temperature;
+    public final List<HistoryItem> history;
     /**
      * 私有构造函数，通过 Builder 创建实例。
      *
      * @param builder 包含各字段值的 Builder 对象
      * @param request 请求的 JSON 对象
      */
-    private AIRequest(Builder builder, JsonObject request) {
-        this.request = request;
-        this.category = builder.category;
-        this.strength = builder.strength;
+    private AIRequest(Builder builder) {
+        ModelCategory category = builder.category;
+        ReasoningStrength strength = builder.strength;
         this.taskType = builder.taskType;
         this.stream = builder.stream;
         this.multimodal = builder.multimodal;
-        this.modelHint = builder.modelHint;
+        this.modelHint = builder.modelHint.split("/");
         this.user = builder.user;
+        this.maxToken=builder.max_tokens;
+        this.temperature=builder.temperature;
+        this.history=builder.history;
+        if(hasModelProperty("reasoning"))
+			category=ModelCategory.REASONING;
+		else if(hasModelProperty("non-reasoning"))
+			category=ModelCategory.NON_REASONING;
+        this.category=category;
+        for(String s:modelHint) {
+			if(s.endsWith("-strength")) {
+				try {
+					ReasoningStrength rs=ReasoningStrength.valueOf(s.split("-")[0].toUpperCase());
+					strength=rs;
+					break;
+				}catch(IllegalArgumentException ex) {
+					
+				}
+			}
+		}
+        this.strength=strength;
     }
-
+    public boolean isModelNamed(String name) {
+    	return modelHint.length>0&&modelHint[0].equals(name);
+    }
+    public String getModelName() {
+    	return modelHint.length>0?modelHint[0]:"";
+    }
+    public boolean hasModelProperty(String name) {
+    	for(String s:modelHint) {
+    		if(name.equals(s))
+    			return true;
+    	}
+    	return false;
+    }
     /**
      * 创建一个新的 Builder 实例，用于构建 AIRequest。
      *
@@ -165,7 +202,7 @@ public class AIRequest {
      */
     @Override
     public String toString() {
-        return "AIRequest [request=" + request + ", category=" + category + ", strength=" + strength + ", multimodal="
+        return "AIRequest [ category=" + category + ", strength=" + strength + ", multimodal="
                 + multimodal + ", taskType=" + taskType + ", stream=" + stream + "]";
     }
 
@@ -183,7 +220,9 @@ public class AIRequest {
         private boolean stream = false;
         /** 多模态类型，默认为 TEXT_ONLY */
         private MultimodalType multimodal = MultimodalType.TEXT_ONLY;
-        
+        private List<HistoryItem> history=new ArrayList<>(200);
+        private int max_tokens=1024;
+        private float temperature=2.0f;
         private String modelHint=null;
         private String user="";
         Builder(String user){
@@ -238,7 +277,14 @@ public class AIRequest {
             this.modelHint = modelHint;
             return this;
         }
-        
+        public Builder maxTokens(int maxToken) {
+            this.max_tokens = maxToken;
+            return this;
+        }
+        public Builder temperature(float value) {
+            this.temperature = value;
+            return this;
+        }
         /**
          * 设置多模态类型。
          *
@@ -269,11 +315,17 @@ public class AIRequest {
          * @return 构建好的 AIRequest 对象
          * @throws IllegalArgumentException 如果 request 为 null
          */
-        public AIRequest build(JsonObject request) {
-            if (request == null) throw new IllegalArgumentException("Prompt cannot be empty");
-            return new AIRequest(this, request);
+        public AIRequest build() {
+            return new AIRequest(this);
         }
-
+        public Builder addHistoryItem(HistoryItem hi) {
+        	history.add(hi);
+        	return this;
+        } 
+        public Builder addHistoryItem(Role role,String content) {
+        	history.add(new DirectHistoryItem(role,content));
+        	return this;
+        } 
         /**
          * 便捷方法：设置流式输出为 true。
          *

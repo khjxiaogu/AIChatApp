@@ -58,10 +58,6 @@ public class DeepseekModelProvider implements ModelProvider{
 	Gson gs=new Gson();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
 		ModelCategory category=request.category;
-		if("deepseek/reasoning".equals(request.modelHint))
-			category=ModelCategory.REASONING;
-		else if("deepseek/non-reasoning".equals(request.modelHint))
-			category=ModelCategory.NON_REASONING;
 		request.request.addProperty("model", category==ModelCategory.REASONING?"deepseek-reasoner":"deepseek-chat");
 		String tosend = gs.toJson(request.request);
 		logger.info("trigger generation");
@@ -78,12 +74,13 @@ public class DeepseekModelProvider implements ModelProvider{
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
 		ModelCategory category=request.category;
-		if("deepseek/reasoning".equals(request.modelHint))
+		if(request.hasModelProperty("reasoning"))
 			category=ModelCategory.REASONING;
-		else if("deepseek/non-reasoning".equals(request.modelHint))
+		else if(request.hasModelProperty("non-reasoning"))
 			category=ModelCategory.NON_REASONING;
-		request.request.addProperty("model", category==ModelCategory.REASONING?"deepseek-reasoner":"deepseek-chat");
+		request.request.addProperty("model", "deepseek-v4-flash");
 		request.request.addProperty("stream", true);
+		request.request.add("thinking", JsonBuilder.object().add("type", category==ModelCategory.REASONING?"enabled":"disabled").end());
 		request.request.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		logger.info("trigger generation");
 		String tosend = gs.toJson(request.request);
@@ -143,6 +140,6 @@ public class DeepseekModelProvider implements ModelProvider{
 
 	@Override
 	public boolean supportsHinted(AIRequest request) {
-		return request.modelHint.startsWith("deepseek");
+		return request.isModelNamed("deepseek");
 	}
 }

@@ -1,7 +1,6 @@
 package com.khjxiaogu.aiwuxia.llm.providers.grok;
 
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 
 class GrokRespScheme extends RespScheme {
 	GrokUsage usage;
@@ -9,7 +8,7 @@ class GrokRespScheme extends RespScheme {
 	}
 
 	@Override
-	public UsageIntf getUsage() {
+	public GrokUsage getUsage() {
 		return usage;
 	}
 

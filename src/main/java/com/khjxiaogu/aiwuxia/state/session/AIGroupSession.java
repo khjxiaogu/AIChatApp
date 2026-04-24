@@ -28,7 +28,6 @@ import java.util.Date;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
-import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 
 public class AIGroupSession extends AISession {
 	ArrayDeque<String> messageQueue=new ArrayDeque<>();
