@@ -36,7 +36,6 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
@@ -51,10 +50,7 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.MemoryAttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIWuxiaMain extends AIApplication {
 	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
@@ -163,8 +159,8 @@ public class AIWuxiaMain extends AIApplication {
 	}
 
 	public AIRequest constructAIrequest(AISession state, String status) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", system).end();
+		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY);
+		builder.addHistoryItem(Role.SYSTEM, system);
 		//if (status != null && !status.isEmpty())
 		//	b.object().add("role", "system").add("content", status).end();
 		// if (status != null&&!status.isEmpty())
@@ -193,27 +189,25 @@ public class AIWuxiaMain extends AIApplication {
 						lasthi=hi;
 						break;
 					}
-					
 				}
 				if(lasthi!=null)
 					state.getExtra().put("lastSummary", constructSystem(lasthi.getLastState()));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
-				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
+				builder.addHistoryItem(Role.SYSTEM, state.getExtra().get("lastSummary"));
 			}
 			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
-				
+				builder.addHistoryItem(hi);
 			}
 				
 		}
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY);
-		return builder.build(b.end().add("temperature", 1.6).add("frequency_penalty", 0.3).add("max_tokens", 8192).end());
+		
+		return builder.temperature(1.6f).maxTokens(8192).build();
 
 	}
 

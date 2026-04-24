@@ -54,8 +54,6 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 public class AISummary {
 
 	public static void main(String[] args) throws IOException {
-		String name="fengyitalk";
-		int idx=0;
 		File dataFolder=new File("save");
 		String system=FileUtil.readString(new File(dataFolder,"summaryprompt2.txt"));
 		String charaset=FileUtil.readString(new File(dataFolder,"charaset.txt"));

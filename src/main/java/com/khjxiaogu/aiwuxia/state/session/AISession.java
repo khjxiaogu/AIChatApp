@@ -23,7 +23,6 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
-import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +33,7 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;

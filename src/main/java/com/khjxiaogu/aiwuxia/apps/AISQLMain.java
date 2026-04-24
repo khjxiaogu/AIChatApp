@@ -109,10 +109,11 @@ public class AISQLMain extends AIApplication {
 	}
 
 	public AIRequest constructAIrequest(AISession state, String status) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", system).end();
+
+		Builder builder=AIRequest.builder(state).taskType(TaskType.CODE).strength(ReasoningStrength.WEAK).streamed();
+		builder.addHistoryItem(Role.SYSTEM,system);
 		if (status != null && !status.isEmpty())
-			b.object().add("role", "system").add("content", status).end();
+			builder.addHistoryItem(Role.SYSTEM,status);
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
@@ -120,15 +121,13 @@ public class AISQLMain extends AIApplication {
 			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
-				
+				builder.addHistoryItem(hi);
 			}
 		}
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		Builder builder=AIRequest.builder(state).taskType(TaskType.CODE).strength(ReasoningStrength.WEAK).streamed();
-		return builder.build(b.end().add("temperature", 1.7).add("max_tokens", 8192).add("presence_penalty", 1).end());
+		return builder.temperature(1.7f).maxTokens(8192).build();
 
 	}
 

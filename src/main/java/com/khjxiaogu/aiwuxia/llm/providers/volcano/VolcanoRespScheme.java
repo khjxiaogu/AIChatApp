@@ -1,7 +1,6 @@
 package com.khjxiaogu.aiwuxia.llm.providers.volcano;
 
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
-import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 
 class VolcanoRespScheme extends RespScheme {
 	VolcanoUsage usage;
@@ -9,7 +8,7 @@ class VolcanoRespScheme extends RespScheme {
 	}
 
 	@Override
-	public UsageIntf getUsage() {
+	public VolcanoUsage getUsage() {
 		return usage;
 	}
 

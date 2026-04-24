@@ -25,13 +25,8 @@ package com.khjxiaogu.aiwuxia.tools;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator.Rule;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator.RuleSerializer;
@@ -93,7 +88,6 @@ public class ParameterLimitGenerator {
 	}
 	public static void save(File fn,String ai,AttributeValidator selector) throws IOException {
 		File save=new File(fn,ai+"/validator.json");
-		List<File> files=new ArrayList<>();
 		System.out.println("saved as "+save);
 		Gson gson = new GsonBuilder()
 	        .registerTypeAdapter(Rule.class, new RuleSerializer())

@@ -33,9 +33,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
-import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekUsage;
 import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
 import com.khjxiaogu.aiwuxia.respscheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
@@ -59,13 +57,13 @@ public class VolcanoModelProvider implements ModelProvider{
 
 
 	public String getModelType(AIRequest request) {
-		if(request.modelHint.contains("lite"))
+		if(request.hasModelProperty("lite"))
 			return "doubao-seed-2-0-lite-260215";
-		else if(request.modelHint.contains("pro"))
+		else if(request.hasModelProperty("pro"))
 			return "doubao-seed-2-0-pro-260215";
-		else if(request.modelHint.contains("code"))
+		else if(request.hasModelProperty("code"))
 			return "doubao-seed-2-0-code-260215";
-		else if(request.modelHint.contains("mini"))
+		else if(request.hasModelProperty("mini"))
 			return "doubao-seed-2-0-mini-260215";
 		switch(request.taskType) {
 		case CODE:return "doubao-seed-2-0-code-260215";
@@ -77,11 +75,11 @@ public class VolcanoModelProvider implements ModelProvider{
 		return "doubao-seed-2-0-lite-260215";
 	}
 	public VolcanoUsage getModelUsage(AIRequest request) {
-		if(request.modelHint.contains("mini"))
+		if(request.hasModelProperty("mini"))
 			return new VolcanoUsageMini();
-		else if(request.modelHint.contains("lite"))
+		else if(request.hasModelProperty("lite"))
 			return new VolcanoUsageLite();
-		else if(request.modelHint.contains("pro")||request.modelHint.contains("code"))
+		else if(request.hasModelProperty("pro")||request.hasModelProperty("code"))
 			return new VolcanoUsagePro();
 		switch(request.taskType) {
 		case CODE:
@@ -94,19 +92,7 @@ public class VolcanoModelProvider implements ModelProvider{
 	}
 	public String getEffort(AIRequest request) {
 		ReasoningStrength strengh=request.strength;
-		for(String s:request.modelHint.split("/")) {
-			if(s.endsWith("-strength")) {
-				try {
-					ReasoningStrength rs=ReasoningStrength.valueOf(s.split("-")[0].toUpperCase());
-					strengh=rs;
-					break;
-				}catch(IllegalArgumentException ex) {
-					
-				}
-				
-			}
-			
-		}
+		
 		switch(strengh) {
 		case NONE:return "minimal";   // 不需要思维链
 		case WEAK:return "low";   // 简单推理
@@ -122,10 +108,7 @@ public class VolcanoModelProvider implements ModelProvider{
 		request.request.addProperty("reasoning_effort", getEffort(request));
 		request.request.addProperty("service_tier", "default");
 		ModelCategory category=request.category;
-		if(request.modelHint.contains("reasoning"))
-			category=ModelCategory.REASONING;
-		else if(request.modelHint.contains("non-reasoning"))
-			category=ModelCategory.NON_REASONING;
+
 		request.request.add("thinking", JsonBuilder.object().add("type", category==ModelCategory.REASONING?"enabled":"disabled").end());
 		String tosend = gs.toJson(request.request);
 		
@@ -156,10 +139,6 @@ public class VolcanoModelProvider implements ModelProvider{
 		request.request.addProperty("stream", true);
 		request.request.addProperty("service_tier", "default");
 		ModelCategory category=request.category;
-		if(request.modelHint.contains("reasoning"))
-			category=ModelCategory.REASONING;
-		else if(request.modelHint.contains("non-reasoning"))
-			category=ModelCategory.NON_REASONING;
 		request.request.add("thinking", JsonBuilder.object().add("type", category==ModelCategory.REASONING?"enabled":"disabled").end());
 		request.request.add("stream_options", JsonBuilder.object().add("include_usage", true).add("chunk_include_usage", true).end());
 		logger.info("trigger generation");
@@ -223,6 +202,6 @@ public class VolcanoModelProvider implements ModelProvider{
 
 	@Override
 	public boolean supportsHinted(AIRequest request) {
-		return request.modelHint.startsWith("volces");
+		return request.getModelName().startsWith("volces");
 	}
 }

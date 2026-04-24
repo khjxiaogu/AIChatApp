@@ -103,8 +103,9 @@ public class AIGroupApplication extends AIApplication {
 		return oldstate;
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-			.add("role", "system").add("content", system).end();
+
+		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK);
+		builder.addHistoryItem(Role.SYSTEM, system);
 
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
@@ -148,12 +149,12 @@ public class AIGroupApplication extends AIApplication {
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
-				b.object().add("role", "system").add("content", state.getExtra().get("lastSummary")).end();
+				builder.addHistoryItem(Role.SYSTEM,state.getExtra().get("lastSummary"));
 			}
 			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				b.object().add("role", hi.getRole().getRoleName()).add("content", hi.getContextContent().toString().trim()).end();
+				builder.addHistoryItem(hi);
 			}
 				
 		}
@@ -161,14 +162,13 @@ public class AIGroupApplication extends AIApplication {
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
 		//头几次用思维链版本构建格式
-		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK);
 		
-		return builder.build(b.end().add("temperature", 1.3).add("max_tokens", 500).end());
+		return builder.temperature(1.3f).maxTokens(1000).build();
 
 	}
 	public AIRequest constructSummaryrequest(AISession state,String summary) {
-		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> b = JsonBuilder.object().array("messages").object()
-				.add("role", "system").add("content", this.summary).end();
+		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.STRONG);
+		builder.addHistoryItem(Role.SYSTEM, this.summary);
 			StringBuilder sumerize=new StringBuilder();
 			if(state.getExtra().containsKey("lastSummary")) {
 				sumerize.append("=== 前情提要 ===\\n");
@@ -177,12 +177,12 @@ public class AIGroupApplication extends AIApplication {
 			sumerize.append("=== 对话块 ===\n");
 			sumerize.append(summary.trim());
 			// if (status != null&&!status.isEmpty())
-			b.object().add("role",Role.USER.getRoleName()).add("content", sumerize.toString()).end();
+			builder.addHistoryItem(Role.USER, sumerize.toString());
 
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).build(b.end().add("temperature", 1.3).add("max_tokens", 8192).end());
+		return builder.maxTokens(8192).temperature(1.3f).build();
 
 	}
 	public String makeSummaryrequest(AISession state,String summary) throws IOException {
