@@ -60,6 +60,7 @@ import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
@@ -104,34 +105,9 @@ public class NapCatAIConnector  extends WebSocketClient {
     }
     public byte[] getImageBytes(String fileId) throws Exception {
         // 1. 构造请求 JSON：{"file_id": "..."}
-        String requestJson = JsonBuilder.object().add("file", fileId).end().toString();
-
-        // 2. 发送 POST 请求（使用 HttpURLConnection）
-        URL url = new URL("http://"+this.url + "/get_image");
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-        conn.setRequestProperty("Authorization", "Bearer "+token);
-        conn.setDoOutput(true);
-        conn.setConnectTimeout(5000);
-        conn.setReadTimeout(5000);
-
-        try (OutputStream os = conn.getOutputStream()) {
-            os.write(requestJson.getBytes("utf-8"));
-            os.flush();
-        }
-        // 4. 解析 JSON
-        JsonObject root = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
-
-System.out.println(root);
-        // 5. 提取 data.file 字段
-        String dataFile = root.get("data").getAsJsonObject().get("base64").getAsString();
-        if (dataFile == null || dataFile.isEmpty()) {
-            throw new RuntimeException("响应中 data.base64 为空");
-        }
-
-        return Base64.getDecoder().decode(dataFile);
-        
+        return HttpRequestBuilder.create("multimedia.nt.qq.com.cn")
+        	.defUA().url(fileId).get()
+        	.readBytes();
     }
 
     @Override
@@ -196,7 +172,7 @@ System.out.println(root);
 			    					JsonObject pic=melm.get("picElement").getAsJsonObject();
 			    					String summary="（图片："+pic.get("summary").getAsString()+"）";
 			    					System.out.println(pic);
-			    					String fid=pic.get("originImageUrl").getAsString();
+			    					String fid="https://"+pic.get("originImageUrl").getAsString();
 			    					hasText=true;
 			    					mes.add(()->{
 										try {

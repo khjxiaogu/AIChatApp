@@ -157,6 +157,17 @@ public class HttpRequestBuilder {
 			}
 			return null;//this should never happen
 		}
+		public byte[] readBytes() throws IOException {
+			closeOutput();
+			try(InputStream is=huc.getInputStream()){
+				return FileUtil.readAll(is);
+			}catch(IOException ex){
+				generateExceptionFromError(ex);
+			}finally{
+				close();
+			}
+			return null;//this should never happen
+		}
 		public JsonObject readJson() throws IOException {
 			closeOutput();
 			if(huc.getResponseCode()>=300) {
