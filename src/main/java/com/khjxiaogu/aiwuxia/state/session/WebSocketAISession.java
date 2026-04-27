@@ -304,10 +304,6 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			parent.markRelease(this);
 		}
 	}
-
-	public boolean isAudioSession() {
-		return (isLocalAudioEnabled&&super.isAudioSession());
-	}
 	public String getChatId() {
 		return chatId;
 	}
