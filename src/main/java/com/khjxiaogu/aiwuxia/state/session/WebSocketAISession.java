@@ -134,6 +134,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		operations.put("setVoiceEnabled", (jo,state)->{
 			state.data.isAudioSession=jo.get("voiceEnabled").getAsBoolean();
 			state.sendFrame(JsonBuilder.object().add("isVoiceEnabled",state.data.isAudioSession).end().toString());
+			state.save();
 		});
 		operations.put("revert", (jo,state)->{
 			state.getCommandExec().submit(()->{
