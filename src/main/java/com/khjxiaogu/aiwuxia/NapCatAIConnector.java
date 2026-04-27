@@ -32,6 +32,7 @@ import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -104,10 +105,8 @@ public class NapCatAIConnector  extends WebSocketClient {
     	 System.out.println("opened connection");
     }
     public byte[] getImageBytes(String fileId) throws Exception {
-        // 1. 构造请求 JSON：{"file_id": "..."}
-        return HttpRequestBuilder.create("multimedia.nt.qq.com.cn")
-        	.defUA().url(fileId).get()
-        	.readBytes();
+        // 1. 构造请求 JSON：{"file_id":urls "..."}
+    	return FileUtil.readAll(FileUtil.fetch(fileId));
     }
 
     @Override
@@ -117,6 +116,15 @@ public class NapCatAIConnector  extends WebSocketClient {
 	    		JsonObject msg=JsonParser.parseString(message).getAsJsonObject();
 		    	if(msg.has("message_type")&&"group".equals(msg.get("message_type").getAsString())) {
 		    		if(msg.get("group_id").getAsLong()==groupId) {
+		    			Map<String,String> urls=new HashMap<>();
+		    			for(JsonElement je:msg.get("message").getAsJsonArray()) {
+		    				JsonObject nmsg=je.getAsJsonObject();
+		    				if(nmsg.get("type").getAsString().equals("image")) {
+		    					JsonObject data=nmsg.get("data").getAsJsonObject();
+		    					
+		    					urls.put(data.get("file").getAsString(), data.get("url").getAsString());
+		    				}
+		    			}
 		    			String sender="";
 		    			JsonObject senderObj=msg.get("sender").getAsJsonObject();
 		    			if(senderObj.has("card"))
@@ -172,7 +180,7 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    					JsonObject pic=melm.get("picElement").getAsJsonObject();
 			    					String summary="（图片："+pic.get("summary").getAsString()+"）";
 			    					System.out.println(pic);
-			    					String fid="https://"+pic.get("originImageUrl").getAsString();
+			    					String fid=urls.get(pic.get("fileName").getAsString());
 			    					hasText=true;
 			    					mes.add(()->{
 										try {
