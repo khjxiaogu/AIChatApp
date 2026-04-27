@@ -50,7 +50,7 @@ public class VolcanoModelProvider implements ModelProvider{
 	SimpleLogger logger=new SimpleLogger("Deepseek");
 	@Override
 	public boolean supports(AIRequest request) {
-		return request.multimodal.canSupport(true, true, true, false);
+		return request.multimodal.canSupport(true, true, false, true);
 	}
 
 	@Override
@@ -132,7 +132,6 @@ public class VolcanoModelProvider implements ModelProvider{
 			msg.add("content",contents);
 			messages.add(msg);
 		}
-		
 		if(request.prefix!=null&&request.category!=ModelCategory.REASONING) {
 			JsonObject msg=new JsonObject();
 			msg.addProperty("role", "assistant");

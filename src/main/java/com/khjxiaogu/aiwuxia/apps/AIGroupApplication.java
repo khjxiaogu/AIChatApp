@@ -34,6 +34,7 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
@@ -101,7 +102,7 @@ public class AIGroupApplication extends AIApplication {
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 
-		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK);
+		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).multimodal(MultimodalType.TEXT_IMAGE);
 		builder.addHistoryItem(Role.SYSTEM, system);
 
 		// if (status != null&&!status.isEmpty())

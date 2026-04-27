@@ -53,7 +53,7 @@ public class GrokModelProvider implements ModelProvider {
 
 	@Override
 	public boolean supports(AIRequest request) {
-		return request.multimodal.canSupport(true, true, false, false);
+		return request.multimodal.canSupport(true, false, false, false);
 	}
 
 	@Override

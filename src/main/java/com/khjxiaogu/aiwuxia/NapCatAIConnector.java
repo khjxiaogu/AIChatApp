@@ -104,7 +104,7 @@ public class NapCatAIConnector  extends WebSocketClient {
     }
     public byte[] getImageBytes(String fileId) throws Exception {
         // 1. 构造请求 JSON：{"file_id": "..."}
-        String requestJson = JsonBuilder.object().add("file_id", fileId).end().toString();
+        String requestJson = JsonBuilder.object().add("file", fileId).end().toString();
 
         // 2. 发送 POST 请求（使用 HttpURLConnection）
         URL url = new URL("http://"+this.url + "/get_image");
@@ -120,11 +120,10 @@ public class NapCatAIConnector  extends WebSocketClient {
             os.write(requestJson.getBytes("utf-8"));
             os.flush();
         }
-
         // 4. 解析 JSON
         JsonObject root = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
 
-
+System.out.println(root);
         // 5. 提取 data.file 字段
         String dataFile = root.get("data").getAsJsonObject().get("base64").getAsString();
         if (dataFile == null || dataFile.isEmpty()) {
@@ -196,7 +195,9 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    				}else if(!melm.get("picElement").isJsonNull()) {
 			    					JsonObject pic=melm.get("picElement").getAsJsonObject();
 			    					String summary="（图片："+pic.get("summary").getAsString()+"）";
-			    					String fid=pic.get("fileId").getAsString();
+			    					System.out.println(pic);
+			    					String fid=pic.get("originImageUrl").getAsString();
+			    					hasText=true;
 			    					mes.add(()->{
 										try {
 											String path = tos.uploadIfNotExists(getImageBytes(fid));
