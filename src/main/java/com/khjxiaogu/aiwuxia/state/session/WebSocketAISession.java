@@ -69,12 +69,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	protected final AIChatService parent;
 	private final String chatId;
 	File fn;
-	
+	boolean isLocalAudioEnabled=false;
 
 	AtomicBoolean lock=new AtomicBoolean();
 	ApplicationAttributes attributes;
-	boolean isClientAudioEnabled=false;
-	boolean isLocalAudioEnabled=false;
 	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,ApplicationAttributes attr,File fn, ISaveData data) {
 		super(uid, data,aiapp);
 		this.fn = fn;
@@ -106,7 +104,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		}
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating()?1:0)
 				.add("price", this.getPrice())
-				.add("isVoiceUsable",super.isAudioSession()||(getAiapp().isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService()))
+				.add("isVoiceEnabled",super.data.isAudioSession)
+				.add("isVoiceUsable",(getAiapp().isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService()))
 				.add("models", models)
 				.add("model", getData().modelHint).end().toString()));
 
@@ -133,8 +132,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public static Map<String,BiConsumer<JsonObject,WebSocketAISession>> operations=new HashMap<>();
 	static{
 		operations.put("setVoiceEnabled", (jo,state)->{
-			state.isClientAudioEnabled=jo.get("voiceEnabled").getAsBoolean();
-			state.sendFrame(JsonBuilder.object().add("isVoiceEnabled",state.isClientAudioEnabled).end().toString());
+			state.data.isAudioSession=jo.get("voiceEnabled").getAsBoolean();
+			state.sendFrame(JsonBuilder.object().add("isVoiceEnabled",state.data.isAudioSession).end().toString());
 		});
 		operations.put("revert", (jo,state)->{
 			state.getCommandExec().submit(()->{
@@ -306,7 +305,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	}
 
 	public boolean isAudioSession() {
-		return isClientAudioEnabled&&(isLocalAudioEnabled||super.isAudioSession());
+		return (isLocalAudioEnabled&&super.isAudioSession());
 	}
 	public String getChatId() {
 		return chatId;

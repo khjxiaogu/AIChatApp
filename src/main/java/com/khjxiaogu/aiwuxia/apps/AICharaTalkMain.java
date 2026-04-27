@@ -417,12 +417,11 @@ public class AICharaTalkMain extends AIApplication {
 		if(status==0) {//truncated
 			logger.info("regenerate as truncated");
 			throw new RegenerateNeededException(oldstate);
+	}
+		if(state.isAudioSession()&&audioId==null) {
+			audioId=UUID.randomUUID().toString();
+			cf=this.generateVoice(state, content.toString(), audioId);
 		}
-		if(status!=3)
-			if(state.isAudioSession()&&audioId==null) {
-				audioId=UUID.randomUUID().toString();
-				cf=this.generateVoice(state, content.toString(), audioId);
-			}
 		if(!state.getState().perks.isEmpty()){
 			sendContent.append("==场景==\n");
 			for(Entry<String, String> i:state.getState().perks.entrySet())
@@ -493,7 +492,7 @@ public class AICharaTalkMain extends AIApplication {
 		final String faudioId=audioId;
 		final String ftext=orgText;
 
-		if(volcappid!=null&&state.getData().isAudioSession)
+		if(volcappid!=null&&"volces".equals(state.getData().voiceModel))
 			return CompletableFuture.supplyAsync
 			(()->{
 				try {

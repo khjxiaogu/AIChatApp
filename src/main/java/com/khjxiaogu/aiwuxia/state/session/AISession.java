@@ -68,7 +68,10 @@ public class AISession implements ISaveData{
 		private UsageTracker usage = new UsageTracker();
 		/** 标记是否为音频会话，影响处理逻辑（如语音识别、语音合成） */
 		public boolean isAudioSession = false;
+		
 		public String modelHint="";
+		
+		public String voiceModel="";
 	}
 
 	/** 保存对话历史条目的容器，提供对历史记录的增删改查 */
