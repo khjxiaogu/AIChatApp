@@ -67,7 +67,7 @@ public class VoiceTagger {
 			prompt.append(s);*/
 		prompt.append("**待处理角色话语**\n");
 		prompt.append(lastText);
-		Builder b=AIRequest.builder(state).taskType(TaskType.STORY).format(ResponseFormat.JSON).temperature(0.2f).maxTokens(1000);
+		Builder b=AIRequest.builder(state).taskType(TaskType.STORY).format(ResponseFormat.JSON).temperature(0.2f).maxTokens(8192);
 		b.addHistoryItem(Role.SYSTEM, sysprompt);
 
 		b.addHistoryItem(Role.USER, prompt.toString());
