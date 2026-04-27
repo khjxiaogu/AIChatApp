@@ -262,7 +262,7 @@ public class AICharaTalkMain extends AIApplication {
 				len+=tokenLen;
 				
 			}
-			if(len>=300000) {//more than 100000 text:about 60k context,remove until 10000
+			if(len>=150000) {//more than 100000 text:about 60k context,remove until 10000
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
@@ -275,7 +275,7 @@ public class AICharaTalkMain extends AIApplication {
 					}
 					his.add(hi);
 					if(hi.getRole()==Role.ASSISTANT) {
-						if(len<=50000) {
+						if(len<=20000) {
 							break;
 						}
 					}
