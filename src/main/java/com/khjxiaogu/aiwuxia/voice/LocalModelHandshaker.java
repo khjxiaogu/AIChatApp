@@ -131,7 +131,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
      * @param reqid 请求 ID
      * @param data  响应的字节数据
      */
-    public void onMessage(String reqid, byte[] data) {
+    public boolean onMessage(String reqid, byte[] data) {
         Result ar = ars.remove(reqid);
         if (ar != null) {
         	synchronized(ar) {
@@ -140,7 +140,9 @@ public class LocalModelHandshaker implements WebsocketEvents {
             ar.notifyAll();
         	}
             // 注意：此处未调用 notifyAll，可能意味着此方法用于同步或已不再需要等待
+        return true;
         }
+        return false;
     }
 
     /**
@@ -199,7 +201,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
                     }
                     synchronized (result) {
                         long beginTime = System.currentTimeMillis();
-                        long endTime = beginTime + 1000 * 60 * 3; // 3 分钟超时
+                        long endTime = beginTime + 1000 * 60 * 5; // 3 分钟超时
                         while (true) {
                             long currTime = System.currentTimeMillis();
                             if (result.finished) {

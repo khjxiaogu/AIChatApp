@@ -73,7 +73,7 @@ public class DeepseekUsage implements UsageIntf<DeepseekUsage> {
 	}
 
 	public double getEquivantTokens() {
-		return completion_tokens * 1d + prompt_cache_hit_tokens * 0.1d + prompt_cache_miss_tokens * .5d;
+		return completion_tokens * 1d + prompt_cache_hit_tokens * 0.01d + prompt_cache_miss_tokens * .5d;
 	}
 
 }

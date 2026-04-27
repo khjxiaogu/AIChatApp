@@ -787,8 +787,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		@GetBy(DataIn.class) byte[] data,
 		@Header("Authorization") String auth) {
 		if (auth != null && auth.startsWith("Bearer ") && System.getProperty("localVoiceToken", "").equals(auth.split(" ")[1])) {
-			LocalVoiceModel.lhs.onMessage(reqid, data);
+			if(LocalVoiceModel.lhs.onMessage(reqid, data))
 			return new ResultDTO(200);
+			return new ResultDTO(500);
 		}
 		return new ResultDTO(404);
 	}
