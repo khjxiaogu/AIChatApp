@@ -54,9 +54,6 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
@@ -77,6 +74,7 @@ public class AICharaTalkMain extends AIApplication {
 	String charaset;
 	String system;
 	VoiceTagger vtg;
+	@SuppressWarnings("unchecked")
 	public AICharaTalkMain(File basePath,File modelFolder,String charaname,JsonObject meta) {
 		super();
 		
@@ -183,7 +181,7 @@ public class AICharaTalkMain extends AIApplication {
 		}
 		if(state.getLast().getRole()==Role.USER) {
 			HistoryItem hi=state.removeLast();
-			state.refillChatBox(hi.getDisplayContent().toString());
+			state.refillChatBox(hi.getContextContent());
 		}
 		state.minDialogRow();
 		return state.getLast().getLastState();
@@ -251,16 +249,12 @@ public class AICharaTalkMain extends AIApplication {
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
-		int i = 0;
 		if (history != null && !history.isEmpty()) {
 			
 			int len=0;
 			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				if(hi.getRole()==Role.ASSISTANT) {
-					i++;
-				}
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
 					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
@@ -272,7 +266,6 @@ public class AICharaTalkMain extends AIApplication {
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
-				int removedSpeech=0;
 				while(it.hasNext()) {//calculate total dialog rows
 					HistoryItem hi=it.next();
 					len-=hi.getTokenLength();
@@ -282,7 +275,6 @@ public class AICharaTalkMain extends AIApplication {
 					}
 					his.add(hi);
 					if(hi.getRole()==Role.ASSISTANT) {
-						removedSpeech++;
 						if(len<=10000) {
 							break;
 						}

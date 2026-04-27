@@ -70,7 +70,7 @@ public class GrokModelProvider implements ModelProvider {
 		for (HistoryItem hi : request.history) {
 			JsonObject msg = new JsonObject();
 			msg.addProperty("role", hi.getRole().getRoleName());
-			msg.addProperty("content", hi.getContextContent().toString());
+			msg.addProperty("content", hi.getContextContent().toText());
 			messages.add(msg);
 		}
 

@@ -11,7 +11,6 @@ import java.util.function.Consumer;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
@@ -22,15 +21,12 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class HistoryCompacter {
 	String system;
 	String version;
 	final Gson json=new GsonBuilder().setPrettyPrinting().create();
-	public void compactHistory(AISession ostate,Map<String,String> state,String dialog,String charaset,Consumer<UsageIntf> usage) throws ModelRouteException, IOException {
+	public void compactHistory(AISession ostate,Map<String,String> state,String dialog,String charaset,Consumer<UsageIntf<?>> usage) throws ModelRouteException, IOException {
 		StringBuilder summary=new StringBuilder();
 		summary.append("==故事设定==\n").append(charaset).append("\n");
 		
@@ -137,7 +133,7 @@ public class HistoryCompacter {
 		System.out.println();
 		return sb.toString();
 	}
-	public static Map<String,String> splitSections(AIOutput resp,Consumer<UsageIntf> usage) throws IOException {
+	public static Map<String,String> splitSections(AIOutput resp,Consumer<UsageIntf<?>> usage) throws IOException {
 		boolean isWaiting = true;
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;

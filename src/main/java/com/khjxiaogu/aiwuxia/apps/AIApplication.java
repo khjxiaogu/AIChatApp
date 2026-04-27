@@ -34,15 +34,20 @@ import java.util.concurrent.CompletableFuture;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
+import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -56,9 +61,15 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
  */
 public abstract class AIApplication {
     /** 默认的Gson实例，用于JSON序列化/反序列化（紧凑格式） */
-    protected static Gson gs = new GsonBuilder().registerTypeAdapter(UsageTracker.class, new UsageTracker.Serilizer()).create();
+    protected static Gson gs = new GsonBuilder()
+    	.registerTypeAdapter(UsageTracker.class, new UsageTracker.Serilizer())
+    	.registerTypeAdapter(MessageContents.class, new MessageContents.Serilizer())
+    	.create();
     /** 格式化的Gson实例，用于生成美观的JSON输出（带缩进） */
-    protected static Gson ppgs = new GsonBuilder().registerTypeAdapter(UsageTracker.class, new UsageTracker.Serilizer()).setPrettyPrinting().create();
+    protected static Gson ppgs = new GsonBuilder()
+    	.registerTypeAdapter(UsageTracker.class, new UsageTracker.Serilizer())
+    	.registerTypeAdapter(MessageContents.class, new MessageContents.Serilizer())
+    	.setPrettyPrinting().create();
     /** 简单的日志记录器，用于输出日志信息（标签为"AI智能"） */
     protected SimpleLogger logger = new SimpleLogger("AI智能");
 
@@ -75,7 +86,7 @@ public abstract class AIApplication {
          * @return 处理后的消息内容；如果返回null，则终止处理链
          * @throws Throwable 处理过程中可能抛出的异常
          */
-        public String apply(AISession state, String message) throws Throwable;
+        public MessageContents apply(AISession state, MessageContents message) throws Throwable;
     }
 
     /** 消息处理器列表，按添加顺序构成处理链 */
@@ -119,10 +130,10 @@ public abstract class AIApplication {
 				if (hi.getLastState() != null) {
 					state.getState().set(hi.getLastState());
 				}
-				this.handleSpeech(state, userhi.getDisplayContent().toString());
+				this.handleSpeech(state, userhi.getContextContent());
 				return;
 			}
-			this.handleSpeech(state, hi.getDisplayContent().toString());
+			this.handleSpeech(state, hi.getContextContent());
 			
 		}
 	}
@@ -135,13 +146,13 @@ public abstract class AIApplication {
 				if(last.getRole()==Role.ASSISTANT) {
 					HistoryItem uhi=state.deleteLast();
 					if(uhi.getRole()==Role.USER)
-						state.refillChatBox(uhi.getDisplayContent().toString());
+						state.refillChatBox(uhi.getContextContent());
 					state.minDialogRow();
 					if (hi.getLastState() != null) {
 						state.getState().set(hi.getLastState());
 					}
 				}else if(last.getRole()==Role.USER){
-					state.refillChatBox(last.getDisplayContent().toString());
+					state.refillChatBox(last.getContextContent());
 				}
 			}
 		}
@@ -180,6 +191,23 @@ public abstract class AIApplication {
 		return gs.fromJson(JsonParser.parseString(FileUtil.readString(jsonFile)).getAsJsonObject().get("history").getAsJsonObject(), MemoryHistory.class);
 	}
     /**
+     * 从JSON文件读取并构造{@link MemoryHistory}对象。
+     * 注意：JSON中应包含一个名为"history"的顶级对象。
+     *
+     * @param jsonFile JSON文件
+     * @return 解析得到的MemoryHistory对象
+     * @throws JsonSyntaxException 如果JSON格式错误
+     * @throws IOException         如果读取文件失败
+     */
+	public static ISaveData saveDataFromJson(File jsonFile) throws JsonSyntaxException, IOException {
+		String fstr=FileUtil.readString(jsonFile);
+		JsonElement je=JsonParser.parseString(fstr);
+		JsonObject jo=je.getAsJsonObject();
+		ExtraData data=gs.fromJson(jo, AISession.ExtraData.class);
+		MemoryHistory history=gs.fromJson(jo.get("history"),MemoryHistory.class);
+		return new SavedData(data,history);
+	}
+    /**
      * 将AI会话状态保存到JSON文件。
      * 保存的内容包括会话的ExtraData（通过{@link AISession#getData()}）和
      * 历史记录（通过{@link AISession#getHistory()}），其中历史记录会被嵌入到ExtraData的JSON对象中。
@@ -188,7 +216,7 @@ public abstract class AIApplication {
      * @param jsonFile 目标JSON文件
      * @throws IOException 如果写入文件失败
      */
-	public static void saveToJson(AISession aistate, File jsonFile) throws IOException {
+	public static void saveToJson(ISaveData aistate, File jsonFile) throws IOException {
 		JsonElement je=ppgs.toJsonTree(aistate.getData());
 		je.getAsJsonObject().add("history", ppgs.toJsonTree(aistate.getHistory()));
 		FileUtil.transfer(ppgs.toJson(je), jsonFile);
@@ -227,14 +255,14 @@ public abstract class AIApplication {
      * @param state        当前AI会话状态
      * @param messageInput 用户输入的原始消息字符串
      */
-	public void handleSpeech(AISession state,final String messageInput) {
+	public void handleSpeech(AISession state,final MessageContents messageInput) {
 		if(state.isGenerating()) {
 			state.sendNotice("内容生成中，请稍后再试。");
 			state.refillChatBox(messageInput);
 			return;
 		}
 		state.onGenerateStart();	
-		String ret=messageInput;
+		MessageContents ret=messageInput;
 		int mid=(int) UUID.randomUUID().getMostSignificantBits();
 		String sid=Integer.toString(mid,16);
 		logger.info("message received "+sid);

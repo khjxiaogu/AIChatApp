@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.llm;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
@@ -7,23 +8,23 @@ import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class DirectHistoryItem implements HistoryItem {
 	final Role role;
-	final String context;
+	final MessageContents context;
 	final long tokenSimulated;
 	public DirectHistoryItem(Role role, String context) {
 		super();
 		this.role = role;
-		this.context = context;
+		this.context = new MessageContents(context);
 		tokenSimulated=TokenSimulatedCounter.fastCountLength(context);
 	}
 
 	@Override
-	public CharSequence getContextContent() {
+	public MessageContents getContextContent() {
 		return context;
 	}
 
 	@Override
 	public CharSequence getDisplayContent() {
-		return context;
+		return context.toText();
 	}
 
 	@Override

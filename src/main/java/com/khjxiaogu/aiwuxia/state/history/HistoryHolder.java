@@ -25,6 +25,7 @@ package com.khjxiaogu.aiwuxia.state.history;
 
 import java.util.Iterator;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
 
 /**
@@ -57,7 +58,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
      * @param isValidContext 指示该条目是否可作为有效的上下文内容（例如用于后续对话）
      * @return 新创建并添加到容器中的 {@link HistoryItem} 对象
      */
-    HistoryItem add(Role role, String content, String fullContent, boolean isValidContext);
+    HistoryItem add(Role role, String content, MessageContents fullContent, boolean isValidContext);
 
     /**
      * 清空容器，移除所有历史条目。
@@ -117,9 +118,11 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
      * @return 新创建并添加的 {@link HistoryItem} 对象
      */
     default HistoryItem add(Role role, String displayContent, boolean isValidContext) {
-        return add(role, displayContent, null, isValidContext);
+        return add(role, displayContent, (MessageContents)null, isValidContext);
     }
-
+    default HistoryItem add(Role role, MessageContents displayContent, boolean isValidContext) {
+        return add(role, displayContent.toText(), displayContent, isValidContext);
+    }
     /**
      * 添加一个新的历史条目，使用默认的有效上下文标志为 true。
      * 这是一个便捷的默认方法，内部调用四参数 {@link #add(Role, String, String, boolean)} 方法，
@@ -130,8 +133,14 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
      * @param contextContent  完整的上下文内容
      * @return 新创建并添加的 {@link HistoryItem} 对象
      */
+    default HistoryItem add(Role role, String displayContent, MessageContents contextContent) {
+        return add(role, displayContent, contextContent, true);
+    }
     default HistoryItem add(Role role, String displayContent, String contextContent) {
         return add(role, displayContent, contextContent, true);
+    }
+    default HistoryItem add(Role role, String displayContent, String contextContent, boolean isValidContext) {
+    	 return add(role, displayContent, new MessageContents(contextContent), true);
     }
 
     /**

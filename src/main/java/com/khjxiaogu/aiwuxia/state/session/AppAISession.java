@@ -31,7 +31,8 @@ import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.AIChatWindow;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
-import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.ISaveData;
 
 import javazoom.jl.decoder.JavaLayerException;
 import javazoom.jl.player.advanced.AdvancedPlayer;
@@ -40,15 +41,15 @@ public class AppAISession extends AISession {
 
 	File saveData;
 	AIChatWindow window;
-	public AppAISession(String user, HistoryHolder historym, ExtraData data,AIApplication aiapp,File saveData,AIChatWindow win) {
-		super(user, historym, data,aiapp);
+	public AppAISession(String user, ISaveData data,AIApplication aiapp,File saveData,AIChatWindow win) {
+		super(user, data,aiapp);
 		this.saveData=saveData;
 		this.window=win;
 	}
 
 	@Override
-	public void refillChatBox(String text) {
-		window.setInput(text);
+	public void refillChatBox(MessageContents text) {
+		window.setInput(text.toText());
 	}
 
 	@Override

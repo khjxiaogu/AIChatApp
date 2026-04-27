@@ -1,14 +1,9 @@
 package com.khjxiaogu.aiwuxia.llm.message;
 
-import java.util.Map;
-
-public class ImageContent implements Message{
+public class ImageContent implements MessageContent{
 
 	String image_url;
 	String description;
-	Map<String,String> fileId;
-	public ImageContent() {
-	}
 
 	@Override
 	public boolean isPlainText() {
@@ -23,6 +18,34 @@ public class ImageContent implements Message{
 	@Override
 	public String toText() {
 		return description==null?"":description;
+	}
+
+	public ImageContent(String image_url, String description) {
+		super();
+		this.image_url = image_url;
+		this.description = description;
+	}
+
+	public String getDescription() {
+		return description;
+	}
+
+	public void setDescription(String description) {
+		this.description = description;
+	}
+
+	public String getImageUrl() {
+		return image_url;
+	}
+
+	public ImageContent(String image_url) {
+		super();
+		this.image_url = image_url;
+	}
+
+	@Override
+	public String getType() {
+		return "image";
 	}
 
 }

@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.state.history;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
@@ -39,7 +40,7 @@ public interface HistoryItem {
      *
      * @return 上下文内容的字符序列，可能为 null 或空
      */
-    CharSequence getContextContent();
+    MessageContents getContextContent();
 
     /**
      * 获取该历史条目的显示内容。

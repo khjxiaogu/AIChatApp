@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.utils.ReverseIterator;
 
@@ -52,7 +53,7 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	}
 
 	@Override
-	public synchronized HistoryItem add( Role role, String content, String fullContent,boolean isSendable) {
+	public synchronized HistoryItem add( Role role, String content,MessageContents fullContent,boolean isSendable) {
 		HistoryMemoryItem mhi;
 		HistoryItem last=peekLast();
 		history.add(mhi=new HistoryMemoryItem(newUniqueId(),role,content,fullContent,isSendable));

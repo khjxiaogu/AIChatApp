@@ -69,7 +69,7 @@ public class AICustomMain extends AIApplication {
 			}finally{
 				if(state.getLast().getRole()==Role.USER) {
 					HistoryItem hi=state.removeLast();
-					state.refillChatBox(hi.getDisplayContent().toString());
+					state.refillChatBox(hi.getContextContent());
 				}
 			}
 			state.getLast().setLastState(airet);

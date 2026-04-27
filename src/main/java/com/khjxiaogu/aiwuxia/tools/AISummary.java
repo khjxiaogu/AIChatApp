@@ -35,7 +35,6 @@ import java.util.Map;
 import java.util.Scanner;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
@@ -46,13 +45,12 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
+import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 
 public class AISummary {
 
+	@SuppressWarnings("unchecked")
 	public static void main(String[] args) throws IOException {
 		File dataFolder=new File("save");
 		String system=FileUtil.readString(new File(dataFolder,"summaryprompt2.txt"));
@@ -71,87 +69,88 @@ public class AISummary {
 		Gson json=new GsonBuilder().setPrettyPrinting().create();
 		int len=0;
 		int i=0;
-		Scanner scan=new Scanner(System.in);
-		while(it.hasNext()) {
-			
-			HistoryItem hi=it.next();
-		
-			len+=hi.getContextContent().length();
-			
-			if(hi.getRole()!=Role.SYSTEM) {
-				if(hi.getRole()==Role.USER)
-					summary.append("【主角】：");
-				summary.append(hi.getDisplayContent()).append("\n");
-			}
-			if(len>60000) {
-				len=0;
-				str=summary.toString();
-			
+		try(Scanner scan=new Scanner(System.in)){
+			while(it.hasNext()) {
 				
-				File curSecFile=new File(dataFolder,"summary-gen-"+(i+1)+".json");
-				Map<String,String> curSection=null;
-				boolean isLoaded=false;
-				if(curSecFile.exists()) {
-					System.out.println("recover state from file");
-					isLoaded=true;
-					curSection=json.fromJson(FileUtil.readString(curSecFile), Map.class);
-				}else {
-					System.out.println("=============================");
-					System.out.println("=============================");
-					System.out.println(str);
-					System.out.println("=============================");
-					System.out.println("=============================");
-					while(curSection==null)
-						curSection=splitSections(LLMConnector.call(constructSummaryrequest(system,str)));
-					FileUtil.transfer(json.toJson(curSection), curSecFile);
+				HistoryItem hi=it.next();
+			
+				len+=TokenSimulatedCounter.fastCountLength(hi.getContextContent());
+				
+				if(hi.getRole()!=Role.SYSTEM) {
+					if(hi.getRole()==Role.USER)
+						summary.append("【主角】：");
+					summary.append(hi.getDisplayContent()).append("\n");
 				}
-				Map<String,String> lastSection=null;
-				File lastSecFile=new File(dataFolder,"summary-gen-"+i+".json");
-				if(lastSecFile.exists()) {
-					lastSection=json.fromJson(FileUtil.readString(lastSecFile), Map.class);
-				}
-				summary=new StringBuilder("==故事设定==\n");
-				summary.append(charaset).append("\n");
-				summary.append("\n==永久记忆==\n");
-				if(lastSection!=null) 
-					summary.append(lastSection.get("永久记忆").trim()).append("\n");
-				summary.append(curSection.get("永久记忆").trim()).append("\n\n");
-				List<String> stories=new ArrayList<>();
-				if(lastSection!=null) 
-					for(String s:lastSection.get("故事脉络").split("\n")) {
+				if(len>60000) {
+					len=0;
+					str=summary.toString();
+				
+					
+					File curSecFile=new File(dataFolder,"summary-gen-"+(i+1)+".json");
+					Map<String,String> curSection=null;
+					boolean isLoaded=false;
+					if(curSecFile.exists()) {
+						System.out.println("recover state from file");
+						isLoaded=true;
+						curSection=json.fromJson(FileUtil.readString(curSecFile), Map.class);
+					}else {
+						System.out.println("=============================");
+						System.out.println("=============================");
+						System.out.println(str);
+						System.out.println("=============================");
+						System.out.println("=============================");
+						while(curSection==null)
+							curSection=splitSections(LLMConnector.call(constructSummaryrequest(system,str)));
+						FileUtil.transfer(json.toJson(curSection), curSecFile);
+					}
+					Map<String,String> lastSection=null;
+					File lastSecFile=new File(dataFolder,"summary-gen-"+i+".json");
+					if(lastSecFile.exists()) {
+						lastSection=json.fromJson(FileUtil.readString(lastSecFile), Map.class);
+					}
+					summary=new StringBuilder("==故事设定==\n");
+					summary.append(charaset).append("\n");
+					summary.append("\n==永久记忆==\n");
+					if(lastSection!=null) 
+						summary.append(lastSection.get("永久记忆").trim()).append("\n");
+					summary.append(curSection.get("永久记忆").trim()).append("\n\n");
+					List<String> stories=new ArrayList<>();
+					if(lastSection!=null) 
+						for(String s:lastSection.get("故事脉络").split("\n")) {
+							s=s.trim();
+							if(!s.isEmpty()) {
+								stories.add(s);
+							}
+						}
+					for(String s:curSection.get("故事脉络").split("\n")) {
 						s=s.trim();
 						if(!s.isEmpty()) {
 							stories.add(s);
 						}
 					}
-				for(String s:curSection.get("故事脉络").split("\n")) {
-					s=s.trim();
-					if(!s.isEmpty()) {
-						stories.add(s);
-					}
-				}
-				int minSection=Math.max(stories.size()-50, 0);
-				summary.append("\n==故事脉络==\n");
-				for(int j=minSection;j<stories.size();j++)
-					summary.append(stories.get(j)).append("\n");
-				
-				summary.append("\n==约定==\n").append(curSection.get("约定"));
-				summary.append("\n==角色状态==\n").append(curSection.get("角色状态"));
-				summary.append("\n==持有物品==\n").append(curSection.get("持有物品"));
-				summary.append("\n==前情提要==\n").append(curSection.get("对话摘要"));
+					int minSection=Math.max(stories.size()-50, 0);
+					summary.append("\n==故事脉络==\n");
+					for(int j=minSection;j<stories.size();j++)
+						summary.append(stories.get(j)).append("\n");
 					
+					summary.append("\n==约定==\n").append(curSection.get("约定"));
+					summary.append("\n==角色状态==\n").append(curSection.get("角色状态"));
+					summary.append("\n==持有物品==\n").append(curSection.get("持有物品"));
+					summary.append("\n==前情提要==\n").append(curSection.get("对话摘要"));
+						
+					
+					summary.append("\n==对话==\n");
+					++i;
+					System.out.println("gen"+i);
+					if(!isLoaded)
+					scan.nextLine();
+					//if(++i>=8)
+					//break;
+					//lastSummary=makeSummaryrequest(system,lastSummary,str);
+				}
 				
-				summary.append("\n==对话==\n");
-				++i;
-				System.out.println("gen"+i);
-				if(!isLoaded)
-				scan.nextLine();
-				//if(++i>=8)
-				//break;
-				//lastSummary=makeSummaryrequest(system,lastSummary,str);
+				
 			}
-			
-			
 		}
 		//Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(str), null);
 		//System.out.println("=============最终结果================");

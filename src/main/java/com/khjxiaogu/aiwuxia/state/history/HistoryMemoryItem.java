@@ -25,6 +25,7 @@ package com.khjxiaogu.aiwuxia.state.history;
 
 import java.io.Serializable;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
@@ -38,7 +39,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	private transient long tokenLength=0;
 	private Role role;
 	private StringBuilder content;
-	private StringBuilder sendContent;
+	private MessageContents sendContent;
 	private StringBuilder reasonContent;
 	private boolean shouldSend;
 	private boolean deleted=false;
@@ -58,30 +59,29 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 		this.setRole(role);
 		this.shouldSend = shouldSend;
 	}
-	HistoryMemoryItem(Role role, String content, String fullContent) {
+	HistoryMemoryItem(Role role, String content, MessageContents fullContent) {
 		super();
 		this.setRole(role);
 		this.content = new StringBuilder(content);
-		this.sendContent = new StringBuilder(fullContent);
+		this.sendContent = fullContent;
 		this.shouldSend = true;
 	}
 
-	HistoryMemoryItem(int identifier, Role role, String content, String fullContent) {
+	HistoryMemoryItem(int identifier, Role role, String content, MessageContents fullContent) {
 		super();
 		this.setIdentifier(identifier);
 		this.setRole(role);
 		this.content = new StringBuilder(content);
-		this.sendContent = new StringBuilder(fullContent);
+		this.sendContent = fullContent;
 		this.shouldSend = true;
 	}
-	HistoryMemoryItem(int identifier, Role role, String content, String fullContent, boolean shouldSend) {
+	HistoryMemoryItem(int identifier, Role role, String content, MessageContents fullContent, boolean shouldSend) {
 		super();
 		this.setIdentifier(identifier);
 		this.setRole(role);
 		if(content!=null)
 			this.content = new StringBuilder(content);
-		if(fullContent!=null)
-			this.sendContent = new StringBuilder(fullContent);
+		this.sendContent = fullContent;
 		this.shouldSend = shouldSend;
 	}
 	HistoryMemoryItem(int identifier, Role role, String content, boolean shouldSend) {
@@ -93,10 +93,10 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	}
 
 	@Override
-	public CharSequence getContextContent() {
+	public MessageContents getContextContent() {
 		if (sendContent != null)
 			return sendContent;
-		return content;
+		return new MessageContents(content.toString());
 	}
 
 	@Override
@@ -110,7 +110,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 
 	public void createContextContent() {
 		if (sendContent == null)
-			this.sendContent = new StringBuilder(content);
+			this.sendContent = new MessageContents(content.toString());
 	}
 	public StringBuilder createReasonContent() {
 		if (reasonContent == null)
@@ -154,7 +154,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 		if (fullContent == null)
 			this.sendContent = null;
 		else
-			this.sendContent = new StringBuilder(fullContent);
+			this.sendContent = new MessageContents(fullContent);
 	}
 	@Override
 	public void appendReasoner(String fullContent) {

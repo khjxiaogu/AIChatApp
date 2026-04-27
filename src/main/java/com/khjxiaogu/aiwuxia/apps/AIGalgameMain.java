@@ -37,6 +37,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryCompacter;
@@ -44,12 +45,8 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
-import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIGalgameMain extends AIApplication {
 	String charaname;
@@ -87,7 +84,7 @@ public class AIGalgameMain extends AIApplication {
 			}finally{
 				if(state.getLast().getRole()==Role.USER) {
 					HistoryItem hi=state.removeLast();
-					state.refillChatBox(hi.getDisplayContent().toString());
+					state.refillChatBox(hi.getContextContent());
 				}
 			}
 			state.getLast().setLastState(airet);
@@ -193,7 +190,6 @@ public class AIGalgameMain extends AIApplication {
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
-				int removedSpeech=0;
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
 					
@@ -207,7 +203,6 @@ public class AIGalgameMain extends AIApplication {
 					his.add(hi);
 					
 					if(hi.getRole()==Role.ASSISTANT) {
-						removedSpeech++;
 						if(len<=10000) {
 							break;
 						}
@@ -260,7 +255,7 @@ public class AIGalgameMain extends AIApplication {
 				}else {
 					state.getExtra().put("name", ret);
 					state.setStage(ApplicationStage.STARTED);
-					this.handleSpeech(state, initSelection);
+					this.handleSpeech(state, new MessageContents(initSelection));
 				}
 			}
 		});
@@ -340,14 +335,6 @@ public class AIGalgameMain extends AIApplication {
 		}
 
 		return nstateModified ? oldstate : null;
-	}
-	private String buildAttrStr(AISession state) {
-		if (state == null || state.getState().intfs.isEmpty())
-			return "";
-		StringBuilder sb = new StringBuilder("");
-		for (AttributeSet intf : state.getState().intfs.values())
-			sb.append(intf.toString());
-		return sb.toString();
 	}
 	public String constructSystem(ApplicationState state) {
 		return "";

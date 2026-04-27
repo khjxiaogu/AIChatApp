@@ -25,14 +25,19 @@ package com.khjxiaogu.aiwuxia;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Date;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Supplier;
 
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.framing.CloseFrame;
@@ -42,14 +47,19 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
+import com.khjxiaogu.aiwuxia.llm.message.PlainText;
+import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
-import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
@@ -66,8 +76,10 @@ public class NapCatAIConnector  extends WebSocketClient {
 	String url;
 	Object lock=new Object();
 	VoiceTagger vt;
-	public NapCatAIConnector(File dataFolder,AIGroupSession state, File saveData, long botId, long groupId,String url, String token) {
-		super(URI.create(url),Map.of("Authorization", "Bearer "+token));
+	TOStorage tos;
+	public NapCatAIConnector(File dataFolder,AIGroupSession state, File saveData, long botId, long groupId,String url, String token) throws JsonSyntaxException, IOException {
+		super(URI.create("ws://"+url),Map.of("Authorization", "Bearer "+token));
+		tos=new TOStorage(JsonParser.parseString(FileUtil.readString(new File(dataFolder,"tos.json"))).getAsJsonObject());
 		this.state = state;
 		this.saveData = saveData;
 		this.botId = botId;
@@ -90,7 +102,39 @@ public class NapCatAIConnector  extends WebSocketClient {
     public void onOpen(ServerHandshake serverHandshake) {
     	 System.out.println("opened connection");
     }
-    
+    public byte[] getImageBytes(String fileId) throws Exception {
+        // 1. 构造请求 JSON：{"file_id": "..."}
+        String requestJson = JsonBuilder.object().add("file_id", fileId).end().toString();
+
+        // 2. 发送 POST 请求（使用 HttpURLConnection）
+        URL url = new URL("http://"+this.url + "/get_image");
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        conn.setRequestProperty("Authorization", "Bearer "+token);
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(5000);
+
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(requestJson.getBytes("utf-8"));
+            os.flush();
+        }
+
+        // 4. 解析 JSON
+        JsonObject root = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
+
+
+        // 5. 提取 data.file 字段
+        String dataFile = root.get("data").getAsJsonObject().get("base64").getAsString();
+        if (dataFile == null || dataFile.isEmpty()) {
+            throw new RuntimeException("响应中 data.base64 为空");
+        }
+
+        return Base64.getDecoder().decode(dataFile);
+        
+    }
+
     @Override
     public void onMessage(String message) {
     	synchronized(lock) {
@@ -108,26 +152,30 @@ public class NapCatAIConnector  extends WebSocketClient {
 		    			if(senderid!=botId) {
 			    			JsonArray ja=msg.get("raw").getAsJsonObject().get("elements").getAsJsonArray();
 			    			boolean containsAtMe=false;
-			    			StringBuilder msgBuilder=new StringBuilder("【").append(sender).append("】");
+			    			List<Supplier<MessageContent>> mes=new ArrayList<>();
+			    			String senderName="【"+sender+"】";
+			    			mes.add(()->new PlainText(senderName));
 			    			boolean hasBarack=false;
 			    			boolean hasText=false;
 			    			for(JsonElement je:ja) {
 			    				JsonObject melm=je.getAsJsonObject();
 			    				if(!melm.get("replyElement").isJsonNull()) {
 			    					JsonObject reply=melm.get("replyElement").getAsJsonObject();
+			    					StringBuilder msgBuilder=new StringBuilder();
 			    					msgBuilder.append("回复“");
 			    					for(JsonElement replys:reply.get("sourceMsgTextElems").getAsJsonArray()) {
 			    						if(replys.getAsJsonObject().get("textElemContent").isJsonPrimitive())
 			    						msgBuilder.append(replys.getAsJsonObject().get("textElemContent").getAsString());	
 			    					}
 			    					msgBuilder.append("”：");
+			    					mes.add(()->new PlainText(msgBuilder.toString()));
 			    					if(reply.get("senderUid").getAsString().equals(String.valueOf(botId))) {
 			    						containsAtMe=true;
 			    					}
 			    					continue;
 			    				}
 			    				if(!hasBarack) {
-			    					msgBuilder.append("「");
+			    					mes.add(()->new PlainText("「"));
 			    					hasBarack=true;
 			    				}
 			    				if(!melm.get("textElement").isJsonNull()) {
@@ -135,25 +183,36 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    					JsonObject text=melm.get("textElement").getAsJsonObject();
 			    					if(text.get("atType").getAsInt()!=0) {
 			    						if(text.get("atUid").getAsString().equals(String.valueOf(botId))) {
-			    							msgBuilder.append("@"+state.getAiapp().getRoleName(state, Role.ASSISTANT));
+			    							mes.add(()->new PlainText("@"+state.getAiapp().getRoleName(state, Role.ASSISTANT)));
 			    							containsAtMe=true;
 			    							continue;
 			    						}
 			    					}
-			    					msgBuilder.append(text.get("content").getAsString());
+			    					String messageLine=text.get("content").getAsString();
+			    					if((!containsAtMe)&&messageLine.contains("@"+state.getAiapp().getRoleName(state, Role.ASSISTANT)))
+			    						containsAtMe=true;
+			    					mes.add(()->new PlainText(messageLine));
 			    					
 			    				}else if(!melm.get("picElement").isJsonNull()) {
 			    					JsonObject pic=melm.get("picElement").getAsJsonObject();
-			    					msgBuilder.append("（图片：").append(pic.get("summary").getAsString()).append("）");
+			    					String summary="（图片："+pic.get("summary").getAsString()+"）";
+			    					String fid=pic.get("fileId").getAsString();
+			    					mes.add(()->{
+										try {
+											String path = tos.uploadIfNotExists(getImageBytes(fid));
+											return new ImageContent(path);
+										} catch (Exception e) {
+											e.printStackTrace();
+										}
+										return new PlainText(summary);
+			    						
+			    					});
 			    				}
 			    			}
 			    			if(hasText) {
-			    				msgBuilder.append("」");
-			    				String messageLine=msgBuilder.toString();
-			    				System.out.println("grep message:"+messageLine);
-			    				if((!containsAtMe)&&messageLine.contains("@"+state.getAiapp().getRoleName(state, Role.ASSISTANT)))
-			    					containsAtMe=true;
-			    				state.addMessage(messageLine);
+			    				mes.add(()->new PlainText("」"));
+			    			
+			    				state.addMessage(mes);
 			    			}
 			    			//int hours=new Date().getHours();
 			    			//if(hours<6)
@@ -222,11 +281,10 @@ public class NapCatAIConnector  extends WebSocketClient {
     		AIGroupSession aistate = null;
     		if (saveData.exists()) {
     			aistate = new AIGroupSession("appuser",
-    				AIApplication.historyFromJson(saveData),
-    				AIApplication.dataFromJson(saveData),
+    				AIApplication.saveDataFromJson(saveData),
     				main);
     		}else {
-    			aistate = new AIGroupSession("appuser",new MemoryHistory(), new AISession.ExtraData(),main);
+    			aistate = new AIGroupSession("appuser",new SavedData(),main);
     			aistate.provideInitialHint();
     		}
     		new Thread(()->{

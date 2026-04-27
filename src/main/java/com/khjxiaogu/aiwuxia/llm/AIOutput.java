@@ -99,13 +99,13 @@ public interface AIOutput {
      *
      * @param listener 一个{@link Consumer}，用于处理{@link GrokUsage}对象。当有新的使用数据可用时会被调用。
      */
-    public void addUsageListener(Consumer<UsageIntf> listener);
+    public void addUsageListener(Consumer<UsageIntf<?>> listener);
 	public static class StreamedAIOutput implements AIOutput{
 		public final BlockingReader reasoner;
 		public final BlockingReader content;
-		private UsageIntf usage;
+		private UsageIntf<?> usage;
 		private boolean interrupted;
-		private List<Consumer<UsageIntf>> usageListener=new ArrayList<>();
+		private List<Consumer<UsageIntf<?>>> usageListener=new ArrayList<>();
 		public StreamedAIOutput() {
 			reasoner=new BlockingReader();
 			content=new BlockingReader();
@@ -137,7 +137,7 @@ public interface AIOutput {
 		public Reader getContent() {
 			return content;
 		}
-		public void setUsage(UsageIntf usage) {
+		public void setUsage(UsageIntf<?> usage) {
 			this.usage=usage;
 			if(usage!=null)
 				synchronized(usageListener) {
@@ -145,7 +145,7 @@ public interface AIOutput {
 					usageListener.clear();
 				}
 		}
-		public void addUsageListener(Consumer<UsageIntf> listener) {
+		public void addUsageListener(Consumer<UsageIntf<?>> listener) {
 			if(this.usage!=null)
 				listener.accept(usage);
 			else
@@ -166,8 +166,8 @@ public interface AIOutput {
 	public static class FilledAIOutput implements AIOutput{
 		public final Reader reasoner;
 		public final Reader content;
-		private final UsageIntf usage;
-		public FilledAIOutput(String reasoning,String content,UsageIntf usage) {
+		private final UsageIntf<?> usage;
+		public FilledAIOutput(String reasoning,String content,UsageIntf<?> usage) {
 			this.reasoner=new StringReader(reasoning);
 			this.content=new StringReader(content);
 			this.usage=usage;
@@ -184,7 +184,7 @@ public interface AIOutput {
 			return true;
 		}
 		@Override
-		public void addUsageListener(Consumer<UsageIntf> listener) {
+		public void addUsageListener(Consumer<UsageIntf<?>> listener) {
 			listener.accept(usage);
 		}
 		@Override

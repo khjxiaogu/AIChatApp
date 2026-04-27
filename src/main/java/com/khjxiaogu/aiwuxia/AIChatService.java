@@ -52,10 +52,9 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
-import com.khjxiaogu.aiwuxia.apps.AIWuxiaMain;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
+import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
@@ -255,6 +254,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * 重新加载所有AI应用配置。 扫描根目录下的所有子目录，根据meta.json元数据动态加载AI应用（如talk类型、trpg类型），
 	 * 并更新apps映射和trial集合。
 	 */
+	@SuppressWarnings("unchecked")
 	public void reload() {
 		apps.clear();
 		trial.clear();
@@ -928,7 +928,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						File data = new File(saveData, cid + ".json");
 						if (data.exists()) {
 							try {
-								exd = AIWuxiaMain.dataFromJson(data);
+								exd = AIApplication.dataFromJson(data);
 							} catch (JsonSyntaxException | IOException e) {
 								getLogger().printStackTrace(e);
 								logger.info("AI " + cid + " Load Error");
@@ -952,8 +952,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 	public WebSocketAISession loadSession(String uid, String rcid, ApplicationAttributes attribute, File data) throws IOException {
 		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
-				AIApplication.historyFromJson(data),
-				AIApplication.dataFromJson(data));
+				AIApplication.saveDataFromJson(data));
 	}
 	public WebSocketAISession createSession(String uid, String rcid,ApplicationAttributes attribute, File data,String visibility){
 		long time = new Date().getTime();
@@ -987,7 +986,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 	public WebSocketAISession createRawSession(String uid, String rcid,ApplicationAttributes attribute, File data){
 		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
-			new MemoryHistory(), new AISession.ExtraData());
+			new SavedData());
 	}
 	@HttpPath("/chatconfig")
 	@Adapter

@@ -33,9 +33,11 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
+import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -46,7 +48,7 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 /**
  * AI会话类，管理与特定用户的对话历史、推理过程和状态。 该类提供了添加消息、管理历史条目、处理推理内容以及控制会话状态的功能。
  */
-public class AISession {
+public class AISession implements ISaveData{
 
 	/**
 	 * 对话会话的额外状态数据，封装了与 UI 状态、对话轮次、使用统计等相关的信息。
@@ -94,10 +96,10 @@ public class AISession {
 	 * @param data     额外状态数据（不能为 null）
 	 * @param aiapp    关联的 AI 应用实例
 	 */
-	public AISession(String user, HistoryHolder historym, ExtraData data, AIApplication aiapp) {
+	public AISession(String user, ISaveData data, AIApplication aiapp) {
 		super();
-		this.history = historym;
-		this.data = data;
+		this.history = data.getHistory();
+		this.data = data.getData();
 		this.user = user;
 		this.aiapp = aiapp;
 	}
@@ -236,7 +238,12 @@ public class AISession {
 			hi.appendReasoner(currentReasoner.toString());
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
-
+	public void add(Role role, MessageContents content, boolean isValidContext) {
+		HistoryItem hi = history.add(role, content, isValidContext);
+		if (currentReasoner != null && role == Role.ASSISTANT)
+			hi.appendReasoner(currentReasoner.toString());
+		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
+	}
 	/**
 	 * 添加一个新的历史条目，指定角色、显示内容和完整的上下文内容。 如果当前有未完成的推理内容且角色为助手，则将其关联到新条目。
 	 *
@@ -342,7 +349,7 @@ public class AISession {
 	public void setUpdated() {
 		isUpdated = true;
 	}
-	public void refillChatBox(String text) {
+	public void refillChatBox(MessageContents text) {
 		
 	}
 
@@ -369,10 +376,10 @@ public class AISession {
 	 *
 	 * @param usage 要累加的 {@link GrokUsage} 对象
 	 */
-	public void addUsage(UsageIntf usage) {
+	public void addUsage(UsageIntf<?> usage) {
 		addStatUsage(usage);
 	}
-	public void addStatUsage(UsageIntf usage) {
+	public void addStatUsage(UsageIntf<?> usage) {
 		data.usage.add(usage);
 	}
 	public boolean canGenerate() {
@@ -552,11 +559,11 @@ public class AISession {
 	}
 
 	/**
-	 * 处理用户语音输入的消息。 通过 {@link #commandExec} 提交任务以确保顺序执行。
+	 * 处理用户输入的消息。 通过 {@link #commandExec} 提交任务以确保顺序执行。
 	 *
 	 * @param message 语音识别后的文本消息
 	 */
-	public Future<?> handleUserSpeech(String message) {
+	public Future<?> handleUserSpeech(MessageContents message) {
 		return getCommandExec().submit(() -> getAiapp().handleSpeech(this, message));
 	}
 

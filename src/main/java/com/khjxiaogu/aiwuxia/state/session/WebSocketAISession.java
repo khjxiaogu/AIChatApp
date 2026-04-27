@@ -29,11 +29,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -43,10 +43,11 @@ import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
+import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -74,8 +75,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	ApplicationAttributes attributes;
 	boolean isClientAudioEnabled=false;
 	boolean isLocalAudioEnabled=false;
-	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,ApplicationAttributes attr,File fn, HistoryHolder history, ExtraData data) {
-		super(uid,history, data,aiapp);
+	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,ApplicationAttributes attr,File fn, ISaveData data) {
+		super(uid, data,aiapp);
 		this.fn = fn;
 		this.parent=par;
 		this.chatId=chatid;
@@ -195,10 +196,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		JsonObject jo=JsonParser.parseString(message).getAsJsonObject();
 		if(jo.has("message")) {
 			if(lock.compareAndSet(false, true)) {
-				refillChatBox("");
+				refillChatBox(new MessageContents());
 				getCommandExec().submit(()->{
 					try {
-						getAiapp().handleSpeech(this, jo.get("message").getAsString());
+						getAiapp().handleSpeech(this,new MessageContents( jo.get("message").getAsString()));
 						if(getAiapp().isLocalVoiceSupported()&&!super.isAudioSession()) {
 							if(isLocalAudioEnabled!=LocalVoiceModel.hasOnlineService()) {
 								isLocalAudioEnabled=LocalVoiceModel.hasOnlineService();
@@ -311,7 +312,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		return chatId;
 	}
 	@Override
-	public void addUsage(UsageIntf usage) {
+	public void addUsage(UsageIntf<?> usage) {
 		if(attributes.paidOnly) {
 			int actualCost=(int) Math.ceil(usage.getEquivantTokens());
 		
@@ -340,8 +341,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		return true;
 	}
 	@Override
-	public void refillChatBox(String text) {
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("sendbox",text).end().toString()));
+	public void refillChatBox(MessageContents text) {
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("sendbox",text.toText()).end().toString()));
 	}
 
 

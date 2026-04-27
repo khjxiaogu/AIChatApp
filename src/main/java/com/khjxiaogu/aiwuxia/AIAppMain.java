@@ -39,9 +39,10 @@ import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AppAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -70,9 +71,8 @@ public class AIAppMain {
 		return sb.toString();
 	}
 	public static void main(String[] args) throws Throwable {
-		String name="muxintalk";
-		int idx=0;
-		//CodeDialog dialog = new CodeDialog("AIGalgame模拟器");
+		String name="fengxitalk";
+		int idx=1;
 		try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception e) {
@@ -94,8 +94,7 @@ public class AIAppMain {
 		AISession aistate = null;
 		if (saveData.exists()) {
 			aistate = new AppAISession("appuser",
-				AIApplication.historyFromJson(saveData),
-				AIApplication.dataFromJson(saveData),
+				AIApplication.saveDataFromJson(saveData),
 				main,saveData,acw);
 		}
 
@@ -103,7 +102,7 @@ public class AIAppMain {
 		if (aistate == null) {
 			acw.setBackLog("正在生成初始面板...","");
 			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AppAISession("appuser",new MemoryHistory(), new AISession.ExtraData(),main,saveData,acw);
+			aistate = new AppAISession("appuser",new SavedData(),main,saveData,acw);
 			aistate.provideInitialHint();
 		}
 		aistate.onLoad().get();
@@ -190,7 +189,7 @@ public class AIAppMain {
 						}
 					});
 				}else
-					aistate.handleUserSpeech(ret).get();
+					aistate.handleUserSpeech(new MessageContents(ret)).get();
 				while(aistate.isGenerating()) {
 					Thread.sleep(100);
 				}

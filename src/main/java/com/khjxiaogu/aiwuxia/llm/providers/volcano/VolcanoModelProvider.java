@@ -32,6 +32,9 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
+import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
+import com.khjxiaogu.aiwuxia.llm.message.VideoContent;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
@@ -109,7 +112,24 @@ public class VolcanoModelProvider implements ModelProvider{
 		for(HistoryItem hi:request.history) {
 			JsonObject msg=new JsonObject();
 			msg.addProperty("role", hi.getRole().getRoleName());
-			msg.addProperty("content", hi.getContextContent().toString());
+			JsonArray contents=new JsonArray();
+			for(MessageContent msgc:hi.getContextContent()) {
+				JsonObject msgjo=new JsonObject();
+				if(msgc instanceof VideoContent) {
+					msgjo.addProperty("type", "video_url");
+					msgjo.addProperty("video_url", ((VideoContent)msgc).getVideoUrl());
+				}else if(msgc instanceof ImageContent) {
+					
+					msgjo.addProperty("type", "image_url");
+					msgjo.addProperty("image_url", ((ImageContent)msgc).getImageUrl());
+				}else{
+
+					msgjo.addProperty("type", "text");
+					msgjo.addProperty("text", msgc.toText());
+				}
+				contents.add(msgjo);
+			}
+			msg.add("content",contents);
 			messages.add(msg);
 		}
 		

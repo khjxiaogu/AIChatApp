@@ -29,7 +29,7 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 
 public abstract class RespScheme {
 	public List<Choice> choices;
-	public abstract UsageIntf getUsage();
+	public abstract UsageIntf<?> getUsage();
 	public AIOutput toOutput(){
 		return new AIOutput.FilledAIOutput(choices.get(0).message.reasoning_content,choices.get(0).message.content,getUsage());
 

@@ -29,7 +29,6 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
 
-import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
@@ -42,9 +41,6 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AIArticleMain extends AIApplication {
 
@@ -55,7 +51,7 @@ public class AIArticleMain extends AIApplication {
 		// check interface
 		handlers.add((state, ret) -> {
 			if (state.getStage() == ApplicationStage.STARTED) {
-				if ("查看大纲".equals(ret)) {
+				if ("查看大纲".equals(ret.toText())) {
 					state.add(Role.USER, ret, false);
 					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
 					return null;

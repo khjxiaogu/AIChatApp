@@ -31,7 +31,7 @@ public class UsageTracker {
 						Object usage;
 						try {
 							usage = context.deserialize(je, Class.forName(je.getAsJsonObject().get("type").getAsString()));
-							tracker.usages.put(usage.getClass(), (UsageIntf) usage);
+							tracker.usages.put(usage.getClass(), (UsageIntf<?>) usage);
 						} catch (ClassNotFoundException e) {
 							throw new JsonParseException(e);
 						}
@@ -51,7 +51,7 @@ public class UsageTracker {
 		@Override
 		public JsonElement serialize(UsageTracker src, Type typeOfSrc, JsonSerializationContext context) {
 			JsonArray data = new JsonArray();
-			for (UsageIntf usage : src.usages.values()) {
+			for (UsageIntf<?> usage : src.usages.values()) {
 				JsonObject origData = context.serialize(usage).getAsJsonObject();
 				origData.addProperty("type", usage.getClass().getName());
 				data.add(origData);
@@ -61,11 +61,12 @@ public class UsageTracker {
 
 	}
 
-	Map<Class<?>, UsageIntf> usages = new LinkedHashMap<>();
+	Map<Class<?>, UsageIntf<?>> usages = new LinkedHashMap<>();
 
 	public UsageTracker() {
 	}
 
+	@SuppressWarnings({ "unchecked", "rawtypes" })
 	public synchronized void add(UsageIntf uit) {
 		Class<?> type = uit.getClass();
 		UsageIntf orig = usages.get(type);
@@ -77,7 +78,7 @@ public class UsageTracker {
 
 	public float getTotalTokenPrice() {
 		float val = 0;
-		for (UsageIntf ri : usages.values()) {
+		for (UsageIntf<?> ri : usages.values()) {
 			val += ri.getEquivantTokens();
 		}
 		return val;
@@ -89,7 +90,7 @@ public class UsageTracker {
 	}
 	public String toString() {
 		StringBuilder sb=new StringBuilder();
-		for(Entry<Class<?>, UsageIntf> i:usages.entrySet()) {
+		for(Entry<Class<?>, UsageIntf<?>> i:usages.entrySet()) {
 			sb.append(i.getKey().getSimpleName()).append(":").append(i.getValue()).append("\n");
 		}
 		sb.append(calculatePrice());

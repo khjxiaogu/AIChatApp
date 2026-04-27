@@ -1,5 +1,10 @@
 package com.khjxiaogu.aiwuxia.utils;
 
+import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.llm.message.PlainText;
+
 public class TokenSimulatedCounter {
     public static long fastCountLength(CharSequence text) {
         if (text == null || text.length()==0) {
@@ -24,5 +29,15 @@ public class TokenSimulatedCounter {
             }
         }
         return (long) Math.ceil(total);
+    }
+    public static long fastCountLength(MessageContents text) {
+    	long count=0;
+    	for(MessageContent msg:text) {
+    		if(msg instanceof ImageContent)
+    			count+=1024;
+    		else
+    			count+=fastCountLength(((PlainText)msg).toText());
+    	}
+		return count;
     }
 }

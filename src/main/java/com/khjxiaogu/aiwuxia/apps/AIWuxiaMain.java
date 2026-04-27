@@ -65,7 +65,7 @@ public class AIWuxiaMain extends AIApplication {
 		handlers.add((state, ret) -> {
 
 			if (state.getStage() == ApplicationStage.NAMING) {
-				if ("换一批".equals(ret)) {
+				if ("换一批".equals(ret.toText())) {
 					provideNames(state);
 
 					return null;
@@ -77,7 +77,7 @@ public class AIWuxiaMain extends AIApplication {
 		// check interface
 		handlers.add((state, ret) -> {
 			if (state.getStage() == ApplicationStage.STARTED) {
-				if ("查看面板".equals(ret)) {
+				if ("查看面板".equals(ret.toText())) {
 					state.add(Role.USER, ret, false);
 					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
 					return null;

@@ -51,10 +51,7 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 
 public class AITRPGSceneMain extends AIApplication {
 	String charaname;
@@ -168,7 +165,7 @@ public class AITRPGSceneMain extends AIApplication {
 		}
 		if(state.getLast().getRole()==Role.USER) {
 			HistoryItem hi=state.removeLast();
-			state.refillChatBox(hi.getDisplayContent().toString());
+			state.refillChatBox(hi.getContextContent());
 		}
 		state.minDialogRow();
 		return state.getLast().getLastState();
@@ -197,16 +194,12 @@ public class AITRPGSceneMain extends AIApplication {
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
-		int i = 0;
 		if (history != null && !history.isEmpty()) {
 			
 			int len=0;
 			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				if(hi.getRole()==Role.ASSISTANT) {
-					i++;
-				}
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
 					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
@@ -218,7 +211,6 @@ public class AITRPGSceneMain extends AIApplication {
 				StringBuilder summery=new StringBuilder();
 				List<HistoryItem> his=new ArrayList<>();
 				it=history.validContextIterator();
-				int removedSpeech=0;
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
 					if(hi.isValidContext()) {
@@ -232,7 +224,6 @@ public class AITRPGSceneMain extends AIApplication {
 						his.add(hi);
 						
 						if(hi.getRole()==Role.ASSISTANT) {
-							removedSpeech++;
 							if(len<=10000) {
 								break;
 							}

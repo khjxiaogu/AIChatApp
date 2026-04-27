@@ -23,30 +23,36 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
+import java.text.DateFormat;
 import java.util.ArrayDeque;
 import java.util.Date;
+import java.util.List;
+import java.util.function.Supplier;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
-import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.ISaveData;
 
 public class AIGroupSession extends AISession {
-	ArrayDeque<String> messageQueue=new ArrayDeque<>();
-	public AIGroupSession(String user, HistoryHolder historym, ExtraData data, AIApplication aiapp) {
-		super(user, historym, data, aiapp);
+	ArrayDeque<List<Supplier<MessageContent>>> messageQueue=new ArrayDeque<>();
+	public AIGroupSession(String user, ISaveData data, AIApplication aiapp) {
+		super(user, data, aiapp);
 	}
-	public void addMessage(String msg) {
+	public void addMessage(List<Supplier<MessageContent>> msg) {
 		messageQueue.add(msg);
 		if(messageQueue.size()>10)
 			messageQueue.pollFirst();
 	}
-	public String getPrompt() {
-		StringBuilder sb=new StringBuilder();
-		sb.append("当前时间：").append(new Date().toLocaleString()).append("\n");
+	public MessageContents getPrompt() {
+        DateFormat formatter = DateFormat.getDateTimeInstance();
+		MessageContents content=new MessageContents("当前时间："+formatter.format(new Date())+"\n");
 		while(true) {
-			String msg=messageQueue.pollFirst();
+			List<Supplier<MessageContent>> msg=messageQueue.pollFirst();
 			if(msg==null)break;
-			sb.append(msg).append("\n");
+			for(Supplier<MessageContent> cmsg:msg)
+				content.add(cmsg.get());
 		}
-		return sb.toString();
+		return content;
 	}
 }

@@ -26,7 +26,6 @@ package com.khjxiaogu.aiwuxia.llm;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
