@@ -153,7 +153,10 @@ public class AIRequest {
         this.taskType = builder.taskType;
         this.stream = builder.stream;
         this.multimodal = builder.multimodal;
-        this.modelHint = builder.modelHint.split("/");
+        if(builder.modelHint!=null)
+        	this.modelHint = builder.modelHint.split("/");
+        else
+        	this.modelHint = new String[0];
         this.user = builder.user;
         this.maxToken=builder.max_tokens;
         this.temperature=builder.temperature;
