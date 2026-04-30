@@ -232,4 +232,19 @@ public class FileUtil {
 		}while(--cRetry>0);
 		throw new IOException("fetch "+url+" failed "+maxRetry+" times, no more tries.");
 	}
+	
+	public static String printAndCollectContent(Reader output) throws IOException {
+		BufferedReader br=new BufferedReader(output);
+		int read;
+		char[] ch=new char[32];
+		StringBuilder sb=new StringBuilder();
+		while((read=br.read(ch,0,32))!=-1) {
+			if(read>0) {
+				String input=String.valueOf(ch,0,read);
+				System.out.print(input);
+				sb.append(input);
+			}
+		}
+		return sb.toString();
+	}
 }

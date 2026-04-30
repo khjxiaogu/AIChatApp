@@ -619,4 +619,8 @@ public class AISession implements ISaveData{
 	public String getMemory() {
 		return aiapp.getMemory(this);
 	}
+	
+	public String getRoleName(Role role) {
+		return aiapp.getRoleName(this, role);
+	}
 }

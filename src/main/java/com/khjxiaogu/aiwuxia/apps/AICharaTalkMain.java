@@ -521,7 +521,7 @@ public class AICharaTalkMain extends AIApplication {
 							logger.info("正在从本地语音引擎生成语音："+ftext);
 							File aud=new File(basePath,"voice");
 							aud.mkdirs();
-							CompletableFuture<VoiceGenerationResult> dataFuture=vtg.extractTalkContent( ftext,state).thenCompose(t->LocalVoiceModel.requireAudio(localChara, faudioId, t));
+							CompletableFuture<VoiceGenerationResult> dataFuture=vtg.extractTalkContent(state.getRoleName(Role.ASSISTANT),ftext,state).thenCompose(t->LocalVoiceModel.requireAudio(localChara, faudioId, t));
 							VoiceGenerationResult rslt=dataFuture.get();
 							state.addUsage(rslt.usage);
 							try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){

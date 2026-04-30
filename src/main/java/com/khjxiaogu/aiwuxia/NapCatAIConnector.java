@@ -166,13 +166,13 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    					JsonObject text=melm.get("textElement").getAsJsonObject();
 			    					if(text.get("atType").getAsInt()!=0) {
 			    						if(text.get("atUid").getAsString().equals(String.valueOf(botId))) {
-			    							mes.add(()->new PlainText("@"+state.getAiapp().getRoleName(state, Role.ASSISTANT)));
+			    							mes.add(()->new PlainText("@"+state.getRoleName(Role.ASSISTANT)));
 			    							containsAtMe=true;
 			    							continue;
 			    						}
 			    					}
 			    					String messageLine=text.get("content").getAsString();
-			    					if((!containsAtMe)&&messageLine.contains("@"+state.getAiapp().getRoleName(state, Role.ASSISTANT)))
+			    					if((!containsAtMe)&&messageLine.contains("@"+state.getRoleName(Role.ASSISTANT)))
 			    						containsAtMe=true;
 			    					mes.add(()->new PlainText(messageLine));
 			    					
@@ -215,7 +215,7 @@ public class NapCatAIConnector  extends WebSocketClient {
 		    							
 		    							
 		    							try {
-		    								CompletableFuture<VoiceGenerationResult> dataFuture=vt.extractTalkContent(state.getLast().getDisplayContent().toString().trim(), state).thenCompose(t->LocalVoiceModel.requireAudio("mx", UUID.randomUUID().toString(), t));
+		    								CompletableFuture<VoiceGenerationResult> dataFuture=vt.extractTalkContent(state.getRoleName(Role.ASSISTANT),state.getLast().getDisplayContent().toString().trim(), state).thenCompose(t->LocalVoiceModel.requireAudio("mx", UUID.randomUUID().toString(), t));
 		    								this.send(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", groupId).object("message").add("type", "record").object("data").add("file", toDataUrl(dataFuture.get().audioData)).end().end().end().end().toString());
 										} catch (InterruptedException | ExecutionException e) {
 											// TODO Auto-generated catch block
