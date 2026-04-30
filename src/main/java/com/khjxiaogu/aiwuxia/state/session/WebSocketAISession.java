@@ -252,7 +252,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	@Override
 	public void postMessage(int id, Role role, String message) {
 		super.postMessage(id, role, message);
-		sendFrame(JsonBuilder.object().add("id", id).add("title", getAiapp().getRoleName(this, role)).add("message", message).end().toString());
+		sendFrame(JsonBuilder.object().add("id", id).add("title", getRoleName(role)).add("message", message).end().toString());
 	}
 	public void sendFrame(String content) {
 		conn.writeAndFlush(new TextWebSocketFrame(content));
@@ -267,7 +267,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		super.postMessages(items);
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> ja=JsonBuilder.object().array("messages");
 		for(HistoryItem i:items) {
-			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object().add("id", i.getIdentifier()).add("title", getAiapp().getRoleName(this, i.getRole())).add("message", i.getDisplayContent().toString());
+			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object().add("id", i.getIdentifier()).add("title", getRoleName(i.getRole())).add("message", i.getDisplayContent().toString());
 			if(i.getAudioId()!=null)
 				ix.add("audioId", i.getAudioId());
 		}
