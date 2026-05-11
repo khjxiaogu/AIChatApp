@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.respscheme;
+package com.khjxiaogu.aiwuxia.llm.scheme;
 
 public class Choice{
 	public static class Message{

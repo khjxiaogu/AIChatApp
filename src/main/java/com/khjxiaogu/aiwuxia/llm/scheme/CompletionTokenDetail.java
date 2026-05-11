@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.respscheme;
+package com.khjxiaogu.aiwuxia.llm.scheme;
 
 public class CompletionTokenDetail {
     public long accepted_prediction_tokens;

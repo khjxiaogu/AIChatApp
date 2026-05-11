@@ -23,9 +23,9 @@
  */
 package com.khjxiaogu.aiwuxia.llm.providers.volcano;
 
-import com.khjxiaogu.aiwuxia.respscheme.CompletionTokenDetail;
-import com.khjxiaogu.aiwuxia.respscheme.TokenDetail;
-import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.llm.scheme.CompletionTokenDetail;
+import com.khjxiaogu.aiwuxia.llm.scheme.TokenDetail;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 
 public class VolcanoUsage implements UsageIntf<VolcanoUsage> {
 	public long total_tokens;

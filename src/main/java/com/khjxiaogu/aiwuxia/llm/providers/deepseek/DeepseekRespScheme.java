@@ -1,6 +1,6 @@
 package com.khjxiaogu.aiwuxia.llm.providers.deepseek;
 
-import com.khjxiaogu.aiwuxia.respscheme.RespScheme;
+import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 
 class DeepseekRespScheme extends RespScheme {
 	DeepseekUsage usage;

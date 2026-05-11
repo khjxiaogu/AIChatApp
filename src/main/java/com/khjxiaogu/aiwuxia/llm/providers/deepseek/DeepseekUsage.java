@@ -23,8 +23,8 @@
  */
 package com.khjxiaogu.aiwuxia.llm.providers.deepseek;
 
-import com.khjxiaogu.aiwuxia.respscheme.CompletionTokenDetail;
-import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.llm.scheme.CompletionTokenDetail;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 
 public class DeepseekUsage implements UsageIntf<DeepseekUsage> {
 

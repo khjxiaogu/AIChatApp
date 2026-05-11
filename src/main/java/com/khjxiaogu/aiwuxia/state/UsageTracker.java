@@ -15,7 +15,7 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonSerializationContext;
 import com.google.gson.JsonSerializer;
 import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekUsage;
-import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceUsage;
 
 public class UsageTracker {

@@ -1,6 +1,6 @@
 package com.khjxiaogu.aiwuxia.voice;
 
-import com.khjxiaogu.aiwuxia.respscheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 
 public class VolcanoVoiceUsage implements UsageIntf<VolcanoVoiceUsage> {
 	int len;

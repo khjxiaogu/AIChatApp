@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.respscheme;
+package com.khjxiaogu.aiwuxia.llm.scheme;
 public class TokenDetail {
     public long audio_tokens;
     public long cached_tokens;
