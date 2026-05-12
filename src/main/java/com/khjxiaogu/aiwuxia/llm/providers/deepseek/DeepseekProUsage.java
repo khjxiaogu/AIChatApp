@@ -6,7 +6,7 @@ public class DeepseekProUsage extends DeepseekUsage{
 	static Calendar discountOff;
 	static{
 		discountOff=Calendar.getInstance();
-		discountOff.set(2026, 5, 6,0,0,0);
+		discountOff.set(2026, 6, 1,0,0,0);
 
 	}
 	public double getEquivantTokens() {

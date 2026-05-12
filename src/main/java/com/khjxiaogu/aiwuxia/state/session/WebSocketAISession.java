@@ -152,6 +152,19 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 				state.save();
 			});
 		});
+		operations.put("moreMessage", (jo,state)->{
+			int i = 0;
+			int id=jo.get("msgId").getAsInt();
+			List<HistoryItem> his = new ArrayList<>();
+			for (Iterator<HistoryItem> it = state.history.reverseIterator(); it.hasNext();) {
+				HistoryItem hisitem=it.next();
+				if(hisitem.getIdentifier()>=id)
+					continue;
+				his.add(0, hisitem);
+				i++;
+				if (i >= 20) break;
+			}
+		});
 		operations.put("model", (jo,state)->{
 			final String model=jo.get("model").getAsString();
 			if(model.isEmpty()||state.attributes.models.contains(model)) {
