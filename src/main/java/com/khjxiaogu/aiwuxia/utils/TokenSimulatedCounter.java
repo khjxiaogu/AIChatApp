@@ -35,7 +35,7 @@ public class TokenSimulatedCounter {
     	for(MessageContent msg:text) {
     		if(msg instanceof ImageContent)
     			count+=1024;
-    		else
+    		else if(msg instanceof PlainText)
     			count+=fastCountLength(((PlainText)msg).toText());
     	}
 		return count;

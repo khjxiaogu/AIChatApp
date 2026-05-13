@@ -10,9 +10,11 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
+import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
@@ -32,9 +34,14 @@ public class ToolcallTest {
 			return "温度：29℃，湿度60%";
 		}, "weather", "根据地点id查询当地温湿度数据", param));
 		AIOutput ao=LLMConnector.call(ar.build());
-		FileUtil.printAndCollectContent(ao.getReasoner());
-		FileUtil.printAndCollectContent(ao.getContent());
 		
+		MessageContents reasoner=FileUtil.printAndCollectContent(ao.getReasoner());
+		String content=FileUtil.printAndCollectContent(ao.getContent());
+		ar.addHistoryItem(new DirectHistoryItem(Role.ASSISTANT,content,reasoner));
+		ar.addHistoryItem(Role.USER,"今天的干湿球温度计值分别是多少？");
+		ao=LLMConnector.call(ar.build());
+		reasoner=FileUtil.printAndCollectContent(ao.getReasoner());
+		content=FileUtil.printAndCollectContent(ao.getContent());
 			
 		
 	}

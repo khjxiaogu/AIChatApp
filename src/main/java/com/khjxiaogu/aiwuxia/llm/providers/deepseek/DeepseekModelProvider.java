@@ -244,7 +244,7 @@ public class DeepseekModelProvider implements ModelProvider{
 					ToolCallCollector toolCalls=new ToolCallCollector();
 					shouldContinueRequest.set(false);
 
-					System.out.println(ja);
+					//System.out.println(ja);
 					DeepseekUsage crnusage=createUsage(request);
 					MessageContents reasoner=new MessageContents();
 						HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
