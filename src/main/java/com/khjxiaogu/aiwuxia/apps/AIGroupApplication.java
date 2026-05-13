@@ -45,6 +45,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.llm.Tool;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
@@ -235,9 +236,7 @@ public class AIGroupApplication extends AIApplication {
 
 			return null;
 		});
-		Map<String,String> params=new HashMap<>();
-		params.put("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容");
-		imageRecognition=new ToolData((data)->{
+		Tool imageView=(data)->{
 			Pattern patt=Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
 			Matcher mtch=patt.matcher(data);
 			if(mtch.find()) {
@@ -259,6 +258,9 @@ public class AIGroupApplication extends AIApplication {
 				
 			}
 			return "参数格式错误";
-		}, "image_regonition", "使用多模态模型查看图片并返回图片描述。", params);
+		};
+		Map<String,String> params=new HashMap<>();
+		params.put("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容");
+		imageRecognition=new ToolData(imageView, "image_regonition", "使用多模态模型查看图片并返回图片描述。", params);
 	}
 }
