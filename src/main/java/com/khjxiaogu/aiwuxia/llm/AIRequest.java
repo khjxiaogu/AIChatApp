@@ -25,6 +25,7 @@ package com.khjxiaogu.aiwuxia.llm;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -233,6 +234,7 @@ public class AIRequest {
         private MultimodalType multimodal = MultimodalType.TEXT_ONLY;
         private ResponseFormat format = ResponseFormat.TEXT;
         private List<HistoryItem> history=new ArrayList<>(200);
+        private Consumer<HistoryItem> historyAppender;
         private int max_tokens=1024;
         private float temperature=2.0f;
         private String modelHint=null;
@@ -345,7 +347,10 @@ public class AIRequest {
         public Builder addHistoryItem(Role role,String content) {
         	history.add(new DirectHistoryItem(role,content));
         	return this;
-        } 
+        }
+        public Builder setHistoryAppender(Consumer<HistoryItem> hi) {
+        	return this;
+        }
         /**
          * 便捷方法：设置流式输出为 true。
          *

@@ -188,6 +188,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 							if(cf.get()) {
 								last.setAudioId(audioId);
 								state.postAudioComplete(last.getIdentifier(),audioId);
+								state.save();
 							}
 						} catch (InterruptedException | ExecutionException e) {
 							e.printStackTrace();
