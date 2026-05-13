@@ -138,27 +138,29 @@ public class DeepseekModelProvider implements ModelProvider{
 		JsonArray messages=new JsonArray();
 		for(HistoryItem hi:request.history) {
 			boolean shouldContainReasoner=false;
-			for(MessageContent msgc:hi.getReasoningContent()) {
-				if(msgc instanceof ToolContent) {
-					shouldContainReasoner=true;
-					break;
-				}
-			}
-			boolean hasPrevious=false;
-			if(shouldContainReasoner) {
+			if(hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
 				for(MessageContent msgc:hi.getReasoningContent()) {
 					if(msgc instanceof ToolContent) {
-						messages.add(createToolMessage((ToolContent) msgc));
-					}else if(msgc instanceof ToolCallContent){
-						if(hasPrevious) {
-							messages.get(messages.size()-1).getAsJsonObject().add("tool_calls", gs.toJsonTree(((ToolCallContent) msgc).getToolCalls()));
+						shouldContainReasoner=true;
+						break;
+					}
+				}
+				boolean hasPrevious=false;
+				if(shouldContainReasoner) {
+					for(MessageContent msgc:hi.getReasoningContent()) {
+						if(msgc instanceof ToolContent) {
+							messages.add(createToolMessage((ToolContent) msgc));
+						}else if(msgc instanceof ToolCallContent){
+							if(hasPrevious) {
+								messages.get(messages.size()-1).getAsJsonObject().add("tool_calls", gs.toJsonTree(((ToolCallContent) msgc).getToolCalls()));
+							}else {
+	
+								messages.add(createReasonerMessage("",((ToolCallContent) msgc).getToolCalls()));
+							}
 						}else {
-
-							messages.add(createReasonerMessage("",((ToolCallContent) msgc).getToolCalls()));
+							hasPrevious=true;
+							messages.add(createReasonerMessage(msgc.toText(),null));
 						}
-					}else {
-						hasPrevious=true;
-						messages.add(createReasonerMessage(msgc.toText(),null));
 					}
 				}
 			}
