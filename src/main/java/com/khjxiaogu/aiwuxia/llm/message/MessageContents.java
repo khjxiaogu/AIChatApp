@@ -91,7 +91,8 @@ public class MessageContents implements Iterable<MessageContent>{
 
 	public MessageContents(String text) {
 		this();
-		append(text);
+		if(text!=null)
+			append(text);
 	}
 	public boolean isPlainText() {
 		for(MessageContent msg:messages)
