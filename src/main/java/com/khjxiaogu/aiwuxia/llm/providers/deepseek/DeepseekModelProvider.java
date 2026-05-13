@@ -316,6 +316,7 @@ public class DeepseekModelProvider implements ModelProvider{
 			} catch (IOException e) {
 				e.printStackTrace();
 				readable.exception(e);
+				System.out.println(ja);
 			}
 			System.out.println();
 			logger.info("=================Usage===============\n");

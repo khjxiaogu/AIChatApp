@@ -42,7 +42,11 @@ public class ToolcallTest {
 		ao=LLMConnector.call(ar.build());
 		reasoner=FileUtil.printAndCollectContent(ao.getReasoner());
 		content=FileUtil.printAndCollectContent(ao.getContent());
-			
+		ar.addHistoryItem(new DirectHistoryItem(Role.ASSISTANT,content,reasoner));
+		ar.addHistoryItem(Role.USER,"篮球运动有哪些注意事项？");
+		ao=LLMConnector.call(ar.build());
+		reasoner=FileUtil.printAndCollectContent(ao.getReasoner());
+		content=FileUtil.printAndCollectContent(ao.getContent());	
 		
 	}
 
