@@ -146,6 +146,9 @@ public class VolcanoModelProvider implements ModelProvider{
 		if(request.category==ModelCategory.REASONING) {
 			jo.add("thinking", JsonBuilder.object("type","enabled"));
 			jo.addProperty("reasoning_effort", getEffort(request));
+		}else {
+			jo.add("thinking", JsonBuilder.object("type","disabled"));
+			
 		}
 		jo.add("messages", messages);
 		if(request.format==ResponseFormat.JSON)

@@ -205,6 +205,8 @@ public class DeepseekModelProvider implements ModelProvider{
 				jo.addProperty("reasoning_effort", "max");
 			else
 				jo.addProperty("reasoning_effort", "high");
+		}else {
+			jo.add("thinking", JsonBuilder.object("type","disabled"));
 		}
 		jo.addProperty("temperature", request.temperature);
 		jo.addProperty("max_tokens", request.maxToken);
