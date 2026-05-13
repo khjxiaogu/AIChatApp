@@ -138,6 +138,7 @@ public class DeepseekModelProvider implements ModelProvider{
 		JsonArray messages=new JsonArray();
 		for(HistoryItem hi:request.history) {
 			boolean shouldContainReasoner=false;
+			boolean shouldSkipContent=false;
 			if(hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
 				for(MessageContent msgc:hi.getReasoningContent()) {
 					if(msgc instanceof ToolContent) {
@@ -162,14 +163,19 @@ public class DeepseekModelProvider implements ModelProvider{
 							messages.add(createReasonerMessage(msgc.toText(),null));
 						}
 					}
+					if(hasPrevious) {
+						messages.get(messages.size()-1).getAsJsonObject().addProperty("content", hi.getContextContent().toText());
+						shouldSkipContent=true;
+					}
 				}
 			}
-
-
-			JsonObject msg=new JsonObject();
-			msg.addProperty("role", hi.getRole().getRoleName());
-			msg.addProperty("content", hi.getContextContent().toText());
-			messages.add(msg);
+			
+			if(!shouldSkipContent) {
+				JsonObject msg=new JsonObject();
+				msg.addProperty("role", hi.getRole().getRoleName());
+				msg.addProperty("content", hi.getContextContent().toText());
+				messages.add(msg);
+			}
 			
 		}
 		
