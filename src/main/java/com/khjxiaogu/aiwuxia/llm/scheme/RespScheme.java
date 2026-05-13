@@ -26,12 +26,13 @@ package com.khjxiaogu.aiwuxia.llm.scheme;
 import java.util.List;
 
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 
 public abstract class RespScheme {
 	public List<Choice> choices;
 	public abstract UsageIntf<?> getUsage();
 	public AIOutput toOutput(){
-		return new AIOutput.FilledAIOutput(choices.get(0).message.reasoning_content,choices.get(0).message.content,getUsage());
+		return new AIOutput.FilledAIOutput(new MessageContents(choices.get(0).message.reasoning_content),choices.get(0).message.content,getUsage());
 
 	}
 }

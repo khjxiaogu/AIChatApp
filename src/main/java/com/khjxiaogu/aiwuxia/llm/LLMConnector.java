@@ -28,6 +28,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekModelProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokModelProvider;
@@ -39,11 +41,18 @@ import com.khjxiaogu.aiwuxia.llm.providers.volcano.VolcanoModelProvider;
  * 设计为工具类，禁止实例化。
  */
 public class LLMConnector {
-
+	public static class LLMThreadFactory implements ThreadFactory {
+		AtomicInteger id=new AtomicInteger();
+	    public Thread newThread(Runnable r) {
+	    	Thread th=new Thread(r,"llm-thread-"+id.incrementAndGet());
+	    	th.setDaemon(true);
+	    	return th;
+	    };
+	}
     /** 模型路由器实例，负责根据请求选择合适的模型提供商 */
     private static ModelRouter router;
     
-    private static ExecutorService exec=Executors.newFixedThreadPool(16);
+    private static ExecutorService exec=Executors.newFixedThreadPool(16,new LLMThreadFactory());
     /**
      * 私有构造函数，防止外部实例化。
      */

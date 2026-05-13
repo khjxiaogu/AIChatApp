@@ -64,7 +64,7 @@ public class TOStorage implements ObjectStorageProvider {
 			PutObjectInput input = new PutObjectInput().setBucket(cfg.bucket).setKey(fn).setContent(new ByteArrayInputStream(data));
 			PutObjectOutput output = client.putObject(input);
 			System.out.println("Put object success, the object's etag is " + output.getEtag());
-			return getUrl(fn);
+			return fn;
 		} catch (TosException e) {
 			e.printStackTrace();
 			throw new IOException(e);

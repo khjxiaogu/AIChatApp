@@ -33,6 +33,7 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
@@ -81,7 +82,7 @@ public class AISession implements ISaveData{
 	/** 关联的 AI 应用程序实例，用于处理具体的 AI 逻辑（如生成回复） */
 	protected AIApplication aiapp;
 	/** 当前正在构建的推理内容（AI 生成过程中的中间思考文本）的缓冲区 */
-	protected StringBuilder currentReasoner = null;
+	protected MessageContents currentReasoner = null;
 	/** 当前会话关联的用户标识 */
 	public final String user;
 	/**
@@ -128,12 +129,12 @@ public class AISession implements ISaveData{
      * 如果缓冲区为空，会先创建一个新的 {@link StringBuilder}。
      * 同时会标记会话为已更新（{@link #setUpdated()}）。
      *
-     * @param content 要追加的推理内容字符串
+     * @param current 要追加的推理内容字符串
      */
-    public void appendReasoner(String content) {
+    public void appendReasoner(MessageContent current) {
         if (currentReasoner == null)
-            currentReasoner = new StringBuilder();
-        currentReasoner.append(content);
+            currentReasoner = new MessageContents();
+        currentReasoner.add(current);
         this.setUpdated();
     }
 
@@ -163,7 +164,8 @@ public class AISession implements ISaveData{
 		if (hi == null) {
 			hi = history.add(role, content + "\n", true);
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi.appendReasoner(currentReasoner.toString());
+				for(MessageContent curn:currentReasoner)
+					hi.appendReasoner(curn);
 				currentReasoner = null;
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
@@ -192,7 +194,8 @@ public class AISession implements ISaveData{
 		if (hi == null) {
 			hi = history.add(role, ch, true);
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi.appendReasoner(currentReasoner.toString());
+				for(MessageContent curn:currentReasoner)
+					hi.appendReasoner(curn);
 				currentReasoner = null;
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
@@ -219,7 +222,8 @@ public class AISession implements ISaveData{
 		if (hi == null) {
 			hi = history.add(role, "", content + "\n");
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi.appendReasoner(currentReasoner.toString());
+				for(MessageContent curn:currentReasoner)
+					hi.appendReasoner(curn);
 				currentReasoner = null;
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
@@ -237,14 +241,20 @@ public class AISession implements ISaveData{
 	 */
 	public void add(Role role, String content, boolean isValidContext) {
 		HistoryItem hi = history.add(role, content, isValidContext);
-		if (currentReasoner != null && role == Role.ASSISTANT)
-			hi.appendReasoner(currentReasoner.toString());
+		if (currentReasoner != null && role == Role.ASSISTANT) {
+			for(MessageContent curn:currentReasoner)
+				hi.appendReasoner(curn);
+			currentReasoner = null;
+		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
 	public void add(Role role, MessageContents content, boolean isValidContext) {
 		HistoryItem hi = history.add(role, content, isValidContext);
-		if (currentReasoner != null && role == Role.ASSISTANT)
-			hi.appendReasoner(currentReasoner.toString());
+		if (currentReasoner != null && role == Role.ASSISTANT) {
+			for(MessageContent curn:currentReasoner)
+				hi.appendReasoner(curn);
+			currentReasoner = null;
+		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
 	/**
@@ -257,7 +267,8 @@ public class AISession implements ISaveData{
 	public void add(Role role, String displayContent, String contextContent) {
 		HistoryItem hi = history.add(role, displayContent, contextContent);
 		if (currentReasoner != null && role == Role.ASSISTANT) {
-			hi.appendReasoner(currentReasoner.toString());
+			for(MessageContent curn:currentReasoner)
+				hi.appendReasoner(curn);
 			currentReasoner = null;
 		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
@@ -540,8 +551,10 @@ public class AISession implements ISaveData{
 	public String getReasonerContent() {
 		if (currentReasoner != null)
 			return currentReasoner.toString();
-		if (!history.isEmpty() && getLast().getRole() == Role.ASSISTANT)
-			return getLast().getReasoningContent();
+		if (!history.isEmpty() && getLast().getRole() == Role.ASSISTANT) {
+			MessageContents reasoner=getLast().getReasoningContent();
+			return reasoner==null?"":reasoner.toString();
+		}
 		return "";
 	}
 

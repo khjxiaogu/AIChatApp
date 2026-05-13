@@ -23,12 +23,9 @@
  */
 package com.khjxiaogu.aiwuxia.tools;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.io.Reader;
-
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
@@ -53,10 +50,10 @@ public class InteractiveConclusionHandler {
 				ar.addHistoryItem(Role.SYSTEM,system);
 				ar.addHistoryItem(Role.USER,in);
 				AIOutput ao=LLMConnector.call(ar.build());
-				printAndCollectContent(ao.getReasoner());
+				FileUtil.printAndCollectContent(ao.getReasoner());
 				System.out.println();
 				System.out.println("==========begin content==========");
-				String last=printAndCollectContent(ao.getContent());
+				String last=FileUtil.printAndCollectContent(ao.getContent());
 				fos.println();
 				fos.println("=========="+f.getName()+"==========");
 				fos.println(last);
@@ -64,19 +61,5 @@ public class InteractiveConclusionHandler {
 			
 		}
 	}
-	
-	public static String printAndCollectContent(Reader output) throws IOException {
-		BufferedReader br=new BufferedReader(output);
-		int read;
-		char[] ch=new char[32];
-		StringBuilder sb=new StringBuilder();
-		while((read=br.read(ch,0,32))!=-1) {
-			if(read>0) {
-				String input=String.valueOf(ch,0,read);
-				System.out.print(input);
-				sb.append(input);
-			}
-		}
-		return sb.toString();
-	}
+
 }

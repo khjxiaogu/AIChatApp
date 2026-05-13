@@ -30,7 +30,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.utils.MessageReader;
 import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
@@ -47,7 +50,7 @@ public interface AIOutput {
      *
      * @return 用于读取推理内容的{@link Reader}对象
      */
-    public Reader getReasoner();
+    public MessageReader getReasoner();
 
     /**
      * 获取最终输出内容的读取器。
@@ -89,8 +92,16 @@ public interface AIOutput {
      * @return 推理内容的完整字符串
      * @throws IOException 如果读取过程中发生I/O错误
      */
-    public default String getReasonerText() throws IOException {
-        return FileUtil.readAll(getReasoner());
+    public default MessageContents getReasonerText() throws IOException {
+    	MessageReader reasoner=getReasoner();
+    	MessageContents contents=new MessageContents();
+    	while(!reasoner.isEnded()) {
+    		MessageContent current=reasoner.read();
+    		if(current==null)
+    			break;
+    		contents.add(current);
+    	}
+        return contents;
     }
 
     /**
@@ -101,21 +112,19 @@ public interface AIOutput {
      */
     public void addUsageListener(Consumer<UsageIntf<?>> listener);
 	public static class StreamedAIOutput implements AIOutput{
-		public final BlockingReader reasoner;
+		public final MessageReader reasoner;
 		public final BlockingReader content;
 		private UsageIntf<?> usage;
 		private boolean interrupted;
 		private List<Consumer<UsageIntf<?>>> usageListener=new ArrayList<>();
 		public StreamedAIOutput() {
-			reasoner=new BlockingReader();
+			reasoner=new MessageReader();
 			content=new BlockingReader();
 		}
-		public void putReasoner(String object) {
+		public void putReasoner(MessageContent object) {
 			reasoner.putCh(object);
 		}
 		public void putContent(String object) {
-			if(!reasoner.isEnded())
-			reasoner.setEnded();
 			content.putCh(object);
 		}
 		public void endContent() {
@@ -130,7 +139,7 @@ public interface AIOutput {
 			return content.isEnded();
 		}
 		@Override
-		public Reader getReasoner() {
+		public MessageReader getReasoner() {
 			return reasoner;
 		}
 		@Override
@@ -164,16 +173,16 @@ public interface AIOutput {
 		
 	}
 	public static class FilledAIOutput implements AIOutput{
-		public final Reader reasoner;
+		public final MessageReader reasoner;
 		public final Reader content;
 		private final UsageIntf<?> usage;
-		public FilledAIOutput(String reasoning,String content,UsageIntf<?> usage) {
-			this.reasoner=new StringReader(reasoning);
+		public FilledAIOutput(MessageContents reasoning,String content,UsageIntf<?> usage) {
+			this.reasoner=new MessageReader(reasoning);
 			this.content=new StringReader(content);
 			this.usage=usage;
 		}
 		@Override
-		public Reader getReasoner() {
+		public MessageReader getReasoner() {
 			return reasoner;
 		}
 		@Override

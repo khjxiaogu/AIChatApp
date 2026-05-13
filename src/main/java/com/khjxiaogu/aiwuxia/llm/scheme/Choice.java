@@ -23,12 +23,42 @@
  */
 package com.khjxiaogu.aiwuxia.llm.scheme;
 
+import java.util.List;
+
 public class Choice{
+	public static class ToolFunction{
+		public String name;
+		public String arguments;
+		public ToolFunction() {
+			super();
+		}
+		public ToolFunction(String name, String arguments) {
+			super();
+			this.name = name;
+			this.arguments = arguments;
+		}
+		
+	}
+	public static class ToolCall{
+		public int index;
+		public String id;
+		public ToolFunction function;
+		public ToolCall() {
+			super();
+		}
+		public ToolCall(int index, String id, ToolFunction function) {
+			super();
+			this.index = index;
+			this.id = id;
+			this.function = function;
+		}
+	}
 	public static class Message{
 		public String content;
 		public String reasoning_content;
 		public String role;
 		public String refusal;
+		public List<ToolCall> tool_calls;
 	}
 	public String finish_reason;
 	public int index;

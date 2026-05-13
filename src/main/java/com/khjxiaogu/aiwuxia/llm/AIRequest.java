@@ -24,7 +24,9 @@
 package com.khjxiaogu.aiwuxia.llm;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -142,6 +144,7 @@ public class AIRequest {
     public final String prefix;
     
     public final List<HistoryItem> history;
+    public final Map<String,ToolData> tools;
     /**
      * 私有构造函数，通过 Builder 创建实例。
      *
@@ -181,6 +184,10 @@ public class AIRequest {
 			}
 		}
         this.strength=strength;
+        this.tools=new LinkedHashMap<>();
+        for(ToolData td:builder.tools) {
+        	tools.put(td.name,td);
+        }
     }
     public boolean isModelNamed(String name) {
     	return modelHint.length>0&&modelHint[0].equals(name);
@@ -234,7 +241,7 @@ public class AIRequest {
         private MultimodalType multimodal = MultimodalType.TEXT_ONLY;
         private ResponseFormat format = ResponseFormat.TEXT;
         private List<HistoryItem> history=new ArrayList<>(200);
-        private Consumer<HistoryItem> historyAppender;
+        private List<ToolData> tools=new ArrayList<>();
         private int max_tokens=1024;
         private float temperature=2.0f;
         private String modelHint=null;
@@ -340,6 +347,10 @@ public class AIRequest {
         public AIRequest build() {
             return new AIRequest(this);
         }
+        public Builder addTool(ToolData tool) {
+        	tools.add(tool);
+        	return this;
+        } 
         public Builder addHistoryItem(HistoryItem hi) {
         	history.add(hi);
         	return this;

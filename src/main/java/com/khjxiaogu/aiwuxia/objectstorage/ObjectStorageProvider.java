@@ -30,7 +30,7 @@ public interface ObjectStorageProvider {
 		}
 		String name=bytesToHex(md.digest(data))+bytesToHex(ByteBuffer.allocate(4).putInt(data.length).array());
 		if(exists(name))
-			return getUrl(name);
+			return name;
 		return upload(name,data);
 	}
 	public static String bytesToHex(byte[] hash) {

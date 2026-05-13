@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.llm;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -9,12 +10,24 @@ import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 public class DirectHistoryItem implements HistoryItem {
 	final Role role;
 	final MessageContents context;
+	final MessageContents reasoner;
 	final long tokenSimulated;
+	public DirectHistoryItem(Role role, MessageContents context) {
+		super();
+		this.role = role;
+		this.context = context;
+		tokenSimulated=TokenSimulatedCounter.fastCountLength(context);
+		reasoner=MessageContents.EMPTY;
+	}
 	public DirectHistoryItem(Role role, String context) {
+		this(role,new MessageContents(context));
+	}
+	public DirectHistoryItem(Role role, String context,MessageContents reasoner) {
 		super();
 		this.role = role;
 		this.context = new MessageContents(context);
-		tokenSimulated=TokenSimulatedCounter.fastCountLength(context);
+		this.reasoner=reasoner;
+		tokenSimulated=TokenSimulatedCounter.fastCountLength(context)+TokenSimulatedCounter.fastCountLength(reasoner);
 	}
 
 	@Override
@@ -48,7 +61,7 @@ public class DirectHistoryItem implements HistoryItem {
 	}
 
 	@Override
-	public void appendReasoner(String fullContent) {
+	public void appendReasoner(MessageContent fullContent) {
 		throw new UnsupportedOperationException();
 	}
 
@@ -63,8 +76,8 @@ public class DirectHistoryItem implements HistoryItem {
 	}
 
 	@Override
-	public String getReasoningContent() {
-		return "";
+	public MessageContents getReasoningContent() {
+		return MessageContents.EMPTY;
 	}
 
 	@Override

@@ -39,6 +39,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
+import com.khjxiaogu.aiwuxia.llm.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -146,12 +147,14 @@ public class GrokModelProvider implements ModelProvider {
 							if (!scheme.choices.isEmpty()) {
 								Message delta = scheme.choices.get(0).delta;
 								if (delta.reasoning_content != null && !delta.reasoning_content.isEmpty()) {
-									readable.putReasoner(delta.reasoning_content);
+									readable.putReasoner(new PlainText(delta.reasoning_content));
 								}
 								if (delta.content != null && !delta.content.isEmpty()) {
+									readable.getReasoner().setEnded();
 									readable.putContent(delta.content);
 								}
 								if (delta.refusal != null && !delta.refusal.isEmpty()) {
+									readable.getReasoner().setEnded();
 									readable.putContent(delta.refusal);
 									if (isRefused.compareAndSet(false, true))
 										usage.completion_tokens += 100000;

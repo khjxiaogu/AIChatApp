@@ -38,6 +38,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
@@ -50,6 +51,7 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.MessageReader;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 /**
@@ -294,15 +296,15 @@ public abstract class AIApplication {
      * @throws IOException 如果读取推理内容时发生I/O错误
      */
 	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
-		BufferedReader br=new BufferedReader(output.getReasoner());
+		MessageReader br=output.getReasoner();
 		int read;
 		state.resetReasoner();
-		char[] ch=new char[32];
-		while((read=br.read(ch,0,32))!=-1) {
-			if(read>0) {
-				String input=String.valueOf(ch,0,read);
-				state.appendReasoner(input);
-			}
+		while(!br.isEnded()) {
+			MessageContent current=br.read();
+			if(current==null)
+				break;
+			state.appendReasoner(current);
+			
 		}
 	}
     /**
@@ -313,17 +315,9 @@ public abstract class AIApplication {
      * @throws IOException 如果读取推理内容时发生I/O错误
      */
 	public void printReasonerContent(AIOutput output) throws IOException {
-		BufferedReader br=new BufferedReader(output.getReasoner());
-		int read;
-		char[] ch=new char[32];
+		
 		logger.info("==============Reasoner===============");
-		while((read=br.read(ch,0,32))!=-1) {
-			if(read>0) {
-				String input=String.valueOf(ch,0,read);
-				System.out.print(input);
-			}
-		}
-		System.out.println();
+		FileUtil.printAndCollectContent(output.getReasoner());
 		logger.info("==============Reasoner End===========");
 	}
     /**

@@ -40,11 +40,13 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.MessageReader;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 
@@ -161,7 +163,7 @@ public class AISummary {
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		Map<String,String> section=new LinkedHashMap<>();
-		printAndCollectContent(resp.getReasoner());
+		FileUtil.printAndCollectContent(resp.getReasoner());
 		String currentSection="";
 		StringBuilder currentContent=null;
 		while (true) {
@@ -195,19 +197,5 @@ public class AISummary {
 		return AIRequest.builder("admin").taskType(TaskType.STORY).strength(ReasoningStrength.STRONG).temperature(1.3f).maxTokens(16384).addHistoryItem(Role.SYSTEM,prompt).addHistoryItem(Role.USER,input).build();
 
 	}
-	public static String printAndCollectContent(Reader output) throws IOException {
-		BufferedReader br=new BufferedReader(output);
-		int read;
-		char[] ch=new char[32];
-		StringBuilder sb=new StringBuilder();
-		while((read=br.read(ch,0,32))!=-1) {
-			if(read>0) {
-				String input=String.valueOf(ch,0,read);
-				System.out.print(input);
-				sb.append(input);
-			}
-		}
-		System.out.println();
-		return sb.toString();
-	}
+
 }

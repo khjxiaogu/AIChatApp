@@ -15,12 +15,14 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.utils.MessageReader;
 
 public class HistoryCompacter {
 	String system;
@@ -118,16 +120,13 @@ public class HistoryCompacter {
 			summary.append("\n==前情提要==\n").append(state.get("前情提要").trim());
 		return summary.toString();
 	}
-	public static String printAndCollectContent(Reader output) throws IOException {
-		BufferedReader br=new BufferedReader(output);
-		int read;
-		char[] ch=new char[32];
+	public static String printAndCollectContent(MessageReader output) throws IOException {
 		StringBuilder sb=new StringBuilder();
-		while((read=br.read(ch,0,32))!=-1) {
-			if(read>0) {
-				String input=String.valueOf(ch,0,read);
-				System.out.print(input);
-				sb.append(input);
+		while(!output.isEnded()) {
+			MessageContent content=output.read();
+			if(content!=null) {
+				System.out.print(content.toText());
+				sb.append(content.toText());
 			}
 		}
 		System.out.println();

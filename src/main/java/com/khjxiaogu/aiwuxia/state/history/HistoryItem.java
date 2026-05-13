@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.state.history;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
@@ -49,6 +50,8 @@ public interface HistoryItem {
      * @return 显示内容的字符序列，可能为 null 或空
      */
     CharSequence getDisplayContent();
+    
+
 
     /**
      * 追加一行内容到当前条目，并指定是否同时将其添加到上下文内容中。
@@ -85,9 +88,9 @@ public interface HistoryItem {
      * 追加推理器相关的内容。
      * 该方法可能用于记录 AI 模型的推理过程或中间结果。
      *
-     * @param fullContent 要追加的推理器内容字符串
+     * @param currentReasoner 要追加的推理器内容字符串
      */
-    void appendReasoner(String fullContent);
+    void appendReasoner(MessageContent currentReasoner);
 
     /**
      * 获取该历史条目关联的角色（例如用户、助手、系统等）。
@@ -108,7 +111,7 @@ public interface HistoryItem {
      *
      * @return 推理内容的字符串，可能为 null 或空
      */
-    String getReasoningContent();
+    MessageContents getReasoningContent();
 
     /**
      * 判断该条目是否可作为有效的上下文内容。

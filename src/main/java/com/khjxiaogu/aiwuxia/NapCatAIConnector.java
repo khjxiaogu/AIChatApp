@@ -185,7 +185,7 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    					mes.add(()->{
 										try {
 											String path = tos.uploadIfNotExists(getImageBytes(fid));
-											return new ImageContent(path);
+											return new PlainText("<image id=\""+path+"\" />");
 										} catch (Exception e) {
 											e.printStackTrace();
 										}

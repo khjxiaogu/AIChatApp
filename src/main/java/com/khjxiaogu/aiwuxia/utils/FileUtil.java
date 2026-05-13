@@ -40,6 +40,9 @@ import javax.swing.JFileChooser;
 import javax.swing.UIManager;
 import javax.swing.filechooser.FileSystemView;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+
 public class FileUtil {
 	public static void transfer(InputStream i,OutputStream os) throws IOException {
 		int nRead;
@@ -232,7 +235,19 @@ public class FileUtil {
 		}while(--cRetry>0);
 		throw new IOException("fetch "+url+" failed "+maxRetry+" times, no more tries.");
 	}
-	
+
+	public static MessageContents printAndCollectContent(MessageReader output) throws IOException {
+		MessageContents sb=new MessageContents();
+		while(!output.isEnded()) {
+			MessageContent content=output.read();
+			if(content!=null) {
+				System.out.print(content.toText());
+				sb.add(content);
+			}
+		}
+		System.out.println();
+		return sb;
+	}
 	public static String printAndCollectContent(Reader output) throws IOException {
 		BufferedReader br=new BufferedReader(output);
 		int read;

@@ -34,6 +34,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
+import com.khjxiaogu.aiwuxia.llm.message.PlainText;
 import com.khjxiaogu.aiwuxia.llm.message.VideoContent;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.Message;
@@ -217,13 +218,15 @@ public class VolcanoModelProvider implements ModelProvider{
 							Message delta=scheme.choices.get(0).delta;
 							if(delta!=null) {
 								if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-									readable.putReasoner(delta.reasoning_content);
+									readable.putReasoner(new PlainText(delta.reasoning_content));
 								}
 								if(delta.content!=null&&!delta.content.isEmpty()) {
+									readable.getReasoner().setEnded();
 									readable.putContent(delta.content);
 								}
 							}
 							if("content_filter".equals(scheme.choices.get(0).finish_reason)) {
+								readable.getReasoner().setEnded();
 								readable.putContent("【该回答已被审核截断】");
 							}
 						}

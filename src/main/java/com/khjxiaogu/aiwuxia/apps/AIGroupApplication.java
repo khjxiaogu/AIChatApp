@@ -27,17 +27,29 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
+import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
+import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -50,6 +62,7 @@ public class AIGroupApplication extends AIApplication {
 	String name;
 	String charaName;
 	String system;
+	ToolData imageRecognition;
 	@Override
 	public void provideInitial(AISession state) {
 	}
@@ -102,7 +115,9 @@ public class AIGroupApplication extends AIApplication {
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 
-		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).multimodal(MultimodalType.TEXT_IMAGE);
+		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY)
+			.strength(ReasoningStrength.WEAK).multimodal(MultimodalType.TEXT_ONLY)
+			.addTool(imageRecognition);
 		builder.addHistoryItem(Role.SYSTEM, system);
 
 		// if (status != null&&!status.isEmpty())
@@ -199,9 +214,10 @@ public class AIGroupApplication extends AIApplication {
 		return state.getExtra().get("lastSummary");
 	}
 	String summary;
-	public AIGroupApplication(File path,String name,JsonObject meta) throws IOException {
+	public AIGroupApplication(File base,File path,String name,JsonObject meta) throws IOException {
 		super();
 		this.name=name;
+		TOStorage tos=new TOStorage(JsonParser.parseString(FileUtil.readString(new File(base,"tos.json"))).getAsJsonObject());
 		system = 
 			
 			FileUtil.readString(new File(path, "role.txt")).replace("\r", "")+
@@ -219,5 +235,30 @@ public class AIGroupApplication extends AIApplication {
 
 			return null;
 		});
+		Map<String,String> params=new HashMap<>();
+		params.put("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容");
+		imageRecognition=new ToolData((data)->{
+			Pattern patt=Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
+			Matcher mtch=patt.matcher(data);
+			if(mtch.find()) {
+				String id=mtch.group(1);
+				if(tos.exists(id)) {
+					Builder builder=AIRequest.builder("picutreTool").taskType(TaskType.STORY)
+						.multimodal(MultimodalType.IMAGE_ONLY);
+					builder.addHistoryItem(Role.SYSTEM, "请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。");
+					builder.addHistoryItem(new DirectHistoryItem(Role.USER,new MessageContents(new ImageContent(tos.getUrl(id)))));
+					try {
+						return FileUtil.printAndCollectContent(LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build()).getContent());
+					} catch (ModelRouteException | IOException e) {
+						e.printStackTrace();
+						return "服务暂不可用";
+					}
+				}else {
+					return "图片不存在或被清理";
+				}
+				
+			}
+			return "参数格式错误";
+		}, "image_regonition", "使用多模态模型查看图片并返回图片描述。", params);
 	}
 }

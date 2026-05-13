@@ -2,8 +2,10 @@ package com.khjxiaogu.aiwuxia.llm.message;
 
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 
 import com.google.gson.JsonArray;
@@ -17,11 +19,15 @@ import com.google.gson.JsonSerializer;
 import com.google.gson.JsonSyntaxException;
 
 public class MessageContents implements Iterable<MessageContent>{
+	public static final MessageContents EMPTY=new MessageContents(Collections.unmodifiableList(new ArrayList<>()));
 	static Map<String,Class<? extends MessageContent>> types=new HashMap<>();
 	static {
 		types.put("image", ImageContent.class);
 		types.put("text", PlainText.class);
 		types.put("video", VideoContent.class);
+		types.put("tool", ToolContent.class);
+		types.put("tool_call", ToolCallContent.class);
+		
 	}
 	public static class Serilizer implements JsonSerializer<MessageContents>, JsonDeserializer<MessageContents> {
 
@@ -68,10 +74,23 @@ public class MessageContents implements Iterable<MessageContent>{
 
 	}
 
-	ArrayList<MessageContent> messages=new ArrayList<>();
+	List<MessageContent> messages;
 	public MessageContents() {
+		messages=new ArrayList<>();
 	}
+	
+	public MessageContents(MessageContent... messages) {
+		this();
+		for(MessageContent mc:messages)
+			add(mc);
+	}
+	public MessageContents(List<MessageContent> messages) {
+		super();
+		this.messages = messages;
+	}
+
 	public MessageContents(String text) {
+		this();
 		append(text);
 	}
 	public boolean isPlainText() {
@@ -121,4 +140,10 @@ public class MessageContents implements Iterable<MessageContent>{
 		return messages.iterator();
 	}
 
+	public boolean isEmpty() {
+		return messages.isEmpty();
+	}
+	public void clear() {
+		messages.clear();
+	}
 }

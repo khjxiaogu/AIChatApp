@@ -24,8 +24,11 @@
 package com.khjxiaogu.aiwuxia.state.history;
 
 import java.io.Serializable;
+import java.util.List;
 
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
@@ -40,9 +43,11 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	private Role role;
 	private StringBuilder content;
 	private MessageContents sendContent;
-	private StringBuilder reasonContent;
+	private MessageContents reasonContent;
 	private boolean shouldSend;
 	private boolean deleted=false;
+	private List<ToolCall> toolcalls;
+
 	private ApplicationState lastState;
 	private String audioId;
 
@@ -112,9 +117,9 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 		if (sendContent == null)
 			this.sendContent = new MessageContents(content.toString());
 	}
-	public StringBuilder createReasonContent() {
+	public MessageContents createReasonContent() {
 		if (reasonContent == null)
-			this.reasonContent = new StringBuilder();
+			this.reasonContent = new MessageContents();
 		return reasonContent;
 	}
 	@Override
@@ -157,8 +162,8 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 			this.sendContent = new MessageContents(fullContent);
 	}
 	@Override
-	public void appendReasoner(String fullContent) {
-		createReasonContent().append(fullContent);
+	public void appendReasoner(MessageContent fullContent) {
+		createReasonContent().add(fullContent);
 	}
 
 	@Override
@@ -174,10 +179,10 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 		return identifier;
 	}
 	@Override
-	public String getReasoningContent() {
+	public MessageContents getReasoningContent() {
 		if(reasonContent==null)
-			return "";
-		return reasonContent.toString();
+			return null;
+		return reasonContent;
 	}
 	@Override
 	public boolean isValidContext() {
@@ -219,7 +224,7 @@ class HistoryMemoryItem implements Serializable, HistoryItem {
 	}
 	@Override
     public void setReasonContent(String reasonContent) {
-		this.reasonContent=new StringBuilder(reasonContent);
+		this.reasonContent=new MessageContents(reasonContent);
 	}
 	@Override
 	public long getTokenLength() {
