@@ -37,6 +37,10 @@ public class Choice{
 			this.name = name;
 			this.arguments = arguments;
 		}
+		@Override
+		public String toString() {
+			return "ToolFunction [name=" + name + ", arguments=" + arguments + "]";
+		}
 		
 	}
 	public static class ToolCall{
@@ -45,6 +49,10 @@ public class Choice{
 		public ToolFunction function;
 		public ToolCall() {
 			super();
+		}
+		@Override
+		public String toString() {
+			return "ToolCall [index=" + index + ", id=" + id + ", function=" + function + "]";
 		}
 		public ToolCall(int index, String id, ToolFunction function) {
 			super();

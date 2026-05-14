@@ -136,30 +136,25 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    			JsonArray ja=msg.get("raw").getAsJsonObject().get("elements").getAsJsonArray();
 			    			boolean containsAtMe=false;
 			    			List<Supplier<MessageContent>> mes=new ArrayList<>();
-			    			String senderName="【"+sender+"】";
+			    			String senderName="<message senderName=\""+sender+"\" senderId=\""+senderid+"\" id=\""+msg.get("real_seq").getAsString()+"\">";
 			    			mes.add(()->new PlainText(senderName));
-			    			boolean hasBarack=false;
 			    			boolean hasText=false;
 			    			for(JsonElement je:ja) {
 			    				JsonObject melm=je.getAsJsonObject();
 			    				if(!melm.get("replyElement").isJsonNull()) {
 			    					JsonObject reply=melm.get("replyElement").getAsJsonObject();
 			    					StringBuilder msgBuilder=new StringBuilder();
-			    					msgBuilder.append("回复“");
+			    					msgBuilder.append("<quote messageId=\""+reply.get("replayMsgSeq").getAsString()+"\" senderId=\""+reply.get("senderUid").getAsString()+"\">“");
 			    					for(JsonElement replys:reply.get("sourceMsgTextElems").getAsJsonArray()) {
 			    						if(replys.getAsJsonObject().get("textElemContent").isJsonPrimitive())
 			    						msgBuilder.append(replys.getAsJsonObject().get("textElemContent").getAsString());	
 			    					}
-			    					msgBuilder.append("”：");
+			    					msgBuilder.append("”</quote>");
 			    					mes.add(()->new PlainText(msgBuilder.toString()));
 			    					if(reply.get("senderUid").getAsString().equals(String.valueOf(botId))) {
 			    						containsAtMe=true;
 			    					}
 			    					continue;
-			    				}
-			    				if(!hasBarack) {
-			    					mes.add(()->new PlainText("「"));
-			    					hasBarack=true;
 			    				}
 			    				if(!melm.get("textElement").isJsonNull()) {
 			    					hasText=true;
@@ -178,7 +173,7 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    					
 			    				}else if(!melm.get("picElement").isJsonNull()) {
 			    					JsonObject pic=melm.get("picElement").getAsJsonObject();
-			    					String summary="（图片："+pic.get("summary").getAsString()+"）";
+			    					String summary="（"+pic.get("summary").getAsString()+"）";
 			    					System.out.println(pic);
 			    					String fid=urls.get(pic.get("fileName").getAsString());
 			    					hasText=true;
@@ -195,7 +190,7 @@ public class NapCatAIConnector  extends WebSocketClient {
 			    				}
 			    			}
 			    			if(hasText) {
-			    				mes.add(()->new PlainText("」"));
+			    				mes.add(()->new PlainText("</message>"));
 			    			
 			    				state.addMessage(mes);
 			    			}

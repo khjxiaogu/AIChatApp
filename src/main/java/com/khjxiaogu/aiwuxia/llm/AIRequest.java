@@ -371,6 +371,10 @@ public class AIRequest {
             stream(true);
             return this;
         }
+		public Builder addTools(List<ToolData> tools) {
+			this.tools.addAll(tools);
+			return this;
+		}
     }
 
 

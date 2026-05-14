@@ -300,6 +300,10 @@ public class DeepseekModelProvider implements ModelProvider{
 										readable.putReasoner(toolcall);
 										for(ToolCall i:toolcall.getToolCalls()) {
 											ToolData data=request.tools.get(i.function.name);
+											if(data==null) {
+												System.out.println(i);
+												continue;
+											}
 											String result=data.tool.run(i.function.arguments);
 											
 											ToolContent tool=new ToolContent(i.id,result);
@@ -319,9 +323,10 @@ public class DeepseekModelProvider implements ModelProvider{
 								});
 						usage.add(crnusage);
 				}
-			} catch (IOException e) {
+			} catch (Exception e) {
 				e.printStackTrace();
-				readable.exception(e);
+				if(e instanceof IOException)
+					readable.exception((IOException)e);
 				System.out.println(ja);
 			}
 			System.out.println();
