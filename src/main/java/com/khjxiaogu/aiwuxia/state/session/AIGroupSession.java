@@ -25,17 +25,20 @@ package com.khjxiaogu.aiwuxia.state.session;
 
 import java.text.DateFormat;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.function.Supplier;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 
 public class AIGroupSession extends AISession {
 	ArrayDeque<List<Supplier<MessageContent>>> messageQueue=new ArrayDeque<>();
+	public List<ToolData> tools=new ArrayList<>();
 	public AIGroupSession(String user, ISaveData data, AIApplication aiapp) {
 		super(user, data, aiapp);
 	}
@@ -54,5 +57,11 @@ public class AIGroupSession extends AISession {
 				content.add(cmsg.get());
 		}
 		return content;
+	}
+	public void addTool(ToolData tool) {
+		tools.add(tool);
+	}
+	public List<ToolData> getAvailableTools(){
+		return tools;
 	}
 }

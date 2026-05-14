@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,7 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
@@ -636,4 +638,8 @@ public class AISession implements ISaveData{
 	public String getRoleName(Role role) {
 		return aiapp.getRoleName(this, role);
 	}
+	protected static final List<ToolData> EMPTY_LIST=Collections.EMPTY_LIST;
+	public List<ToolData> getAvailableTools(){
+		return EMPTY_LIST;
+	};
 }
