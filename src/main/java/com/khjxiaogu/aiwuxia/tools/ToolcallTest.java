@@ -6,6 +6,8 @@ import java.io.PrintStream;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
@@ -23,22 +25,18 @@ public class ToolcallTest {
 	public static void main(String[] args) throws IOException {
 		LLMConnector.initDefault();
 		Builder ar=AIRequest.builder("admin").enableDeepThink()
-			.taskType(TaskType.ANALYSIS).strength(ReasoningStrength.MEDIUM)
+			.taskType(TaskType.STORY).strength(ReasoningStrength.MEDIUM)
 			.streamed().temperature(1f).maxTokens(8192);
-		ar.addHistoryItem(Role.SYSTEM,"你是一个人工智能助手，请辅助用户完成任务，仅允许在思维链调用工具。");
-		ar.addHistoryItem(Role.USER,"地点id:AEFB2031 用户发言：查询今天天气适合进行的户外活动");
-		Map<String,String> param=new HashMap<>();
-		param.put("location_id","地点id");
-		ar.addTool(new ToolData((par)->{
-			System.out.println(par);
-			return "温度：29℃，湿度60%";
-		}, "weather", "根据地点id查询当地温湿度数据", param));
+		ar.addHistoryItem(Role.SYSTEM,"你是一个角色扮演人工智能。");
+		ar.addHistoryItem(Role.USER,"用户发言：");
+
+
 		AIOutput ao=LLMConnector.call(ar.build());
 		
 		MessageContents reasoner=FileUtil.printAndCollectContent(ao.getReasoner());
 		String content=FileUtil.printAndCollectContent(ao.getContent());
-		ar.addHistoryItem(new DirectHistoryItem(Role.ASSISTANT,content,reasoner));
-		ar.addHistoryItem(Role.USER,"今天的干湿球温度计值分别是多少？");
+		/*ar.addHistoryItem(new DirectHistoryItem(Role.ASSISTANT,content,reasoner));
+		ar.addHistoryItem(Role.USER,"拍张照片？");
 		ao=LLMConnector.call(ar.build());
 		reasoner=FileUtil.printAndCollectContent(ao.getReasoner());
 		content=FileUtil.printAndCollectContent(ao.getContent());
@@ -46,7 +44,7 @@ public class ToolcallTest {
 		ar.addHistoryItem(Role.USER,"篮球运动有哪些注意事项？");
 		ao=LLMConnector.call(ar.build());
 		reasoner=FileUtil.printAndCollectContent(ao.getReasoner());
-		content=FileUtil.printAndCollectContent(ao.getContent());	
+		content=FileUtil.printAndCollectContent(ao.getContent());*/
 		
 	}
 

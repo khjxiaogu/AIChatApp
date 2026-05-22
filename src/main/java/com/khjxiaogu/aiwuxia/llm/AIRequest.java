@@ -208,7 +208,7 @@ public class AIRequest {
      * @return Builder 对象
      */
     public static Builder builder(AISession session) {
-        return new Builder(session.user).modelHint(session.getData().modelHint);
+        return new Builder(session.user).modelHint(session.getData().modelHint).addTools(session.getAvailableTools());
     }
 	public static Builder builder(String user) {
 		return new Builder(user);
@@ -371,6 +371,10 @@ public class AIRequest {
             stream(true);
             return this;
         }
+		public Builder addTools(List<ToolData> tools) {
+			this.tools.addAll(tools);
+			return this;
+		}
     }
 
 

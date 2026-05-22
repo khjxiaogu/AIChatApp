@@ -23,7 +23,6 @@
  */
 package com.khjxiaogu.aiwuxia.apps;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -66,11 +65,13 @@ public abstract class AIApplication {
     protected static Gson gs = new GsonBuilder()
     	.registerTypeAdapter(UsageTracker.class, new UsageTracker.Serilizer())
     	.registerTypeAdapter(MessageContents.class, new MessageContents.Serilizer())
+    	.disableHtmlEscaping()
     	.create();
     /** 格式化的Gson实例，用于生成美观的JSON输出（带缩进） */
     protected static Gson ppgs = new GsonBuilder()
     	.registerTypeAdapter(UsageTracker.class, new UsageTracker.Serilizer())
     	.registerTypeAdapter(MessageContents.class, new MessageContents.Serilizer())
+    	.disableHtmlEscaping()
     	.setPrettyPrinting().create();
     /** 简单的日志记录器，用于输出日志信息（标签为"AI智能"） */
     protected SimpleLogger logger = new SimpleLogger("AI智能");

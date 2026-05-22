@@ -26,6 +26,13 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -57,13 +64,14 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class AIGroupApplication extends AIApplication {
 	String name;
 	String charaName;
 	String system;
-	ToolData imageRecognition;
+	List<ToolData> tools=new ArrayList<>();
 	@Override
 	public void provideInitial(AISession state) {
 	}
@@ -118,7 +126,7 @@ public class AIGroupApplication extends AIApplication {
 
 		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY)
 			.strength(ReasoningStrength.WEAK).multimodal(MultimodalType.TEXT_ONLY)
-			.addTool(imageRecognition);
+			.addTools(tools);
 		builder.addHistoryItem(Role.SYSTEM, system);
 
 		// if (status != null&&!status.isEmpty())
@@ -214,11 +222,11 @@ public class AIGroupApplication extends AIApplication {
 	public String getMemory(AISession state) {
 		return state.getExtra().get("lastSummary");
 	}
+
 	String summary;
 	public AIGroupApplication(File base,File path,String name,JsonObject meta) throws IOException {
 		super();
 		this.name=name;
-		TOStorage tos=new TOStorage(JsonParser.parseString(FileUtil.readString(new File(base,"tos.json"))).getAsJsonObject());
 		system = 
 			
 			FileUtil.readString(new File(path, "role.txt")).replace("\r", "")+
@@ -236,31 +244,6 @@ public class AIGroupApplication extends AIApplication {
 
 			return null;
 		});
-		Tool imageView=(data)->{
-			Pattern patt=Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
-			Matcher mtch=patt.matcher(data);
-			if(mtch.find()) {
-				String id=mtch.group(1);
-				if(tos.exists(id)) {
-					Builder builder=AIRequest.builder("picutreTool").taskType(TaskType.STORY)
-						.multimodal(MultimodalType.IMAGE_ONLY);
-					builder.addHistoryItem(Role.SYSTEM, "请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。");
-					builder.addHistoryItem(new DirectHistoryItem(Role.USER,new MessageContents(new ImageContent(tos.getUrl(id)))));
-					try {
-						return FileUtil.printAndCollectContent(LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build()).getContent());
-					} catch (ModelRouteException | IOException e) {
-						e.printStackTrace();
-						return "服务暂不可用";
-					}
-				}else {
-					return "图片不存在或被清理";
-				}
-				
-			}
-			return "参数格式错误";
-		};
-		Map<String,String> params=new HashMap<>();
-		params.put("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容");
-		imageRecognition=new ToolData(imageView, "image_regonition", "使用多模态模型查看图片并返回图片描述。", params);
+
 	}
 }

@@ -88,6 +88,11 @@ public class MessageContents implements Iterable<MessageContent>{
 		super();
 		this.messages = messages;
 	}
+	public MessageContents(MessageContents messages) {
+		this();
+		for(MessageContent mc:messages)
+			add(mc);
+	}
 
 	public MessageContents(String text) {
 		this();

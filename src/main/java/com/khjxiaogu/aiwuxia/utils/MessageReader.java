@@ -28,6 +28,7 @@ import java.util.ArrayDeque;
 
 import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.llm.message.PlainText;
 
 public class MessageReader{
     private final ArrayDeque<MessageContent> internal = new ArrayDeque<>();
@@ -39,6 +40,9 @@ public class MessageReader{
     	for(MessageContent msg:messages)
     		internal.add(msg);
     	
+    }
+    public MessageReader(String content) {
+    	internal.add(new PlainText(content));
     }
     
     public void setEnded() {
