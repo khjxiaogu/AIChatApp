@@ -181,7 +181,7 @@ public class AIGroupApplication extends AIApplication {
 		// true);
 		//头几次用思维链版本构建格式
 		
-		return builder.temperature(1.3f).maxTokens(1000).build();
+		return builder.temperature(1.3f).maxTokens(384000).build();
 
 	}
 	public AIRequest constructSummaryrequest(AISession state,String summary) {

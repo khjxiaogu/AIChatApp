@@ -5,6 +5,8 @@ import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
+
 public interface ObjectStorageProvider {
 	public boolean exists(String fn);
 	public String upload(String fn,byte[] data) throws IOException;
@@ -44,7 +46,10 @@ public interface ObjectStorageProvider {
 		}
 		return hexString.toString();
 	}
-
+	default byte[] download(String fn) throws IOException {
+		return FileUtil.readAll(FileUtil.fetch(getUrl(fn)));
+		
+	}
 	public static MessageDigest getSha256Digest() throws NoSuchAlgorithmException {
 		return MessageDigest.getInstance("SHA-256");
 	}

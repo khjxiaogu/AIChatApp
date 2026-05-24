@@ -2,13 +2,9 @@ package com.khjxiaogu.aiwuxia.utils;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.google.gson.JsonSyntaxException;
-
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -17,6 +13,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
+import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -24,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 
 public class JimengImageGenerator {
 
@@ -53,7 +49,7 @@ public class JimengImageGenerator {
      * @return CompletableFuture 携带生成图片的URL（异步轮询）
      * @throws RuntimeException 提交任务失败时直接抛出
      */
-    public CompletableFuture<String> generateImage(List<String> referenceImageUrls,
+    public CompletableFuture<byte[]> generateImage(List<String> referenceImageUrls,
                                                            String prompt) {
         // 同步提交任务，失败立即抛异常
     	try {
@@ -96,7 +92,7 @@ public class JimengImageGenerator {
         }
     }
 
-    private String pollResult(String taskId) {
+    private byte[] pollResult(String taskId) {
         try {
             int maxRetries = 300;
             int retryIntervalMs = 2000;
@@ -114,9 +110,9 @@ public class JimengImageGenerator {
                 System.out.println(status);
                 if ("done".equals(status)) {
                     if (data.has("image_urls") && !data.get("image_urls").isJsonNull()) {
-                        return data.getAsJsonArray("image_urls").get(0).getAsString();
+                    	return fetch( data.getAsJsonArray("image_urls").get(0).getAsString());
                     } else if (data.has("binary_data_base64") && !data.get("binary_data_base64").isJsonNull()) {
-                        return "data:image/png;base64," + data.getAsJsonArray("binary_data_base64").get(0).getAsString();
+                        return Base64.getDecoder().decode(data.getAsJsonArray("binary_data_base64").get(0).getAsString());
                     } else {
                         throw new RuntimeException("No image in response");
                     }
@@ -133,7 +129,35 @@ public class JimengImageGenerator {
             throw new RuntimeException("Polling error", e);
         }
     }
+	public static byte[] fetch(String urlStr) {
+		HttpURLConnection connection = null;
+		try {
+			URL url = new URL(urlStr);
+			connection = (HttpURLConnection) url.openConnection();
+			connection.setRequestMethod("GET");
+			connection.setConnectTimeout(5000); // 连接超时5秒
+			connection.setReadTimeout(10000); // 读取超时10秒
+			connection.setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; MyFetcher/1.0)");
+			connection.setInstanceFollowRedirects(true);
 
+			int responseCode = connection.getResponseCode();
+			if (responseCode != HttpURLConnection.HTTP_OK) {
+				 throw new RuntimeException("Unexpected status: " + responseCode);
+			}
+
+			String contentType = connection.getContentType();
+
+			return FileUtil.readAll(connection.getInputStream());
+
+		} catch (Exception e) {
+			// 发生任何异常（网络错误、协议异常等）都返回无法识别
+			throw new RuntimeException("Unexpcected Exception",e);
+		} finally {
+			if (connection != null) {
+				connection.disconnect();
+			}
+		}
+	}
     private String fetchTaskResult(String taskId) throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("req_key", "jimeng_seedream46_cvtob");

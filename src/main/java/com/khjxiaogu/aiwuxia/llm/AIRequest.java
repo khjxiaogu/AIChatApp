@@ -24,6 +24,7 @@
 package com.khjxiaogu.aiwuxia.llm;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -371,7 +372,7 @@ public class AIRequest {
             stream(true);
             return this;
         }
-		public Builder addTools(List<ToolData> tools) {
+		public Builder addTools(Collection<ToolData> tools) {
 			this.tools.addAll(tools);
 			return this;
 		}

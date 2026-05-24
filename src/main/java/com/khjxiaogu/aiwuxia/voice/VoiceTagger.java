@@ -15,6 +15,7 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
@@ -69,7 +70,7 @@ public class VoiceTagger {
 			prompt.append("**第一人称说话人**\n").append(role).append("\n");
 		prompt.append("**待处理角色话语**\n");
 		prompt.append(lastText);
-		Builder b=AIRequest.builder(state).taskType(TaskType.STORY).format(ResponseFormat.JSON).temperature(0.2f).maxTokens(8192);
+		Builder b=AIRequest.builder(state).taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192);
 		b.addHistoryItem(Role.SYSTEM, sysprompt);
 
 		b.addHistoryItem(Role.USER, prompt.toString());
