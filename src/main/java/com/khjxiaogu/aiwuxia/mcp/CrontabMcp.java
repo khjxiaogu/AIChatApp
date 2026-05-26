@@ -174,7 +174,7 @@ public class CrontabMcp {
 				.putParam("note", "触发器事项，在触发时会写入到上下文，需要详细描述任务内容。")
 				.tool((data) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-					SimpleDateFormat format=new SimpleDateFormat("yyyy-mm-dd HH:MM:SS");
+					SimpleDateFormat format=new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
 					Date date;
 					try {
 						date = format.parse(jo.get("alert_time").getAsString());

@@ -161,7 +161,7 @@ public class SDXLMcp {
 							
 							byte[] image=generateImage("(masterpiece,best quality,absurdres),"+prompt,
 									"((nsfw)),low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs, trademark,artist's name, username, watermark,signature, watermark,text, words,"
-									,25,
+									,30,
 									its[0],
 									its[1]);
 							imageCollector.accept(image);
@@ -266,7 +266,7 @@ public class SDXLMcp {
 							prompt=prompt+processLoraConfigurations(usingLoras);
 							byte[] image=generateImage2Image(tos.download(pid),"(masterpiece,best quality,absurdres),"+prompt,
 									"((nsfw)),low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs, trademark,artist's name, username, watermark,signature, watermark,text, words,"
-									,25,
+									,30,
 									its[0],
 									its[1]);
 

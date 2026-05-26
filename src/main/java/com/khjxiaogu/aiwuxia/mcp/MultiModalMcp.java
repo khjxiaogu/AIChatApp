@@ -22,7 +22,7 @@ import com.khjxiaogu.aiwuxia.utils.MCPTools;
 public class MultiModalMcp {
 	public static MCPTools create(ObjectStorageProvider tos) {
 		MCPTools tools=new MCPTools();
-		tools.register(new ToolData.Builder("image_recognition", "使用多模态模型查看图片并返回图片描述。")
+		tools.register(new ToolData.Builder("image_recognition", "使用多模态模型查看图片并返回图片描述。该功能仅负责描述图片内容，注意需要甄别描述中的内容是否合理，是否符合人物设定，人物是否应该知道对应内容。描述中的分析仅供参考，你需要独立判断是否正确。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容").tool((data) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
 					Matcher mtch = patt.matcher(data);
@@ -41,7 +41,7 @@ public class MultiModalMcp {
 			Builder builder = AIRequest.builder("picutreTool").taskType(TaskType.STORY)
 					.multimodal(MultimodalType.IMAGE_ONLY);
 			builder.addHistoryItem(Role.SYSTEM,
-					"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。注意仅忠实描述图片外观，禁止进行分析。");
+					"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。并对其所属作品、人物和表达内容进行一定的分析。");
 			builder.addHistoryItem(
 					new DirectHistoryItem(Role.USER, new MessageContents(new ImageContent(tos.getUrl(id)))));
 			try {

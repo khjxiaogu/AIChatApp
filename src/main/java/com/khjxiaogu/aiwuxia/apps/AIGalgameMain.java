@@ -34,6 +34,7 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
+import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
@@ -167,7 +168,7 @@ public class AIGalgameMain extends AIApplication {
 		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
-		Builder b = AIRequest.builder(state).taskType(TaskType.STORY).streamed().temperature(1.3f).maxTokens(8192);
+		Builder b = AIRequest.builder(state).taskType(TaskType.STORY).streamed().temperature(1.3f).maxTokens(8192).strength(ReasoningStrength.WEAK);
 		b.addHistoryItem(Role.SYSTEM, system+constructNameState(state.getExtra().get("name")));
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
