@@ -48,7 +48,6 @@ import com.khjxiaogu.aiwuxia.state.session.AppAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
-import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceApi;
 import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 
 public class AIAppMain {
@@ -79,10 +78,12 @@ public class AIAppMain {
             e.printStackTrace();
         }
 		LLMConnector.initDefault();
-		VoiceModelHandler.model=new VolcanoVoiceApi();
+		
 		AIChatWindow acw=new AIChatWindow();
 		acw.setVisible(true);
 		File dataFolder=new File("save");
+
+		VoiceModelHandler.init(dataFolder);
 		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
 		//File saveData =new File(new File(dataFolder,"saveData"), "dbf0b38ff80644689aabe14d031253cc.json");//
 		

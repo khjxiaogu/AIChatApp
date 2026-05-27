@@ -161,15 +161,6 @@ public abstract class AIApplication {
 		}
 	}
 
-    /**
-     * 判断当前应用是否支持本地语音（例如语音合成/识别）。
-     * 默认返回false，子类可覆盖。
-     *
-     * @return 如果支持本地语音则返回true，否则false
-     */
-	public boolean isLocalVoiceSupported() {
-		return false;
-	}
 	   /**
      * 从JSON文件读取并构造{@link AISession.ExtraData}对象。
      *

@@ -241,7 +241,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			throw e;
 		}
 		LLMConnector.initDefault();
-		VoiceModelHandler.model = new VolcanoVoiceApi();
+		VoiceModelHandler.init(path);
 		parent = path;
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();

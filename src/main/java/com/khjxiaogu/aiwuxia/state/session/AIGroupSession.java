@@ -42,19 +42,25 @@ public class AIGroupSession extends AISession {
 	public AIGroupSession(String user, ISaveData data, AIApplication aiapp) {
 		super(user, data, aiapp);
 	}
+	Object queueLock=new Object();
 	public void addMessage(List<Supplier<MessageContent>> msg) {
-		messageQueue.add(msg);
-		if(messageQueue.size()>10)
-			messageQueue.pollFirst();
+		synchronized(queueLock) {
+			messageQueue.add(msg);
+			if(messageQueue.size()>10)
+				messageQueue.pollFirst();
+		}
 	}
 	public MessageContents getPrompt() {
-        DateFormat formatter = DateFormat.getDateTimeInstance();
-		MessageContents content=new MessageContents("当前时间："+formatter.format(new Date())+"\n");
-		while(true) {
-			List<Supplier<MessageContent>> msg=messageQueue.pollFirst();
-			if(msg==null)break;
-			for(Supplier<MessageContent> cmsg:msg)
-				content.add(cmsg.get());
+		MessageContents content;
+		synchronized(queueLock) {
+	        DateFormat formatter = DateFormat.getDateTimeInstance();
+			content=new MessageContents("当前时间："+formatter.format(new Date())+"\n");
+			while(true) {
+				List<Supplier<MessageContent>> msg=messageQueue.pollFirst();
+				if(msg==null)break;
+				for(Supplier<MessageContent> cmsg:msg)
+					content.add(cmsg.get());
+			}
 		}
 		return content;
 	}

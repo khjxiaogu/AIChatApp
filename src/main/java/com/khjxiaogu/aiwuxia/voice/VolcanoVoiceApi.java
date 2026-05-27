@@ -23,40 +23,65 @@
  */
 package com.khjxiaogu.aiwuxia.voice;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Base64;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+
 /**
  * 火山引擎声音复刻API。
- * */
+ */
 public class VolcanoVoiceApi implements VoiceModel {
+	Map<String,String> botids;
+	Gson gs=new Gson();
+	public VolcanoVoiceApi(File file) throws JsonSyntaxException, IOException {
+		super();
+		this.botids=gs.fromJson(FileUtil.readString(new File(file,"volcanovoice.json")), Map.class);
+	}
 	@Override
-	public CompletableFuture<VoiceGenerationResult> getAudioData(String botid,String uid,String text,String rid){
-        String appid = System.getProperty("volcappid");
-        String accessToken = System.getProperty("volcsecret");
-        JsonObject send=JsonBuilder.object().object("app").add("appid", appid).add("token", accessToken).add("cluster", "volcano_icl").end()
-        .object("user").add("uid", "aichatapp@"+uid).end()
-        .object("audio").add("voice_type", botid).add("encoding", "mp3").end()
-        .object("request").add("reqid",rid).add("operation", "query").add("text", text).end()
-        .end();
-        JsonObject data;
+	public CompletableFuture<VoiceGenerationResult> getAudioData(String roleName, String uid, String text, String rid,
+			Consumer<UsageIntf<?>> usageListener) {
+		String appid = System.getProperty("volcappid");
+		String accessToken = System.getProperty("volcsecret");
+		JsonObject send = JsonBuilder.object().object("app").add("appid", appid).add("token", accessToken)
+				.add("cluster", "volcano_icl").end().object("user").add("uid", "aichatapp@" + uid).end().object("audio")
+				.add("voice_type", botids.get(roleName)).add("encoding", "mp3").end().object("request").add("reqid", rid)
+				.add("operation", "query").add("text", text.replaceAll("（[^）]+）", "")).end().end();
+		JsonObject data;
 		try {
 			data = new HttpRequestBuilder("https://openspeech.bytedance.com/api/v1/tts")
-					.header("Authorization", "Bearer;"+accessToken)
-					.header("Content-Type", "application/json; charset=utf-8")
-					.post(true).send(send.toString()).readJson();
-			 if(data.has("data")) {
-		        	return CompletableFuture.completedFuture(new VoiceGenerationResult(new VolcanoVoiceUsage(text.length()), Base64.getDecoder().decode(data.get("data").getAsString()),"mp3"));
-		     }
+					.header("Authorization", "Bearer;" + accessToken)
+					.header("Content-Type", "application/json; charset=utf-8").post(true).send(gs.toJson(send))
+					.readJson();
+			if (data.has("data")) {
+				usageListener.accept(new VolcanoVoiceUsage(text.length()));
+				return CompletableFuture.completedFuture(
+						new VoiceGenerationResult(Base64.getDecoder().decode(data.get("data").getAsString()), "mp3"));
+			}
 
-		     return CompletableFuture.failedFuture(new IOException("API Returned "+data));
+			return CompletableFuture.failedFuture(new IOException("API Returned " + data));
 		} catch (IOException e) {
 			return CompletableFuture.failedFuture(e);
 		}
-       
+
+	}
+
+	@Override
+	public boolean canProcessVoice(String roleName) {
+		return botids.containsKey(roleName);
+	}
+	@Override
+	public boolean isHinted(String modelName) {
+		return "volcano".equals(modelName);
 	}
 }

@@ -492,56 +492,25 @@ public class AICharaTalkMain extends AIApplication {
 		final String faudioId=audioId;
 		final String ftext=orgText;
 
-		if(volcappid!=null&&"volces".equals(state.getData().voiceModel))
-			return CompletableFuture.supplyAsync
-			(()->{
-				try {
-					String nftext=ftext.replaceAll("（[^）]+）", ftext);
-					logger.info("正在从火山引擎生成语音："+nftext);
-					File aud=new File(basePath,"voice");
-					aud.mkdirs();
-					CompletableFuture<VoiceGenerationResult> data=VoiceModelHandler.getAudioData(volcappid,state.user, nftext, faudioId);
-					
-					VoiceGenerationResult rslt=data.get();
-					state.addUsage(rslt.usage);
-					try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
-						fos.write(rslt.audioData);
-					};
-					return true;
-				} catch (Exception e) {
-					e.printStackTrace();
-				}
-				return false;
-			});
+		return CompletableFuture.supplyAsync
+		(()->{
+			try {
+				logger.info("正在生成语音："+ftext);
+				File aud=new File(basePath,"voice");
+				aud.mkdirs();
+				CompletableFuture<VoiceGenerationResult> data=VoiceModelHandler.getAudioData(state.getData().voiceModel,getRoleName(state, Role.ASSISTANT),state.user, ftext, faudioId, state::addUsage);
+				
+				VoiceGenerationResult rslt=data.get();
+				try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
+					fos.write(rslt.audioData);
+				};
+				return true;
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			return false;
+		});
 		
-		if(localChara!=null&&LocalVoiceModel.hasOnlineService()) {
-			return CompletableFuture.supplyAsync
-					(()->{
-						try {
-							logger.info("正在从本地语音引擎生成语音："+ftext);
-							File aud=new File(basePath,"voice");
-							aud.mkdirs();
-							CompletableFuture<VoiceGenerationResult> dataFuture=vtg.extractTalkContent(state.getRoleName(Role.ASSISTANT),ftext,state).thenCompose(t->LocalVoiceModel.requireAudio(localChara, faudioId, t));
-							VoiceGenerationResult rslt=dataFuture.get();
-							state.addUsage(rslt.usage);
-							try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
-								fos.write(rslt.audioData);
-							};
-							return true;
-							
-						} catch (IOException | InterruptedException | ExecutionException e) {
-							e.printStackTrace();
-						}
-						return false;
-					});
-			
-		}
-		return CompletableFuture.completedFuture(false);
-	}
-	
-	@Override
-	public boolean isLocalVoiceSupported() {
-		return localChara!=null;
 	}
 
 

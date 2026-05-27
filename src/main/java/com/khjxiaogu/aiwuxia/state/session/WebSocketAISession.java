@@ -54,6 +54,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
+import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
 import io.netty.channel.Channel;
@@ -102,10 +103,11 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			
 			models.add(JsonBuilder.object().add("key", s).add("name", translate).end());
 		}
+		boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating()?1:0)
 				.add("price", this.getPrice())
 				.add("isVoiceEnabled",super.data.isAudioSession)
-				.add("isVoiceUsable",(getAiapp().isLocalVoiceSupported()&&LocalVoiceModel.hasOnlineService()))
+				.add("isVoiceUsable",hasAudioService)
 				.add("models", models)
 				.add("model", getData().modelHint).end().toString()));
 
@@ -214,9 +216,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 				getCommandExec().submit(()->{
 					try {
 						getAiapp().handleSpeech(this,new MessageContents( jo.get("message").getAsString()));
-						if(getAiapp().isLocalVoiceSupported()&&!super.isAudioSession()) {
-							if(isLocalAudioEnabled!=LocalVoiceModel.hasOnlineService()) {
-								isLocalAudioEnabled=LocalVoiceModel.hasOnlineService();
+						boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
+						if(hasAudioService&&!super.isAudioSession()) {
+							if(isLocalAudioEnabled!=hasAudioService) {
+								isLocalAudioEnabled=hasAudioService;
 								conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
 							}
 						}

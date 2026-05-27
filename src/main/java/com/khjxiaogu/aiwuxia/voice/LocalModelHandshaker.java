@@ -31,11 +31,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
@@ -64,7 +66,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
     private final BlockingQueue<Channel> pool = new LinkedBlockingQueue<>();
     /** 请求 ID 到 Result 对象的映射，用于在收到响应时唤醒等待线程 */
     private final Map<String, Result> ars = new ConcurrentHashMap<>();
-
+    private final Map<Channel, Result> crs = new ConcurrentHashMap<>();
     /**
      * 构造一个空的本地模型握手器，初始化连接池和请求映射。
      */
@@ -96,6 +98,9 @@ public class LocalModelHandshaker implements WebsocketEvents {
      */
     @Override
     public void onClose(Channel conn) {
+    	Result rs=crs.remove(conn);
+    	rs.finished = true;
+    	rs.notifyAll();
         pool.remove(conn);
         num--;
     }
@@ -165,7 +170,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
      * @param text   要合成的文本内容
      * @return 包含音频字节数组的 {@link CompletableFuture}，如果失败或超时则返回 null
      */
-    public CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String reqid, JsonArray content) {
+    public CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String reqid, JsonArray content,Consumer<UsageIntf<?>> usageListener) {
         if (pool.isEmpty())
             return CompletableFuture.failedFuture(new IOException("no local voice model found"));
         if(content.size()==0)
@@ -190,6 +195,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
 
                     Result result = new Result();
                     ars.put(reqid, result);
+                    crs.put(ch, result);
                     ch.writeAndFlush(new TextWebSocketFrame(request.toString()));
                     int len=0;
                     for(JsonElement je:content) {
@@ -205,7 +211,8 @@ public class LocalModelHandshaker implements WebsocketEvents {
                         while (true) {
                             long currTime = System.currentTimeMillis();
                             if (result.finished) {
-                                return new VoiceGenerationResult(new LocalVoiceUsage(len), result.data,"mp3"); // 成功接收到数据
+                            	usageListener.accept(new LocalVoiceUsage(len));
+                                return new VoiceGenerationResult(result.data,"mp3"); // 成功接收到数据
                             }
                             if (!ch.isActive() || currTime >= endTime)
                             	throw new IOException("Connection timeout");
@@ -217,8 +224,10 @@ public class LocalModelHandshaker implements WebsocketEvents {
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 } finally {
-                    if (ch != null)
+                    if (ch != null) {
+                    	crs.remove(ch);
                         pool.offer(ch); // 将连接归还池中
+                    }
                 }
             }
         });

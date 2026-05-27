@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Consumer;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -20,6 +21,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -39,7 +41,7 @@ public class VoiceTagger {
 		emotions.add("中立");
 		emotions.add("厌恶");
 	}
-	public CompletableFuture<JsonArray> extractTalkContent(String role,String text,AISession state) {
+	public CompletableFuture<JsonArray> extractTalkContent(String role,String text,Consumer<UsageIntf<?>> state) {
 		//Iterator<HistoryItem> revit=hist.reverseIterator();
 		String lastText=text;
 		//ArrayList<String> foreWords=new ArrayList<>();
@@ -70,7 +72,7 @@ public class VoiceTagger {
 			prompt.append("**第一人称说话人**\n").append(role).append("\n");
 		prompt.append("**待处理角色话语**\n");
 		prompt.append(lastText);
-		Builder b=AIRequest.builder(state).modelHint("").taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192);
+		Builder b=AIRequest.builder("voiceTagger").modelHint("").taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192);
 		b.addHistoryItem(Role.SYSTEM, sysprompt);
 
 		b.addHistoryItem(Role.USER, prompt.toString());
@@ -82,7 +84,7 @@ public class VoiceTagger {
 			for(int i=0;i<5;i++) {
 				try {
 					AIOutput output=LLMConnector.call(request);
-					output.addUsageListener(state::addUsage);
+					output.addUsageListener(state);
 					FileUtil.printAndCollectContent(output.getReasoner());
 					//System.out.println(output.getReasonerText());
 					String speech=output.getContentText();
@@ -136,6 +138,6 @@ public class VoiceTagger {
 			+ "（她攥紧拳头作势要打你，但姐姐及时伸手拦住了她。枫茜气鼓鼓地背过身去，可连她自己都没发现——她的嘴角正不争气地翘得老高。）\n"
 			+ "（姚枫怡：（轻笑）好了好了，到家了。khj小骨，谢谢你送我们回来，你也早点回去休息吧。）\n"
 			+ "（枫茜闷声推开家门，一脚踏进去，又顿住，头也不回地丢下一句话，声音却软了许多）……明天早上，别忘了给姐姐带她喜欢的豆沙包。还有你那份早点钱，我帮你付了！算是……回礼！才不是因为什么可爱不可爱的！\n"
-			+ "（她说完“砰”地关上门，门里隐约传来她跺脚的动静和一声懊恼的嘀咕：“呜哇好丢人我到底在说什么啊——！！！”）", new AISession("test",null)).get());
+			+ "（她说完“砰”地关上门，门里隐约传来她跺脚的动静和一声懊恼的嘀咕：“呜哇好丢人我到底在说什么啊——！！！”）", e->{}).get());
 	}
 }

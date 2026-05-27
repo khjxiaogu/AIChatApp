@@ -61,11 +61,15 @@ public class Choice{
 			this.function = function;
 		}
 	}
+	public static class Datable{
+		public String data;
+	}
 	public static class Message{
 		public String content;
 		public String reasoning_content;
 		public String role;
 		public String refusal;
+		public Datable audio;
 		public List<ToolCall> tool_calls;
 	}
 	public String finish_reason;
