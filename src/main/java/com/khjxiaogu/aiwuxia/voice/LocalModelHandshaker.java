@@ -149,7 +149,35 @@ public class LocalModelHandshaker implements WebsocketEvents {
         }
         return false;
     }
-
+    public CompletableFuture<VoiceGenerationResult> registerTask(String reqid){
+        return CompletableFuture.supplyAsync(() -> {
+            while (true) {
+            	Result result=null;
+                try {
+                    result = new Result();
+                    ars.put(reqid, result);
+                    synchronized (result) {
+                        long beginTime = System.currentTimeMillis();
+                        long endTime = beginTime + 1000 * 60 * 5; // 3 分钟超时
+                        while (true) {
+                            long currTime = System.currentTimeMillis();
+                            if (result.finished) {
+                                return new VoiceGenerationResult(result.data,"mp3"); // 成功接收到数据
+                            }
+                            // 等待剩余时间，或被唤醒
+                            result.wait(endTime - currTime);
+                        }
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    if (result != null) {
+                    	result.finished=true;
+                    }
+                }
+            }
+        });
+    }
     /**
      * 检查是否有在线服务（即是否有可用的 WebSocket 连接）。
      *
@@ -171,7 +199,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
      * @return 包含音频字节数组的 {@link CompletableFuture}，如果失败或超时则返回 null
      */
     public CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String reqid, JsonArray content,Consumer<UsageIntf<?>> usageListener) {
-        if (pool.isEmpty())
+        if (!hasOnlineService())
             return CompletableFuture.failedFuture(new IOException("no local voice model found"));
         if(content.size()==0)
         	return CompletableFuture.failedFuture(new IOException("Empty input"));
@@ -186,7 +214,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
             while (true) {
             	Channel ch = null;
                 try {
-                	if (pool.isEmpty())
+                	if (!hasOnlineService())
                         throw new IOException("no local voice model found");
                     
                     // 从池中获取一个连接，最多等待 5 秒

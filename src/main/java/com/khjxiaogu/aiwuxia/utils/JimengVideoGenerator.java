@@ -1,18 +1,18 @@
 package com.khjxiaogu.aiwuxia.utils;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
-public class JimengImageGenerator extends JimengApiBase<byte[]> {
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+public class JimengVideoGenerator extends JimengApiBase<String> {
 
 
-    public JimengImageGenerator(JsonObject config) {
-		super("visual.volcengineapi.com","cn-north-1","cv","jimeng_seedream46_cvtob",GSON.fromJson(config, Config.class));
+    public JimengVideoGenerator(JsonObject config) {
+		super("visual.volcengineapi.com","cn-north-1","cv","pippit_iv2v_v20_cvtob_with_vinput",GSON.fromJson(config, Config.class));
 	}
 
 	/**
@@ -24,14 +24,14 @@ public class JimengImageGenerator extends JimengApiBase<byte[]> {
      * @return CompletableFuture 携带生成图片的URL（异步轮询）
      * @throws RuntimeException 提交任务失败时直接抛出
      */
-    public CompletableFuture<byte[]> generateImage(List<String> referenceImageUrls,
+    public CompletableFuture<String> generateImage(List<String> referenceImageUrls,
                                                            String prompt) {
         // 同步提交任务，失败立即抛异常
     	try {
     		String taskId = submitTask(referenceImageUrls, prompt);
     		System.out.println(taskId);
-    		return CompletableFuture.supplyAsync(() ->{
-    			try {
+    		return CompletableFuture.supplyAsync(() -> {
+				try {
 					return pollResult(taskId);
 				} catch (Exception e) {
 					e.printStackTrace();
@@ -39,9 +39,8 @@ public class JimengImageGenerator extends JimengApiBase<byte[]> {
 						throw ((RuntimeException)e);
 					throw new RuntimeException(e);
 				}
-    		});
+			});
     	}catch(Throwable t) {
-    		t.printStackTrace();
     		return CompletableFuture.failedFuture(t);
     	}
         // 提交成功，异步轮询结果
@@ -53,10 +52,11 @@ public class JimengImageGenerator extends JimengApiBase<byte[]> {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("req_key", reqKey);
             if (imageUrls != null && !imageUrls.isEmpty()) {
-                body.put("image_urls", imageUrls);
+                body.put("img_url_list", imageUrls);
             }
             body.put("prompt", prompt);
-            body.put("force_single", true);   // 强制只生成一张图
+            body.put("duration", "～15s");   // 强制只生成一张图
+            body.put("language", "Chinese");
             // 尺寸：同时传入width和height才生效
            
             
@@ -79,13 +79,12 @@ public class JimengImageGenerator extends JimengApiBase<byte[]> {
     }
 
 	@Override
-	protected byte[] handleResult(JsonObject data) {
-		if (data.has("image_urls") && !data.get("image_urls").isJsonNull()) {
-        	return fetch( data.getAsJsonArray("image_urls").get(0).getAsString());
-        } else if (data.has("binary_data_base64") && !data.get("binary_data_base64").isJsonNull()) {
-            return Base64.getDecoder().decode(data.getAsJsonArray("binary_data_base64").get(0).getAsString());
-        } else {
-            throw new RuntimeException("No image in response");
+	protected String handleResult(JsonObject data) {
+		System.out.println(data);
+		if (data.has("video_url") && !data.get("video_url").isJsonNull()) {
+        	return data.get("video_url").getAsString();
         }
+		throw new RuntimeException("No video in response");
 	}
+
 }

@@ -47,6 +47,7 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class AIGalgameMain extends AIApplication {
@@ -268,7 +269,11 @@ public class AIGalgameMain extends AIApplication {
 	}
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
-		int status = 0;
+		SequentialStateExecutor status=new SequentialStateExecutor(null,()->{
+
+			
+			state.appendLine(Role.ASSISTANT, "选择你的操作（数字或行动）：", false);
+		});
 
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		boolean nstateModified = false;
@@ -291,15 +296,15 @@ public class AIGalgameMain extends AIApplication {
 				//System.out.println("\n=================Content===============");
 				isWaiting = false;
 			}
-			if (status == 0) {//处理主要剧情
+			if (status.isValue(0)) {//处理主要剧情
 				if (last.startsWith("==操作==")) {
-					status = 2;
 					state.appendContextLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "选择你的操作（数字或行动）：", false);
+					status.setValue(2);
 				} else {
-					if(last.startsWith("==情景剧本=="))
+					if(last.startsWith("==情景剧本==")) {
 						state.appendContextLine(Role.ASSISTANT, last);
-					else
+						status.setValue(1);
+					}else
 						state.appendLine(Role.ASSISTANT, last, true);
 					int codePoint=0,codePoint2=0;
 					reader.mark(16);
@@ -323,7 +328,7 @@ public class AIGalgameMain extends AIApplication {
 					}
 				}
 			} else {
-				if(status==2) {
+				if(status.isValue(2)) {
 					if(!Character.isDigit(last.charAt(0))) {
 						last=orderIndex+". "+last;
 					}	
@@ -332,8 +337,10 @@ public class AIGalgameMain extends AIApplication {
 					
 				state.appendLine(Role.ASSISTANT, last, true);
 			}
+			
 
 		}
+		status.setValue(3);
 
 		return nstateModified ? oldstate : null;
 	}

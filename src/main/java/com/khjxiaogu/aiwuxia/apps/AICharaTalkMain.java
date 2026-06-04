@@ -54,6 +54,7 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
+import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
@@ -349,7 +350,6 @@ public class AICharaTalkMain extends AIApplication {
 
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
-		int status = 0;
 		
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		BufferedReader reader=new BufferedReader(resp.getContent());
@@ -359,6 +359,15 @@ public class AICharaTalkMain extends AIApplication {
 		String oldchara=state.getExtra().get("chara");
 		String oldbg=state.getExtra().get("back");
 		String audioId=null;
+
+		SequentialStateExecutor status=new SequentialStateExecutor(null,null,null,()->{
+
+			if(!state.getState().perks.isEmpty()){
+				sendContent.append("==场景==\n");
+				for(Entry<String, String> i:state.getState().perks.entrySet())
+					sendContent.append(i.getKey()).append("=").append(i.getValue()).append("\n");
+			}
+		});
 		CompletableFuture<Boolean> cf=null;
 		handleReasonerContent(resp,state);
 		if(back!=null)
@@ -375,18 +384,18 @@ public class AICharaTalkMain extends AIApplication {
 				isWaiting = false;
 			}
 			
-			if (status == 0) {//处理主要剧情
+			if (status.isValue(0)) {//处理主要剧情
 				if(last.startsWith("==对话==")) {
-					status=1;
+					status.setValue(1);
 				}else{//对话部分错误，督促AI重新生成一份
 					System.out.println(last);
 					logger.info("retry because header error");
 					throw new RegenerateNeededException(oldstate);
 				}
 
-			}else if(status==1) {//处理演出
+			}else if(status.isValue(1)) {//处理演出
 				if (last.startsWith("==场景==")) {
-					status = 3;
+					status.setValue(3);
 					if(state.isAudioSession()&&audioId==null) {
 						audioId=UUID.randomUUID().toString();
 						cf=this.generateVoice(state, content.toString(), audioId);
@@ -396,7 +405,7 @@ public class AICharaTalkMain extends AIApplication {
 					content.append(last).append("\n");
 				}
 				
-			} else if (status == 3) {
+			} else if (status.isValue(3)) {
 				
 					
 				if(last.contains("=")) {
@@ -414,18 +423,14 @@ public class AICharaTalkMain extends AIApplication {
 			}
 			sendContent.append(last).append("\n");
 		}
-		if(status==0) {//truncated
+		if(status.isValue(0)) {//truncated
 			logger.info("regenerate as truncated");
 			throw new RegenerateNeededException(oldstate);
-	}
+		}
+		status.setValue(4);
 		if(state.isAudioSession()&&audioId==null) {
 			audioId=UUID.randomUUID().toString();
 			cf=this.generateVoice(state, content.toString(), audioId);
-		}
-		if(!state.getState().perks.isEmpty()){
-			sendContent.append("==场景==\n");
-			for(Entry<String, String> i:state.getState().perks.entrySet())
-				sendContent.append(i.getKey()).append("=").append(i.getValue()).append("\n");
 		}
 		String pos=state.getState().perks.get("位置");
 		String chara=null;

@@ -51,6 +51,8 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.RunnableOnce;
+import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class AITRPGSceneMain extends AIApplication {
@@ -316,7 +318,6 @@ public class AITRPGSceneMain extends AIApplication {
 
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
-		int status = 0;
 		
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		BufferedReader reader=new BufferedReader(resp.getContent());
@@ -326,6 +327,18 @@ public class AITRPGSceneMain extends AIApplication {
 		handleReasonerContent(resp,state);
 		AttributeSet scene=state.getState().getOrCreateInterface("场景");
 		AttributeSet characs=state.getState().getOrCreateInterface("角色");
+
+		SequentialStateExecutor status=new SequentialStateExecutor(null,()->{
+			if(!scene.isEmpty()){
+				state.appendContextLine(Role.ASSISTANT, "==场景==");
+				for(Entry<String, String> i:scene)
+					state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+			}
+		},null,()->{
+			state.appendContextLine(Role.ASSISTANT, "==角色==");
+			for(Entry<String, String> i:characs)
+				state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+		});
 		if(back!=null)
 		oldbg=back.getSceneData(scene.getAsMap());
 		String bg=null;	
@@ -340,28 +353,19 @@ public class AITRPGSceneMain extends AIApplication {
 			if (isWaiting) {
 				isWaiting = false;
 			}
-			if (status == 0) {//开始
+			if (status.isValue(0)) {//开始
 				/*if(last.startsWith("==对话==")) {
 					status=1;
 				}else*/
 				
 				if (last.startsWith("==场景==")) {
 					
-				}else if(!scene.isEmpty()){
-					state.appendContextLine(Role.ASSISTANT, "==场景==");
-					for(Entry<String, String> i:scene)
-						state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
-				}else
+				}else if(scene.isEmpty())
 					throw new RegenerateNeededException(oldstate);//对话部分错误，督促AI重新生成一份
-				status=1;
-
-			}else if(status==1) {//处理场景
+				status.setValue(1);
+				continue;
+			}else if(status.isValue(1)) {//处理场景
 				if (last.startsWith("==对话==")) {
-					if(!scene.isEmpty()){
-						state.appendContextLine(Role.ASSISTANT, "==场景==");
-						for(Entry<String, String> i:scene)
-							state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
-					}
 					if(back!=null)
 						bg=back.getSceneData(scene.getAsMap());
 					if(bg==null)
@@ -370,7 +374,7 @@ public class AITRPGSceneMain extends AIApplication {
 						state.sendSceneContent("back", bg);
 					else
 						state.sendSceneContent("back", "");
-					status = 2;
+					status.setValue(2);
 					state.appendContextLine(Role.ASSISTANT, last);
 					int codePoint=0,codePoint2=0;
 					while((codePoint=reader.read())!=-1) {
@@ -381,7 +385,7 @@ public class AITRPGSceneMain extends AIApplication {
 							String read=reader.readLine();
 							if(read.startsWith("角色==")) {
 								state.appendContextLine(Role.ASSISTANT, "==角色==");
-								status=3;
+								status.setValue(3);
 								break;
 							}
 							state.appendCh(Role.ASSISTANT, "==", true);
@@ -413,13 +417,13 @@ public class AITRPGSceneMain extends AIApplication {
 					}
 					continue;
 				}
-			} else if (status == 2) {	
+			} else if (status.isValue(2)) {	
 				if (last.startsWith("==角色==")) {
-					status=3;
+					status.setValue(3);
 					continue;
 				}else
 					state.appendLine(Role.ASSISTANT, last, false);
-			} else if (status == 3) {	
+			} else if (status.getValue() == 3) {	
 				if(last.contains("=")) {
 					String[] lasts=last.split("=");
 					if(lasts.length==2) {
@@ -438,12 +442,8 @@ public class AITRPGSceneMain extends AIApplication {
 			state.appendContextLine(Role.ASSISTANT, last);
 
 		}
-		if(status==1) {//没有对话和角色部分，重新生成
-			throw new RegenerateNeededException(oldstate);
-		}
-		state.appendContextLine(Role.ASSISTANT, "==角色==");
-		for(Entry<String, String> i:characs)
-			state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+		status.setValue(4);
+		
 		
 		String chara=null;
 		

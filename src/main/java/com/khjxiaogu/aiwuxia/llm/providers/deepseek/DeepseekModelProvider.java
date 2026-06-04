@@ -296,15 +296,24 @@ public class DeepseekModelProvider implements ModelProvider{
 										for(ToolCall i:toolcall.getToolCalls()) {
 											ToolData data=request.tools.get(i.function.name);
 											if(data==null) {
-												System.out.println(i);
+												ToolContent tool=new ToolContent(i.id,"tool不存在或已禁用。");
+												ja.add(createToolMessage(tool));
+												readable.putReasoner(tool);
 												continue;
 											}
-											String result=data.tool.run(i.function.arguments);
-											
-											ToolContent tool=new ToolContent(i.id,result);
-											ja.add(createToolMessage(tool));
-											
-											readable.putReasoner(tool);
+											try {
+												String result=data.tool.run(i.function.arguments);
+												
+												ToolContent tool=new ToolContent(i.id,result);
+												ja.add(createToolMessage(tool));
+												
+												readable.putReasoner(tool);
+											}catch(Throwable ex) {
+												ex.printStackTrace();
+												ToolContent tool=new ToolContent(i.id,"tool发生内部错误。");
+												ja.add(createToolMessage(tool));
+												readable.putReasoner(tool);
+											}
 											
 										}
 										shouldContinueRequest.set(true);

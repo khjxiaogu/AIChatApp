@@ -11,11 +11,14 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import com.google.gson.Gson;
@@ -31,26 +34,31 @@ public class CrontabMcp {
 	    private final List<TodoItem> items;
 	    private final Gson gson;
 	    private final File dataFile;
-	    private final Consumer<String> triggerConsumer;
+	    private final BiConsumer<Long,String> triggerConsumer;
 	    private final ScheduledExecutorService scheduler;
 	    private static final String DATE_PATTERN = "yyyy-MM-dd HH:mm:ss";
 	    private static class TodoItem {
-	        String description;
+	    	long botId;
+	    	String description;
 	        Date triggerTime; 
 
-	        public TodoItem(String description, Date triggerTime) {
-	            this.description = description;
-	            this.triggerTime = triggerTime;
-	        }
 
 	        @Override
 	        public String toString() {
-	            return String.format("待办: %s | 触发时间: %s",
+	            return String.format("%s的待办: %s | 触发时间: %s",botId,
 	                    description, new SimpleDateFormat(DATE_PATTERN).format(triggerTime));
 	        }
+
+
+			TodoItem(long botId, String description, Date triggerTime) {
+				super();
+				this.botId = botId;
+				this.description = description;
+				this.triggerTime = triggerTime;
+			}
 	    }
 
-	    public TimedTodoManager(File storageFilePath, Consumer<String> triggerConsumer) throws IOException {
+	    public TimedTodoManager(File storageFilePath, BiConsumer<Long,String> triggerConsumer) throws IOException {
 	        this.triggerConsumer = triggerConsumer;
 	        this.dataFile = storageFilePath;
 	        File parentDir = dataFile.getParentFile();
@@ -100,7 +108,7 @@ public class CrontabMcp {
 	     * @param triggerTime 触发时间
 	     * @return 是否添加成功（时间不能为过去？允许添加已过期待办，下次扫描会立即触发）
 	     */
-	    public synchronized boolean addTodo(String description, Date triggerTime) {
+	    public synchronized boolean addTodo(long botId,String description, Date triggerTime) {
 	        if (description == null || description.trim().isEmpty()) {
 	            System.err.println("待办描述不能为空");
 	            return false;
@@ -109,7 +117,7 @@ public class CrontabMcp {
 	            System.err.println("触发时间不能为空");
 	            return false;
 	        }
-	        TodoItem newItem = new TodoItem(description, triggerTime);
+	        TodoItem newItem = new TodoItem(botId,description, triggerTime);
 	        items.add(newItem);
 	        saveToFile();
 	        System.out.println("已添加待办: " + newItem);
@@ -141,7 +149,7 @@ public class CrontabMcp {
 	        // 在锁外触发回调，避免回调中可能的长时间操作影响其他待办检查
 	        for (TodoItem item : toTrigger) {
 	            try {
-	                triggerConsumer.accept(item.description);
+	                triggerConsumer.accept(item.botId,item.description);
 	                System.out.println("待办已触发并删除: " + item.description);
 	            } catch (Exception e) {
 	                System.err.println("触发待办回调时发生异常: " + e.getMessage());
@@ -166,8 +174,25 @@ public class CrontabMcp {
 	        System.out.println("定时待办管理器已关闭");
 	    }
 	}
-	public static MCPTools create(File path,Consumer<String> trigger) throws IOException {
-		TimedTodoManager manager=new TimedTodoManager(path, trigger);
+	static TimedTodoManager manager;
+	static Map<Long,Consumer<String>> triggers;
+	static File savepath;
+	public static void setPath(File path) {
+		savepath=path;
+	}
+	public static void init() throws IOException {
+		if(manager==null) {
+			triggers=new HashMap<>();
+			manager=new TimedTodoManager(savepath, (id,str)->{
+				Consumer<String> csm=triggers.get(id);
+				if(csm!=null)
+					csm.accept(str);
+			});
+		}
+	}
+	public static MCPTools create(long id,Consumer<String> trigger) throws IOException {
+		init();
+		triggers.put(id, trigger);
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("timed_trigger", "创建一个定时触发器，达到设定的时间时会触发，可用于定时提醒或定时任务。")
 				.putParam("alert_time", "触发时间，格式是yyyy-mm-dd HH:MM:SS，系统本地时间")
@@ -183,7 +208,7 @@ public class CrontabMcp {
 						return "日期格式错误";
 					}
 					
-					manager.addTodo(jo.get("note").getAsString(), date);
+					manager.addTodo(id,jo.get("note").getAsString(), date);
 					return "待办设置成功";
 				}).build());
 		return tools;

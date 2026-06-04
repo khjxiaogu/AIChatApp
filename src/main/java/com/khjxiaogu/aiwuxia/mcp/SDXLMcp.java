@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -104,13 +105,14 @@ public class SDXLMcp {
 
         return result.toString();
     }
-	public static MCPTools create(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,Consumer<byte[]> imageCollector) {
+	public static MCPTools create(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora) {
 		MCPTools tools=new MCPTools();
 		Map<String, int[]> resolutions = new HashMap<>();
-		resolutions.put("16:9", new int[] { 1280, 720 });
-		resolutions.put("9:16", new int[] { 720, 1280 });
-		resolutions.put("3:4", new int[] { 768, 1024 });
-		resolutions.put("4:3", new int[] { 1024, 768 });
+		resolutions.put("16:9", new int[] { 2048, 1152 });
+		resolutions.put("9:16", new int[] { 1152, 2048 });
+		resolutions.put("3:4", new int[] { 1200, 1600 });
+		resolutions.put("4:3", new int[] { 1600, 1200 });
+		resolutions.put("1:1", new int[] { 1200, 1200 });
 
 		tools.register(
 				new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
@@ -164,10 +166,10 @@ public class SDXLMcp {
 									,30,
 									its[0],
 									its[1]);
-							imageCollector.accept(image);
+							;
 							String fn = tos.uploadIfNotExists(image);
 	
-							return "发送成功，图片id为："+fn;
+							return "生成成功，图片id为："+fn;
 						} catch (IOException e) {
 							e.printStackTrace();
 							return "图片生成失败，服务暂不可用。";
@@ -228,10 +230,10 @@ public class SDXLMcp {
 									,30,
 									its[0],
 									its[1],isRow,ratio);
-							imageCollector.accept(image);
 							String fn = tos.uploadIfNotExists(image);
 	
-							return "发送成功，图片id为："+fn;
+
+							return "生成成功，图片id为："+fn;
 						} catch (IOException e) {
 							e.printStackTrace();
 							return "图片生成失败，服务暂不可用。";
@@ -270,10 +272,10 @@ public class SDXLMcp {
 									its[0],
 									its[1]);
 
-							imageCollector.accept(image);
 							String fn = tos.uploadIfNotExists(image);
 	
-							return "发送成功，图片id为："+fn;
+
+							return "生成成功，图片id为："+fn;
 						} catch (IOException e) {
 							e.printStackTrace();
 							return "图片生成失败，服务暂不可用。";

@@ -165,6 +165,20 @@ public class FileUtil {
 			return readIgnoreSpace(fis);
 		}
 	}
+	public static boolean isExistent(String urlstr){
+		try {
+			URL url = new URL(urlstr);
+			HttpURLConnection huc = (HttpURLConnection) url.openConnection();
+			huc.setRequestProperty("User-Agent",
+					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36");
+			huc.setRequestMethod("HEAD");
+			huc.connect();
+			return huc.getResponseCode() == 200;
+		} catch (Exception ex) {
+			
+			return false;
+		}
+	}
 	public static File choose() {
 		 // 创建文件选择器
 		try {

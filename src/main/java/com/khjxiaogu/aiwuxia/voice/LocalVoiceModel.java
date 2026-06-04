@@ -65,4 +65,8 @@ public class LocalVoiceModel {
     	
     	return lhs.requireAudio(chara, reqid, content,usageListener);
     }
+    public static CompletableFuture<VoiceGenerationResult> registerTask(String reqid) {
+    	
+    	return lhs.registerTask(reqid);
+    }
 }
