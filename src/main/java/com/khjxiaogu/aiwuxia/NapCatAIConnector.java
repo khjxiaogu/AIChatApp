@@ -164,18 +164,18 @@ public class NapCatAIConnector extends WebSocketClient {
 			}
 		}
 		Map<String, LoraConfigurations> lora = new LinkedHashMap<>();
-		File fn=new File(dataFolder,"loras.json");
-		if(fn.exists()) {
-			JsonObject refimg=JsonParser.parseString(FileUtil.readString(fn)).getAsJsonObject();
+		File lfn=new File(dataFolder,"loras.json");
+		if(lfn.exists()) {
+			JsonObject refimg=JsonParser.parseString(FileUtil.readString(lfn)).getAsJsonObject();
 			for(String key:refimg.keySet()) {
 				JsonObject jo=refimg.get(key).getAsJsonObject();
 				lora.put(key, new LoraConfigurations(jo.get("key").getAsString(),jo.get("weight").getAsFloat()));
 			}
 		}
 		Map<String, String> refimage = new LinkedHashMap<>();
-		File fn=new File(dataFolder,"reference_image.json");
-		if(fn.exists()) {
-			JsonObject refimg=JsonParser.parseString(FileUtil.readString(fn)).getAsJsonObject();
+		File rfn=new File(dataFolder,"reference_image.json");
+		if(rfn.exists()) {
+			JsonObject refimg=JsonParser.parseString(FileUtil.readString(rfn)).getAsJsonObject();
 			for(String key:refimg.keySet()) {
 				refimage.put(key, refimg.get(key).getAsString());
 			}

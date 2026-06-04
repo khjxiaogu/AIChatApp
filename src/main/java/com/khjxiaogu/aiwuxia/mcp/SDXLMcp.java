@@ -108,8 +108,8 @@ public class SDXLMcp {
 	public static MCPTools create(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora) {
 		MCPTools tools=new MCPTools();
 		Map<String, int[]> resolutions = new HashMap<>();
-		resolutions.put("16:9", new int[] { 2048, 1152 });
-		resolutions.put("9:16", new int[] { 1152, 2048 });
+		resolutions.put("16:9", new int[] { 1920, 1080 });
+		resolutions.put("9:16", new int[] { 1080, 1920 });
 		resolutions.put("3:4", new int[] { 1200, 1600 });
 		resolutions.put("4:3", new int[] { 1600, 1200 });
 		resolutions.put("1:1", new int[] { 1200, 1200 });
