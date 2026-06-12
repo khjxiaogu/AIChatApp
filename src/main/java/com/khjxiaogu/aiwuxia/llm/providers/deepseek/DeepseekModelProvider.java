@@ -134,7 +134,7 @@ public class DeepseekModelProvider implements ModelProvider{
 		for(HistoryItem hi:request.history) {
 			boolean shouldContainReasoner=false;
 			boolean shouldSkipContent=false;
-			if(hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
+			if(hi.maySendReasoner()&&hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
 				for(MessageContent msgc:hi.getReasoningContent()) {
 					if(msgc instanceof ToolContent) {
 						shouldContainReasoner=true;

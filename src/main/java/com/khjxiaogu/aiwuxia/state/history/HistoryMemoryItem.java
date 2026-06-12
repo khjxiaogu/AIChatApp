@@ -68,7 +68,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	/** 是否已删除 */
 	private boolean deleted = false;
 	/** 是否允许发送推理内容 */
-	private boolean sendReasoner = false;
+	private boolean sendReasoner = true;
 	/** 最后一次关联的应用状态 */
 	private ApplicationState lastState;
 	/** 关联的音频标识符 */
