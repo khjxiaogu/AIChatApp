@@ -14,11 +14,10 @@ import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
-import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
@@ -46,7 +45,7 @@ public class MultiModalMcp {
 			builder.addHistoryItem(Role.SYSTEM,
 					"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。最后要输出图片分辨率。");
 			builder.addHistoryItem(
-					new DirectHistoryItem(Role.USER, new MessageContents(new ImageContent(tos.getUrl(id)))));
+					new DirectHistoryItem(Role.USER, new ImageContent(tos.getUrl(id))));
 			try {
 				AIOutput output=LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build());
 				output.addUsageListener(addUsage);

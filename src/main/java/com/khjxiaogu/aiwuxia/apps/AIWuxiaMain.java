@@ -91,7 +91,7 @@ public class AIWuxiaMain extends AIApplication {
 			state.add(Role.USER, ret, true);
 			state.appendContextLine(Role.USER, "\n按上述行动继续，至少写出5条大纲，情景剧本部分按大纲扩写，必须包含所有大纲的要点，内容务必详细详尽，文本优美通顺，至少1500字。");
 			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
-			state.getLast().setLastState(airet);
+			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;
@@ -173,7 +173,7 @@ public class AIWuxiaMain extends AIApplication {
 				HistoryItem hi=it.next();
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
-					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 				}
 				len+=tokenLen;
 			}
@@ -184,7 +184,7 @@ public class AIWuxiaMain extends AIApplication {
 				while(it.hasNext()) {
 					HistoryItem hi=it.next();
 					len-=hi.getTokenLength();
-					hi.setValidContext(false);
+					history.setValidContext(hi, false);
 					if(len<=60000&&hi.getRole()==Role.ASSISTANT) {
 						lasthi=hi;
 						break;

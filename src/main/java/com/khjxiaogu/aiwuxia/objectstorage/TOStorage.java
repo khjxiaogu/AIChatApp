@@ -1,7 +1,6 @@
 package com.khjxiaogu.aiwuxia.objectstorage;
 
 import java.io.ByteArrayInputStream;
-import java.io.File;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -9,9 +8,6 @@ import java.net.URL;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonSyntaxException;
-import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.volcengine.tos.TOSV2;
 import com.volcengine.tos.TOSV2ClientBuilder;
 import com.volcengine.tos.TosException;

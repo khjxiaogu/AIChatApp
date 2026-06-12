@@ -1,12 +1,12 @@
 package com.khjxiaogu.aiwuxia.utils;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 public class JimengImageGenerator extends JimengApiBase<byte[]> {
 

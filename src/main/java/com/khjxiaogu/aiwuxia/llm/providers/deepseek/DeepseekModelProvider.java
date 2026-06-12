@@ -44,11 +44,6 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
-import com.khjxiaogu.aiwuxia.llm.message.PlainText;
-import com.khjxiaogu.aiwuxia.llm.message.ToolCallContent;
-import com.khjxiaogu.aiwuxia.llm.message.ToolContent;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 import com.khjxiaogu.aiwuxia.llm.scheme.ToolCallCollector;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
@@ -57,6 +52,11 @@ import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -251,7 +251,7 @@ public class DeepseekModelProvider implements ModelProvider{
 
 					//System.out.println(ja);
 					DeepseekUsage crnusage=createUsage(request);
-					MessageContents reasoner=new MessageContents();
+					MutableMessageContents reasoner=new MutableMessageContents();
 						HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 								.header("Content-Type", "application/json")
 								.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))

@@ -35,11 +35,12 @@ import java.util.function.Supplier;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
-import com.khjxiaogu.aiwuxia.llm.message.PlainText;
-import com.khjxiaogu.aiwuxia.llm.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 
 public class AIGroupSession extends AISession {
 	public static class CallContext{
@@ -114,7 +115,7 @@ public class AIGroupSession extends AISession {
 	}
     public void appendReasoner(MessageContent current) {
         if (currentReasoner == null)
-            currentReasoner = new MessageContents();
+            currentReasoner = new MutableMessageContents();
         currentReasoner.add(current);
         if(outputReaonser) {
         	if(lastReasoner==null)
@@ -135,11 +136,11 @@ public class AIGroupSession extends AISession {
 		}
 	}
 	public CurrentContext getPrompt() {
-		MessageContents content;
+		MutableMessageContents content;
 		CallContext last=null;
 		synchronized(queueLock) {
 	        DateFormat formatter = DateFormat.getDateTimeInstance();
-			content=new MessageContents("当前时间："+formatter.format(new Date())+"\n");
+			content=new MutableMessageContents("当前时间："+formatter.format(new Date())+"\n");
 			for(CallContext cctx:important) {
 				for(Supplier<MessageContent> cmsg:cctx.getter)
 					content.add(cmsg.get());

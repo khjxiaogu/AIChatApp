@@ -48,15 +48,14 @@ import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.history.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
+import com.khjxiaogu.aiwuxia.utils.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
-import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceTagger;
@@ -128,7 +127,7 @@ public class AICharaTalkMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
 			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
-			state.getLast().setLastState(airet);
+			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;
@@ -225,7 +224,7 @@ public class AICharaTalkMain extends AIApplication {
 			HistoryItem hi=it.next();
 			long tokenLen=hi.getTokenLength();
 			if(tokenLen==0) {
-				hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				state.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 			}
 			len+=tokenLen;
 			if(hi.getRole()!=Role.SYSTEM) {
@@ -258,7 +257,7 @@ public class AICharaTalkMain extends AIApplication {
 				HistoryItem hi=it.next();
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
-					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 				}
 				len+=tokenLen;
 				
@@ -284,7 +283,7 @@ public class AICharaTalkMain extends AIApplication {
 				}
 				compactor.compactHistory(state ,state.getExtra(), summery.toString(),charaset,state::addUsage);
 				state.getExtra().put("lastSummary",compactor.constructHistory(state.getExtra()));
-				his.forEach(t->t.setValidContext(false));
+				his.forEach(t->state.setValidContext(t,false));
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {
@@ -474,7 +473,7 @@ public class AICharaTalkMain extends AIApplication {
 		if(cf!=null) {
 			try {
 				if(cf.get()) {
-					state.getLast().setAudioId(audioId);	
+					state.setAudioId(state.getLast(),audioId);	
 					state.postAudioComplete(state.getLast().getIdentifier(), audioId);
 				}
 			} catch (InterruptedException | ExecutionException e) {

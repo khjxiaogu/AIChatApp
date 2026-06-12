@@ -25,141 +25,280 @@ package com.khjxiaogu.aiwuxia.state.history;
 
 import java.util.Iterator;
 
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
 /**
- * 表示一个持有多个历史条目（{@link HistoryItem}）的容器。
- * 该接口扩展了 {@link Iterable}，允许通过迭代器遍历其中的条目。
- * 主要用于存储、管理和操作对话或上下文的历史记录。
+ * 历史条目容器接口。
+ * <p>
+ * 扩展 {@link Iterable}{@code <HistoryItem>}，用于存储和管理多个 {@link HistoryItem} 条目。
+ * 提供正向遍历、反向遍历、有效上下文过滤遍历等多种迭代方式，
+ * 以及添加、移除、查看最后一个条目等操作方法。
+ * 多个 {@code default add(...)} 便捷方法允许省略部分参数，使用合理的默认值。
+ * </p>
+ * <p>
+ * {@link #appendLine(String, boolean)}、{@link #append(String, boolean)} 和
+ * {@link #appendContext(String)} 方法会委托给最后一个条目的对应方法。
+ * </p>
+ *
+ * @see MemoryHistory
+ * @see HistoryItem
  */
 public interface HistoryHolder extends Iterable<HistoryItem> {
 
-    /**
-     * 判断该容器是否为空（即不包含任何历史条目）。
-     *
-     * @return 如果容器为空则返回 true，否则返回 false
-     */
-    boolean isEmpty();
+	/**
+	 * 判断该容器是否为空。
+	 *
+	 * @return {@code true} 如果不包含任何历史条目；{@code false} 否则
+	 */
+	boolean isEmpty();
 
-    /**
-     * 返回一个按添加顺序正向遍历所有历史条目的迭代器。
-     *
-     * @return 正向迭代器，类型为 {@link Iterator}&lt;{@link HistoryItem}&gt;
-     */
-    Iterator<HistoryItem> iterator();
+	/**
+	 * 返回一个按添加顺序正向遍历所有历史条目的迭代器。
+	 *
+	 * @return 正向迭代器
+	 */
+	Iterator<HistoryItem> iterator();
 
-    /**
-     * 向容器中添加一个新的历史条目。
-     *
-     * @param role           条目的角色（如用户、助手、系统等），不能为 null
-     * @param content        条目的显示内容（通常用于 UI 展示）
-     * @param fullContent    条目的完整上下文内容（可能包含更多内部信息），可为 null
-     * @param isValidContext 指示该条目是否可作为有效的上下文内容（例如用于后续对话）
-     * @return 新创建并添加到容器中的 {@link HistoryItem} 对象
-     */
-    HistoryItem add(Role role, String content, MessageContents fullContent, boolean isValidContext);
+	/**
+	 * 向容器中添加一个新的历史条目。
+	 *
+	 * @param role           条目的角色（如用户、助手、系统等）
+	 * @param content        条目的显示内容
+	 * @param fullContent    条目的完整上下文内容，可为 null
+	 * @param reasoner       条目的推理内容，可为 null
+	 * @param isValidContext 指示该条目是否可作为有效的上下文内容
+	 * @return 新创建并添加的 {@link HistoryItem} 对象
+	 */
+	HistoryItem add(Role role, String content, MessageContents fullContent, MessageContents reasoner,
+			boolean isValidContext);
 
-    /**
-     * 清空容器，移除所有历史条目。
-     */
-    void clear();
+	/**
+	 * 清空容器，移除所有历史条目。
+	 */
+	void clear();
 
-    /**
-     * 返回一个按添加顺序逆向遍历所有历史条目的迭代器。
-     * 可用于从最新到最旧的顺序访问条目。
-     *
-     * @return 反向迭代器，类型为 {@link Iterator}&lt;{@link HistoryItem}&gt;
-     */
-    Iterator<HistoryItem> reverseIterator();
+	/**
+	 * 返回一个按添加顺序逆向（从最新到最旧）遍历所有历史条目的迭代器。
+	 *
+	 * @return 反向迭代器
+	 */
+	Iterator<HistoryItem> reverseIterator();
 
-    /**
-     * 返回当前容器中历史条目的数量。
-     *
-     * @return 条目总数
-     */
-    int size();
+	/**
+	 * 返回当前容器中历史条目的总数。
+	 *
+	 * @return 条目总数
+	 */
+	int size();
 
-    /**
-     * 根据指定的唯一标识符移除对应的历史条目。
-     *
-     * @param identifier 要移除的条目的标识符（参见 {@link HistoryItem#getIdentifier()}）
-     */
-    void removeOf(int identifier);
+	/**
+	 * 根据唯一标识符移除对应的历史条目。
+	 *
+	 * @param identifier 要移除的条目的标识符（参见 {@link HistoryItem#getIdentifier()}）
+	 */
+	void removeOf(int identifier);
 
-    /**
-     * 查看容器中的最后一个历史条目（即最新添加的条目），但不会将其移除。
-     *
-     * @return 最后一个 {@link HistoryItem}，如果容器为空则返回 null
-     */
-    default HistoryItem peekLast() {
-		Iterator<HistoryItem> rit= reverseIterator();
-		if(rit.hasNext())
+	/**
+	 * 查看容器中的最后一个历史条目（即最新添加的），不会将其移除。
+	 *
+	 * @return 最后一个 {@link HistoryItem}，如果容器为空则返回 null
+	 */
+	default HistoryItem peekLast() {
+		Iterator<HistoryItem> rit = reverseIterator();
+		if (rit.hasNext())
 			return rit.next();
 		return null;
 	}
 
-    /**
-     * 返回一个迭代器，仅遍历那些被标记为“有效上下文”的历史条目。
-     * 有效上下文的判断依据是添加条目时的 {@code isValidContext} 参数。
-     *
-     * @return 仅包含有效上下文条目的迭代器
-     */
-    Iterator<HistoryItem> validContextIterator();
+	/**
+	 * 返回一个迭代器，仅遍历被标记为"有效上下文"的条目。
+	 *
+	 * @return 仅包含有效上下文条目的迭代器
+	 */
+	Iterator<HistoryItem> validContextIterator();
 
-    /**
-     * 添加一个新的历史条目，使用默认的上下文内容为 null。
-     * 这是一个便捷的默认方法，内部调用四参数 {@link #add(Role, String, String, boolean)} 方法，
-     * 并将 {@code isValidContext} 设置为指定值。
-     *
-     * @param role           条目的角色
-     * @param displayContent 显示内容
-     * @param isValidContext 指示该条目是否可作为有效的上下文内容
-     * @return 新创建并添加的 {@link HistoryItem} 对象
-     */
-    default HistoryItem add(Role role, String displayContent, boolean isValidContext) {
-        return add(role, displayContent, (MessageContents)null, isValidContext);
-    }
-    default HistoryItem add(Role role, MessageContents displayContent, boolean isValidContext) {
-        return add(role, displayContent.toText(), displayContent, isValidContext);
-    }
-    /**
-     * 添加一个新的历史条目，使用默认的有效上下文标志为 true。
-     * 这是一个便捷的默认方法，内部调用四参数 {@link #add(Role, String, String, boolean)} 方法，
-     * 并将 {@code isValidContext} 设置为 true。
-     *
-     * @param role            条目的角色
-     * @param displayContent  显示内容
-     * @param contextContent  完整的上下文内容
-     * @return 新创建并添加的 {@link HistoryItem} 对象
-     */
-    default HistoryItem add(Role role, String displayContent, MessageContents contextContent) {
-        return add(role, displayContent, contextContent, true);
-    }
-    default HistoryItem add(Role role, String displayContent, String contextContent) {
-        return add(role, displayContent, contextContent, true);
-    }
-    default HistoryItem add(Role role, String displayContent, String contextContent, boolean isValidContext) {
-    	 return add(role, displayContent, new MessageContents(contextContent), true);
-    }
+	/**
+	 * 添加一个新的历史条目，省略上下文内容（设为 null）。
+	 *
+	 * @param role           条目的角色
+	 * @param displayContent 显示内容
+	 * @param reasoner       推理内容，可为 null
+	 * @param isValidContext 是否为有效的上下文
+	 * @return 新创建并添加的 {@link HistoryItem} 对象
+	 */
+	default HistoryItem add(Role role, String displayContent, MessageContents reasoner, boolean isValidContext) {
+		return add(role, displayContent, (MessageContents) null, reasoner, isValidContext);
+	}
 
-    /**
-     * 移除并返回容器中的最后一个历史条目（即最新添加的条目）。
-     *
-     * @return 被移除的最后一个 {@link HistoryItem}，如果容器为空则可能返回 null（具体取决于实现）
-     */
-    HistoryItem removeLast();
+	/**
+	 * 添加一个新的历史条目，省略上下文内容和推理内容（均设为 null）。
+	 *
+	 * @param role           条目的角色
+	 * @param displayContent 显示内容
+	 * @param isValidContext 是否为有效的上下文
+	 * @return 新创建并添加的 {@link HistoryItem} 对象
+	 */
+	default HistoryItem add(Role role, String displayContent, boolean isValidContext) {
+		return add(role, displayContent, (MessageContents) null, null, isValidContext);
+	}
 
-    /**
-     * 撤回并返回容器中的最后一个历史条目（即最新添加的条目）。
-     *
-     * @return 被移除的最后一个 {@link HistoryItem}，如果容器为空则可能返回 null（具体取决于实现）
-     */
-    default HistoryItem deleteLast() {
-    	HistoryItem hi=peekLast();
-    	if(hi!=null)
-    		hi.setDeleted(true);
-    	return hi;
-    }
-    public long getContextLimit();
+	/**
+	 * 添加一个新的历史条目，使用 {@link MessageContents} 作为显示内容，
+	 * 其文本表示作为字符串显示内容。
+	 *
+	 * @param role           条目的角色
+	 * @param displayContent 显示内容（将取其文本表示作为字符串）
+	 * @param reasoner       推理内容，可为 null
+	 * @param isValidContext 是否为有效的上下文
+	 * @return 新创建并添加的 {@link HistoryItem} 对象
+	 */
+	default HistoryItem add(Role role, MessageContents displayContent, MessageContents reasoner,
+			boolean isValidContext) {
+		return add(role, displayContent.toText(), displayContent, reasoner, isValidContext);
+	}
+
+	/**
+	 * 添加一个新的历史条目，默认标记为有效上下文。
+	 *
+	 * @param role           条目的角色
+	 * @param displayContent 显示内容
+	 * @param contextContent 上下文内容，可为 null
+	 * @param reasoner       推理内容，可为 null
+	 * @return 新创建并添加的 {@link HistoryItem} 对象
+	 */
+	default HistoryItem add(Role role, String displayContent, MessageContents contextContent, MessageContents reasoner) {
+		return add(role, displayContent, contextContent, reasoner, true);
+	}
+
+	/**
+	 * 添加一个新的历史条目，仅使用显示内容和上下文内容的字符串形式。
+	 *
+	 * @param role           条目的角色
+	 * @param displayContent 显示内容
+	 * @param contextContent 上下文内容
+	 * @return 新创建并添加的 {@link HistoryItem} 对象
+	 */
+	default HistoryItem add(Role role, String displayContent, String contextContent) {
+		return add(role, displayContent, contextContent);
+	}
+
+	/**
+	 * 添加一个新的历史条目，使用字符串形式的上下文内容和推理内容。
+	 *
+	 * @param role           条目的角色
+	 * @param displayContent 显示内容
+	 * @param contextContent 上下文内容
+	 * @param reasoner       推理内容
+	 * @return 新创建并添加的 {@link HistoryItem} 对象
+	 */
+	default HistoryItem add(Role role, String displayContent, String contextContent, MessageContents reasoner) {
+		return add(role, displayContent, contextContent, reasoner);
+	}
+
+	/**
+	 * 移除并返回容器中的最后一个历史条目（即最新添加的条目）。
+	 *
+	 * @return 被移除的最后一个 {@link HistoryItem}，如果容器为空则可能返回 null
+	 */
+	HistoryItem removeLast();
+
+	/**
+	 * 获取上下文上限。
+	 * <p>
+	 * 具体含义由实现决定，通常表示当前的上下文数量（如有效且未删除的助手条目数）。
+	 * </p>
+	 *
+	 * @return 上下文上限值
+	 */
+	public long getContextLimit();
+
+	/**
+	 * 将最后一个条目标记为已删除（软删除，不真正移除）。
+	 *
+	 * @return 被标记删除的条目
+	 */
+	HistoryItem deleteLast();
+
+	/**
+	 * 设置指定条目的有效上下文标志。
+	 *
+	 * @param hi       历史条目
+	 * @param sendable 是否为有效上下文
+	 */
+	void setValidContext(HistoryItem hi, boolean sendable);
+
+	/**
+	 * 设置指定条目的删除状态。
+	 *
+	 * @param hi       历史条目
+	 * @param sendable 是否标记为已删除
+	 */
+	void setDeleted(HistoryItem hi, boolean sendable);
+
+	/**
+	 * 设置指定条目的音频标识符。
+	 *
+	 * @param hi      历史条目
+	 * @param audioId 音频 ID 字符串
+	 */
+	void setAudioId(HistoryItem hi, String audioId);
+
+	/**
+	 * 设置指定条目是否允许发送推理内容。
+	 *
+	 * @param hi           历史条目
+	 * @param sendReasoner 是否允许发送推理内容
+	 */
+	void setSendReasoner(HistoryItem hi, boolean sendReasoner);
+
+	/**
+	 * 设置指定条目的令牌长度。
+	 *
+	 * @param hi 历史条目
+	 * @param l  令牌长度
+	 */
+	void setTokenLength(HistoryItem hi, long l);
+
+	/**
+	 * 设置指定条目的最后应用状态。
+	 *
+	 * @param hi        历史条目
+	 * @param lastState 应用状态
+	 */
+	void setLastState(HistoryItem hi, ApplicationState lastState);
+
+	/**
+	 * 向最后一个条目追加一行内容，并根据参数决定是否同时写入上下文内容。
+	 * <p>
+	 * 委托给 {@link #peekLast()} 返回的可变条目执行。
+	 * </p>
+	 *
+	 * @param content      要追加的内容字符串
+	 * @param addToContext 若为 {@code true}，则将该内容也追加到上下文内容中
+	 */
+	void appendLine(String content, boolean addToContext);
+
+	/**
+	 * 向最后一个条目追加内容（不自动添加换行符），并根据参数决定是否同时写入上下文内容。
+	 * <p>
+	 * 委托给 {@link #peekLast()} 返回的可变条目执行。
+	 * 与 {@link #appendLine(String, boolean)} 的区别在于不添加换行符。
+	 * </p>
+	 *
+	 * @param content      要追加的内容字符串
+	 * @param addToContext 若为 {@code true}，则将该内容也追加到上下文内容中
+	 */
+	void append(String content, boolean addToContext);
+
+	/**
+	 * 向最后一个条目的上下文内容追加内容。
+	 * <p>
+	 * 委托给 {@link #peekLast()} 返回的可变条目执行。
+	 * </p>
+	 *
+	 * @param content 要追加到上下文的内容字符串
+	 */
+	void appendContext(String content);
 }

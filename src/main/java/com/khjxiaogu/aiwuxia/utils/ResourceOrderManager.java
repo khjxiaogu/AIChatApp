@@ -106,7 +106,8 @@ public class ResourceOrderManager {
         /**
          * 增加引用计数（在成功获取资源时调用）
          */
-        void addRef() {
+        @SuppressWarnings("unused")
+		void addRef() {
             manager.lock.lock();
             try {
                 refCount++;

@@ -39,10 +39,10 @@ import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AppAISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -180,7 +180,7 @@ public class AIAppMain {
 								CompletableFuture<Boolean> cf=state.getAiapp().generateVoice(state, last.getDisplayContent().toString(), audioId);
 								try {
 									if(cf.get()) {
-										last.setAudioId(audioId);
+										state.setAudioId(last, audioId);
 										state.postAudioComplete(last.getIdentifier(),audioId);
 									}
 								} catch (InterruptedException | ExecutionException e) {
@@ -190,7 +190,7 @@ public class AIAppMain {
 						}
 					});
 				}else
-					aistate.handleUserSpeech(new MessageContents(ret)).get();
+					aistate.handleUserSpeech(new MutableMessageContents(ret)).get();
 				while(aistate.isGenerating()) {
 					Thread.sleep(100);
 				}

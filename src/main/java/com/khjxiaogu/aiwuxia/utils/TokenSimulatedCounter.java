@@ -1,9 +1,9 @@
 package com.khjxiaogu.aiwuxia.utils;
 
-import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
-import com.khjxiaogu.aiwuxia.llm.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 
 public class TokenSimulatedCounter {
     public static long fastCountLength(CharSequence text) {

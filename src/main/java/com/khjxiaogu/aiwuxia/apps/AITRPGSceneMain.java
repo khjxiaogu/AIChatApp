@@ -51,7 +51,6 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.RunnableOnce;
 import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
@@ -109,7 +108,7 @@ public class AITRPGSceneMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
 			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
-			state.getLast().setLastState(airet);
+			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;
@@ -204,7 +203,7 @@ public class AITRPGSceneMain extends AIApplication {
 				HistoryItem hi=it.next();
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
-					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 				}
 				len+=tokenLen;
 				
@@ -234,7 +233,7 @@ public class AITRPGSceneMain extends AIApplication {
 					
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
-				his.forEach(t->t.setValidContext(false));
+				his.forEach(t->history.setValidContext(t, false));
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
 			if(state.getExtra().containsKey("lastSummary")) {

@@ -26,48 +26,29 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
-import com.khjxiaogu.aiwuxia.llm.Tool;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
-import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
-import com.khjxiaogu.aiwuxia.llm.message.PlainText;
-import com.khjxiaogu.aiwuxia.llm.message.ToolCallContent;
-import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
-import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.MessageReader;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
@@ -102,7 +83,6 @@ public class AIGroupApplication extends AIApplication {
 	}
 	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
 		MessageReader br=output.getReasoner();
-		int read;
 		state.resetReasoner();
 		while(!br.isEnded()) {
 			MessageContent current=br.read();
@@ -174,7 +154,7 @@ public class AIGroupApplication extends AIApplication {
 				HistoryItem hi=it.next();
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
-					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 				}
 				len+=tokenLen;
 			}
@@ -196,7 +176,7 @@ public class AIGroupApplication extends AIApplication {
 					
 				}
 				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
-				his.forEach(t->t.setValidContext(false));
+				his.forEach(t->history.setValidContext(t,false));
 
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
@@ -273,7 +253,7 @@ public class AIGroupApplication extends AIApplication {
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
 			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
-			state.getLast().setLastState(airet);
+			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;

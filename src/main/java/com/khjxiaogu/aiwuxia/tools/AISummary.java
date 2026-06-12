@@ -26,7 +26,6 @@ package com.khjxiaogu.aiwuxia.tools;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -40,13 +39,11 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.MessageReader;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 

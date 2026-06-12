@@ -16,9 +16,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.locks.Lock;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -432,6 +431,7 @@ public class SDXLMcp {
 			JsonObject jsonResponse = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
 			JsonArray images = jsonResponse.get("images").getAsJsonArray();
 			for (int i = 0; i < images.size(); i++) {
+				try {
 				String base64Image = images.get(i).getAsString();
 
 				if (base64Image.contains(",")) {
@@ -439,6 +439,9 @@ public class SDXLMcp {
 				}
 				byte[] imageBytes = Base64.getDecoder().decode(base64Image);
 				return imageBytes;
+				}catch(Exception ex) {
+					ex.printStackTrace();
+				}
 			}
 
 		} finally {
@@ -496,13 +499,17 @@ public class SDXLMcp {
 			JsonObject jsonResponse = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
 			JsonArray images = jsonResponse.get("images").getAsJsonArray();
 			for (int i = 0; i < images.size(); i++) {
-				String base64Image = images.get(i).getAsString();
+				try {
+					String base64Image = images.get(i).getAsString();
 
-				if (base64Image.contains(",")) {
-					base64Image = base64Image.split(",", 2)[1];
+					if (base64Image.contains(",")) {
+						base64Image = base64Image.split(",", 2)[1];
+					}
+					byte[] imageBytes = Base64.getDecoder().decode(base64Image);
+					return imageBytes;
+				}catch(Exception ex) {
+					ex.printStackTrace();
 				}
-				byte[] imageBytes = Base64.getDecoder().decode(base64Image);
-				return imageBytes;
 			}
 
 		} finally {
@@ -575,13 +582,17 @@ public class SDXLMcp {
 			JsonObject jsonResponse = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
 			JsonArray images = jsonResponse.get("images").getAsJsonArray();
 			for (int i = 0; i < images.size(); i++) {
-				String base64Image = images.get(i).getAsString();
+				try {
+					String base64Image = images.get(i).getAsString();
 
-				if (base64Image.contains(",")) {
-					base64Image = base64Image.split(",", 2)[1];
+					if (base64Image.contains(",")) {
+						base64Image = base64Image.split(",", 2)[1];
+					}
+					byte[] imageBytes = Base64.getDecoder().decode(base64Image);
+					return imageBytes;
+				}catch(Exception ex) {
+					ex.printStackTrace();
 				}
-				byte[] imageBytes = Base64.getDecoder().decode(base64Image);
-				return imageBytes;
 			}
 
 		} finally {

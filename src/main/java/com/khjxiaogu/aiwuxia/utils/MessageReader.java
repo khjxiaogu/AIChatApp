@@ -26,9 +26,9 @@ package com.khjxiaogu.aiwuxia.utils;
 import java.io.IOException;
 import java.util.ArrayDeque;
 
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
-import com.khjxiaogu.aiwuxia.llm.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 
 public class MessageReader{
     private final ArrayDeque<MessageContent> internal = new ArrayDeque<>();

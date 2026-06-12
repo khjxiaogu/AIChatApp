@@ -28,7 +28,6 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -358,9 +357,6 @@ public class AIRequest {
         } 
         public Builder addHistoryItem(Role role,String content) {
         	history.add(new DirectHistoryItem(role,content));
-        	return this;
-        }
-        public Builder setHistoryAppender(Consumer<HistoryItem> hi) {
         	return this;
         }
         /**

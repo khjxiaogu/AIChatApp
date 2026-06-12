@@ -31,8 +31,8 @@ import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.AIChatWindow;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 
 import javazoom.jl.decoder.JavaLayerException;
 import javazoom.jl.player.advanced.AdvancedPlayer;

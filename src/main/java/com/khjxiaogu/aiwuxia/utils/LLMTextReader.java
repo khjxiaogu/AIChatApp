@@ -28,8 +28,8 @@ import java.io.Reader;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 
 public class LLMTextReader extends Reader {
     private final StringBuilder internal = new StringBuilder();

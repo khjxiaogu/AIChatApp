@@ -1,8 +1,7 @@
-package com.khjxiaogu.aiwuxia.state.history;
+package com.khjxiaogu.aiwuxia.utils;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.Reader;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,16 +12,15 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
+import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.utils.MessageReader;
 
 public class HistoryCompacter {
 	String system;

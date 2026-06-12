@@ -40,8 +40,8 @@ import javax.swing.JFileChooser;
 import javax.swing.UIManager;
 import javax.swing.filechooser.FileSystemView;
 
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 
 public class FileUtil {
 	public static void transfer(InputStream i,OutputStream os) throws IOException {
@@ -250,8 +250,8 @@ public class FileUtil {
 		throw new IOException("fetch "+url+" failed "+maxRetry+" times, no more tries.");
 	}
 
-	public static MessageContents printAndCollectContent(MessageReader output) throws IOException {
-		MessageContents sb=new MessageContents();
+	public static MutableMessageContents printAndCollectContent(MessageReader output) throws IOException {
+		MutableMessageContents sb=new MutableMessageContents();
 		while(!output.isEnded()) {
 			MessageContent content=output.read();
 			if(content!=null) {

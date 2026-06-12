@@ -44,6 +44,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 public class VolcanoVoiceApi implements VoiceModel {
 	Map<String,String> botids;
 	Gson gs=new Gson();
+	@SuppressWarnings("unchecked")
 	public VolcanoVoiceApi(File file) throws JsonSyntaxException, IOException {
 		super();
 		this.botids=gs.fromJson(FileUtil.readString(new File(file,"volcanovoice.json")), Map.class);

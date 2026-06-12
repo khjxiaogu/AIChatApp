@@ -35,9 +35,6 @@ import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
-import com.khjxiaogu.aiwuxia.llm.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
@@ -47,6 +44,10 @@ import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
 /**
@@ -85,7 +86,7 @@ public class AISession implements ISaveData{
 	/** 关联的 AI 应用程序实例，用于处理具体的 AI 逻辑（如生成回复） */
 	protected AIApplication aiapp;
 	/** 当前正在构建的推理内容（AI 生成过程中的中间思考文本）的缓冲区 */
-	protected MessageContents currentReasoner = null;
+	protected MutableMessageContents currentReasoner = null;
 	/** 当前会话关联的用户标识 */
 	public final String user;
 	/**
@@ -136,7 +137,7 @@ public class AISession implements ISaveData{
      */
     public void appendReasoner(MessageContent current) {
         if (currentReasoner == null)
-            currentReasoner = new MessageContents();
+            currentReasoner = new MutableMessageContents();
         currentReasoner.add(current);
         this.setUpdated();
     }
@@ -165,15 +166,16 @@ public class AISession implements ISaveData{
 			}
 		}
 		if (hi == null) {
-			hi = history.add(role, content + "\n", true);
+			
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				for(MessageContent curn:currentReasoner)
-					hi.appendReasoner(curn);
+				hi = history.add(role, content + "\n", currentReasoner, true);
 				currentReasoner = null;
+			}else {
+				hi = history.add(role, content + "\n", true);
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 		} else {
-			hi.appendLine(content, appendToContext);
+			history.appendLine(content, appendToContext);
 			appendMessage(hi.getIdentifier(), content + "\n");
 		}
 	}
@@ -189,21 +191,22 @@ public class AISession implements ISaveData{
 	public void appendCh(Role role, String ch, boolean appendToContext) {
 		HistoryItem hi = null;
 		if (!history.isEmpty()) {
-			hi = getLast();
+			hi = history.peekLast();
 			if (role != hi.getRole() || (!hi.isValidContext() && appendToContext)) {
 				hi = null;
 			}
 		}
 		if (hi == null) {
-			hi = history.add(role, ch, true);
+			
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				for(MessageContent curn:currentReasoner)
-					hi.appendReasoner(curn);
+				hi = history.add(role, ch, currentReasoner, true);
 				currentReasoner = null;
+			}else {
+				hi = history.add(role, ch, true);
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 		} else {
-			hi.append(ch, appendToContext);
+			history.append(ch, appendToContext);
 			appendMessage(hi.getIdentifier(), ch);
 		}
 	}
@@ -217,21 +220,22 @@ public class AISession implements ISaveData{
 	public void appendContextLine(Role role, String content) {
 		HistoryItem hi = null;
 		if (!history.isEmpty()) {
-			hi = getLast();
+			hi = history.peekLast();
 			if (role != hi.getRole() || (!hi.isValidContext())) {
 				hi = null;
 			}
 		}
 		if (hi == null) {
-			hi = history.add(role, "", content + "\n");
+			
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				for(MessageContent curn:currentReasoner)
-					hi.appendReasoner(curn);
+				hi = history.add(role, content + "\n", currentReasoner, true);
 				currentReasoner = null;
+			}else {
+				hi = history.add(role, "", content + "\n");
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 		} else {
-			hi.appendContext(content + "\n");
+			history.appendContext(content + "\n");
 		}
 	}
 
@@ -243,20 +247,22 @@ public class AISession implements ISaveData{
 	 * @param isValidContext 指示该条目是否可作为有效的上下文内容
 	 */
 	public void add(Role role, String content, boolean isValidContext) {
-		HistoryItem hi = history.add(role, content, isValidContext);
+		HistoryItem hi;
 		if (currentReasoner != null && role == Role.ASSISTANT) {
-			for(MessageContent curn:currentReasoner)
-				hi.appendReasoner(curn);
+			hi = history.add(role, content, currentReasoner, isValidContext);
 			currentReasoner = null;
+		}else {
+			hi = history.add(role, content, isValidContext);
 		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
 	public void add(Role role, MessageContents content, boolean isValidContext) {
-		HistoryItem hi = history.add(role, content, isValidContext);
+		HistoryItem hi;
 		if (currentReasoner != null && role == Role.ASSISTANT) {
-			for(MessageContent curn:currentReasoner)
-				hi.appendReasoner(curn);
+			hi = history.add(role, content, currentReasoner, isValidContext);
 			currentReasoner = null;
+		}else {
+			hi = history.add(role, content, null, isValidContext);
 		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
@@ -268,11 +274,12 @@ public class AISession implements ISaveData{
 	 * @param contextContent 完整的上下文内容（用于 AI 输入）
 	 */
 	public void add(Role role, String displayContent, String contextContent) {
-		HistoryItem hi = history.add(role, displayContent, contextContent);
+		HistoryItem hi;
 		if (currentReasoner != null && role == Role.ASSISTANT) {
-			for(MessageContent curn:currentReasoner)
-				hi.appendReasoner(curn);
+			hi = history.add(role, displayContent, contextContent, currentReasoner);
 			currentReasoner = null;
+		}else {
+			hi = history.add(role, displayContent, contextContent);
 		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
@@ -641,11 +648,31 @@ public class AISession implements ISaveData{
 	public String getRoleName(Role role) {
 		return aiapp.getRoleName(this, role);
 	}
-	protected static final List<ToolData> EMPTY_LIST=Collections.EMPTY_LIST;
 	public List<ToolData> getAvailableTools(){
-		return EMPTY_LIST;
+		return Collections.emptyList();
 	};
 	public void onToolcall(ToolCallContent content) {
 		
+	}
+	public void setValidContext(HistoryItem hi, boolean sendable) {
+		history.setValidContext(hi, sendable);
+	}
+	public void setDeleted(HistoryItem hi, boolean sendable) {
+		history.setDeleted(hi, sendable);
+	}
+	public void setAudioId(HistoryItem hi, String audioId) {
+		history.setAudioId(hi, audioId);
+	}
+	public void setAudioId(String audioId) {
+		history.setAudioId(history.peekLast(), audioId);
+	}
+	public void setSendReasoner(HistoryItem hi, boolean sendReasoner) {
+		history.setSendReasoner(hi, sendReasoner);
+	}
+	public void setTokenLength(HistoryItem hi, long l) {
+		history.setTokenLength(hi, l);
+	}
+	public void setLastState(ApplicationState airet) {
+		history.setLastState(history.peekLast(), airet);
 	}
 }

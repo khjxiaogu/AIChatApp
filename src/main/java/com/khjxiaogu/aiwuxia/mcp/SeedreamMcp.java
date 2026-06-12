@@ -7,17 +7,17 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
+
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.objectstorage.TOSUsage;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -139,7 +139,7 @@ public class SeedreamMcp {
 					String[] refs=ref.split(",");
 					List<String> links=new ArrayList<>();
 					List<String> errors=new ArrayList<>();
-					int picNum=0;
+					//int picNum=0;
 					for(String refImg:refs) {
 						if(refImg.length()==72) {
 							if(tos.exists(refImg.trim())) {
@@ -154,7 +154,7 @@ public class SeedreamMcp {
 							errors.add("参考图"+refImg.trim()+"不存在；");
 						}else
 							links.add(link);
-						picNum++;
+						//picNum++;
 					}
 					if(errors.size()>0) {
 						StringBuilder sb=new StringBuilder();

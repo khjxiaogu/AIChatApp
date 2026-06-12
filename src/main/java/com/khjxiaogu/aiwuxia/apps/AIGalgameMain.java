@@ -38,15 +38,15 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.history.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
@@ -89,7 +89,7 @@ public class AIGalgameMain extends AIApplication {
 					state.refillChatBox(hi.getContextContent());
 				}
 			}
-			state.getLast().setLastState(airet);
+			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;
@@ -151,7 +151,7 @@ public class AIGalgameMain extends AIApplication {
 			HistoryItem hi=it.next();
 			long tokenLen=hi.getTokenLength();
 			if(tokenLen==0) {
-				hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				state.setTokenLength(hi, tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 			}
 			len+=tokenLen;
 			if(hi.getRole()!=Role.SYSTEM) {
@@ -182,7 +182,7 @@ public class AIGalgameMain extends AIApplication {
 				HistoryItem hi=it.next();
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
-					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 				}
 				len+=tokenLen;
 				
@@ -214,7 +214,7 @@ public class AIGalgameMain extends AIApplication {
 				}
 				compactor.compactHistory(state, state.getExtra(), summery.toString(),charaset,state::addUsage);
 				state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
-				his.forEach(t->t.setValidContext(false));
+				his.forEach(t->history.setValidContext(t,false));
 
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			}
@@ -257,7 +257,7 @@ public class AIGalgameMain extends AIApplication {
 				}else {
 					state.getExtra().put("name", ret);
 					state.setStage(ApplicationStage.STARTED);
-					this.handleSpeech(state, new MessageContents(initSelection));
+					this.handleSpeech(state, new MutableMessageContents(initSelection));
 				}
 			}
 		});

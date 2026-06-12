@@ -37,8 +37,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -46,6 +44,8 @@ import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
@@ -289,7 +289,6 @@ public abstract class AIApplication {
      */
 	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
 		MessageReader br=output.getReasoner();
-		int read;
 		state.resetReasoner();
 		while(!br.isEnded()) {
 			MessageContent current=br.read();

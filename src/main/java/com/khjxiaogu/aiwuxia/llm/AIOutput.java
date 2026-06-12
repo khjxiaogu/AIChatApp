@@ -30,12 +30,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
-import com.khjxiaogu.aiwuxia.utils.MessageReader;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.utils.BlockingReader;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.MessageReader;
 
 /**
  * 表示AI模型输出的接口，提供对模型生成的推理内容和最终内容的读取访问。
@@ -94,7 +96,7 @@ public interface AIOutput {
      */
     public default MessageContents getReasonerText() throws IOException {
     	MessageReader reasoner=getReasoner();
-    	MessageContents contents=new MessageContents();
+    	MutableMessageContents contents=new MutableMessageContents();
     	while(!reasoner.isEnded()) {
     		MessageContent current=reasoner.read();
     		if(current==null)

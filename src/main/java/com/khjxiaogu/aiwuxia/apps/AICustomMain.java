@@ -39,12 +39,12 @@ import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.history.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class AICustomMain extends AIApplication {
@@ -72,7 +72,7 @@ public class AICustomMain extends AIApplication {
 					state.refillChatBox(hi.getContextContent());
 				}
 			}
-			state.getLast().setLastState(airet);
+			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;
@@ -121,7 +121,7 @@ public class AICustomMain extends AIApplication {
 			HistoryItem hi=it.next();
 			long tokenLen=hi.getTokenLength();
 			if(tokenLen==0) {
-				hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				state.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 			}
 			len+=tokenLen;
 			if(hi.getRole()!=Role.SYSTEM) {
@@ -153,7 +153,7 @@ public class AICustomMain extends AIApplication {
 				HistoryItem hi=it.next();
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
-					hi.setTokenLength(tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+					state.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 				}
 				len+=tokenLen;
 				
@@ -190,7 +190,7 @@ public class AICustomMain extends AIApplication {
 				}
 				compactor.compactHistory(state, state.getExtra(), summery.toString(),state.getExtra().get("charaset"),state::addUsage);
 				state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
-				his.forEach(t->t.setValidContext(false));
+				his.forEach(t->history.setValidContext(t,false));
 
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			}

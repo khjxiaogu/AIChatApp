@@ -15,6 +15,7 @@ public class LocalVoiceApi implements VoiceModel {
 	VoiceTagger vt;
 	Map<String,String> botids;
 	Gson gs=new Gson();
+	@SuppressWarnings("unchecked")
 	public LocalVoiceApi(File file) throws JsonSyntaxException, IOException {
 		super();
 		this.botids=gs.fromJson(FileUtil.readString(new File(file,"localvoice.json")), Map.class);

@@ -79,7 +79,7 @@ public class AISQLMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			state.add(Role.USER, ret, true);
 			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
-			state.getLast().setLastState(airet);
+			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;

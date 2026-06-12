@@ -26,7 +26,6 @@ package com.khjxiaogu.aiwuxia;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -52,7 +51,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -72,9 +70,6 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
-import com.khjxiaogu.aiwuxia.llm.message.PlainText;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
 import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
@@ -89,6 +84,9 @@ import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession.CurrentContext;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
@@ -434,6 +432,7 @@ public class NapCatAIConnector extends WebSocketClient {
 				/*if ("message_sent".equals(evt)) {
 					
 				}*/
+				@SuppressWarnings("unused")
 				long self=msg.get("self_id").getAsLong();
 				if ("group".equals(evt)) {
 					System.out.println("received group message: " + message);
@@ -673,7 +672,7 @@ public class NapCatAIConnector extends WebSocketClient {
 			try(OrderHandle handle=manager.register()){
 				float priceBefore=state.getTokens();
 				String lst=state.getAndClearStatus();
-				MessageContents mst=new MessageContents(lst);
+				MutableMessageContents mst=new MutableMessageContents(lst);
 				for(MessageContent msg:prompt.content)
 					mst.add(msg);
 				if(prompt.ctx.qq!=0)

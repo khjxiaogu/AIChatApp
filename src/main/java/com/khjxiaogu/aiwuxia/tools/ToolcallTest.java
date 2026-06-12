@@ -1,28 +1,19 @@
 package com.khjxiaogu.aiwuxia.tools;
 
-import java.io.File;
 import java.io.IOException;
-import java.io.PrintStream;
-import java.util.HashMap;
-import java.util.Map;
-
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.ToolData;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
-import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 public class ToolcallTest {
 
+	@SuppressWarnings("unused")
 	public static void main(String[] args) throws IOException {
 		LLMConnector.initDefault();
 		Builder ar=AIRequest.builder("admin").enableDeepThink()

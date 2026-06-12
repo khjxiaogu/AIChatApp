@@ -53,8 +53,6 @@ public abstract class JimengApiBase<T> {
 				 throw new RuntimeException("Unexpected status: " + responseCode);
 			}
 	
-			String contentType = connection.getContentType();
-	
 			return FileUtil.readAll(connection.getInputStream());
 	
 		} catch (Exception e) {

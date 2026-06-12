@@ -1,9 +1,14 @@
 package com.khjxiaogu.aiwuxia.utils;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import com.google.gson.JsonObject; // 假设使用Gson库，您可根据实际项目替换为其他JSON类型
 import com.khjxiaogu.aiwuxia.NapCatAIConnector.BotCallback;
-
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 将BotCallback与CompletableFuture绑定的工具类。
@@ -70,7 +75,11 @@ public class BotCallbackPromise {
      * 自定义异常，封装非零状态码及对应的数据。
      */
     public static class BotCallbackException extends Exception {
-        private final int status;
+        /**
+		 * 
+		 */
+		private static final long serialVersionUID = -2584989602125281954L;
+		private final int status;
         private final JsonObject data;
 
         public BotCallbackException(int status, JsonObject data) {

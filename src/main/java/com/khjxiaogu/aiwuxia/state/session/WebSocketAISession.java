@@ -43,17 +43,17 @@ import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
-import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
-import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
@@ -188,7 +188,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 						CompletableFuture<Boolean> cf=state.getAiapp().generateVoice(state, last.getDisplayContent().toString(), audioId);
 						try {
 							if(cf.get()) {
-								last.setAudioId(audioId);
+								state.setAudioId(last,audioId);
 								state.postAudioComplete(last.getIdentifier(),audioId);
 								state.save();
 							}
@@ -212,10 +212,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		JsonObject jo=JsonParser.parseString(message).getAsJsonObject();
 		if(jo.has("message")) {
 			if(lock.compareAndSet(false, true)) {
-				refillChatBox(new MessageContents());
+				refillChatBox(MessageContents.EMPTY);
 				getCommandExec().submit(()->{
 					try {
-						getAiapp().handleSpeech(this,new MessageContents( jo.get("message").getAsString()));
+						getAiapp().handleSpeech(this,new MutableMessageContents( jo.get("message").getAsString()));
 						boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
 						if(hasAudioService&&!super.isAudioSession()) {
 							if(isLocalAudioEnabled!=hasAudioService) {
