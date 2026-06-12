@@ -43,7 +43,6 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
@@ -79,10 +78,8 @@ public class AISession implements ISaveData{
 		public String voiceModel="";
 	}
 
-	/** 保存对话历史条目的容器，提供对历史记录的增删改查 */
-	protected HistoryHolder history;
 	/** 会话的额外状态数据，包含轮次、阶段、使用统计等 */
-	protected ExtraData data;
+	protected ISaveData data;
 	/** 关联的 AI 应用程序实例，用于处理具体的 AI 逻辑（如生成回复） */
 	protected AIApplication aiapp;
 	/** 当前正在构建的推理内容（AI 生成过程中的中间思考文本）的缓冲区 */
@@ -106,15 +103,7 @@ public class AISession implements ISaveData{
 	 */
 	public AISession(String user, ISaveData data, AIApplication aiapp) {
 		super();
-		this.history = data.getHistory();
-		this.data = data.getData();
-		this.user = user;
-		this.aiapp = aiapp;
-	}
-	public AISession(String user, AIApplication aiapp) {
-		super();
-		this.history = new MemoryHistory();
-		this.data = new ExtraData();
+		this.data = data;
 		this.user = user;
 		this.aiapp = aiapp;
 	}
@@ -125,7 +114,7 @@ public class AISession implements ISaveData{
 	 * @return {@link HistoryHolder} 实例
 	 */
 	public HistoryHolder getHistory() {
-		return history;
+		return data.getHistory();
 	}
 
 	 /**
@@ -159,7 +148,7 @@ public class AISession implements ISaveData{
 	 */
 	public void appendLine(Role role, String content, boolean appendToContext) {
 		HistoryItem hi = null;
-		if (!history.isEmpty()) {
+		if (!getHistory().isEmpty()) {
 			hi = getLast();
 			if (role != hi.getRole() || (!hi.isValidContext() && appendToContext)) {
 				hi = null;
@@ -168,14 +157,14 @@ public class AISession implements ISaveData{
 		if (hi == null) {
 			
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi = history.add(role, content + "\n", currentReasoner, true);
+				hi = getHistory().add(role, content + "\n", currentReasoner, true);
 				currentReasoner = null;
 			}else {
-				hi = history.add(role, content + "\n", true);
+				hi = getHistory().add(role, content + "\n", true);
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 		} else {
-			history.appendLine(content, appendToContext);
+			getHistory().appendLine(content, appendToContext);
 			appendMessage(hi.getIdentifier(), content + "\n");
 		}
 	}
@@ -190,8 +179,8 @@ public class AISession implements ISaveData{
 	 */
 	public void appendCh(Role role, String ch, boolean appendToContext) {
 		HistoryItem hi = null;
-		if (!history.isEmpty()) {
-			hi = history.peekLast();
+		if (!getHistory().isEmpty()) {
+			hi = getHistory().peekLast();
 			if (role != hi.getRole() || (!hi.isValidContext() && appendToContext)) {
 				hi = null;
 			}
@@ -199,14 +188,14 @@ public class AISession implements ISaveData{
 		if (hi == null) {
 			
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi = history.add(role, ch, currentReasoner, true);
+				hi = getHistory().add(role, ch, currentReasoner, true);
 				currentReasoner = null;
 			}else {
-				hi = history.add(role, ch, true);
+				hi = getHistory().add(role, ch, true);
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 		} else {
-			history.append(ch, appendToContext);
+			getHistory().append(ch, appendToContext);
 			appendMessage(hi.getIdentifier(), ch);
 		}
 	}
@@ -219,8 +208,8 @@ public class AISession implements ISaveData{
 	 */
 	public void appendContextLine(Role role, String content) {
 		HistoryItem hi = null;
-		if (!history.isEmpty()) {
-			hi = history.peekLast();
+		if (!getHistory().isEmpty()) {
+			hi = getHistory().peekLast();
 			if (role != hi.getRole() || (!hi.isValidContext())) {
 				hi = null;
 			}
@@ -228,14 +217,14 @@ public class AISession implements ISaveData{
 		if (hi == null) {
 			
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi = history.add(role, content + "\n", currentReasoner, true);
+				hi = getHistory().add(role, content + "\n", currentReasoner, true);
 				currentReasoner = null;
 			}else {
-				hi = history.add(role, "", content + "\n");
+				hi = getHistory().add(role, "", content + "\n");
 			}
 			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 		} else {
-			history.appendContext(content + "\n");
+			getHistory().appendContext(content + "\n");
 		}
 	}
 
@@ -249,20 +238,20 @@ public class AISession implements ISaveData{
 	public void add(Role role, String content, boolean isValidContext) {
 		HistoryItem hi;
 		if (currentReasoner != null && role == Role.ASSISTANT) {
-			hi = history.add(role, content, currentReasoner, isValidContext);
+			hi = getHistory().add(role, content, currentReasoner, isValidContext);
 			currentReasoner = null;
 		}else {
-			hi = history.add(role, content, isValidContext);
+			hi = getHistory().add(role, content, isValidContext);
 		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
 	public void add(Role role, MessageContents content, boolean isValidContext) {
 		HistoryItem hi;
 		if (currentReasoner != null && role == Role.ASSISTANT) {
-			hi = history.add(role, content, currentReasoner, isValidContext);
+			hi = getHistory().add(role, content, currentReasoner, isValidContext);
 			currentReasoner = null;
 		}else {
-			hi = history.add(role, content, null, isValidContext);
+			hi = getHistory().add(role, content, null, isValidContext);
 		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
@@ -276,10 +265,10 @@ public class AISession implements ISaveData{
 	public void add(Role role, String displayContent, String contextContent) {
 		HistoryItem hi;
 		if (currentReasoner != null && role == Role.ASSISTANT) {
-			hi = history.add(role, displayContent, contextContent, currentReasoner);
+			hi = getHistory().add(role, displayContent, contextContent, currentReasoner);
 			currentReasoner = null;
 		}else {
-			hi = history.add(role, displayContent, contextContent);
+			hi = getHistory().add(role, displayContent, contextContent);
 		}
 		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
 	}
@@ -290,7 +279,7 @@ public class AISession implements ISaveData{
 	 * @param num 要移除的条目的标识符（参见 {@link HistoryItem#getIdentifier()}）
 	 */
 	public void removeOf(int num) {
-		history.removeOf(num);
+		getHistory().removeOf(num);
 		delMessage(num);
 	}
 
@@ -300,7 +289,7 @@ public class AISession implements ISaveData{
 	 * @return 被移除的最后一个 {@link HistoryItem} 对象
 	 */
 	public HistoryItem removeLast() {
-		HistoryItem removed = history.removeLast();
+		HistoryItem removed = getHistory().removeLast();
 		delMessage(removed.getIdentifier());
 		return removed;
 	}
@@ -310,7 +299,7 @@ public class AISession implements ISaveData{
 	 * @return 被移除的最后一个 {@link HistoryItem} 对象
 	 */
 	public HistoryItem deleteLast() {
-		HistoryItem removed = history.deleteLast();
+		HistoryItem removed = getHistory().deleteLast();
 		delMessage(removed.getIdentifier());
 		return removed;
 	}
@@ -320,7 +309,7 @@ public class AISession implements ISaveData{
 	 * @return 最后一个 {@link HistoryItem}，如果历史为空则返回 null
 	 */
 	public HistoryItem getLast() {
-		return history.peekLast();
+		return getHistory().peekLast();
 	}
 
 	/**
@@ -383,6 +372,7 @@ public class AISession implements ISaveData{
 	public void onGenComplete() {
 		setUpdated();
 		isGenerating = false;
+		data.flush();
 	}
 
 	/**
@@ -404,7 +394,7 @@ public class AISession implements ISaveData{
 		addStatUsage(usage);
 	}
 	public void addStatUsage(UsageIntf<?> usage) {
-		data.usage.add(usage);
+		getExtraData().usage.add(usage);
 	}
 	public boolean canGenerate() {
 		return true;
@@ -415,7 +405,7 @@ public class AISession implements ISaveData{
 	 * @return 使用量信息字符串
 	 */
 	public String getUsage() {
-		return data.usage.toString();
+		return getExtraData().usage.toString();
 	}
 
 	/**
@@ -424,10 +414,10 @@ public class AISession implements ISaveData{
 	 * @return 价格字符串
 	 */
 	public String getPrice() {
-		return data.usage.calculatePrice();
+		return getExtraData().usage.calculatePrice();
 	}
 	public float getTokens() {
-		return data.usage.getTotalTokenPrice();
+		return getExtraData().usage.getTotalTokenPrice();
 	}
 	/**
 	 * 获取当前对话阶段。
@@ -435,7 +425,7 @@ public class AISession implements ISaveData{
 	 * @return {@link ApplicationStage} 枚举值
 	 */
 	public ApplicationStage getStage() {
-		return data.stage;
+		return getExtraData().stage;
 	}
 	Map<String,Consumer<String>> pendingInputs=new ConcurrentHashMap<>();
 	public void requestUserInput(String input,String prompt,Consumer<String> consumer) {
@@ -455,30 +445,56 @@ public class AISession implements ISaveData{
 	 * @return 键值对映射，可用于存储自定义数据
 	 */
 	public Map<String, String> getExtra() {
-		return data.extraData;
+		return getExtraData().extraData;
 	}
-
+	public Map<String, String> getHistoryState() {
+		return getExtraData().extraData;
+	}
+	public String getUserName() {
+		return getExtraData().extraData.get("name");
+	}
+	public void setUserName(String name) {
+		getExtraData().extraData.put("name", name);
+	}
+	public String getLastSummary() {
+		return getHistoryState().get("lastSummary");
+	}
+	public void setLastSummary(String lastSummary) {
+		getHistoryState().put("lastSummary",lastSummary);
+	}
+	public String getBackground() {
+		return getExtraData().extraData.get("back");
+	}
+	public void setBackground(String back) {
+		getExtraData().extraData.put("back",back);
+	}
+	public String getCharacter() {
+		return getExtraData().extraData.get("chara");
+	}
+	public void setCharacter(String chara) {
+		getExtraData().extraData.put("chara",chara);
+	}
 	/**
 	 * 设置当前对话阶段。
 	 *
 	 * @param stage 新的阶段
 	 */
 	public void setStage(ApplicationStage stage) {
-		data.stage = stage;
+		getExtraData().stage = stage;
 	}
 
 	/**
 	 * 增加对话轮次计数（row + 1）。 每次完成一轮完整的对话交互后调用。
 	 */
 	public void addDialogRow() {
-		data.row++;
+		getExtraData().row++;
 	}
 
 	/**
 	 * 减少对话轮次计数（row - 1）。 当撤回一轮对话时调用。
 	 */
 	public void minDialogRow() {
-		data.row--;
+		getExtraData().row--;
 	}
 
 	/**
@@ -487,7 +503,7 @@ public class AISession implements ISaveData{
 	 * @return 最小轮次数
 	 */
 	public int getMinDialogRow() {
-		return data.minRow;
+		return getExtraData().minRow;
 	}
 
 	/**
@@ -496,7 +512,7 @@ public class AISession implements ISaveData{
 	 * @param minRow 新的最小轮次数
 	 */
 	public void setMinDialogRow(int minRow) {
-		data.minRow = minRow;
+		getExtraData().minRow = minRow;
 	}
 
 	/**
@@ -505,7 +521,7 @@ public class AISession implements ISaveData{
 	 * @return 当前轮次数
 	 */
 	public int getDialogRow() {
-		return data.row;
+		return getExtraData().row;
 	}
 
 	/**
@@ -514,7 +530,7 @@ public class AISession implements ISaveData{
 	 * @return {@link ApplicationState} 实例
 	 */
 	public ApplicationState getState() {
-		return data.state;
+		return getExtraData().state;
 	}
 
 	/**
@@ -539,10 +555,10 @@ public class AISession implements ISaveData{
 	 * @param rows 要减少的轮次数
 	 */
 	public void minDialogRows(int rows) {
-		data.row -= rows;
+		getExtraData().row -= rows;
 	}
 	public void setDialogRows(int rows) {
-		data.row = rows;
+		getExtraData().row = rows;
 	}
 
 	/**
@@ -551,7 +567,7 @@ public class AISession implements ISaveData{
 	 * @return 如果是音频会话则返回 true
 	 */
 	public boolean isAudioSession() {
-		return data.isAudioSession;
+		return getExtraData().isAudioSession;
 	}
 
 	/**
@@ -563,7 +579,7 @@ public class AISession implements ISaveData{
 	public MessageContents getReasonerContent() {
 		if (currentReasoner != null)
 			return currentReasoner;
-		if (!history.isEmpty() && getLast().getRole() == Role.ASSISTANT) {
+		if (!getHistory().isEmpty() && getLast().getRole() == Role.ASSISTANT) {
 			MessageContents reasoner=getLast().getReasoningContent();
 			return reasoner==null?null:reasoner;
 		}
@@ -627,8 +643,8 @@ public class AISession implements ISaveData{
 	 *
 	 * @return {@link ExtraData} 实例
 	 */
-	public ExtraData getData() {
-		return data;
+	public ExtraData getExtraData() {
+		return data.getExtraData();
 	}
 
 	public Future<?> onLoad() {
@@ -655,24 +671,30 @@ public class AISession implements ISaveData{
 		
 	}
 	public void setValidContext(HistoryItem hi, boolean sendable) {
-		history.setValidContext(hi, sendable);
+		getHistory().setValidContext(hi, sendable);
 	}
 	public void setDeleted(HistoryItem hi, boolean sendable) {
-		history.setDeleted(hi, sendable);
+		getHistory().setDeleted(hi, sendable);
 	}
 	public void setAudioId(HistoryItem hi, String audioId) {
-		history.setAudioId(hi, audioId);
+		getHistory().setAudioId(hi, audioId);
 	}
 	public void setAudioId(String audioId) {
-		history.setAudioId(history.peekLast(), audioId);
+		getHistory().setAudioId(getHistory().peekLast(), audioId);
 	}
 	public void setSendReasoner(HistoryItem hi, boolean sendReasoner) {
-		history.setSendReasoner(hi, sendReasoner);
+		getHistory().setSendReasoner(hi, sendReasoner);
 	}
 	public void setTokenLength(HistoryItem hi, long l) {
-		history.setTokenLength(hi, l);
+		getHistory().setTokenLength(hi, l);
 	}
 	public void setLastState(ApplicationState airet) {
-		history.setLastState(history.peekLast(), airet);
+		getHistory().setLastState(getHistory().peekLast(), airet);
+	}
+
+
+	@Override
+	public void flush() {
+		data.flush();
 	}
 }

@@ -54,7 +54,6 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
@@ -937,7 +936,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						} else
 							return new ResultDTO(404, "Chat does not exist");
 					}else
-						exd=state.getData();
+						exd=state.getExtraData();
 					return new ResultDTO(200,JsonBuilder.object().add("brief", exd.extraData.get("brief")).add("gameSetting", exd.extraData.get("charaset")).add("coreRule", exd.extraData.get("rules")).add("contextLimit",Integer.parseInt(exd.extraData.get("limit"))).add("url", "custom?chatid="+cid).end());		
 					
 				}
@@ -954,7 +953,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
 				AIApplication.saveDataFromJson(data));
 	}
-	public WebSocketAISession createSession(String uid, String rcid,ApplicationAttributes attribute, File data,String visibility){
+	public WebSocketAISession createSession(String uid, String rcid,ApplicationAttributes attribute, File data,String visibility) throws IOException{
 		long time = new Date().getTime();
 		try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,attribute) VALUES(?,?,?,?,?)")) {
 			ps2.setString(1, uid);
@@ -984,9 +983,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return createRawSession(uid,rcid,attribute,data);
 	}
-	public WebSocketAISession createRawSession(String uid, String rcid,ApplicationAttributes attribute, File data){
+	public WebSocketAISession createRawSession(String uid, String rcid,ApplicationAttributes attribute, File data) throws IOException{
 		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
-			new SavedData());
+			AIApplication.saveDataFromJson(data));
 	}
 	@HttpPath("/chatconfig")
 	@Adapter
@@ -1021,7 +1020,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		File data = new File(saveData, rcid + ".json");
 		if (state == null) {
-			state=createSession(uid,rcid,attr,data,"");
+			try {
+				state=createSession(uid,rcid,attr,data,"");
+			} catch (IOException e) {
+				e.printStackTrace();
+				return new ResultDTO(500,"加载失败");
+			}
 		}
 		if(state.onModifyAttempt()) {
 			try {
@@ -1029,7 +1033,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				state.getExtra().put("rules",obj.get("coreRule").getAsString());
 				state.getExtra().put("limit",obj.get("contextLimit").getAsString());
 				state.getExtra().put("brief",obj.get("brief").getAsString());
-				state.save();
+				state.flush();
 			}finally {
 				state.onModifyComplete();
 			}
@@ -1099,14 +1103,20 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					logger.info("AI " + cid + " Load Error");
 				}
 			if (state == null) {
-				if (isCreate) {
-					state = createSession( uid, cid, attr, data,attribute);
-					state.save();
-					logger.info("AI " + cid + " Created");
-				}else {
-					state = createRawSession(uid,cid,attr,data);
-					state.save();
-					logger.info("AI " + cid + " Created");
+				try{
+					if (isCreate) {
+						state = createSession( uid, cid, attr, data,attribute);
+						state.flush();
+						logger.info("AI " + cid + " Created");
+					}else {
+						state = createRawSession(uid,cid,attr,data);
+						state.flush();
+						logger.info("AI " + cid + " Created");
+					}
+				}catch(IOException e) {
+					e.printStackTrace();
+					res.write(500,"加载失败");
+					return;
 				}
 				
 			}

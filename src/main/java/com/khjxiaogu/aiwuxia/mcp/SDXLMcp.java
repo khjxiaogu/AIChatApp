@@ -1,22 +1,17 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -31,7 +26,7 @@ import com.khjxiaogu.aiwuxia.objectstorage.TOSUsage;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
-import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
@@ -54,6 +49,49 @@ public class SDXLMcp {
 				li.add(lora);
 			}
 		}
+	}
+	public static class PromptClass{
+		private final String prompt;
+		private final String promptText;
+		public PromptClass(String prompt) {
+			super();
+			this.prompt = cleanToken(prompt);
+			this.promptText = prompt;
+		}
+	    private static String cleanToken(String token) {
+	    	token = token.replaceAll(":[\\d.]+$", "").trim();
+	        while (token.startsWith("(") && token.endsWith(")")) {
+	        	token = token.substring(1, token.length() - 1).trim();
+	        }
+	        token = token.replaceAll(":[\\d.]+$", "").trim();
+	        while (token.startsWith("[") && token.endsWith("]")) {
+	        	token = token.substring(1, token.length() - 1).trim();
+	        }
+	        token = token.replaceAll(":[\\d.]+$", "").trim();
+	        return token;
+	    }
+		public PromptClass(String prompt, String promptText) {
+			super();
+			this.prompt = prompt;
+			this.promptText = promptText;
+		}
+		@Override
+		public String toString() {
+			return promptText;
+		}
+		@Override
+		public int hashCode() {
+			return Objects.hash(prompt);
+		}
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj) return true;
+			if (obj == null) return false;
+			if (getClass() != obj.getClass()) return false;
+			PromptClass other = (PromptClass) obj;
+			return Objects.equals(prompt, other.prompt);
+		}
+		
 	}
 	public static class LoraConfiguration{
 		public final String loraName;
@@ -109,17 +147,35 @@ public class SDXLMcp {
         return result.toString();
     }
     public static boolean matchWord(String text, String word) {
-        // 处理无效输入
         if (text == null || text.isEmpty() || word == null || word.isEmpty()) {
             return false;
         }
-        
-        // 使用正则表达式单词边界 \\b 确保全词匹配
-        // Pattern.quote 转义单词中的特殊字符
         String regex = "\\b" + Pattern.quote(word) + "\\b";
         Pattern pattern = Pattern.compile(regex);
         Matcher matcher = pattern.matcher(text);
         return matcher.find();
+    }
+    public static boolean validatePrompt(String prompt) {
+    	for(int i=0;i<prompt.length();i++){
+			if(prompt.codePointAt(i)>0x100) {
+				return false;
+			}
+		}
+    	return true;
+    }
+    public static String appendCommonPrompt(String prompt,Collection<PromptClass> commons) {
+    	Set<PromptClass> prompts=new LinkedHashSet<>(commons);
+		if(!prompt.isEmpty()) {
+			for(String s:prompt.split(",")) {
+				prompts.add(new PromptClass(s));
+			}
+		}
+		StringBuilder sb=new StringBuilder();
+		for(PromptClass s:prompts) {
+			sb.append(s).append(",");
+		}
+		sb.deleteCharAt(sb.length()-1);
+		return sb.toString();
     }
 	public static MCPTools create(AISession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,ResourceLock lock) {
 		MCPTools tools=new MCPTools();
@@ -129,9 +185,18 @@ public class SDXLMcp {
 		resolutions.put("3:4", new int[] { 1200, 1600 });
 		resolutions.put("4:3", new int[] { 1600, 1200 });
 		resolutions.put("1:1", new int[] { 1200, 1200 });
-		String[] commonNegatives="low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs,trademark,artist's name,username,watermark,signature,watermark,text,words".split(",");
-		tools.register(
-				new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
+		List<PromptClass> commonNegatives=new ArrayList<>();
+		for(String s:"low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs,trademark,artist's name,username,watermark,signature,watermark,text,words".split(",")) {
+			commonNegatives.add(new PromptClass(s));
+		}
+		List<PromptClass> commonPositive=new ArrayList<>();
+		for(String s:"(masterpiece),(best quality),(absurdres)".split(",")) {
+			commonPositive.add(new PromptClass(s));
+		}
+		if(!isNsfw)
+			commonNegatives.add(new PromptClass("nsfw","((nsfw))"));
+		
+		tools.register(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
 				.tool((data) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
@@ -139,7 +204,7 @@ public class SDXLMcp {
 					if (mtch.find()) {
 						String id = mtch.group(1);
 						try {
-							JsonObject datax = interrogate(tos.download(id));
+							JsonObject datax = interrogate(tos.download(id),lock);
 							StringBuilder sb=new StringBuilder("按可能性从大到小排列的提示词：");
 							for(String key:datax.keySet()) {
 								sb.append(key).append(",");
@@ -156,7 +221,7 @@ public class SDXLMcp {
 		
 		
 		tools.register(new ToolData.Builder("sdxl_gen_image",
-				"使用Stable Diffusion XL生成图片并发送，只允许生成单角色或风景图。")
+				"使用Stable Diffusion XL生成图片并发送。")
 				.putParam("positive", "正面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("negative", "负面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
@@ -169,49 +234,25 @@ public class SDXLMcp {
 						if (its == null)
 							return "不支持的分辨率设置";
 						String prompt=jo.get("positive").getAsString();
+						String negative=jo.get("negative").getAsString();
 						
-						String negative="";
-						if(jo.has("negative"))
-							negative=jo.get("negative").getAsString();
-						for(int i=0;i<prompt.length();i++){
-							if(prompt.codePointAt(i)>0x100) {
-								return "失败，提示词中有非英文/符号的内容。";
-							}
+						if(!validatePrompt(prompt)||!validatePrompt(negative)) {
+							return "失败，提示词中有非英文/符号的内容。";
 						}
-						for(int i=0;i<negative.length();i++){
-							if(negative.codePointAt(i)>0x100) {
-								return "失败，提示词中有非英文/符号的内容。";
-							}
-						}
+						prompt=appendCommonPrompt(prompt,commonPositive);
+						negative=appendCommonPrompt(negative,commonNegatives);
+						prompt=addLoras(prompt,lora);
+						
 						System.out.println(prompt);
+						System.out.println(negative);
 						try {
-							Set<LoraConfigurations> usingLoras=new HashSet<>();
-							for(Entry<String, LoraConfigurations> s:lora.entrySet()) {
-								if(matchWord(prompt,s.getKey()))
-									usingLoras.add(s.getValue());
-							}
-							prompt=prompt+processLoraConfigurations(usingLoras);
-							Set<String> negatives=new HashSet<>(Arrays.asList(commonNegatives));
-							if(!negative.isEmpty()) {
-								for(String s:negative.split(",")) {
-									negatives.add(s.trim());
-								}
-							}
-							StringBuilder sb=new StringBuilder();
-							for(String s:negatives) {
-								sb.append(s).append(",");
-							}
-							sb.deleteCharAt(sb.length()-1);
-							negative=sb.toString();
-							byte[] image=generateImage("(masterpiece,best quality,absurdres),"+(isNsfw?"nsfw,":"")+prompt,
-									(isNsfw?"":"((nsfw)),")+negative
+							byte[] image=generateImage(prompt,
+									negative
 									,30,
 									its[0],
 									its[1],lock);
-
 							state.addUsage(new TOSUsage(image.length));
 							String fn = tos.uploadIfNotExists(image);
-	
 							return "生成成功，图片id为："+fn;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -223,10 +264,11 @@ public class SDXLMcp {
 					}
 				}).build());
 		tools.register(new ToolData.Builder("regional_image",
-				"使用Stable Diffusion XL搭配分区提示词生成图片并发送，不需要包含画质提示词，提示词必须是纯英文。仅可生成2人图片。")
+				"使用Stable Diffusion XL搭配分区提示词生成图片并发送，不需要包含画质提示词，提示词必须是纯英文。")
 				.putParam("common_positive", "共用正面提示词")
 				.putParam("first_positive", "第一区域提示词")
 				.putParam("second_positive", "第二区域提示词")
+				.putParam("common_negative", "共用负面提示词")
 				.putParam("placement", "区域排布，必须是row/col之一，col表示两个区域呈现左右结构，row表示两个区域呈现上下结构")
 				.putParam("area_ratio", "区域比例，必须是以x:y的格式，其中x是第一区域面积占比，y是第二区域面积占比，x和y必须为整数。例如1:1")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
@@ -255,28 +297,23 @@ public class SDXLMcp {
 						if(ratios.length!=2) {
 							return "区域比例错误，必须是x:y的格式";
 						}
+
+						String prompt=appendCommonPrompt(jo.get("common_positive").getAsString(),commonPositive);
+						String negative=appendCommonPrompt(jo.get("common_negative").getAsString(),commonNegatives);
+						prompt=addLoras(prompt,lora);
 						String ratio=ratios[0]+","+ratios[1];
-						String prompt=jo.get("common_positive").getAsString();
-						prompt=prompt+" BREAK ";
-						prompt=prompt+jo.get("first_positive").getAsString()+" BREAK ";
+						prompt=prompt+" BREAK\n";
+						prompt=prompt+jo.get("first_positive").getAsString()+" BREAK\n";
 						prompt=prompt+jo.get("second_positive").getAsString();
+						prompt=addLoras(prompt,lora);
 						System.out.println(prompt);
+						System.out.println(negative);
 						try {
-							Set<LoraConfigurations> usingLoras=new HashSet<>();
-							for(Entry<String, LoraConfigurations> s:lora.entrySet()) {
-								if(matchWord(prompt,s.getKey()))
-									usingLoras.add(s.getValue());
-							}
-							prompt=prompt+processLoraConfigurations(usingLoras);
-							byte[] image=generateRegionalImage("(masterpiece,best quality,absurdres),"+prompt,
-									"((nsfw)),low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs, trademark,artist's name, username, watermark,signature, watermark,text, words,"
-									,30,
+							byte[] image=generateRegionalImage(prompt,negative,30,
 									its[0],
 									its[1],isRow,ratio,lock);
 							state.addUsage(new TOSUsage(image.length));
 							String fn = tos.uploadIfNotExists(image);
-							
-
 							return "生成成功，图片id为："+fn;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -288,8 +325,9 @@ public class SDXLMcp {
 					}
 				}).build());
 		tools.register(new ToolData.Builder("image_to_image",
-				"使用Stable Diffusion XL的图生图功能。仅可生成单人图片或风景画。")
-				.putParam("positive", "正面提示词，必须是纯英文，不需要包含画质提示词。")
+				"使用Stable Diffusion XL的图生图功能。")
+				.putParam("positive", "正面提示词，必须是纯英文。")
+				.putParam("negative", "负面提示词，必须是纯英文。")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
 				.tool((data) -> {
@@ -301,17 +339,16 @@ public class SDXLMcp {
 						if (its == null)
 							return "不支持的分辨率设置";
 						String prompt=jo.get("positive").getAsString();
+						String negative=jo.get("negative").getAsString();
 						String pid=jo.get("picture_id").getAsString();
+						prompt=appendCommonPrompt(prompt,commonPositive);
+						negative=appendCommonPrompt(negative,commonNegatives);
+						prompt=addLoras(prompt,lora);
 						System.out.println(prompt);
+						System.out.println(negative);
 						try {
-							Set<LoraConfigurations> usingLoras=new HashSet<>();
-							for(Entry<String, LoraConfigurations> s:lora.entrySet()) {
-								if(matchWord(prompt,s.getKey()))
-									usingLoras.add(s.getValue());
-							}
-							prompt=prompt+processLoraConfigurations(usingLoras);
-							byte[] image=generateImage2Image(tos.download(pid),"(masterpiece,best quality,absurdres),"+prompt,
-									"((nsfw)),low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs, trademark,artist's name, username, watermark,signature, watermark,text, words,"
+
+							byte[] image=generateImage2Image(tos.download(pid),prompt,negative
 									,30,
 									its[0],
 									its[1],lock);
@@ -332,106 +369,83 @@ public class SDXLMcp {
 				}).build());
 		return tools;
 	}
-
-	public static JsonObject interrogate(byte[] image) throws IOException {
-		HttpURLConnection conn = null;
-		try {
-			JsonObject payload = new JsonObject();
-			payload.addProperty("image", Base64.getEncoder().encodeToString(image));
-			payload.addProperty("model", "wd-v1-4-moat-tagger.v2");
-			payload.addProperty("threshold", 0.2);
-			
-
-			URL url = new URL(System.getProperty("sdwebuiUrl") + "/tagger/v1/interrogate");
-			conn = (HttpURLConnection) url.openConnection();
-			conn.setRequestMethod("POST");
-			conn.setRequestProperty("Content-Type", "application/json; utf-8");
-			conn.setRequestProperty("Accept", "application/json");
-			conn.setDoOutput(true);
-
-			try (OutputStream os = conn.getOutputStream()) {
-				byte[] input = payload.toString().getBytes(StandardCharsets.UTF_8);
-				os.write(input, 0, input.length);
-			}
-
-			int responseCode = conn.getResponseCode();
-			if (responseCode != HttpURLConnection.HTTP_OK) {
-				System.err.println("HTTP 错误: " + responseCode);
-				try (BufferedReader br = new BufferedReader(
-						new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
-					StringBuilder error = new StringBuilder();
-					String line;
-					while ((line = br.readLine()) != null) {
-						error.append(line);
-					}
-					System.err.println("错误详情: " + error);
-				}
-				throw new IOException("server responsed"+responseCode);
-			}
-
-			JsonObject jsonResponse = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
-			url = new URL(System.getProperty("sdwebuiUrl") + "/tagger/v1/unload-interrogators");
-			conn = (HttpURLConnection) url.openConnection();
-			conn.setRequestMethod("POST");
-			conn.setRequestProperty("Content-Type", "application/json; utf-8");
-			conn.setRequestProperty("Accept", "application/json");
-			conn.setDoOutput(false);
-			conn.getResponseCode();
-
-			return jsonResponse.get("caption").getAsJsonObject().get("tag").getAsJsonObject();
-
-		} finally {
-			if (conn != null) {
-				conn.disconnect();
-			}
+	public static String addLoras(String prompt,Map<String, LoraConfigurations> lora) {
+		Set<LoraConfigurations> usingLoras=new HashSet<>();
+		for(Entry<String, LoraConfigurations> s:lora.entrySet()) {
+			if(matchWord(prompt,s.getKey()))
+				usingLoras.add(s.getValue());
 		}
+		return prompt+processLoraConfigurations(usingLoras);
+	}
+	public static JsonObject interrogate(byte[] image,ResourceLock lock) throws IOException {
+		JsonObject payload = new JsonObject();
+		payload.addProperty("image", Base64.getEncoder().encodeToString(image));
+		payload.addProperty("model", "wd-v1-4-moat-tagger.v2");
+		payload.addProperty("threshold", 0.2);
+		JsonObject jsonResponse;
+		try(ResourcePermit l=lock.acquire(3))  {
+			jsonResponse = HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
+			.header("Accept", "application/json")
+			.header("Content-Type", "application/json; utf-8")
+			.url("/tagger/v1/interrogate")
+			.post()
+			.readJson();
+			HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
+			.header("Accept", "application/json")
+			.header("Content-Type", "application/json; utf-8")
+			.url("/tagger/v1/unload-interrogators")
+			.post(false).readString();
+		}
+		return jsonResponse.get("caption").getAsJsonObject().get("tag").getAsJsonObject();
 	}
 	public static byte[] generateImage(String prompt, String negativePrompt, int steps, int width, int height,ResourceLock lock) throws IOException {
-		HttpURLConnection conn = null;
-		try {
-			JsonObject payload = new JsonObject();
-			payload.addProperty("prompt", prompt);
-			payload.addProperty("negative_prompt", negativePrompt);
-			payload.addProperty("steps", steps);
-			payload.addProperty("width", width);
-			payload.addProperty("height", height);
-			payload.addProperty("restore_faces", false);
-			payload.addProperty("sampler_name", "DPM++ 2M");
+		JsonObject payload = new JsonObject();
+		payload.addProperty("prompt", prompt);
+		payload.addProperty("negative_prompt", negativePrompt);
+		payload.addProperty("steps", steps);
+		payload.addProperty("width", width);
+		payload.addProperty("height", height);
+		payload.addProperty("restore_faces", false);
+		payload.addProperty("sampler_name", "DPM++ 2M");
 
-			try(ResourcePermit l=lock.acquire(12)) {
-				URL url = new URL(System.getProperty("sdwebuiUrl") + "/sdapi/v1/txt2img");
-				conn = (HttpURLConnection) url.openConnection();
-				conn.setRequestMethod("POST");
-				conn.setRequestProperty("Content-Type", "application/json; utf-8");
-				conn.setRequestProperty("Accept", "application/json");
-				conn.setDoOutput(true);
-	
-				try (OutputStream os = conn.getOutputStream()) {
-					byte[] input = payload.toString().getBytes(StandardCharsets.UTF_8);
-					os.write(input, 0, input.length);
-				}
-	
-				int responseCode = conn.getResponseCode();
-				if (responseCode != HttpURLConnection.HTTP_OK) {
-					System.err.println("HTTP 错误: " + responseCode);
-					try (BufferedReader br = new BufferedReader(
-							new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
-						StringBuilder error = new StringBuilder();
-						String line;
-						while ((line = br.readLine()) != null) {
-							error.append(line);
-						}
-						System.err.println("错误详情: " + error);
-					}
-					throw new IOException("server responsed"+responseCode);
-				}
-			}
-
-
-			JsonObject jsonResponse = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
-			JsonArray images = jsonResponse.get("images").getAsJsonArray();
-			for (int i = 0; i < images.size(); i++) {
-				try {
+		JsonObject jsonResponse;
+		try(ResourcePermit l=lock.acquire(12))  {
+			jsonResponse = HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
+			.header("Accept", "application/json")
+			.header("Content-Type", "application/json; utf-8")
+			.url("/sdapi/v1/txt2img")
+			.post()
+			.readJson();
+		}
+		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
+	}
+	public static byte[] generateImage2Image(byte[] baseImg,String prompt, String negativePrompt, int steps, int width, int height,ResourceLock lock) throws IOException {
+		JsonObject payload = new JsonObject();
+		payload.add("init_images", JsonBuilder.array().add(Base64.getEncoder().encodeToString(baseImg)).end());
+		payload.addProperty("prompt", prompt);
+		payload.addProperty("negative_prompt", negativePrompt);
+		payload.addProperty("steps", steps);
+		payload.addProperty("width", width);
+		payload.addProperty("height", height);
+		payload.addProperty("restore_faces", false);
+		payload.addProperty("sampler_name", "DPM++ 2M");
+		payload.addProperty("resize_mode", 0);
+		payload.addProperty("denoising_strength", 0.8);
+		JsonObject jsonResponse;
+		try(ResourcePermit l=lock.acquire(12))  {
+			jsonResponse = HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
+			.header("Accept", "application/json")
+			.header("Content-Type", "application/json; utf-8")
+			.url("/sdapi/v1/img2img")
+			.post()
+			.readJson();
+		}
+		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
+		
+	}
+	public static byte[] getFirstImage(JsonArray images) {
+		for (int i = 0; i < images.size(); i++) {
+			try {
 				String base64Image = images.get(i).getAsString();
 
 				if (base64Image.contains(",")) {
@@ -439,168 +453,53 @@ public class SDXLMcp {
 				}
 				byte[] imageBytes = Base64.getDecoder().decode(base64Image);
 				return imageBytes;
-				}catch(Exception ex) {
-					ex.printStackTrace();
-				}
-			}
-
-		} finally {
-			if (conn != null) {
-				conn.disconnect();
-			}
-		}
-		return null;
-	}
-	public static byte[] generateImage2Image(byte[] baseImg,String prompt, String negativePrompt, int steps, int width, int height,ResourceLock lock) throws IOException {
-		HttpURLConnection conn = null;
-		try {
-			JsonObject payload = new JsonObject();
-
-			payload.add("init_images", JsonBuilder.array().add(Base64.getEncoder().encodeToString(baseImg)).end());
-			payload.addProperty("prompt", prompt);
-			payload.addProperty("negative_prompt", negativePrompt);
-			payload.addProperty("steps", steps);
-			payload.addProperty("width", width);
-			payload.addProperty("height", height);
-			payload.addProperty("restore_faces", false);
-			payload.addProperty("sampler_name", "DPM++ 2M");
-			payload.addProperty("resize_mode", 0);
-			payload.addProperty("denoising_strength", 0.8);
-			try(ResourcePermit l=lock.acquire(12))  {
-				URL url = new URL(System.getProperty("sdwebuiUrl") + "/sdapi/v1/img2img");
-				conn = (HttpURLConnection) url.openConnection();
-				conn.setRequestMethod("POST");
-				conn.setRequestProperty("Content-Type", "application/json; utf-8");
-				conn.setRequestProperty("Accept", "application/json");
-				conn.setDoOutput(true);
-	
-				try (OutputStream os = conn.getOutputStream()) {
-					byte[] input = payload.toString().getBytes(StandardCharsets.UTF_8);
-					os.write(input, 0, input.length);
-				}
-	
-				int responseCode = conn.getResponseCode();
-				if (responseCode != HttpURLConnection.HTTP_OK) {
-					System.err.println("HTTP 错误: " + responseCode);
-					try (BufferedReader br = new BufferedReader(
-							new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
-						StringBuilder error = new StringBuilder();
-						String line;
-						while ((line = br.readLine()) != null) {
-							error.append(line);
-						}
-						System.err.println("错误详情: " + error);
-					}
-					throw new IOException("server responsed"+responseCode);
-				}
-
-
-			}
-			JsonObject jsonResponse = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
-			JsonArray images = jsonResponse.get("images").getAsJsonArray();
-			for (int i = 0; i < images.size(); i++) {
-				try {
-					String base64Image = images.get(i).getAsString();
-
-					if (base64Image.contains(",")) {
-						base64Image = base64Image.split(",", 2)[1];
-					}
-					byte[] imageBytes = Base64.getDecoder().decode(base64Image);
-					return imageBytes;
-				}catch(Exception ex) {
-					ex.printStackTrace();
-				}
-			}
-
-		} finally {
-			if (conn != null) {
-				conn.disconnect();
+			}catch(Exception ex) {
+				ex.printStackTrace();
 			}
 		}
 		return null;
 	}
 	public static byte[] generateRegionalImage(String prompt, String negativePrompt, int steps, int width, int height,boolean isRow,String ratio,ResourceLock lock) throws IOException {
-		HttpURLConnection conn = null;
-		try {
-			JsonObject payload = new JsonObject();
-			payload.addProperty("prompt", prompt);
-			payload.addProperty("negative_prompt", negativePrompt);
-			payload.addProperty("steps", steps);
-			payload.addProperty("width", width);
-			payload.addProperty("height", height);
-			payload.addProperty("restore_faces", false);
-			payload.addProperty("sampler_name", "DPM++ 2M");
-			payload.add("alwayson_scripts", JsonBuilder.object().object("Regional Prompter").array("args")
-					.add(true)
-					.add(false)
-					.add("Matrix")
-					.add(isRow?"Rows":"Columns")
-					.add("Mask")
-					.add("Prompt")
-					.add(ratio)
-					.add("0.2")
-					.add(false)
-					.add(true)
-					.add(false)
-					.add("Attention")
-					.array().add(false).end()
-					.add("0")
-					.add("0")
-					.add("0.4")
-					.add(JsonNull.INSTANCE)
-					.add("0")
-					.add("0")
-					.add(false).end().end().end());
-			try(ResourcePermit l=lock.acquire(12)) {
-				URL url = new URL(System.getProperty("sdwebuiUrl") + "/sdapi/v1/txt2img");
-				conn = (HttpURLConnection) url.openConnection();
-				conn.setRequestMethod("POST");
-				conn.setRequestProperty("Content-Type", "application/json; utf-8");
-				conn.setRequestProperty("Accept", "application/json");
-				conn.setDoOutput(true);
-	
-				try (OutputStream os = conn.getOutputStream()) {
-					byte[] input = payload.toString().getBytes(StandardCharsets.UTF_8);
-					os.write(input, 0, input.length);
-				}
-	
-				int responseCode = conn.getResponseCode();
-				if (responseCode != HttpURLConnection.HTTP_OK) {
-					System.err.println("HTTP 错误: " + responseCode);
-					try (BufferedReader br = new BufferedReader(
-							new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
-						StringBuilder error = new StringBuilder();
-						String line;
-						while ((line = br.readLine()) != null) {
-							error.append(line);
-						}
-						System.err.println("错误详情: " + error);
-					}
-					throw new IOException("server responsed"+responseCode);
-				}
-			}
-			JsonObject jsonResponse = JsonParser.parseString(FileUtil.readString(conn.getInputStream())).getAsJsonObject();
-			JsonArray images = jsonResponse.get("images").getAsJsonArray();
-			for (int i = 0; i < images.size(); i++) {
-				try {
-					String base64Image = images.get(i).getAsString();
-
-					if (base64Image.contains(",")) {
-						base64Image = base64Image.split(",", 2)[1];
-					}
-					byte[] imageBytes = Base64.getDecoder().decode(base64Image);
-					return imageBytes;
-				}catch(Exception ex) {
-					ex.printStackTrace();
-				}
-			}
-
-		} finally {
-			if (conn != null) {
-				conn.disconnect();
-			}
+		JsonObject payload = new JsonObject();
+		payload.addProperty("prompt", prompt);
+		payload.addProperty("negative_prompt", negativePrompt);
+		payload.addProperty("steps", steps);
+		payload.addProperty("width", width);
+		payload.addProperty("height", height);
+		payload.addProperty("restore_faces", false);
+		payload.addProperty("sampler_name", "DPM++ 2M");
+		payload.add("alwayson_scripts", JsonBuilder.object().object("Regional Prompter").array("args")
+				.add(true)
+				.add(false)
+				.add("Matrix")
+				.add(isRow?"Rows":"Columns")
+				.add("Mask")
+				.add("Prompt")
+				.add(ratio)
+				.add("0.2")
+				.add(false)
+				.add(true)
+				.add(false)
+				.add("Attention")
+				.array().add(false).end()
+				.add("0")
+				.add("0")
+				.add("0.4")
+				.add(JsonNull.INSTANCE)
+				.add("0")
+				.add("0")
+				.add(false).end().end().end());
+		JsonObject jsonResponse;
+		try(ResourcePermit l=lock.acquire(12))  {
+			jsonResponse = HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
+			.header("Accept", "application/json")
+			.header("Content-Type", "application/json; utf-8")
+			.url("/sdapi/v1/txt2img")
+			.post()
+			.readJson();
 		}
-		return null;
+		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
+
 	}
 
 }

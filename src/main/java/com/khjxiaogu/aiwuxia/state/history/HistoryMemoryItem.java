@@ -79,6 +79,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	 *
 	 * @return 前一条目的标识符，-1 表示无前驱
 	 */
+	@Override
 	public int getPrevIdentifier() {
 		return prevIdentifier;
 	}
@@ -88,6 +89,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	 *
 	 * @param prevIdentifier 前一条目的标识符
 	 */
+	@Override
 	public void setPrevIdentifier(int prevIdentifier) {
 		this.prevIdentifier = prevIdentifier;
 	}

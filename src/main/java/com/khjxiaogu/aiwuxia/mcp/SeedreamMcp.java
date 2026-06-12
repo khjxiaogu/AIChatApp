@@ -64,25 +64,8 @@ public class SeedreamMcp {
 						}
 						return "参数错误："+sb.toString();
 					}
-					Builder b=AIRequest.builder("videoAgent").modelHint("").taskType(TaskType.STORY).strength(ReasoningStrength.MEDIUM).temperature(0.2f).maxTokens(16384);
-					b.addHistoryItem(Role.SYSTEM, "你是一名艺术家，请根据用户输入写一份详细的即梦（豆包）AI图片生成提示词，使用“图一”“图二”等引用参考图，开头说明每个参考图的指代哪个人物，描述人物时请写全名或者图片编号，禁止使用一切其他代称。输出不含markdown格式。输出需要包含“图片风格”、“参考图说明”、“图片内容”。图片内容需要扩写至150字左右，你需要发挥想象力。");
-					b.modelHint("deepseek/pro");
-					b.addHistoryItem(Role.USER, jo.get("prompt").getAsString());
-						// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
-						// true);
-						//
-					AIRequest request=b.build();
-					String lprompt;
-					try {
-						AIOutput output=LLMConnector.call(request);
-						FileUtil.printAndCollectContent(output.getReasoner());
-						lprompt=FileUtil.printAndCollectContent(output.getContent());
-					} catch (ModelRouteException | IOException e) {
-						e.printStackTrace();
-						return "agent调用失败，请重试";
-					}
 					
-					CompletableFuture<Void> cf=jig.generateImage(links, lprompt).thenApply(t -> {
+					CompletableFuture<Void> cf=jig.generateImage(links, jo.get("prompt").getAsString()).thenApply(t -> {
 
 						state.addUsage(new TOSUsage(t.length));
 						try {

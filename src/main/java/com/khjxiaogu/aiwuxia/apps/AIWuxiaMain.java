@@ -191,10 +191,11 @@ public class AIWuxiaMain extends AIApplication {
 					}
 				}
 				if(lasthi!=null)
-					state.getExtra().put("lastSummary", constructSystem(lasthi.getLastState()));
+					state.setLastSummary(constructSystem(history.getStateAt(lasthi)));
 			}
-			if(state.getExtra().containsKey("lastSummary")) {
-				builder.addHistoryItem(Role.SYSTEM, state.getExtra().get("lastSummary"));
+			String lastSummary=state.getLastSummary();
+			if(lastSummary!=null) {
+				builder.addHistoryItem(Role.SYSTEM, lastSummary);
 			}
 			it=history.validContextIterator();
 			while(it.hasNext()) {
@@ -224,8 +225,10 @@ public class AIWuxiaMain extends AIApplication {
 	}
 
 	public void provideInitial(AISession state) {
-		provideNames(state);
-		state.setStage(ApplicationStage.NAMING);
+		if(state.getStage()!=ApplicationStage.STARTED) {
+			provideNames(state);
+			state.setStage(ApplicationStage.NAMING);
+		}
 	}
 
 	public ApplicationState precessResponse(AIOutput op, AISession state) throws IOException {

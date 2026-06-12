@@ -140,8 +140,10 @@ public class AIArticleMain extends AIApplication {
 	}
 
 	public void provideInitial(AISession state) {
-		state.add(Role.ASSISTANT,"请提供写作内容要求",false);
-		state.setStage(ApplicationStage.STARTED);
+		if(state.getStage()!=ApplicationStage.STARTED) {
+			state.add(Role.ASSISTANT,"请提供写作内容要求",false);
+			state.setStage(ApplicationStage.STARTED);
+		}
 	}
 
 	public ApplicationState precessResponse(BufferedReader scan, AISession state) throws IOException {

@@ -83,7 +83,7 @@ public interface MessageContents extends Iterable<MessageContent> {
 	 * 反序列化时自动识别数组元素类型并还原为对应的实现类。
 	 * </p>
 	 */
-	public static class Serilizer implements JsonSerializer<MessageContents>, JsonDeserializer<MessageContents> {
+	public static class Serilizer<T extends MessageContents> implements JsonSerializer<T>, JsonDeserializer<T> {
 
 		/**
 		 * 从 JSON 元素反序列化为 {@link MutableMessageContents}。
@@ -101,8 +101,9 @@ public interface MessageContents extends Iterable<MessageContent> {
 		 * @return 反序列化得到的 {@link MessageContents}
 		 * @throws JsonParseException 如果缺少 {@code "type"} 字段或类型无效
 		 */
+		@SuppressWarnings("unchecked")
 		@Override
-		public MessageContents deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context)
+		public T deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context)
 				throws JsonParseException {
 			MutableMessageContents content = new MutableMessageContents();
 			if (json.isJsonArray()) {
@@ -124,7 +125,7 @@ public interface MessageContents extends Iterable<MessageContent> {
 			} else if (json.isJsonPrimitive()) {
 				content.append(json.getAsString());
 			}
-			return content;
+			return (T) content;
 		}
 
 		/**
@@ -140,7 +141,7 @@ public interface MessageContents extends Iterable<MessageContent> {
 		 * @return JSON 数组元素
 		 */
 		@Override
-		public JsonElement serialize(MessageContents src, Type typeOfSrc, JsonSerializationContext context) {
+		public JsonElement serialize(T src, Type typeOfSrc, JsonSerializationContext context) {
 			JsonArray data = new JsonArray();
 			for (MessageContent message : src) {
 				if (message instanceof PlainText) {

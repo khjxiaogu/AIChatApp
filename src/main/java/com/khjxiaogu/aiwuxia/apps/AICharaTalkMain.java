@@ -27,9 +27,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
@@ -43,9 +41,9 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
+import com.khjxiaogu.aiwuxia.state.GsonHelper;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -54,8 +52,8 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.HistoryCompacter;
+import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
 import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
-import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceTagger;
@@ -101,13 +99,13 @@ public class AICharaTalkMain extends AIApplication {
 				validator=AttributeValidator.fromJson(readFile(validfile));
 			File adrp=new File(model, "replacements.json");
 			if(adrp.exists())
-				replacements = gs.fromJson(readFile(adrp), Map.class);
+				replacements = GsonHelper.getStorageGson().fromJson(readFile(adrp), Map.class);
 			if(new File(model,"chara.json").exists()) {
-				character=gs.fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
+				character=GsonHelper.getStorageGson().fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
 				
 			}
 			if(new File(model,"back.json").exists()) {
-				back=gs.fromJson(readFile(new File(model,"back.json")), SceneSelector.class);
+				back=GsonHelper.getStorageGson().fromJson(readFile(new File(model,"back.json")), SceneSelector.class);
 				
 			}
 		} catch (IOException e) {
@@ -199,106 +197,34 @@ public class AICharaTalkMain extends AIApplication {
 		}
 
 	}
-	@Override
-	public void onload(AISession state) {
-		if(state.getExtra().containsKey("lastSummary")&&!state.getExtra().containsKey("永久记忆")) {
-			state.onGenerateStart();
-			state.sendNotice("系统正在修复历史记录中，请稍候。");
-			try {
-				runFullCompact(state);
-			} catch (ModelRouteException | IOException e) {
-				e.printStackTrace();
-			}
-			state.onGenComplete();
-		}
-	}
 
-
-	@Override
-	public void runFullCompact(AISession state) throws ModelRouteException, IOException {
-		Iterator<HistoryItem> it=state.getHistory().iterator();
-		int len=0;
-		StringBuilder summery=new StringBuilder();
-		compactor.clearHistoryState(state.getExtra());
-		while(it.hasNext()) {
-			HistoryItem hi=it.next();
-			long tokenLen=hi.getTokenLength();
-			if(tokenLen==0) {
-				state.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
-			}
-			len+=tokenLen;
-			if(hi.getRole()!=Role.SYSTEM) {
-				summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getDisplayContent()).append("\n");
-			}
-			if(len>60000) {
-				len=0;
-				String str=summery.toString();
-				summery=new StringBuilder();
-				compactor.compactHistory(state, state.getExtra(), str,charaset,state::addUsage);
-			}
-		}
-		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
-	}
 	public String constructNameState(String name){
 		return "用户是主角，姓名为"+name+"，请直接用姓名称呼主角，不要用“主角”二字指代主角。";
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 		Builder b=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.WEAK).temperature(1.3f).maxTokens(1000);
-		b.addHistoryItem(Role.SYSTEM, system+constructNameState(state.getExtra().get("name")));
+		b.addHistoryItem(Role.SYSTEM, system+constructNameState(state.getUserName()));
 
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			
-			int len=0;
-			Iterator<HistoryItem> it=history.validContextIterator();
-			while(it.hasNext()) {
-				HistoryItem hi=it.next();
-				long tokenLen=hi.getTokenLength();
-				if(tokenLen==0) {
-					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
-				}
-				len+=tokenLen;
-				
-			}
-			if(len>=150000) {//more than 100000 text:about 60k context,remove until 10000
-				StringBuilder summery=new StringBuilder();
-				List<HistoryItem> his=new ArrayList<>();
-				it=history.validContextIterator();
-				while(it.hasNext()) {//calculate total dialog rows
-					HistoryItem hi=it.next();
-					len-=hi.getTokenLength();
-					
-					if(hi.getRole()!=Role.SYSTEM) {
-						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getContextContent()).append("\n");
-					}
-					his.add(hi);
-					if(hi.getRole()==Role.ASSISTANT) {
-						if(len<=20000) {
-							break;
-						}
-					}
-					
-				}
-				compactor.compactHistory(state ,state.getExtra(), summery.toString(),charaset,state::addUsage);
-				state.getExtra().put("lastSummary",compactor.constructHistory(state.getExtra()));
-				his.forEach(t->state.setValidContext(t,false));
+			HistoryCompactor.compact(history, 150000, 20000, t->getRoleName(state,t)+"：", s->{
+				compactor.compactHistory(state ,state.getHistoryState(), s,charaset,state::addUsage);
+				String summary=compactor.constructHistory(state.getHistoryState());
+				state.setLastSummary(summary);
 				state.setDialogRows((int) (history.getContextLimit()-5));
+			});
+			String lastSummary=state.getLastSummary();
+			if(lastSummary!=null) {
+				b.addHistoryItem(Role.SYSTEM, lastSummary);
 			}
-			if(state.getExtra().containsKey("lastSummary")) {
-				b.addHistoryItem(Role.SYSTEM, state.getExtra().get("lastSummary"));
-			}
-			it=history.validContextIterator();
+			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
 				b.addHistoryItem(hi);
 			}
-				
 		}
-		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
-		// true);
-
 		b.prefix("==对话==");
 		return b.build();
 
@@ -314,27 +240,13 @@ public class AICharaTalkMain extends AIApplication {
 		return sb.toString();
 
 	}
-	public String constructSummaryBackLog(AISession state) {
-		StringBuilder sb = new StringBuilder("");
-		Iterator<HistoryItem> it=state.getHistory().validContextIterator();
-		if(state.getExtra().containsKey("lastSummary")) {
-			sb.append( state.getExtra().get("lastSummary"));
-		}
-		while(it.hasNext()) {
-			HistoryItem hs=it.next();
-				sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContextContent()).append("\n");
-		}
-
-		return sb.toString();
-
-	}
 	public void sendNamingPrompt(AISession state) {
 		state.requestUserInput("name", "请输入玩家姓名，名称不得多于6字符",(ret)->{
 			if (state.getStage() == ApplicationStage.NAMING) {
 				if(ret.length()>6) {
 					sendNamingPrompt(state);
 				}else {
-					state.getExtra().put("name", ret);
+					state.setUserName(ret);
 					state.setStage(ApplicationStage.STARTED);
 					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
 				}
@@ -342,9 +254,10 @@ public class AICharaTalkMain extends AIApplication {
 		});
 	}
 	public void provideInitial(AISession state) {
-		state.setStage(ApplicationStage.NAMING);
-		this.sendNamingPrompt(state);
-
+		if(state.getStage()!=ApplicationStage.STARTED) {
+			state.setStage(ApplicationStage.NAMING);
+			this.sendNamingPrompt(state);
+		}
 	}
 
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
@@ -355,8 +268,8 @@ public class AICharaTalkMain extends AIApplication {
 		String last;
 		StringBuilder sendContent=new StringBuilder();
 		StringBuilder content=new StringBuilder();
-		String oldchara=state.getExtra().get("chara");
-		String oldbg=state.getExtra().get("back");
+		String oldchara=state.getCharacter();
+		String oldbg=state.getBackground();
 		String audioId=null;
 
 		SequentialStateExecutor status=new SequentialStateExecutor(null,null,null,()->{
@@ -466,14 +379,14 @@ public class AICharaTalkMain extends AIApplication {
 			state.sendSceneContent("back", bg);
 		else
 			state.sendSceneContent("back", "");
-		state.getExtra().put("chara",chara);
-		state.getExtra().put("back",bg);
+		state.setCharacter(chara);
+		state.setBackground(bg);
 		state.add(Role.ASSISTANT, content.toString().trim(), sendContent.toString().trim());
 		
 		if(cf!=null) {
 			try {
 				if(cf.get()) {
-					state.setAudioId(state.getLast(),audioId);	
+					state.setAudioId(audioId);	
 					state.postAudioComplete(state.getLast().getIdentifier(), audioId);
 				}
 			} catch (InterruptedException | ExecutionException e) {
@@ -502,7 +415,7 @@ public class AICharaTalkMain extends AIApplication {
 				logger.info("正在生成语音："+ftext);
 				File aud=new File(basePath,"voice");
 				aud.mkdirs();
-				CompletableFuture<VoiceGenerationResult> data=VoiceModelHandler.getAudioData(state.getData().voiceModel,getRoleName(state, Role.ASSISTANT),state.user, ftext, faudioId, state::addUsage);
+				CompletableFuture<VoiceGenerationResult> data=VoiceModelHandler.getAudioData(state.getExtraData().voiceModel,getRoleName(state, Role.ASSISTANT),state.user, ftext, faudioId, state::addUsage);
 				
 				VoiceGenerationResult rslt=data.get();
 				try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
@@ -519,8 +432,8 @@ public class AICharaTalkMain extends AIApplication {
 
 
 	public void prepareScene(AISession state) {
-		String chara=state.getExtra().get("chara");
-		String bg=state.getExtra().get("back");
+		String chara=state.getCharacter();
+		String bg=state.getBackground();
 		String pos=state.getState().perks.get("位置");
 		if(chara!=null&&pos!=null
 				) {
@@ -568,12 +481,10 @@ public class AICharaTalkMain extends AIApplication {
 	}
 	@Override
 	public String getMemory(AISession state) {
-		return state.getExtra().get("lastSummary");
+		return state.getLastSummary();
 	}
 	@Override
 	public String getBrief(AISession state) {
-		if(state.getExtra().isEmpty())
-			return null;
-		return state.getExtra().get("name");
+		return state.getUserName();
 	}
 }

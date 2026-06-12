@@ -26,9 +26,7 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.List;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -37,7 +35,6 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -47,8 +44,8 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HistoryCompacter;
+import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
 import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
-import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class AIGalgameMain extends AIApplication {
 	String charaname;
@@ -128,107 +125,31 @@ public class AIGalgameMain extends AIApplication {
 	
 	@Override
 	public void onload(AISession state) {
-		if(state.getExtra().containsKey("lastSummary")&&!state.getExtra().containsKey("永久记忆")) {
-			state.onGenerateStart();
-			state.sendNotice("系统正在修复历史记录中，请稍候。");
-			try {
-				runFullCompact(state);
-			} catch (ModelRouteException | IOException e) {
-				e.printStackTrace();
-			}
-			state.onGenComplete();
-		}
-	}
-
-
-	@Override
-	public void runFullCompact(AISession state) throws ModelRouteException, IOException {
-		Iterator<HistoryItem> it=state.getHistory().iterator();
-		int len=0;
-		StringBuilder summery=new StringBuilder();
-		compactor.clearHistoryState(state.getExtra());
-		while(it.hasNext()) {
-			HistoryItem hi=it.next();
-			long tokenLen=hi.getTokenLength();
-			if(tokenLen==0) {
-				state.setTokenLength(hi, tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
-			}
-			len+=tokenLen;
-			if(hi.getRole()!=Role.SYSTEM) {
-				if(hi.getRole()==Role.USER)
-					summery.append("【"+getRoleName(state,hi.getRole())+"】").append("：");
-				summery.append(hi.getDisplayContent()).append("\n");
-			}
-			if(len>80000) {
-				len=0;
-				String str=summery.toString();
-				summery=new StringBuilder();
-				compactor.compactHistory(state, state.getExtra(), str,charaset,state::addUsage);
-			}
-		}
-		state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
+		super.onload(state);
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 		Builder b = AIRequest.builder(state).taskType(TaskType.STORY).streamed().temperature(1.3f).maxTokens(8192).strength(ReasoningStrength.WEAK);
-		b.addHistoryItem(Role.SYSTEM, system+constructNameState(state.getExtra().get("name")));
+		b.addHistoryItem(Role.SYSTEM, system+constructNameState(state.getUserName()));
 		// if (status != null&&!status.isEmpty())
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			int len=0;
+			HistoryCompactor.compact(history, 90000, 10000, h->h==Role.USER?"【"+getRoleName(state,h)+"】：":"", s->{
+				compactor.compactHistory(state ,state.getHistoryState(), s,charaset,state::addUsage);
+				String summary=compactor.constructHistory(state.getHistoryState());
+				state.setLastSummary(summary);
+				state.setDialogRows((int) (history.getContextLimit()-5));
+			});
+			String lastSummary=state.getLastSummary();
+			if(lastSummary!=null) {
+				b.addHistoryItem(Role.SYSTEM, lastSummary);
+			}
 			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				long tokenLen=hi.getTokenLength();
-				if(tokenLen==0) {
-					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
-				}
-				len+=tokenLen;
-				
-			}
-			
-			if(len>=90000) {//more than 100000 text:about 60k context,remove until 20000
-				StringBuilder summery=new StringBuilder();
-				List<HistoryItem> his=new ArrayList<>();
-				it=history.validContextIterator();
-				while(it.hasNext()) {
-					HistoryItem hi=it.next();
-					
-					len-=hi.getTokenLength();
-					
-					if(hi.getRole()!=Role.SYSTEM) {
-						if(hi.getRole()==Role.USER)
-							summery.append("【"+getRoleName(state,hi.getRole())+"】").append("：");
-						summery.append(hi.getDisplayContent()).append("\n");
-					}
-					his.add(hi);
-					
-					if(hi.getRole()==Role.ASSISTANT) {
-						if(len<=10000) {
-							break;
-						}
-					}
-					
-					
-				}
-				compactor.compactHistory(state, state.getExtra(), summery.toString(),charaset,state::addUsage);
-				state.getExtra().put("lastSummary", compactor.constructHistory(state.getExtra()));
-				his.forEach(t->history.setValidContext(t,false));
-
-				state.setDialogRows((int) (history.getContextLimit()-5));
-			}
-			if(state.getExtra().containsKey("lastSummary")) {
-				b.addHistoryItem(Role.SYSTEM,state.getExtra().get("lastSummary"));
-			}
-			it=history.validContextIterator();
-			while(it.hasNext()) {
-				HistoryItem hi=it.next();
-					
 				b.addHistoryItem(hi);
-				
 			}
-				
 		}
 
 		b.prefix("你选择：");
@@ -255,7 +176,7 @@ public class AIGalgameMain extends AIApplication {
 				if(ret.length()>6) {
 					sendNamingPrompt(state);
 				}else {
-					state.getExtra().put("name", ret);
+					state.setUserName(ret);
 					state.setStage(ApplicationStage.STARTED);
 					this.handleSpeech(state, new MutableMessageContents(initSelection));
 				}
@@ -263,8 +184,10 @@ public class AIGalgameMain extends AIApplication {
 		});
 	}
 	public void provideInitial(AISession state) {
-		state.setStage(ApplicationStage.NAMING);
-		this.sendNamingPrompt(state);
+		if(state.getStage()!=ApplicationStage.STARTED) {
+			state.setStage(ApplicationStage.NAMING);
+			this.sendNamingPrompt(state);
+		}
 
 	}
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
@@ -351,7 +274,7 @@ public class AIGalgameMain extends AIApplication {
 
 	@Override
 	public String getMemory(AISession state) {
-		return state.getExtra().get("lastSummary");
+		return state.getLastSummary();
 	}
 	@Override
 	public String getRoleName(AISession state,Role role) {
@@ -368,8 +291,6 @@ public class AIGalgameMain extends AIApplication {
 
 	@Override
 	public String getBrief(AISession state) {
-		if(state.getExtra().isEmpty())
-			return null;
-		return state.getExtra().get("name");
+		return state.getUserName();
 	}
 }

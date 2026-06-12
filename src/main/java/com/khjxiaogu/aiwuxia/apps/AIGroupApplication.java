@@ -49,8 +49,8 @@ import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
 import com.khjxiaogu.aiwuxia.utils.MessageReader;
-import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class AIGroupApplication extends AIApplication {
 	String name;
@@ -147,48 +147,19 @@ public class AIGroupApplication extends AIApplication {
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			
-			int len=0;
-			Iterator<HistoryItem> it=history.validContextIterator();
-			while(it.hasNext()) {
-				HistoryItem hi=it.next();
-				long tokenLen=hi.getTokenLength();
-				if(tokenLen==0) {
-					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
-				}
-				len+=tokenLen;
-			}
-			if(len>=100000) {//more than 100000 text:about 60k context,remove until 20000
-				StringBuilder summery=new StringBuilder();
-				List<HistoryItem> his=new ArrayList<>();
-				it=history.validContextIterator();
-				while(it.hasNext()) {//calculate total dialog rows
-					HistoryItem hi=it.next();
-					len-=hi.getTokenLength();
-					
-					if(hi.getRole()!=Role.SYSTEM) {
-						summery.append(getRoleName(state,hi.getRole())).append("：").append(hi.getContextContent()).append("\n");
-					}
-					his.add(hi);
-					if(len<=20000&&hi.getRole()==Role.ASSISTANT) {
-						break;
-					}
-					
-				}
-				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
-				his.forEach(t->history.setValidContext(t,false));
-
+			HistoryCompactor.compact(history, 100000, 20000, h->getRoleName(state,h)+"：", s->{
+				state.setLastSummary(makeSummaryrequest(state,s.toString()));
 				state.setDialogRows((int) (history.getContextLimit()-5));
+			});
+			String lastSummary=state.getLastSummary();
+			if(lastSummary!=null) {
+				builder.addHistoryItem(Role.SYSTEM, lastSummary);
 			}
-			if(state.getExtra().containsKey("lastSummary")) {
-				builder.addHistoryItem(Role.SYSTEM,state.getExtra().get("lastSummary"));
-			}
-			it=history.validContextIterator();
+			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
 				builder.addHistoryItem(hi);
 			}
-				
 		}
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
@@ -198,13 +169,15 @@ public class AIGroupApplication extends AIApplication {
 		return builder.temperature(1.3f).maxTokens(384000).build();
 
 	}
-	public AIRequest constructSummaryrequest(AISession state,String summary) {
+	public String makeSummaryrequest(AISession state,String summary) throws IOException {
 		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.STRONG);
 		builder.addHistoryItem(Role.SYSTEM, this.summary);
 			StringBuilder sumerize=new StringBuilder();
-			if(state.getExtra().containsKey("lastSummary")) {
+
+			String lastSummary=state.getLastSummary();
+			if(lastSummary!=null) {
 				sumerize.append("=== 前情提要 ===\\n");
-				sumerize.append( state.getExtra().get("lastSummary"));
+				sumerize.append(lastSummary);
 			}
 			sumerize.append("=== 对话块 ===\n");
 			sumerize.append(summary.trim());
@@ -214,16 +187,12 @@ public class AIGroupApplication extends AIApplication {
 
 		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 		// true);
-		return builder.maxTokens(8192).temperature(1.3f).build();
-
-	}
-	public String makeSummaryrequest(AISession state,String summary) throws IOException {
-		
-			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
-			resp.addUsageListener(state::addUsage);
-			printReasonerContent(resp);
-			//System.out.println(resp.choices.get(0).message.reasoning_content);
-			return resp.getContentText();
+		builder.maxTokens(8192).temperature(1.3f).build();
+		AIOutput resp=LLMConnector.call(builder.build());
+		resp.addUsageListener(state::addUsage);
+		printReasonerContent(resp);
+		//System.out.println(resp.choices.get(0).message.reasoning_content);
+		return resp.getContentText();
 		
 
 	}
@@ -234,7 +203,7 @@ public class AIGroupApplication extends AIApplication {
 
 	@Override
 	public String getMemory(AISession state) {
-		return state.getExtra().get("lastSummary");
+		return state.getLastSummary();
 	}
 
 	String summary;

@@ -27,6 +27,7 @@ import java.util.Iterator;
 
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
 /**
@@ -181,7 +182,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @return 新创建并添加的 {@link HistoryItem} 对象
 	 */
 	default HistoryItem add(Role role, String displayContent, String contextContent) {
-		return add(role, displayContent, contextContent);
+		return add(role, displayContent, new MutableMessageContents(contextContent), null, true);
 	}
 
 	/**
@@ -194,7 +195,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @return 新创建并添加的 {@link HistoryItem} 对象
 	 */
 	default HistoryItem add(Role role, String displayContent, String contextContent, MessageContents reasoner) {
-		return add(role, displayContent, contextContent, reasoner);
+		return add(role, displayContent, new MutableMessageContents(contextContent), reasoner, true);
 	}
 
 	/**
@@ -246,6 +247,13 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	void setAudioId(HistoryItem hi, String audioId);
 
 	/**
+	 * 设置最后条目的音频标识符。
+	 *
+	 * @param audioId 音频 ID 字符串
+	 */
+	void setAudioId(String audioId);
+	
+	/**
 	 * 设置指定条目是否允许发送推理内容。
 	 *
 	 * @param hi           历史条目
@@ -268,6 +276,46 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @param lastState 应用状态
 	 */
 	void setLastState(HistoryItem hi, ApplicationState lastState);
+	/**
+	 * 设置最后条目的最后应用状态。
+	 *
+	 * @param lastState 应用状态
+	 */
+	void setLastState(ApplicationState lastState);
+	/**
+	 * 根据唯一标识符查找对应的历史条目。
+	 *
+	 * @param id 条目标识符
+	 * @return 对应的 {@link HistoryItem}，如果不存在则返回 null
+	 */
+	HistoryItem getById(int id);
+
+	/**
+	 * 获取给定条目前面第一个非 null 的应用状态。
+	 * <p>
+	 * 沿 {@code prevIdentifier} 链表向前追溯，返回遇到的第一个
+	 * {@link HistoryItem#getLastState()} 不为 null 的状态。
+	 * 从当前条目自身开始检查，如果其状态非 null 则直接返回。
+	 * </p>
+	 *
+	 * @param item 起始条目
+	 * @return 第一个非 null 的 {@link ApplicationState}，如果没有找到则返回 null
+	 */
+	default ApplicationState getStateAt(HistoryItem item) {
+		HistoryItem current = item;
+		while (current != null) {
+			ApplicationState state = current.getLastState();
+			if (state != null) {
+				return state;
+			}
+			int prevId = current.getPrevIdentifier();
+			if (prevId < 0) {
+				return null;
+			}
+			current = getById(prevId);
+		}
+		return null;
+	}
 
 	/**
 	 * 向最后一个条目追加一行内容，并根据参数决定是否同时写入上下文内容。
@@ -301,4 +349,18 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @param content 要追加到上下文的内容字符串
 	 */
 	void appendContext(String content);
+
+	/**
+	 * 批量持久化所有已修改的重度字段到 JSON 文件，并驱逐超出缓存容量的条目。
+	 * <p>
+	 * 应用应在每次修改完成后调用此方法：
+	 * </p>
+	 * <ol>
+	 *   <li>将所有 {@code dirty} 条目的重度字段序列化为 JSON 并写入文件。</li>
+	 *   <li>将缓存大小缩减至 20 条，按标识符升序移除最旧的条目（仅从内存移除，
+	 *       数据库和 JSON 文件不受影响），保留最新插入的 20 条。</li>
+	 * </ol>
+	 */
+	void flush();
+
 }

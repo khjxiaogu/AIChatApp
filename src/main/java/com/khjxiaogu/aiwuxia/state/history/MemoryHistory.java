@@ -63,6 +63,7 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	/** 唯一标识符生成器 */
 	AtomicInteger idgenerator = new AtomicInteger();
 
+
 	/**
 	 * 构造一个空的内存历史容器。
 	 */
@@ -146,6 +147,16 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 				it.remove();
 			}
 		}
+	}
+
+	@Override
+	public HistoryItem getById(int id) {
+		for (HistoryMemoryItem hmi : history) {
+			if (hmi.getIdentifier() == id) {
+				return hmi;
+			}
+		}
+		return null;
 	}
 
 	@Override
@@ -580,5 +591,19 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	public void appendContext(String content) {
 		MutableHistoryItem mhi = peekLast();
 		mhi.appendContext(content);
+	}
+
+	@Override
+	public void setAudioId(String audioId) {
+		setAudioId(peekLast(),audioId);
+	}
+
+	@Override
+	public void setLastState(ApplicationState lastState) {
+		setLastState(peekLast(),lastState);
+	}
+
+	@Override
+	public void flush() {
 	}
 }

@@ -26,7 +26,6 @@ package com.khjxiaogu.aiwuxia.state.session;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.AIChatWindow;
@@ -80,14 +79,5 @@ public class AppAISession extends AISession {
 		}
 	}
 
-	@Override
-	public void onGenComplete() {
-		super.onGenComplete();
-		try {
-			AIApplication.saveToJson(this, saveData);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-	}
 
 }

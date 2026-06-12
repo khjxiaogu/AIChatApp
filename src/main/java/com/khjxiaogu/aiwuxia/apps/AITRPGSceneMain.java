@@ -42,6 +42,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.scene.SceneSelector;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
+import com.khjxiaogu.aiwuxia.state.GsonHelper;
 import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
@@ -51,8 +52,8 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
 import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
-import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class AITRPGSceneMain extends AIApplication {
 	String charaname;
@@ -83,11 +84,11 @@ public class AITRPGSceneMain extends AIApplication {
 			if(validfile.exists())
 				validator=AttributeValidator.fromJson(readFile(validfile));
 			if(new File(model,"chara.json").exists()) {
-				character=gs.fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
+				character=GsonHelper.getStorageGson().fromJson(readFile(new File(model,"chara.json")), SceneSelector.class);
 				
 			}
 			if(new File(model,"back.json").exists()) {
-				back=gs.fromJson(readFile(new File(model,"back.json")), SceneSelector.class);
+				back=GsonHelper.getStorageGson().fromJson(readFile(new File(model,"back.json")), SceneSelector.class);
 				
 			}
 		} catch (IOException e) {
@@ -140,7 +141,7 @@ public class AITRPGSceneMain extends AIApplication {
 				if(ret.length()>6) {
 					sendNamingPrompt(state);
 				}else {
-					state.getExtra().put("name", ret);
+					state.setUserName(ret);
 					state.setStage(ApplicationStage.STARTED);
 					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
 				}
@@ -190,66 +191,23 @@ public class AITRPGSceneMain extends AIApplication {
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 
 		Builder builder=AIRequest.builder(state).taskType(TaskType.CODE).strength(ReasoningStrength.WEAK).streamed();
-		builder.addHistoryItem(Role.SYSTEM,system+constructNameState(state.getExtra().get("name")));
-
-		// if (status != null&&!status.isEmpty())
-		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
+		builder.addHistoryItem(Role.SYSTEM,system+constructNameState(state.getUserName()));
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			
-			int len=0;
-			Iterator<HistoryItem> it=history.validContextIterator();
-			while(it.hasNext()) {
-				HistoryItem hi=it.next();
-				long tokenLen=hi.getTokenLength();
-				if(tokenLen==0) {
-					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
-				}
-				len+=tokenLen;
-				
-			}
-			if(len>=60000) {//more than 100000 text:about 60k context,remove until 20000
-				StringBuilder summery=new StringBuilder();
-				List<HistoryItem> his=new ArrayList<>();
-				it=history.validContextIterator();
-				while(it.hasNext()) {
-					HistoryItem hi=it.next();
-					if(hi.isValidContext()) {
-						len-=hi.getTokenLength();
-						
-						if(hi.getRole()!=Role.SYSTEM) {
-							if(hi.getRole()==Role.USER)
-								summery.append("用户").append("：");
-							summery.append(hi.getDisplayContent()).append("\n");
-						}
-						his.add(hi);
-						
-						if(hi.getRole()==Role.ASSISTANT) {
-							if(len<=10000) {
-								break;
-							}
-						}
-					}
-					
-				}
-				state.getExtra().put("lastSummary", makeSummaryrequest(state,summery.toString()));
-				his.forEach(t->history.setValidContext(t, false));
+			HistoryCompactor.compact(history, 60000, 10000, t->t==Role.USER?"用户：":"", s->{
+				state.setLastSummary(makeSummaryrequest(state,s));
 				state.setDialogRows((int) (history.getContextLimit()-5));
+			});
+			String lastSummary=state.getLastSummary();
+			if(lastSummary!=null) {
+				builder.addHistoryItem(Role.SYSTEM, lastSummary);
 			}
-			if(state.getExtra().containsKey("lastSummary")) {
-				builder.addHistoryItem(Role.SYSTEM, state.getExtra().get("lastSummary"));
-			}
-			it=history.validContextIterator();
+			Iterator<HistoryItem> it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
 				builder.addHistoryItem(hi);
 			}
 		}
-
-		// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
-		// true);
-		//头几次用思维链版本构建格式
-
 		builder.prefix("==场景==");
 		return builder.temperature(1.6f).maxTokens(8192).build();
 
@@ -258,9 +216,10 @@ public class AITRPGSceneMain extends AIApplication {
 		Builder b=AIRequest.builder(state).taskType(TaskType.STORY).strength(ReasoningStrength.STRONG);
 		b.addHistoryItem(Role.SYSTEM, this.summary);
 		StringBuilder sumerize=new StringBuilder();
-		if(state.getExtra().containsKey("lastSummary")) {
+		String lastSummary=state.getLastSummary();
+		if(lastSummary!=null) {
 			sumerize.append("=== 前情提要 ===\\n");
-			sumerize.append( state.getExtra().get("lastSummary"));
+			sumerize.append(lastSummary);
 		}
 		sumerize.append("=== 对话块 ===\n");
 		sumerize.append(summary.trim());
@@ -294,25 +253,12 @@ public class AITRPGSceneMain extends AIApplication {
 		return sb.toString();
 
 	}
-	public String constructSummaryBackLog(AISession state) {
-		StringBuilder sb = new StringBuilder("");
-		Iterator<HistoryItem> it=state.getHistory().validContextIterator();
-		if(state.getExtra().containsKey("lastSummary")) {
-			sb.append( state.getExtra().get("lastSummary"));
-		}
-		while(it.hasNext()) {
-			HistoryItem hs=it.next();
-				sb.append(getRoleName(state,hs.getRole())).append("：").append(hs.getContextContent()).append("\n");
-		}
-
-		return sb.toString();
-
-	}
-
 
 	public void provideInitial(AISession state) {
-		state.add(Role.SYSTEM, "请输入姓名", false);
-		state.setStage(ApplicationStage.NAMING);
+		if(state.getStage()!=ApplicationStage.STARTED) {
+			state.add(Role.SYSTEM, "请输入姓名", false);
+			state.setStage(ApplicationStage.NAMING);
+		}
 	}
 
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
@@ -321,8 +267,8 @@ public class AITRPGSceneMain extends AIApplication {
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
-		String oldchara=state.getExtra().get("chara");
-		String oldbg=state.getExtra().get("back");
+		String oldchara=state.getCharacter();
+		String oldbg=state.getBackground();
 		handleReasonerContent(resp,state);
 		AttributeSet scene=state.getState().getOrCreateInterface("场景");
 		AttributeSet characs=state.getState().getOrCreateInterface("角色");
@@ -485,16 +431,16 @@ public class AITRPGSceneMain extends AIApplication {
 			state.sendSceneContent("front", "");
 		}
 		if(chara!=null)
-			state.getExtra().put("chara",chara);
+			state.setCharacter(chara);
 		if(bg!=null)
-			state.getExtra().put("back",bg);
+			state.setBackground(bg);
 		
 		return oldstate;
 	}
 
 	public void prepareScene(AISession state) {
-		String chara=state.getExtra().get("chara");
-		String bg=state.getExtra().get("back");
+		String chara=state.getCharacter();
+		String bg=state.getBackground();
 		if(chara!=null) {
 			state.sendSceneContent("front", chara);
 		}else {
@@ -518,7 +464,7 @@ public class AITRPGSceneMain extends AIApplication {
 
 	@Override
 	public String getMemory(AISession state) {
-		return state.getExtra().get("lastSummary");
+		return state.getLastSummary();
 	}
 	@Override
 	public String getName() {
@@ -527,8 +473,7 @@ public class AITRPGSceneMain extends AIApplication {
 
 	@Override
 	public String getBrief(AISession state) {
-		if(state.getExtra().isEmpty())
-			return null;
-		return state.getExtra().get("name");
+
+		return state.getUserName();
 	}
 }

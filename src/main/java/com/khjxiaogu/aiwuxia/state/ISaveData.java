@@ -5,8 +5,10 @@ import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 
 public interface ISaveData {
 
-	ExtraData getData();
+	ExtraData getExtraData();
 
 	HistoryHolder getHistory();
+	
+	void flush();
 
 }

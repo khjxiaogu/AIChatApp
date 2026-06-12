@@ -40,7 +40,6 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
@@ -92,22 +91,8 @@ public class AIAppMain {
 		JsonObject meta=JsonParser.parseString(FileUtil.readString(metaFile)).getAsJsonObject();
 		
 		AIApplication main = AIApplicationRegistry.createInstance(dataFolder, modelFolder, meta);
-		AISession aistate = null;
-		if (saveData.exists()) {
-			aistate = new AppAISession("appuser",
-				AIApplication.saveDataFromJson(saveData),
-				main,saveData,acw);
-		}
-
-		// construct initail message
-		if (aistate == null) {
-			acw.setBackLog("正在生成初始面板...","");
-			// RespScheme airetinit=sendAIRequest(constructAIrequest(null,null,null));
-			aistate = new AppAISession("appuser",new SavedData(),main,saveData,acw);
-			aistate.provideInitialHint();
-		}
+		AISession aistate = new AppAISession("appuser",AIApplication.saveDataFromJson(saveData),main,saveData,acw);
 		aistate.onLoad().get();
-		AIApplication.saveToJson(aistate, saveData);
 		
 		acw.setStatus(main.constructSystem(aistate.getState()));
 		// dialog.setBackLog(constructBackLog());
@@ -180,7 +165,7 @@ public class AIAppMain {
 								CompletableFuture<Boolean> cf=state.getAiapp().generateVoice(state, last.getDisplayContent().toString(), audioId);
 								try {
 									if(cf.get()) {
-										state.setAudioId(last, audioId);
+										state.setAudioId(audioId);
 										state.postAudioComplete(last.getIdentifier(),audioId);
 									}
 								} catch (InterruptedException | ExecutionException e) {

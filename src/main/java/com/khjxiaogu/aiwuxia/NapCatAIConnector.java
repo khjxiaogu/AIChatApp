@@ -82,7 +82,6 @@ import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
 import com.khjxiaogu.aiwuxia.objectstorage.TOSUsage;
 import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
@@ -679,11 +678,7 @@ public class NapCatAIConnector extends WebSocketClient {
 					state.currentCtx=prompt.ctx;
 				state.getAiapp().handleSpeech(state, mst);
 				state.currentCtx=null;
-				try {
-					AIApplication.saveToJson(state, state.saveData);
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
+
 			
 				sendLastMessage(state,handle,state.getTokens()-priceBefore);
 			}
@@ -726,13 +721,8 @@ public class NapCatAIConnector extends WebSocketClient {
 				
 				AIApplication main = AIApplicationRegistry.createInstance(dataFolder, modelFolder);
 				AIGroupSession aistate = null;
-				if (saveData.exists()) {
-					System.out.println("exists");
-					aistate = new AIGroupSession("appuser", AIApplication.saveDataFromJson(saveData),saveData, main,config);
-				} else {
-					aistate = new AIGroupSession("appuser", new SavedData(),saveData, main,config);
-					aistate.provideInitialHint();
-				}
+				aistate = new AIGroupSession("appuser", AIApplication.saveDataFromJson(saveData),saveData, main,config);
+
 				states[i++]=aistate;
 			}
 			new Thread(() -> {
@@ -741,17 +731,14 @@ public class NapCatAIConnector extends WebSocketClient {
 							.rule("/aichat").complete().complete().setNotFound(new File(new File("save"), "404.html"))
 							.compile().serverHttp(8998).info("http服务端已开启");
 				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
 					e.printStackTrace();
 				}
 			}).start();
 			new NapCatAIConnector(dataFolder, System.getProperty("napcat_url"),
 					System.getProperty("napcat_token"),states);
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 

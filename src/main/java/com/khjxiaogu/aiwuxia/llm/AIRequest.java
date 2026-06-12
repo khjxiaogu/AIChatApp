@@ -208,7 +208,7 @@ public class AIRequest {
      * @return Builder 对象
      */
     public static Builder builder(AISession session) {
-        return new Builder(session.user).modelHint(session.getData().modelHint).addTools(session.getAvailableTools());
+        return new Builder(session.user).modelHint(session.getExtraData().modelHint).addTools(session.getAvailableTools());
     }
 	public static Builder builder(String user) {
 		return new Builder(user);

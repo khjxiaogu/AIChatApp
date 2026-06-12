@@ -24,7 +24,6 @@
 package com.khjxiaogu.aiwuxia.state.session;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -106,17 +105,17 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("status", isGenerating()?1:0)
 				.add("price", this.getPrice())
-				.add("isVoiceEnabled",super.data.isAudioSession)
+				.add("isVoiceEnabled",super.getExtraData().isAudioSession)
 				.add("isVoiceUsable",hasAudioService)
 				.add("models", models)
-				.add("model", getData().modelHint).end().toString()));
+				.add("model", getExtraData().modelHint).end().toString()));
 
 	}
 	
 	public void requireMoreMessages() {
 		int i = 0;
 		List<HistoryItem> his = new ArrayList<>();
-		for (Iterator<HistoryItem> it = history.reverseIterator(); it.hasNext();) {
+		for (Iterator<HistoryItem> it = getHistory().reverseIterator(); it.hasNext();) {
 			HistoryItem hisitem=it.next();
 			his.add(0, hisitem);
 			i++;
@@ -134,9 +133,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public static Map<String,BiConsumer<JsonObject,WebSocketAISession>> operations=new HashMap<>();
 	static{
 		operations.put("setVoiceEnabled", (jo,state)->{
-			state.data.isAudioSession=jo.get("voiceEnabled").getAsBoolean();
-			state.sendFrame(JsonBuilder.object().add("isVoiceEnabled",state.data.isAudioSession).end().toString());
-			state.save();
+			state.getExtraData().isAudioSession=jo.get("voiceEnabled").getAsBoolean();
+			state.sendFrame(JsonBuilder.object().add("isVoiceEnabled",state.getExtraData().isAudioSession).end().toString());
+			state.flush();
 		});
 		operations.put("revert", (jo,state)->{
 			state.getCommandExec().submit(()->{
@@ -151,14 +150,14 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 		operations.put("prompt", (jo,state)->{
 			state.getCommandExec().submit(()->{
 				state.handleUserInput(jo.get("input").getAsString(), jo.get("content").getAsString());
-				state.save();
+				state.flush();
 			});
 		});
 		operations.put("moreMessage", (jo,state)->{
 			int i = 0;
 			int id=jo.get("msgId").getAsInt();
 			List<HistoryItem> his = new ArrayList<>();
-			for (Iterator<HistoryItem> it = state.history.reverseIterator(); it.hasNext();) {
+			for (Iterator<HistoryItem> it = state.getHistory().reverseIterator(); it.hasNext();) {
 				HistoryItem hisitem=it.next();
 				if(hisitem.getIdentifier()>=id)
 					continue;
@@ -171,12 +170,12 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			final String model=jo.get("model").getAsString();
 			if(model.isEmpty()||state.attributes.models.contains(model)) {
 				state.getCommandExec().submit(()->{
-					state.getData().modelHint=model;
-					state.save();
+					state.getExtraData().modelHint=model;
+					state.flush();
 				});
 				state.sendFrame(JsonBuilder.object().add("model", model).end().toString());
 			}else {
-				state.sendFrame(JsonBuilder.object().add("model", state.getData().modelHint).end().toString());
+				state.sendFrame(JsonBuilder.object().add("model", state.getExtraData().modelHint).end().toString());
 			}
 		});
 		operations.put("genVoice", (jo,state)->{
@@ -188,9 +187,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 						CompletableFuture<Boolean> cf=state.getAiapp().generateVoice(state, last.getDisplayContent().toString(), audioId);
 						try {
 							if(cf.get()) {
-								state.setAudioId(last,audioId);
+								state.setAudioId(audioId);
 								state.postAudioComplete(last.getIdentifier(),audioId);
-								state.save();
+								state.flush();
 							}
 						} catch (InterruptedException | ExecutionException e) {
 							e.printStackTrace();
@@ -299,19 +298,11 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 
 		sendFrame(JsonBuilder.object().add("scene", type).add("scene_data", value).end().toString());
 	}
-	public void save() {
-		try {
-			AIApplication.saveToJson(this, fn);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-	}
 	@Override
 	public void onGenComplete() {
 		
 		
 		parent.updateBrief(chatId, getAiapp().getBrief(this));
-		save();
 		String price=getPrice();
 		
 		parent.setPrice(chatId, price);
