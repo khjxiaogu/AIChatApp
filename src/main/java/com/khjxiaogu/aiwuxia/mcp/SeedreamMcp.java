@@ -24,9 +24,9 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.JimengImageGenerator;
-import com.khjxiaogu.aiwuxia.utils.JimengVideoGenerator;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
+import com.khjxiaogu.aiwuxia.vision.JimengImageGenerator;
+import com.khjxiaogu.aiwuxia.vision.JimengVideoGenerator;
 
 public class SeedreamMcp {
 	public static MCPTools createImage(AISession state,JsonObject config,Consumer<String> imageCollector,Consumer<Throwable> except,Map<String,String> refImages,ObjectStorageProvider tos) {

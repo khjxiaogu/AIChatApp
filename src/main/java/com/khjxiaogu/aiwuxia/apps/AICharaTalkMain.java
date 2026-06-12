@@ -51,7 +51,7 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
-import com.khjxiaogu.aiwuxia.utils.HistoryCompacter;
+import com.khjxiaogu.aiwuxia.subagent.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
 import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
 import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;

@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.utils;
+package com.khjxiaogu.aiwuxia.subagent;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -21,6 +21,7 @@ import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.utils.MessageReader;
 
 public class HistoryCompacter {
 	String system;

@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.utils;
+package com.khjxiaogu.aiwuxia.voice;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

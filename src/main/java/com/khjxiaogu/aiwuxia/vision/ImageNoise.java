@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.utils;
+package com.khjxiaogu.aiwuxia.vision;
 import java.awt.image.BufferedImage;
 import java.util.Random;
 

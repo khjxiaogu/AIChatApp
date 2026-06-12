@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.utils;
+package com.khjxiaogu.aiwuxia.vision;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -21,6 +21,7 @@ import javax.crypto.spec.SecretKeySpec;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 public abstract class JimengApiBase<T> {
 	protected final String HOST;
