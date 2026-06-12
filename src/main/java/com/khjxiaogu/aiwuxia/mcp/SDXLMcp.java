@@ -221,7 +221,7 @@ public class SDXLMcp {
 		
 		
 		tools.register(new ToolData.Builder("sdxl_gen_image",
-				"使用Stable Diffusion XL生成图片并发送。")
+				"使用Stable Diffusion XL生成图片，生成后需要使用其他工具发送。")
 				.putParam("positive", "正面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("negative", "负面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
@@ -264,7 +264,7 @@ public class SDXLMcp {
 					}
 				}).build());
 		tools.register(new ToolData.Builder("regional_image",
-				"使用Stable Diffusion XL搭配分区提示词生成图片并发送，不需要包含画质提示词，提示词必须是纯英文。")
+				"使用Stable Diffusion XL搭配分区提示词生成图片，不需要包含画质提示词，提示词必须是纯英文，生成后需要使用其他工具发送。")
 				.putParam("common_positive", "共用正面提示词")
 				.putParam("first_positive", "第一区域提示词")
 				.putParam("second_positive", "第二区域提示词")
@@ -325,7 +325,7 @@ public class SDXLMcp {
 					}
 				}).build());
 		tools.register(new ToolData.Builder("image_to_image",
-				"使用Stable Diffusion XL的图生图功能。")
+				"使用Stable Diffusion XL的图生图功能，生成后需要使用其他工具发送。")
 				.putParam("positive", "正面提示词，必须是纯英文。")
 				.putParam("negative", "负面提示词，必须是纯英文。")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
