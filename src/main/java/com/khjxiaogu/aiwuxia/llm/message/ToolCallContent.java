@@ -30,4 +30,8 @@ public class ToolCallContent implements MessageContent {
 	public List<ToolCall> getToolCalls() {
 		return toolCalls;
 	}
+	@Override
+	public MessageContent copy() {
+		return this;
+	}
 }

@@ -44,7 +44,7 @@ public class MultiModalMcp {
 			Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 					.multimodal(MultimodalType.IMAGE_ONLY);
 			builder.addHistoryItem(Role.SYSTEM,
-					"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。注意仅忠实描述图片外观，禁止进行分析。");
+					"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。最后要输出图片分辨率。");
 			builder.addHistoryItem(
 					new DirectHistoryItem(Role.USER, new MessageContents(new ImageContent(tos.getUrl(id)))));
 			try {

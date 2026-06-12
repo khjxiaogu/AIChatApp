@@ -242,7 +242,8 @@ public class LocalModelHandshaker implements WebsocketEvents {
                             	usageListener.accept(new LocalVoiceUsage(len));
                                 return new VoiceGenerationResult(result.data,"mp3"); // 成功接收到数据
                             }
-                            if (!ch.isActive() || currTime >= endTime)
+                            
+                            if ((!(ch.isOpen()||ch.isActive()))||currTime >= endTime)
                             	throw new IOException("Connection timeout");
                             
                             // 等待剩余时间，或被唤醒

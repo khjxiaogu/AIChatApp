@@ -29,6 +29,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import com.google.gson.JsonObject;
@@ -36,6 +37,8 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.llm.message.PlainText;
+import com.khjxiaogu.aiwuxia.llm.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 
 public class AIGroupSession extends AISession {
@@ -77,13 +80,21 @@ public class AIGroupSession extends AISession {
 	public CallContext currentCtx;
 	List<CallContext> important=new ArrayList<>();
 	ArrayDeque<CallContext> messageQueue=new ArrayDeque<>();
+	public StringBuilder lastReasoner;
+	public Consumer<StringBuilder> reasonerConsumer;
 	public List<ToolData> tools=new ArrayList<>();
 	private StringBuilder lastState=new StringBuilder();
 	public File saveData;
+	public boolean outputReaonser;
+	public boolean outputPrice;
 	public AIGroupSession(String user, ISaveData data,File saveData, AIApplication aiapp,JsonObject config) {
 		super(user, data, aiapp);
 		this.groupId=config.get("groupId").getAsLong();
 		this.botId=config.get("botId").getAsLong();
+		if(config.has("hasReaonser"))
+		this.outputReaonser=config.get("hasReaonser").getAsBoolean();
+		if(config.has("hasPrice"))
+		this.outputPrice=config.get("hasPrice").getAsBoolean();
 		this.config=config;
 		this.saveData=saveData;
 	}
@@ -101,6 +112,18 @@ public class AIGroupSession extends AISession {
 			return ret;
 		}
 	}
+    public void appendReasoner(MessageContent current) {
+        if (currentReasoner == null)
+            currentReasoner = new MessageContents();
+        currentReasoner.add(current);
+        if(outputReaonser) {
+        	if(lastReasoner==null)
+	        	lastReasoner = new StringBuilder();
+        	if(current instanceof PlainText)
+        		lastReasoner.append(current.toText());
+        }
+        this.setUpdated();
+    }
 	public void addMessage(long qq,String text,List<Supplier<MessageContent>> msg,boolean important) {
 		synchronized(queueLock) {
 			messageQueue.add(new CallContext(qq,text,msg,important));
@@ -137,5 +160,15 @@ public class AIGroupSession extends AISession {
 	}
 	public List<ToolData> getAvailableTools(){
 		return tools;
+	}
+	public void printReasoning() {
+		if(lastReasoner!=null&&outputReaonser&&reasonerConsumer!=null)
+			reasonerConsumer.accept(lastReasoner);
+
+		lastReasoner=null;
+	}
+	@Override
+	public void onToolcall(ToolCallContent content) {
+		printReasoning();
 	}
 }

@@ -37,6 +37,7 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.llm.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
@@ -418,7 +419,9 @@ public class AISession implements ISaveData{
 	public String getPrice() {
 		return data.usage.calculatePrice();
 	}
-
+	public float getTokens() {
+		return data.usage.getTotalTokenPrice();
+	}
 	/**
 	 * 获取当前对话阶段。
 	 *
@@ -550,14 +553,14 @@ public class AISession implements ISaveData{
 	 *
 	 * @return 推理内容字符串
 	 */
-	public String getReasonerContent() {
+	public MessageContents getReasonerContent() {
 		if (currentReasoner != null)
-			return currentReasoner.toString();
+			return currentReasoner;
 		if (!history.isEmpty() && getLast().getRole() == Role.ASSISTANT) {
 			MessageContents reasoner=getLast().getReasoningContent();
-			return reasoner==null?"":reasoner.toString();
+			return reasoner==null?null:reasoner;
 		}
-		return "";
+		return null;
 	}
 
 	/**
@@ -642,4 +645,7 @@ public class AISession implements ISaveData{
 	public List<ToolData> getAvailableTools(){
 		return EMPTY_LIST;
 	};
+	public void onToolcall(ToolCallContent content) {
+		
+	}
 }

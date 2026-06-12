@@ -140,7 +140,7 @@ public class AIAppMain {
 						final String fs = s;
 						String rs="";
 						if(cstate.getReasonerContent()!=null) {
-							rs=cstate.getReasonerContent();
+							rs=cstate.getReasonerContent().toString();
 						}
 						final String rfs=rs;
 						SwingUtilities.invokeLater(() -> {

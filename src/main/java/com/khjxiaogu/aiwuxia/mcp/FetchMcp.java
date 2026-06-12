@@ -16,11 +16,13 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
+import com.khjxiaogu.aiwuxia.objectstorage.TOSUsage;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
 public class FetchMcp {
-	public static MCPTools create(ObjectStorageProvider tos) {
+	public static MCPTools create(AISession state,ObjectStorageProvider tos) {
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("web_view", "获取链接指定的内容，只支持ftp/http/https链接").putParam("url", "网页链接")
 				.tool((data) -> {
@@ -29,7 +31,7 @@ public class FetchMcp {
 						if (jo.has("url")) {
 							String url = jo.get("url").getAsString();
 							if (url.startsWith("ftp") || url.startsWith("http"))
-								return fetch(url,tos);
+								return fetch(state,url,tos);
 
 						}
 					} catch (Throwable err) {
@@ -42,7 +44,7 @@ public class FetchMcp {
 				JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 				if (jo.has("keyword")) {
 					String keyword = jo.get("keyword").getAsString();
-					return fetch("https://zh.moegirl.org.cn/index.php?search="
+					return fetch(state,"https://zh.moegirl.org.cn/index.php?search="
 							+ URLEncoder.encode(keyword, StandardCharsets.UTF_8)
 							+ "&title=Special%3A%E6%90%9C%E7%B4%A2",tos);
 
@@ -81,7 +83,7 @@ public class FetchMcp {
 	 * @param urlStr 目标URL
 	 * @return 文本内容、图片识别结果或错误提示
 	 */
-	public static String fetch(String urlStr,ObjectStorageProvider tos) {
+	public static String fetch(AISession state,String urlStr,ObjectStorageProvider tos) {
 		HttpURLConnection connection = null;
 		try {
 			URL url = new URL(urlStr);
@@ -110,6 +112,8 @@ public class FetchMcp {
 			// 图片类型：只处理 JPEG 和 PNG
 			else if (isImageType(mimeType)) {
 				byte[] imageData = FileUtil.readAll(connection.getInputStream());
+
+				state.addUsage(new TOSUsage(imageData.length));
 				return "图片id："+tos.uploadIfNotExists(imageData);
 			}
 			// 其他不支持的类型，不下载正文

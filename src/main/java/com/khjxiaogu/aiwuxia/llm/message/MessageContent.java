@@ -6,4 +6,5 @@ public interface MessageContent {
 	boolean isTextRepresentable();
 	String toText();
 	String getType();
+	MessageContent copy();
 }

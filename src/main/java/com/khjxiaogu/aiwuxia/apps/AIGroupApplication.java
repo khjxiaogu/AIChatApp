@@ -55,7 +55,10 @@ import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.Tool;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.message.ImageContent;
+import com.khjxiaogu.aiwuxia.llm.message.MessageContent;
 import com.khjxiaogu.aiwuxia.llm.message.MessageContents;
+import com.khjxiaogu.aiwuxia.llm.message.PlainText;
+import com.khjxiaogu.aiwuxia.llm.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -65,6 +68,7 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
+import com.khjxiaogu.aiwuxia.utils.MessageReader;
 import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
 
 public class AIGroupApplication extends AIApplication {
@@ -96,6 +100,21 @@ public class AIGroupApplication extends AIApplication {
 		return precessResponse(resp, state);
 		
 	}
+	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
+		MessageReader br=output.getReasoner();
+		int read;
+		state.resetReasoner();
+		while(!br.isEnded()) {
+			MessageContent current=br.read();
+			if(current==null)
+				break;
+			if(current instanceof ToolCallContent) {
+				state.onToolcall((ToolCallContent) current);
+			}
+			state.appendReasoner(current);
+			
+		}
+	}
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
 		boolean isWaiting = true;
 		
@@ -117,8 +136,23 @@ public class AIGroupApplication extends AIApplication {
 			}
 			sendContent.append(last).append("\n");
 		}
-	
-		state.add(Role.ASSISTANT, sendContent.toString().trim(), sendContent.toString().trim());
+		String msg=sendContent.toString().trim();
+		if(msg.isEmpty()) {
+			MessageContents content=state.getReasonerContent();
+			if(content!=null) {
+				PlainText lastText=null;
+				for(MessageContent msgBody:content) {
+					if(msgBody instanceof PlainText)
+						lastText=(PlainText) msgBody;
+				}
+				String lastTextStr=lastText.toText();
+				int idx=lastTextStr.lastIndexOf("response");
+				if(idx!=-1) {
+					msg=lastTextStr.substring(idx+8);
+				}
+			}
+		}
+		state.add(Role.ASSISTANT, msg,msg);
 		
 		return oldstate;
 	}

@@ -46,10 +46,6 @@ public class SequentialStateExecutor {
             throw new IllegalArgumentException(
                 "新值不能小于当前值。当前值: " + current + ", 新值: " + newValue);
         }
-        if (newValue > tasks.length) {
-            throw new IllegalArgumentException(
-                "新值超出范围。允许的最大值: " + tasks.length + ", 实际: " + newValue);
-        }
 
         // 执行从 current 到 newValue-1 的所有非空 Runnable
         for (int i = current; i < newValue; i++) {

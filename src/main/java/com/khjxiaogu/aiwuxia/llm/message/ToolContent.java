@@ -36,4 +36,9 @@ public class ToolContent implements MessageContent {
 	public String getResult() {
 		return result;
 	}
+
+	@Override
+	public MessageContent copy() {
+		return new ToolContent(toolId,result);
+	}
 }

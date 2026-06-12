@@ -49,4 +49,9 @@ public class VideoContent implements MessageContent{
 		return "video";
 	}
 
+	@Override
+	public MessageContent copy() {
+		return new VideoContent(video_url,description);
+	}
+
 }

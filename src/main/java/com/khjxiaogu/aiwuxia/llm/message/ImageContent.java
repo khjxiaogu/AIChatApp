@@ -48,4 +48,9 @@ public class ImageContent implements MessageContent{
 		return "image";
 	}
 
+	@Override
+	public MessageContent copy() {
+		return new ImageContent(image_url,description);
+	}
+
 }

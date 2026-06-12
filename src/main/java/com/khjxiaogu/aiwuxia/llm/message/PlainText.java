@@ -29,4 +29,8 @@ public class PlainText implements MessageContent {
 	public String getType() {
 		return "text";
 	}
+	@Override
+	public MessageContent copy() {
+		return new PlainText(text.toString());
+	}
 }

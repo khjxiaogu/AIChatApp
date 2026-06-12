@@ -19,15 +19,17 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
+import com.khjxiaogu.aiwuxia.objectstorage.TOSUsage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JimengImageGenerator;
 import com.khjxiaogu.aiwuxia.utils.JimengVideoGenerator;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
 public class SeedreamMcp {
-	public static MCPTools createImage(JsonObject config,Consumer<String> imageCollector,Consumer<Throwable> except,Map<String,String> refImages,ObjectStorageProvider tos) {
+	public static MCPTools createImage(AISession state,JsonObject config,Consumer<String> imageCollector,Consumer<Throwable> except,Map<String,String> refImages,ObjectStorageProvider tos) {
 		JimengImageGenerator jig=new JimengImageGenerator(config);
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("jimeng_image", "使用即梦AI生成图片，注意参考图的图片id或名称不会被传递给模型，因此只能用从1开始的顺序索引指代图片。")
@@ -81,6 +83,8 @@ public class SeedreamMcp {
 					}
 					
 					CompletableFuture<Void> cf=jig.generateImage(links, lprompt).thenApply(t -> {
+
+						state.addUsage(new TOSUsage(t.length));
 						try {
 							return tos.uploadIfNotExists(t);
 						} catch (IOException e) {
