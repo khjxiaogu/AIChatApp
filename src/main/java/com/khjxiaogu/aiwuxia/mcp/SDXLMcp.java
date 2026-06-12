@@ -389,6 +389,7 @@ public class SDXLMcp {
 			.header("Content-Type", "application/json; utf-8")
 			.url("/tagger/v1/interrogate")
 			.post()
+			.send(payload.toString())
 			.readJson();
 			HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
 			.header("Accept", "application/json")
@@ -415,6 +416,7 @@ public class SDXLMcp {
 			.header("Content-Type", "application/json; utf-8")
 			.url("/sdapi/v1/txt2img")
 			.post()
+			.send(payload.toString())
 			.readJson();
 		}
 		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
@@ -438,6 +440,7 @@ public class SDXLMcp {
 			.header("Content-Type", "application/json; utf-8")
 			.url("/sdapi/v1/img2img")
 			.post()
+			.send(payload.toString())
 			.readJson();
 		}
 		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
@@ -496,6 +499,7 @@ public class SDXLMcp {
 			.header("Content-Type", "application/json; utf-8")
 			.url("/sdapi/v1/txt2img")
 			.post()
+			.send(payload.toString())
 			.readJson();
 		}
 		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
