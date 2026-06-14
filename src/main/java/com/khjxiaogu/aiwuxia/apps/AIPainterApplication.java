@@ -28,19 +28,15 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -56,13 +52,14 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
 import com.khjxiaogu.aiwuxia.utils.MessageReader;
 
-public class AIGroupApplication extends AIApplication {
+public class AIPainterApplication extends AIApplication {
 	String name;
 	String charaName;
 	String system;
 	List<ToolData> tools=new ArrayList<>();
 	@Override
 	public void provideInitial(AISession state) {
+
 	}
 
 	@Override
@@ -136,7 +133,7 @@ public class AIGroupApplication extends AIApplication {
 				}
 			}
 		}
-		state.appendCh(Role.ASSISTANT,msg,true);
+		state.add(Role.ASSISTANT, msg,msg);
 		
 		return oldstate;
 	}
@@ -209,12 +206,11 @@ public class AIGroupApplication extends AIApplication {
 	public String getMemory(AISession state) {
 		return state.getLastSummary();
 	}
-	
+
 	String summary;
-	public AIGroupApplication(File base,File path,String name,JsonObject meta) throws IOException {
+	public AIPainterApplication(File base,File path,String name,JsonObject meta) throws IOException {
 		super();
 		this.name=name;
-
 		system = 
 			
 			FileUtil.readString(new File(path, "role.txt")).replace("\r", "")+
@@ -225,8 +221,7 @@ public class AIGroupApplication extends AIApplication {
 		this.charaName=meta.get("charaName").getAsString();
 		// AI response, always valid
 		handlers.add((state, ret) -> {
-			if(!ret.isEmpty())
-				state.add(Role.USER, ret, true);
+			state.add(Role.USER, ret, true);
 			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
 			state.setLastState(airet);
 			state.addDialogRow();

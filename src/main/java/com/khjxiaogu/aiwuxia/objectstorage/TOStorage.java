@@ -4,10 +4,12 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.function.Consumer;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.volcengine.tos.TOSV2;
 import com.volcengine.tos.TOSV2ClientBuilder;
 import com.volcengine.tos.TosException;
@@ -31,10 +33,10 @@ public class TOStorage implements ObjectStorageProvider {
 	}
 
 	@Override
-	public boolean exists(String fn) {
+	public boolean exists(String fn,Consumer<UsageIntf<?>> addUsage) {
 		HttpURLConnection connection = null;
 		try {
-			URL url = new URL(getUrl(fn));
+			URL url = new URL(getUrl(fn,addUsage));
 			connection = (HttpURLConnection) url.openConnection();
 			connection.setRequestMethod("HEAD");
 			connection.setConnectTimeout(5000); // 连接超时 5 秒
@@ -55,10 +57,12 @@ public class TOStorage implements ObjectStorageProvider {
 	}
 
 	@Override
-	public String upload(String fn, byte[] data) throws IOException {
+	public String upload(String fn, byte[] data,Consumer<UsageIntf<?>> addUsage) throws IOException {
 		try {
 			PutObjectInput input = new PutObjectInput().setBucket(cfg.bucket).setKey(fn).setContent(new ByteArrayInputStream(data));
 			PutObjectOutput output = client.putObject(input);
+			if(addUsage!=null)
+				addUsage.accept(new TOSUsage(data.length));
 			System.out.println("Put object success, the object's etag is " + output.getEtag());
 			return fn;
 		} catch (TosException e) {
@@ -68,8 +72,13 @@ public class TOStorage implements ObjectStorageProvider {
 	}
 
 	@Override
-	public String getUrl(String fn) {
+	public String getUrl(String fn,Consumer<UsageIntf<?>> addUsage) {
 		return "https://" + cfg.bucket + "." + cfg.endpoint + "/" + fn;
+	}
+
+	@Override
+	public String getPublicUrl(String fn,Consumer<UsageIntf<?>> addUsage) {
+		return getUrl(fn,addUsage);
 	}
 
 }

@@ -19,7 +19,6 @@ import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
-import com.khjxiaogu.aiwuxia.objectstorage.TOSUsage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
@@ -42,20 +41,25 @@ public class SeedreamMcp {
 					String[] refs=ref.split(",");
 					List<String> links=new ArrayList<>();
 					List<String> errors=new ArrayList<>();
-					for(String refImg:refs) {
-						if(refImg.length()==72) {
-							if(tos.exists(refImg.trim())) {
-								links.add(tos.getUrl(refImg.trim()));
-							}else {
-								errors.add("参考图"+refImg.trim()+"已清理或不存在；");
+					try {
+						for(String refImg:refs) {
+							if(refImg.length()==72) {
+								if(tos.exists(refImg.trim(),state::addUsage)) {
+									links.add(tos.getPublicUrl(refImg.trim(),state::addUsage));
+								}else {
+									errors.add("参考图"+refImg.trim()+"已清理或不存在；");
+								}
 							}
+							String link=refImages.get(refImg.trim());
+							if(link==null) {
+								errors.add("参考图"+refImg.trim()+"不存在；");
+							}else
+								links.add(link);
+							
 						}
-						String link=refImages.get(refImg.trim());
-						if(link==null) {
-							errors.add("参考图"+refImg.trim()+"不存在；");
-						}else
-							links.add(link);
-						
+					} catch (IOException e) {
+						e.printStackTrace();
+						return "参考图处理失败";
 					}
 					if(errors.size()>0) {
 						StringBuilder sb=new StringBuilder();
@@ -67,9 +71,8 @@ public class SeedreamMcp {
 					
 					CompletableFuture<Void> cf=jig.generateImage(links, jo.get("prompt").getAsString()).thenApply(t -> {
 
-						state.addUsage(new TOSUsage(t.length));
 						try {
-							return tos.uploadIfNotExists(t);
+							return tos.uploadIfNotExists(t,state::addUsage);
 						} catch (IOException e) {
 							e.printStackTrace();
 							throw new RuntimeException(e);
@@ -123,21 +126,26 @@ public class SeedreamMcp {
 					List<String> links=new ArrayList<>();
 					List<String> errors=new ArrayList<>();
 					//int picNum=0;
-					for(String refImg:refs) {
-						if(refImg.length()==72) {
-							if(tos.exists(refImg.trim())) {
-								links.add(tos.getUrl(refImg.trim()));
-							}else {
-								errors.add("参考图"+refImg.trim()+"已清理或不存在；");
+					try {
+						for(String refImg:refs) {
+							if(refImg.length()==72) {
+								if(tos.exists(refImg.trim(),state::addUsage)) {
+									links.add(tos.getPublicUrl(refImg.trim(),state::addUsage));
+								}else {
+									errors.add("参考图"+refImg.trim()+"已清理或不存在；");
+								}
 							}
+							//lprompt+="图"+picNum+"是"+refImg.trim()+"，";
+							String link=refImages.get(refImg.trim());
+							if(link==null) {
+								errors.add("参考图"+refImg.trim()+"不存在；");
+							}else
+								links.add(link);
+							//picNum++;
 						}
-						//lprompt+="图"+picNum+"是"+refImg.trim()+"，";
-						String link=refImages.get(refImg.trim());
-						if(link==null) {
-							errors.add("参考图"+refImg.trim()+"不存在；");
-						}else
-							links.add(link);
-						//picNum++;
+					} catch (IOException e) {
+						e.printStackTrace();
+						return "参考图处理失败";
 					}
 					if(errors.size()>0) {
 						StringBuilder sb=new StringBuilder();

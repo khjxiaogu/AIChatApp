@@ -66,7 +66,7 @@ class SqliteHistoryItem implements HistoryItem {
 
 	// ── 重度字段（懒加载 / 首次设置时填充）─────────────────
 
-	String displayContent;
+	MutableMessageContents displayContent;
 	MutableMessageContents contextContent;
 	MutableMessageContents reasonContent;
 	ApplicationState lastState;
@@ -113,7 +113,7 @@ class SqliteHistoryItem implements HistoryItem {
 	}
 
 	@Override
-	public CharSequence getDisplayContent() {
+	public MessageContents getDisplayContent() {
 		ensureLoaded();
 		return displayContent;
 	}

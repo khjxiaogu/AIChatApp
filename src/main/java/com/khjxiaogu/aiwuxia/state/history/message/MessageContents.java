@@ -163,22 +163,44 @@ public interface MessageContents extends Iterable<MessageContent> {
 	 *
 	 * @return {@code true} 如果全部为纯文本；{@code false} 否则
 	 */
-	boolean isPlainText();
+	default boolean isPlainText() {
+		for (MessageContent msg : this)
+			if (!msg.isPlainText())
+				return false;
+		return true;
+	}
 
 	/**
 	 * 判断集合中的所有消息内容是否均可表示为文本。
 	 *
 	 * @return {@code true} 如果全部可表示为文本；{@code false} 否则
 	 */
-	boolean isTextRepresentable();
-
+	default boolean isTextRepresentable() {
+		for (MessageContent msg : this)
+			if (!msg.isTextRepresentable())
+				return false;
+		return true;
+	}
 	/**
 	 * 将所有消息内容的文本表示拼接成一个完整的字符串。
 	 *
 	 * @return 拼接后的文本，不可为 null
 	 */
-	String toText();
-
+	default String toText() {
+		StringBuilder builder = new StringBuilder();
+		for (MessageContent msg : this)
+			builder.append(msg.toText());
+		return builder.toString();
+	}
+	default String getPlainText() {
+		StringBuilder builder = new StringBuilder();
+		for(MessageContent content:this) {
+			if(content instanceof PlainText) {
+				builder.append(content.toText());
+			}
+		}
+		return builder.toString();
+	}
 	/**
 	 * 判断集合是否为空。
 	 *

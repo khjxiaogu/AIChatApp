@@ -27,14 +27,14 @@ public class HistoryCompactor {
 				history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
 			}
 			len+=tokenLen;
-			if(hi.maySendReasoner())
+			if(hi.maySendReasoner()&&hi.getRole()==Role.ASSISTANT)
 				reasoning++;
 		}
 		if(reasoning>30) {
 			it=history.validContextIterator();
 			while(it.hasNext()) {
 				HistoryItem hi=it.next();
-				if(hi.maySendReasoner()) {
+				if(hi.maySendReasoner()&&hi.getRole()==Role.ASSISTANT) {
 					history.setSendReasoner(hi, false);
 					reasoning--;
 					if(reasoning<=10)

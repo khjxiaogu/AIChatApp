@@ -68,28 +68,10 @@ public class MutableMessageContents implements MessageContents {
 			append(text);
 	}
 
-	@Override
-	public boolean isPlainText() {
-		for (MessageContent msg : messages)
-			if (!msg.isPlainText())
-				return false;
-		return true;
-	}
 
 	@Override
-	public boolean isTextRepresentable() {
-		for (MessageContent msg : messages)
-			if (!msg.isTextRepresentable())
-				return false;
-		return true;
-	}
-
-	@Override
-	public String toText() {
-		StringBuilder builder = new StringBuilder();
-		for (MessageContent msg : messages)
-			builder.append(msg.toText());
-		return builder.toString();
+	public String toString() {
+		return toText();
 	}
 
 	/**

@@ -31,7 +31,7 @@ public class QQMcp {
 									.url("/g?b=qq&nk=" + id + "&s=640").get().readBytes();
 
 							state.addUsage(new TOSUsage(picture.length));
-							String fn = tos.uploadIfNotExists(picture);
+							String fn = tos.uploadIfNotExists(picture,state::addUsage);
 
 							return fn;
 						} catch (IOException e) {
@@ -50,7 +50,7 @@ public class QQMcp {
 								.url("/gh/" + groupId + "/" + groupId + "/640").get().readBytes();
 
 						state.addUsage(new TOSUsage(picture.length));
-						String fn = tos.uploadIfNotExists(picture);
+						String fn = tos.uploadIfNotExists(picture,state::addUsage);
 
 						return fn;
 					} catch (IOException e) {
@@ -69,10 +69,10 @@ public class QQMcp {
 							String fn=jo.get("picture_id").getAsString();
 							String nsfw=jo.get("is_nsfw").getAsString();
 							if("true".equalsIgnoreCase(nsfw)||"是".equals(nsfw)||"yes".equalsIgnoreCase(nsfw)||"y".equalsIgnoreCase(nsfw))
-								return nsfwCollector.apply(tos.getUrl(fn));
+								return nsfwCollector.apply(tos.getUrl(fn,state::addUsage));
 
 							if("false".equalsIgnoreCase(nsfw)||"否".equals(nsfw)||"no".equalsIgnoreCase(nsfw)||"n".equalsIgnoreCase(nsfw))
-								return imageCollector.apply(tos.getUrl(fn));
+								return imageCollector.apply(tos.getUrl(fn,state::addUsage));
 							return "is_nsfw错误，必须为true/false之一";
 						}catch(Throwable t) {
 							t.printStackTrace();
@@ -86,7 +86,7 @@ public class QQMcp {
 							JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 							String fn=jo.get("picture_id").getAsString();
 						
-							return imageCollector.apply(tos.getUrl(fn));
+							return imageCollector.apply(tos.getUrl(fn,state::addUsage));
 						}catch(Throwable t) {
 							t.printStackTrace();
 						}

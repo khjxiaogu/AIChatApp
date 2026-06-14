@@ -44,12 +44,13 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
-import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
-import com.khjxiaogu.aiwuxia.llm.scheme.ToolCallCollector;
-import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
-import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
+import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
+import com.khjxiaogu.aiwuxia.llm.scheme.ToolCallCollector;
+import com.khjxiaogu.aiwuxia.state.GsonHelper;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
@@ -134,7 +135,7 @@ public class DeepseekModelProvider implements ModelProvider{
 		for(HistoryItem hi:request.history) {
 			boolean shouldContainReasoner=false;
 			boolean shouldSkipContent=false;
-			if(hi.maySendReasoner()&&hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
+			if(hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
 				for(MessageContent msgc:hi.getReasoningContent()) {
 					if(msgc instanceof ToolContent) {
 						shouldContainReasoner=true;

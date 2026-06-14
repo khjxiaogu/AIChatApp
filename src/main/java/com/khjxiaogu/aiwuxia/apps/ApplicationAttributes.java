@@ -10,6 +10,7 @@ public class ApplicationAttributes {
 	public String url=null;
 	public AIApplication app;
 	public String appid;
+	public String ui;
 	public ApplicationAttributes(AIApplication app,String appid) {
 		this.app=app;
 		this.appid=appid;

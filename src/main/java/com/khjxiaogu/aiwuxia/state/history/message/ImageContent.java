@@ -46,7 +46,7 @@ public class ImageContent implements MessageContent {
 
 	@Override
 	public String toText() {
-		return description == null ? "" : description;
+		return description == null ? "<image id="+image_url+">" : description;
 	}
 
 	/**

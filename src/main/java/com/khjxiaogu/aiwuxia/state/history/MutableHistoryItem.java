@@ -61,6 +61,18 @@ public interface MutableHistoryItem extends HistoryItem {
 	void append(String content, boolean addToContext);
 
 	/**
+	 * 追加多模态内容到当前条目的显示内容，并根据参数决定是否同时写入上下文内容。
+	 * <p>
+	 * 与 {@link #append(String, boolean)} 的区别在于接受 {@link MessageContent}，
+	 * 可以追加图片、视频等非文本内容。
+	 * </p>
+	 *
+	 * @param content      要追加的多模态内容
+	 * @param addToContext 若为 {@code true}，则将该内容也追加到上下文内容中
+	 */
+	void append(MessageContent content, boolean addToContext);
+
+	/**
 	 * 强制将内容追加到上下文内容中，不影响显示内容或推理内容。
 	 *
 	 * @param content 要追加到上下文的内容字符串

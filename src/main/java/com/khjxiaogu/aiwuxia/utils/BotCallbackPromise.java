@@ -8,7 +8,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.gson.JsonObject; // 假设使用Gson库，您可根据实际项目替换为其他JSON类型
-import com.khjxiaogu.aiwuxia.NapCatAIConnector.BotCallback;
 
 /**
  * 将BotCallback与CompletableFuture绑定的工具类。
@@ -16,7 +15,7 @@ import com.khjxiaogu.aiwuxia.NapCatAIConnector.BotCallback;
  * - 若1分钟内回调未被调用，Future将因超时异常而完成。
  * - 线程安全，确保回调与超时仅生效一次。
  */
-public class BotCallbackPromise {
+public class BotCallbackPromise{
     private final CompletableFuture<JsonObject> future;
     private final BotCallback callback;
     private static final ScheduledExecutorService scheduler =Executors.newSingleThreadScheduledExecutor(r -> {
@@ -28,9 +27,9 @@ public class BotCallbackPromise {
     private final ScheduledFuture<?> timeoutTask;
 
     /**
-     * 构造一个新的绑定实例，立即启动1分钟超时计时。
+     * 构造一个新的绑定实例，立即启动超时计时。
      */
-    public BotCallbackPromise() {
+    public BotCallbackPromise(int minutes) {
         this.future = new CompletableFuture<>();
         // 使用守护线程的调度器，避免阻止JVM退出
 
@@ -38,9 +37,9 @@ public class BotCallbackPromise {
         // 超时任务：1分钟后若尚未完成，则异常完成Future
         this.timeoutTask = scheduler.schedule(() -> {
             if (completed.compareAndSet(false, true)) {
-                future.completeExceptionally(new TimeoutException("BotCallback not called within 1 minute"));
+                future.completeExceptionally(new TimeoutException("BotCallback timeout"));
             }
-        }, 1, TimeUnit.MINUTES);
+        }, minutes, TimeUnit.MINUTES);
 
         // 回调实现：根据status决定Future的结果，并取消超时任务
         this.callback = (status, data) -> {
@@ -82,7 +81,7 @@ public class BotCallbackPromise {
 		private final int status;
         private final JsonObject data;
 
-        public BotCallbackException(int status, JsonObject data) {
+        public BotCallbackException(int status,JsonObject data) {
             super("BotCallback failed with status: " + status);
             this.status = status;
             this.data = data;

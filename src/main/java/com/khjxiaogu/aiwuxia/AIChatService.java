@@ -36,9 +36,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -54,10 +56,22 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
+import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
+import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
+import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
+import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
+import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
+import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
+import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
+import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
+import com.khjxiaogu.aiwuxia.state.session.ChatIdentity;
+import com.khjxiaogu.aiwuxia.state.session.PainterSession;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
+import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
@@ -77,12 +91,14 @@ import com.khjxiaogu.webserver.web.FilePageService;
 import com.khjxiaogu.webserver.web.ServiceClass;
 import com.khjxiaogu.webserver.web.lowlayer.Request;
 import com.khjxiaogu.webserver.web.lowlayer.Response;
+import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 import com.khjxiaogu.webserver.wrappers.ResultDTO;
 import com.khjxiaogu.webserver.wrappers.inadapters.DataIn;
 import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
 import com.khjxiaogu.webserver.wrappers.inadapters.JsonIn;
 
 import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.multipart.HttpData;
 
 /**
  * AI对话核心服务，负责管理AI对话会话、用户权限、历史记录以及与前端WebSocket通信。 该类实现了 {@link ServiceClass} 和
@@ -110,7 +126,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 
 	/** 当前活跃的WebSocket会话映射，键为对话ID，值为对应的WebSocket会话对象 */
-	protected Map<String, WebSocketAISession> uidsockets = new ConcurrentHashMap<>();
+	protected Map<String, AISession> uidsockets = new ConcurrentHashMap<>();
+	/** 绘画师图片存储，使用DelegatingStorage（本地+TOS）持久化存储 */
+	protected ObjectStorageProvider painterStorage;
 
 	/** 可用的AI应用映射，键为应用ID（如"wuxia"），值为对应的AI应用实例 */
 	private Map<String, ApplicationAttributes> apps = new HashMap<>();
@@ -119,6 +137,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private Set<String> trial = new HashSet<>();
 	
 	public Map<String,NameTranslator> modelTranslations=new HashMap<>();
+	
 	String defaultRule="";
 
 	/** 服务数据根目录 */
@@ -148,6 +167,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				.add("none-strength", "（最简推理）").add("weak-strength", "（轻度推理）").add("medium-strength", "（中度推理）").add("strong-strength", "（重度推理）")
 				);
 	}
+	public final Map<String, LoraConfigurations> lora = new LinkedHashMap<>();
+	public final String urlbase;
 	/**
 	 * 构造AI对话服务，初始化数据库连接、文件目录和AI应用。
 	 *
@@ -156,15 +177,25 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * @throws ClassNotFoundException 如果找不到SQLite JDBC驱动
 	 * @throws IOException 
 	 */
-	public AIChatService(File path) throws SQLException, ClassNotFoundException, IOException {
+	public AIChatService(String urlbase,File path) throws SQLException, ClassNotFoundException, IOException {
 		try {
 			Class.forName("org.sqlite.JDBC");
 		} catch (ClassNotFoundException e) {
 			logger.severe("SQLITE链接失败！");
 			throw e;
 		}
+		this.urlbase=urlbase;
 		initModelNames();
 		defaultRule=FileUtil.readString(new File(path,"apps/custom/prompt.txt"));
+		
+		File lfn=new File(path,"loras.json");
+		if(lfn.exists()) {
+			JsonObject refimg=JsonParser.parseString(FileUtil.readString(lfn)).getAsJsonObject();
+			for(String key:refimg.keySet()) {
+				JsonObject jo=refimg.get(key).getAsJsonObject();
+				lora.put(key, new LoraConfigurations(jo.get("key").getAsString(),jo.get("weight").getAsFloat()));
+			}
+		}
 		logger.info("正在链接SQLITE信息数据库...");
 		try {
 			database = DriverManager.getConnection("jdbc:sqlite:" + new File(path, "messages.db"));
@@ -245,6 +276,20 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		saveData.mkdirs();
 		resource = new FilePageService(new File(parent, "resource"));
 		voice = new FilePageService(new File(parent, "voice"));
+		try {
+			File tosConfigFile = new File(parent, "tos.json");
+			if (tosConfigFile.exists()) {
+				JsonObject tosCfg = JsonParser.parseString(FileUtil.readString(tosConfigFile)).getAsJsonObject();
+				painterStorage = new DelegatingStorage(new File(parent, "painter_images"), new TOStorage(tosCfg));
+				logger.info("绘画图片存储: 本地+TOS");
+			} else {
+				painterStorage = new LocalStorage(new File(parent, "painter_images"));
+				logger.info("绘画图片存储: 仅本地");
+			}
+		} catch (Exception e) {
+			painterStorage = new LocalStorage(new File(parent, "painter_images"));
+			logger.info("绘画图片存储: 仅本地 (TOS初始化失败)");
+		}
 		reload();
 	}
 
@@ -282,6 +327,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 								attr.url=meta.get("url").getAsString();
 							if(meta.has("freeNow"))
 								attr.freeNow=meta.get("freeNow").getAsBoolean();
+							if(meta.has("ui"))
+								attr.ui=meta.get("ui").getAsString();
 							getLogger().info("AI加载成功：" + name);
 						} catch (Throwable e) {
 							getLogger().printStackTrace(e);
@@ -697,6 +744,115 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO custom() throws IOException {
 		return new ResultDTO(200, new File(parent, "custom.html"));
 	}
+
+	/**
+	 * HTTP GET端点：返回painter.html文件（AI绘画页面）。
+	 *
+	 * @return 包含文件内容的ResultDTO
+	 * @throws IOException 如果文件读取失败
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/painter")
+	@Adapter
+	public ResultDTO painter() throws IOException {
+		return new ResultDTO(200, new File(parent, "painter.html"));
+	}
+
+	@HttpMethod("GET")
+	@HttpPath("/painter-local")
+	@Adapter
+	public ResultDTO painterLocal() throws IOException {
+		return new ResultDTO(200, new File(parent, "painter-local.html"));
+	}
+
+	@HttpPath("/painter/localResponse")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO painterLocalResponse(@Query("conversation_id") String cid,
+		@Query("request_id") String requestId,
+		@GetBy(JsonIn.class) JsonObject result) {
+		try {
+			if (cid == null || cid.isEmpty() || requestId == null || requestId.isEmpty()) {
+				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "missing parameters").end());
+			}
+			AISession session = uidsockets.get(cid);
+			if (session != null&&session instanceof PainterSession) {
+				((PainterSession) session).completeLocalRequest(requestId, result);
+				return new ResultDTO(200, JsonBuilder.object().add("code", 0).end());
+			}
+			return new ResultDTO(404, JsonBuilder.object().add("code", -1).add("message", "session not found").end());
+		} catch (Exception e) {
+			getLogger().printStackTrace(e);
+			return new ResultDTO(500, JsonBuilder.object().add("code", -1).add("message", "internal error").end());
+		}
+	}
+
+	public ObjectStorageProvider getPainterStorage() {
+		return painterStorage;
+	}
+	/**
+	 * HTTP POST端点：接收绘画师前端上传的图片（multipart/form-data）。
+	 * 使用DelegatingStorage持久化存储（本地+TOS），返回内容寻址的图片ID。
+	 *
+	 * @param cid 对话ID（conversation_id）
+	 * @param imageData 上传的图片文件数据
+	 * @return 包含图片ID的JSON结果
+	 */
+	@HttpPath("/painter/uploadImage")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO painterUploadImage(@PostQuery("conversation_id") String cid,
+		@PostQuery("image") HttpData imageData) {
+		try {
+			if (cid == null || cid.isEmpty() || imageData == null) {
+				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "missing conversation_id or image").end());
+			}
+			AISession session = uidsockets.get(cid);
+			if (session != null&&session instanceof PainterSession) {
+
+				byte[] data = imageData.get();
+				String imageId = painterStorage.uploadIfNotExists(data,session::addUsage);
+				
+				((PainterSession) session).addPendingUserMessage(new ImageContent(imageId));
+				session.flush();
+				return new ResultDTO(200, JsonBuilder.object().add("code", 0).add("message", "success").end());
+			}
+			
+		} catch (Exception e) {
+			getLogger().printStackTrace(e);
+		}
+		return new ResultDTO(500, JsonBuilder.object().add("code", -1).add("message", "upload failed").end());
+	}
+
+	/**
+	 * HTTP GET端点：根据图片ID获取已存储的图片数据。
+	 * 优先从本地存储读取，若不存在则从TOS下载。
+	 *
+	 * @param imageId 图片ID（内容寻址的SHA-256哈希）
+	 * @return 包含图片字节数据的ResultDTO
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/painter/image")
+	@Adapter
+	public ResultDTO painterGetImage(@Query("image_id") String imageId) {
+		try {
+			if (!painterStorage.exists(imageId,null)) {
+				return new ResultDTO(404, "image not found");
+			}
+			byte[] data = painterStorage.download(imageId,null);
+			String mime = "image/png";
+			if (imageId.endsWith(".jpg") || imageId.endsWith(".jpeg")) mime = "image/jpeg";
+			else if (imageId.endsWith(".gif")) mime = "image/gif";
+			else if (imageId.endsWith(".webp")) mime = "image/webp";
+			ResultDTO result = new ResultDTO(200, data);
+			result.addHeader(HttpHeaderNames.CONTENT_TYPE, mime);
+			result.setHeader(HttpHeaderNames.CACHE_CONTROL, "public,max-age=2592000");
+			return result;
+		} catch (Exception e) {
+			getLogger().printStackTrace(e);
+			return new ResultDTO(500, "failed to load image");
+		}
+	}
 	/**
 	 * HTTP GET端点：删除（隐藏）指定对话。 将对话的attribute字段设置为"hide"，使其在列表中不可见。
 	 *
@@ -791,12 +947,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return new ResultDTO(404);
 	}
-	public WebSocketAISession getOrLoadSession(String cid,String uid) throws SQLException{
+	public AISession getOrLoadSession(String cid,String uid) throws SQLException{
 		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ?")) {
 			ps.setString(1, cid);
 			try (ResultSet rs = ps.executeQuery()) {
 				if (rs.next() && rs.getString(1).equals(uid)) {
-					WebSocketAISession state = uidsockets.get(cid);
+					AISession state = uidsockets.get(cid);
 					String app = rs.getString(2);
 					ApplicationAttributes attr = apps.get(app);
 					if (state == null) {
@@ -835,7 +991,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@HttpMethod("POST")
 	public ResultDTO export(@Query("uid") String uid, @Query("chatid") String cid) {
 		try {
-			WebSocketAISession state = this.getOrLoadSession(cid, uid);
+			AISession state = this.getOrLoadSession(cid, uid);
 			if(state!=null) {
 				ByteArrayOutputStream baos = new ByteArrayOutputStream();
 				try {
@@ -868,7 +1024,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@HttpMethod("POST")
 	public ResultDTO exportMemory(@Query("uid") String uid, @Query("chatid") String cid) {
 		try {
-			WebSocketAISession state = this.getOrLoadSession(cid, uid);
+			AISession state = this.getOrLoadSession(cid, uid);
 			if(state!=null) {
 				String memory=state.getMemory();
 				if(memory==null) {
@@ -916,7 +1072,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			ps.setString(1, cid);
 			try (ResultSet rs = ps.executeQuery()) {
 				if (rs.next() && rs.getString(1).equals(uid)) {
-					WebSocketAISession state = uidsockets.get(cid);
+					AISession state = uidsockets.get(cid);
 					String app = rs.getString(2);
 					ApplicationAttributes attr = apps.get(app);
 					ExtraData exd;
@@ -949,11 +1105,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ApplicationAttributes getAttribute(String app) {
 		return apps.get(app);
 	}
-	public WebSocketAISession loadSession(String uid, String rcid, ApplicationAttributes attribute, File data) throws IOException {
-		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
-				AIApplication.saveDataFromJson(data));
-	}
-	public WebSocketAISession createSession(String uid, String rcid,ApplicationAttributes attribute, File data,String visibility) throws IOException{
+	public AISession createSession(String uid, String rcid,ApplicationAttributes attribute, File data,String visibility) throws IOException{
 		long time = new Date().getTime();
 		try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,attribute) VALUES(?,?,?,?,?)")) {
 			ps2.setString(1, uid);
@@ -981,9 +1133,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
 		}
-		return createRawSession(uid,rcid,attribute,data);
+		return loadSession(uid,rcid,attribute,data);
 	}
-	public WebSocketAISession createRawSession(String uid, String rcid,ApplicationAttributes attribute, File data) throws IOException{
+	public AISession loadSession(String uid, String rcid,ApplicationAttributes attribute, File data) throws IOException{
+		if("painter".equals(attribute.ui))
+			return new PainterSession(this, uid, rcid, attribute.app, attribute, data,
+					AIApplication.saveDataFromJson(data));
 		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
 			AIApplication.saveDataFromJson(data));
 	}
@@ -1007,7 +1162,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		if(rcid==null) {
 			rcid=this.getAvailableId();	
 		}
-		WebSocketAISession state =null;
+		AISession state =null;
 		try {
 			state = this.getOrLoadSession(rcid, uid);
 		} catch (SQLException e) {
@@ -1057,6 +1212,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		String cid = req.getQuery().get("chatid");
 		String app = req.getQuery().get("app");
 		String uid = req.getQuery().get("userId");
+
 		boolean isCreate = false;
 		String attribute = "";
 		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ? and attribute!='removed'")) {
@@ -1085,7 +1241,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
 		}
-		WebSocketAISession state = uidsockets.get(cid);
+		AISession state = uidsockets.get(cid);
 		if (state == null) {
 			ApplicationAttributes attr = apps.get(app);
 			if (attr == null) {
@@ -1095,7 +1251,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			File data = new File(saveData, cid + ".json");
 			if (data.exists())
 				try {
-					state = loadSession( uid, cid, attr, data);
+					state = loadSession(uid, cid, attr, data);
 					state.onLoad();
 					logger.info("AI " + cid + " Loaded");
 				} catch (JsonSyntaxException | IOException e) {
@@ -1105,11 +1261,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			if (state == null) {
 				try{
 					if (isCreate) {
-						state = createSession( uid, cid, attr, data,attribute);
+						state = createSession(uid, cid, attr, data,attribute);
 						state.flush();
 						logger.info("AI " + cid + " Created");
 					}else {
-						state = createRawSession(uid,cid,attr,data);
+						state = loadSession(uid,cid,attr,data);
 						state.flush();
 						logger.info("AI " + cid + " Created");
 					}
@@ -1122,7 +1278,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			}
 		}
 		uidsockets.put(cid, state);
-		res.suscribeWebsocketEvents(state);
+		
+		res.suscribeWebsocketEvents((WebsocketEvents) state);
 	}
 	/**
 	 * 根据用户 ID、对话 ID 修改备注。
@@ -1359,11 +1516,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/**
 	 * 释放指定的WebSocket会话，从活跃会话映射中移除。 当WebSocket连接关闭时调用。
 	 *
-	 * @param state 要释放的会话对象
+	 * @param painterSession 要释放的会话对象
 	 */
-	public void markRelease(WebSocketAISession state) {
-		logger.info("AI " + state.getChatId() + " UnLoaded");
-		uidsockets.remove(state.getChatId());
+	public void markRelease(ChatIdentity painterSession) {
+		logger.info("AI " + painterSession.getChatId() + " UnLoaded");
+		uidsockets.remove(painterSession.getChatId());
 	}
 
 	@Override

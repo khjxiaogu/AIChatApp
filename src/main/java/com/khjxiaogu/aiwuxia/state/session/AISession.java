@@ -125,9 +125,14 @@ public class AISession implements ISaveData{
      * @param current 要追加的推理内容字符串
      */
     public void appendReasoner(MessageContent current) {
-        if (currentReasoner == null)
-            currentReasoner = new MutableMessageContents();
-        currentReasoner.add(current);
+    	HistoryItem hi=this.getHistory().peekLast();
+    	if(hi.getRole()==Role.ASSISTANT) {
+    		this.getHistory().appendReasoner(current);
+    	}else {
+	        if (currentReasoner == null)
+	            currentReasoner = new MutableMessageContents();
+	        currentReasoner.add(current);
+    	}
         this.setUpdated();
     }
 
@@ -162,7 +167,7 @@ public class AISession implements ISaveData{
 			}else {
 				hi = getHistory().add(role, content + "\n", true);
 			}
-			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
+			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
 		} else {
 			getHistory().appendLine(content, appendToContext);
 			appendMessage(hi.getIdentifier(), content + "\n");
@@ -188,15 +193,47 @@ public class AISession implements ISaveData{
 		if (hi == null) {
 			
 			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi = getHistory().add(role, ch, currentReasoner, true);
+				hi = getHistory().add(role, ch, currentReasoner, appendToContext);
 				currentReasoner = null;
 			}else {
-				hi = getHistory().add(role, ch, true);
+				hi = getHistory().add(role, ch, appendToContext);
 			}
-			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
+			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
 		} else {
 			getHistory().append(ch, appendToContext);
 			appendMessage(hi.getIdentifier(), ch);
+		}
+	}
+
+
+	/**
+	 * 向当前会话追加一个多模态内容块（不自动添加换行），并决定是否同时将其添加到上下文内容中。
+	 * 与 {@link #appendCh(Role, String, boolean)} 类似，但接受 {@link MessageContent}，
+	 * 可以追加图片、视频等非文本内容。
+	 *
+	 * @param role            条目的角色
+	 * @param content         要追加的多模态内容
+	 * @param appendToContext 是否同时将其添加到上下文内容中
+	 */
+	public void appendCh(Role role, MessageContent content, boolean appendToContext) {
+		HistoryItem hi = null;
+		if (!getHistory().isEmpty()) {
+			hi = getHistory().peekLast();
+			if (role != hi.getRole() || (!hi.isValidContext() && appendToContext)) {
+				hi = null;
+			}
+		}
+		if (hi == null) {
+			if (currentReasoner != null && role == Role.ASSISTANT) {
+				hi = getHistory().add(role, new MutableMessageContents(content), currentReasoner,appendToContext);
+				currentReasoner = null;
+			} else {
+				hi = getHistory().add(role, new MutableMessageContents(content), null, appendToContext);
+			}
+			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
+		} else {
+			getHistory().append(content, appendToContext);
+			appendMessage(hi.getIdentifier(), content);
 		}
 	}
 
@@ -222,7 +259,7 @@ public class AISession implements ISaveData{
 			}else {
 				hi = getHistory().add(role, "", content + "\n");
 			}
-			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
+			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
 		} else {
 			getHistory().appendContext(content + "\n");
 		}
@@ -243,7 +280,7 @@ public class AISession implements ISaveData{
 		}else {
 			hi = getHistory().add(role, content, isValidContext);
 		}
-		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
+		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
 	}
 	public void add(Role role, MessageContents content, boolean isValidContext) {
 		HistoryItem hi;
@@ -253,7 +290,7 @@ public class AISession implements ISaveData{
 		}else {
 			hi = getHistory().add(role, content, null, isValidContext);
 		}
-		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
+		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
 	}
 	/**
 	 * 添加一个新的历史条目，指定角色、显示内容和完整的上下文内容。 如果当前有未完成的推理内容且角色为助手，则将其关联到新条目。
@@ -270,7 +307,7 @@ public class AISession implements ISaveData{
 		}else {
 			hi = getHistory().add(role, displayContent, contextContent);
 		}
-		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent().toString());
+		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
 	}
 
 	/**
@@ -319,7 +356,7 @@ public class AISession implements ISaveData{
 	 * @param role    消息的角色
 	 * @param message 消息的显示内容
 	 */
-	public void postMessage(int id, Role role, String message) {
+	public void postMessage(int id, Role role, MessageContents message) {
 		setUpdated();
 	}
 
@@ -331,6 +368,20 @@ public class AISession implements ISaveData{
 	 */
 	public void appendMessage(int id, String title) {
 		setUpdated();
+	}
+
+	/**
+	 * 当现有消息被追加多模态内容时调用，用于通知外部更新。
+	 * <p>
+	 * 默认实现将内容转为文本后委托给 {@link #appendMessage(int, String)}。
+	 * 子类可重写此方法以支持图片、视频等非文本内容的传输。
+	 * </p>
+	 *
+	 * @param id      消息标识符
+	 * @param content 要追加的多模态内容
+	 */
+	public void appendMessage(int id, MessageContent content) {
+		appendMessage(id, content.toText());
 	}
 
 	/**
@@ -362,6 +413,9 @@ public class AISession implements ISaveData{
 	public void setUpdated() {
 		isUpdated = true;
 	}
+	/**
+	 * @param text  
+	 */
 	public void refillChatBox(MessageContents text) {
 		
 	}
@@ -428,9 +482,15 @@ public class AISession implements ISaveData{
 		return getExtraData().stage;
 	}
 	Map<String,Consumer<String>> pendingInputs=new ConcurrentHashMap<>();
+	/**
+	 * @param prompt  
+	 */
 	public void requestUserInput(String input,String prompt,Consumer<String> consumer) {
 		pendingInputs.put(input, consumer);
 	}
+	/**
+	 * @param msg  
+	 */
 	public void sendNotice(String msg) {
 		
 	}
@@ -667,6 +727,9 @@ public class AISession implements ISaveData{
 	public List<ToolData> getAvailableTools(){
 		return Collections.emptyList();
 	};
+	/**
+	 * @param content  
+	 */
 	public void onToolcall(ToolCallContent content) {
 		
 	}
@@ -696,5 +759,13 @@ public class AISession implements ISaveData{
 	@Override
 	public void flush() {
 		data.flush();
+	}
+
+	public boolean onModifyAttempt() {
+		return true;
+	}
+
+	public void onModifyComplete() {
+		flush();
 	}
 }

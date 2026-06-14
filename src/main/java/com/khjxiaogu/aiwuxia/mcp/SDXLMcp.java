@@ -13,6 +13,10 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,8 +26,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
-import com.khjxiaogu.aiwuxia.objectstorage.TOSUsage;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.khjxiaogu.aiwuxia.state.session.PainterSession;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
@@ -177,8 +181,36 @@ public class SDXLMcp {
 		sb.deleteCharAt(sb.length()-1);
 		return sb.toString();
     }
-	public static MCPTools create(AISession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,ResourceLock lock) {
+	public static MCPTools createRemoteLocal(PainterSession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,Function<String,String> urlGetter,boolean isNsfw) {
+		BiFunction<String,String,CompletableFuture<JsonObject>> func=state::requestLocal;
+		return create(state,tos,lora,isNsfw,urlGetter,func);
+	}
+	public static MCPTools createLocal(AISession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,ResourceLock lock) {
+		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,payload)->CompletableFuture.supplyAsync(()->{
+			try(ResourcePermit l=lock.acquire(12))  {
+				return HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
+				.header("Accept", "application/json")
+				.header("Content-Type", "application/json; utf-8")
+				.url("/sdapi/v1/txt2img")
+				.post()
+				.send(payload.toString())
+				.readJson();
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
+		});
+		return create(state,tos,lora,isNsfw,s->{
+			try {
+				return Base64.getEncoder().encodeToString(tos.download(s,state::addUsage));
+			} catch (IOException e) {
+				e.printStackTrace();
+				throw new RuntimeException(e);
+			}
+		},func);
+	}
+	public static MCPTools create(AISession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,Function<String,String> urlGetter,BiFunction<String,String,CompletableFuture<JsonObject>> func) {
 		MCPTools tools=new MCPTools();
+		
 		Map<String, int[]> resolutions = new HashMap<>();
 		resolutions.put("16:9", new int[] { 1920, 1080 });
 		resolutions.put("9:16", new int[] { 1080, 1920 });
@@ -204,7 +236,7 @@ public class SDXLMcp {
 					if (mtch.find()) {
 						String id = mtch.group(1);
 						try {
-							JsonObject datax = interrogate(tos.download(id),lock);
+							JsonObject datax = interrogate(urlGetter.apply(id),func);
 							StringBuilder sb=new StringBuilder("按可能性从大到小排列的提示词：");
 							for(String key:datax.keySet()) {
 								sb.append(key).append(",");
@@ -250,9 +282,9 @@ public class SDXLMcp {
 									negative
 									,30,
 									its[0],
-									its[1],lock);
-							state.addUsage(new TOSUsage(image.length));
-							String fn = tos.uploadIfNotExists(image);
+									its[1],func);
+							
+							String fn = tos.uploadIfNotExists(image,state::addUsage);
 							return "生成成功，图片id为："+fn;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -311,9 +343,8 @@ public class SDXLMcp {
 						try {
 							byte[] image=generateRegionalImage(prompt,negative,30,
 									its[0],
-									its[1],isRow,ratio,lock);
-							state.addUsage(new TOSUsage(image.length));
-							String fn = tos.uploadIfNotExists(image);
+									its[1],isRow,ratio,func);
+							String fn = tos.uploadIfNotExists(image,state::addUsage);
 							return "生成成功，图片id为："+fn;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -348,13 +379,13 @@ public class SDXLMcp {
 						System.out.println(negative);
 						try {
 
-							byte[] image=generateImage2Image(tos.download(pid),prompt,negative
+							byte[] image=generateImage2Image(urlGetter.apply(pid),prompt,negative
 									,30,
 									its[0],
-									its[1],lock);
+									its[1],func);
 
-							state.addUsage(new TOSUsage(image.length));
-							String fn = tos.uploadIfNotExists(image);
+							
+							String fn = tos.uploadIfNotExists(image,state::addUsage);
 	
 
 							return "生成成功，图片id为："+fn;
@@ -377,76 +408,7 @@ public class SDXLMcp {
 		}
 		return prompt+processLoraConfigurations(usingLoras);
 	}
-	public static JsonObject interrogate(byte[] image,ResourceLock lock) throws IOException {
-		JsonObject payload = new JsonObject();
-		payload.addProperty("image", Base64.getEncoder().encodeToString(image));
-		payload.addProperty("model", "wd-v1-4-moat-tagger.v2");
-		payload.addProperty("threshold", 0.2);
-		JsonObject jsonResponse;
-		try(ResourcePermit l=lock.acquire(3))  {
-			jsonResponse = HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
-			.header("Accept", "application/json")
-			.header("Content-Type", "application/json; utf-8")
-			.url("/tagger/v1/interrogate")
-			.post()
-			.send(payload.toString())
-			.readJson();
-			HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
-			.header("Accept", "application/json")
-			.header("Content-Type", "application/json; utf-8")
-			.url("/tagger/v1/unload-interrogators")
-			.post(false).readString();
-		}
-		return jsonResponse.get("caption").getAsJsonObject().get("tag").getAsJsonObject();
-	}
-	public static byte[] generateImage(String prompt, String negativePrompt, int steps, int width, int height,ResourceLock lock) throws IOException {
-		JsonObject payload = new JsonObject();
-		payload.addProperty("prompt", prompt);
-		payload.addProperty("negative_prompt", negativePrompt);
-		payload.addProperty("steps", steps);
-		payload.addProperty("width", width);
-		payload.addProperty("height", height);
-		payload.addProperty("restore_faces", false);
-		payload.addProperty("sampler_name", "DPM++ 2M");
-
-		JsonObject jsonResponse;
-		try(ResourcePermit l=lock.acquire(12))  {
-			jsonResponse = HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
-			.header("Accept", "application/json")
-			.header("Content-Type", "application/json; utf-8")
-			.url("/sdapi/v1/txt2img")
-			.post()
-			.send(payload.toString())
-			.readJson();
-		}
-		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
-	}
-	public static byte[] generateImage2Image(byte[] baseImg,String prompt, String negativePrompt, int steps, int width, int height,ResourceLock lock) throws IOException {
-		JsonObject payload = new JsonObject();
-		payload.add("init_images", JsonBuilder.array().add(Base64.getEncoder().encodeToString(baseImg)).end());
-		payload.addProperty("prompt", prompt);
-		payload.addProperty("negative_prompt", negativePrompt);
-		payload.addProperty("steps", steps);
-		payload.addProperty("width", width);
-		payload.addProperty("height", height);
-		payload.addProperty("restore_faces", false);
-		payload.addProperty("sampler_name", "DPM++ 2M");
-		payload.addProperty("resize_mode", 0);
-		payload.addProperty("denoising_strength", 0.8);
-		JsonObject jsonResponse;
-		try(ResourcePermit l=lock.acquire(12))  {
-			jsonResponse = HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
-			.header("Accept", "application/json")
-			.header("Content-Type", "application/json; utf-8")
-			.url("/sdapi/v1/img2img")
-			.post()
-			.send(payload.toString())
-			.readJson();
-		}
-		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
-		
-	}
-	public static byte[] getFirstImage(JsonArray images) {
+	private static byte[] getFirstImage(JsonArray images) {
 		for (int i = 0; i < images.size(); i++) {
 			try {
 				String base64Image = images.get(i).getAsString();
@@ -462,7 +424,67 @@ public class SDXLMcp {
 		}
 		return null;
 	}
-	public static byte[] generateRegionalImage(String prompt, String negativePrompt, int steps, int width, int height,boolean isRow,String ratio,ResourceLock lock) throws IOException {
+	public static JsonObject interrogate(String image,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
+		JsonObject payload = new JsonObject();
+		payload.addProperty("image", image);
+		payload.addProperty("model", "wd-v1-4-moat-tagger.v2");
+		payload.addProperty("threshold", 0.2);
+		
+		JsonObject jsonResponse;
+	
+		try {
+			jsonResponse = connector.apply("/tagger/v1/interrogate", payload.toString()).get();
+			connector.apply("/tagger/v1/unload-interrogators", "");
+		} catch (InterruptedException | ExecutionException e) {
+			e.printStackTrace();
+			throw new IOException("服务异常");
+		}
+			
+		
+		return jsonResponse.get("caption").getAsJsonObject().get("tag").getAsJsonObject();
+	}
+	public static byte[] generateImage(String prompt, String negativePrompt, int steps, int width, int height,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
+		JsonObject payload = new JsonObject();
+		payload.addProperty("prompt", prompt);
+		payload.addProperty("negative_prompt", negativePrompt);
+		payload.addProperty("steps", steps);
+		payload.addProperty("width", width);
+		payload.addProperty("height", height);
+		payload.addProperty("restore_faces", false);
+		payload.addProperty("sampler_name", "DPM++ 2M");
+		JsonObject jsonResponse;
+		
+		try {
+			jsonResponse = connector.apply("/sdapi/v1/txt2img", payload.toString()).get();
+		} catch (InterruptedException | ExecutionException e) {
+			e.printStackTrace();
+			throw new IOException("服务异常");
+		}
+		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
+	}
+	public static byte[] generateImage2Image(String baseImg,String prompt, String negativePrompt, int steps, int width, int height,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
+		JsonObject payload = new JsonObject();
+		payload.add("init_images", JsonBuilder.array().add(baseImg).end());
+		payload.addProperty("prompt", prompt);
+		payload.addProperty("negative_prompt", negativePrompt);
+		payload.addProperty("steps", steps);
+		payload.addProperty("width", width);
+		payload.addProperty("height", height);
+		payload.addProperty("restore_faces", false);
+		payload.addProperty("sampler_name", "DPM++ 2M");
+		payload.addProperty("resize_mode", 0);
+		payload.addProperty("denoising_strength", 0.8);
+		JsonObject jsonResponse;
+		try {
+			jsonResponse = connector.apply("/sdapi/v1/img2img", payload.toString()).get();
+		} catch (InterruptedException | ExecutionException e) {
+			e.printStackTrace();
+			throw new IOException("服务异常");
+		}
+		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
+		
+	}
+	public static byte[] generateRegionalImage(String prompt, String negativePrompt, int steps, int width, int height,boolean isRow,String ratio,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
 		JsonObject payload = new JsonObject();
 		payload.addProperty("prompt", prompt);
 		payload.addProperty("negative_prompt", negativePrompt);
@@ -493,17 +515,14 @@ public class SDXLMcp {
 				.add("0")
 				.add(false).end().end().end());
 		JsonObject jsonResponse;
-		try(ResourcePermit l=lock.acquire(12))  {
-			jsonResponse = HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
-			.header("Accept", "application/json")
-			.header("Content-Type", "application/json; utf-8")
-			.url("/sdapi/v1/txt2img")
-			.post()
-			.send(payload.toString())
-			.readJson();
+		
+		try {
+			jsonResponse = connector.apply("/sdapi/v1/txt2img", payload.toString()).get();
+		} catch (InterruptedException | ExecutionException e) {
+			e.printStackTrace();
+			throw new IOException("服务异常");
 		}
 		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
 
 	}
-
 }

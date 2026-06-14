@@ -26,6 +26,7 @@ package com.khjxiaogu.aiwuxia.state.history;
 import java.util.Iterator;
 
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
@@ -72,7 +73,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @param isValidContext 指示该条目是否可作为有效的上下文内容
 	 * @return 新创建并添加的 {@link HistoryItem} 对象
 	 */
-	HistoryItem add(Role role, String content, MessageContents fullContent, MessageContents reasoner,
+	HistoryItem add(Role role, MessageContents content, MessageContents fullContent, MessageContents reasoner,
 			boolean isValidContext);
 
 	/**
@@ -130,7 +131,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @return 新创建并添加的 {@link HistoryItem} 对象
 	 */
 	default HistoryItem add(Role role, String displayContent, MessageContents reasoner, boolean isValidContext) {
-		return add(role, displayContent, (MessageContents) null, reasoner, isValidContext);
+		return add(role,new MutableMessageContents(displayContent), (MessageContents) null, reasoner, isValidContext);
 	}
 
 	/**
@@ -142,7 +143,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @return 新创建并添加的 {@link HistoryItem} 对象
 	 */
 	default HistoryItem add(Role role, String displayContent, boolean isValidContext) {
-		return add(role, displayContent, (MessageContents) null, null, isValidContext);
+		return add(role, new MutableMessageContents(displayContent), isValidContext?null:new MutableMessageContents(), null, true);
 	}
 
 	/**
@@ -157,7 +158,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 */
 	default HistoryItem add(Role role, MessageContents displayContent, MessageContents reasoner,
 			boolean isValidContext) {
-		return add(role, displayContent.toText(), displayContent, reasoner, isValidContext);
+		return add(role, displayContent, isValidContext?null:new MutableMessageContents(), reasoner, true);
 	}
 
 	/**
@@ -170,7 +171,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @return 新创建并添加的 {@link HistoryItem} 对象
 	 */
 	default HistoryItem add(Role role, String displayContent, MessageContents contextContent, MessageContents reasoner) {
-		return add(role, displayContent, contextContent, reasoner, true);
+		return add(role, new MutableMessageContents(displayContent), contextContent, reasoner, true);
 	}
 
 	/**
@@ -182,7 +183,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @return 新创建并添加的 {@link HistoryItem} 对象
 	 */
 	default HistoryItem add(Role role, String displayContent, String contextContent) {
-		return add(role, displayContent, new MutableMessageContents(contextContent), null, true);
+		return add(role, new MutableMessageContents(displayContent), new MutableMessageContents(contextContent), null, true);
 	}
 
 	/**
@@ -195,7 +196,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @return 新创建并添加的 {@link HistoryItem} 对象
 	 */
 	default HistoryItem add(Role role, String displayContent, String contextContent, MessageContents reasoner) {
-		return add(role, displayContent, new MutableMessageContents(contextContent), reasoner, true);
+		return add(role, new MutableMessageContents(displayContent), new MutableMessageContents(contextContent), reasoner, true);
 	}
 
 	/**
@@ -328,6 +329,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 */
 	void appendLine(String content, boolean addToContext);
 
+
 	/**
 	 * 向最后一个条目追加内容（不自动添加换行符），并根据参数决定是否同时写入上下文内容。
 	 * <p>
@@ -339,6 +341,14 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @param addToContext 若为 {@code true}，则将该内容也追加到上下文内容中
 	 */
 	void append(String content, boolean addToContext);
+
+	/**
+	 * 向最后一个条目追加多模态内容（不自动添加换行符），并根据参数决定是否同时写入上下文内容。
+	 *
+	 * @param content      要追加的多模态内容
+	 * @param addToContext 若为 {@code true}，则将该内容也追加到上下文内容中
+	 */
+	void append(MessageContent content, boolean addToContext);
 
 	/**
 	 * 向最后一个条目的上下文内容追加内容。
@@ -362,5 +372,7 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * </ol>
 	 */
 	void flush();
+
+	void appendReasoner(MessageContent current);
 
 }

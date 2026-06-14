@@ -54,14 +54,14 @@ public class AIServerMain {
 			System.setOut(ls);
 			System.setErr(ls);
 			BasicWebServerBuilder.build().createURIRoot()
-			.createWrapper(new AIChatService(new File("save"))).rule("/aichat")
+			.createWrapper(new AIChatService("http://127.0.0.1:8999/aichat",new File("save"))).rule("/aichat")
 			.complete()
 			.complete()
 			.setNotFound(new File(new File("save"), "404.html"))
 			.compile()
-			.serverHttp(8998)
+			.serverHttp(8999)
 
-			.info("http服务端 http://0.0.0.0:8998/aichat 已开启")
+			.info("http服务端 http://0.0.0.0:8999/aichat 已开启")
 			.info("服务端已开启")
 			.info("网页服务端By khjxiaogu 启动完毕").await();
 		}

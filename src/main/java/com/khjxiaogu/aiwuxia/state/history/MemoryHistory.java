@@ -31,6 +31,7 @@ import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.ReverseIterator;
@@ -101,7 +102,7 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 	 * @return 新创建的可变历史条目
 	 */
 	@Override
-	public synchronized MutableHistoryItem add(Role role, String content, MessageContents fullContent,
+	public synchronized MutableHistoryItem add(Role role, MessageContents content, MessageContents fullContent,
 			MessageContents reasoner, boolean isSendable) {
 		HistoryMemoryItem mhi;
 		HistoryItem last = peekLast();
@@ -605,5 +606,17 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 
 	@Override
 	public void flush() {
+	}
+
+	@Override
+	public void append(MessageContent content, boolean addToContext) {
+		MutableHistoryItem mhi = peekLast();
+		mhi.append(content, addToContext);
+	}
+
+	@Override
+	public void appendReasoner(MessageContent current) {
+		MutableHistoryItem mhi = peekLast();
+		mhi.appendReasoner(current);
 	}
 }

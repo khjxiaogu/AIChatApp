@@ -90,6 +90,7 @@ import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession.CurrentContext;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
+import com.khjxiaogu.aiwuxia.utils.BotCallback;
 import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -167,10 +168,6 @@ public class NapCatAIConnector extends WebSocketClient {
 			}
 		}
 	}
-	@FunctionalInterface
-	public interface BotCallback{
-		void call(int status,JsonObject data);
-	}
 	public Map<String,BotCallback> callBack=new ConcurrentHashMap<>();
 	public void sendWithCallback(JsonObject jo,BotCallback callback) {
 		String uid=UUID.randomUUID().toString();
@@ -181,7 +178,7 @@ public class NapCatAIConnector extends WebSocketClient {
 	}
 	public CompletableFuture<JsonObject> sendWithCallback(JsonObject jo) {
 		String uid=UUID.randomUUID().toString();
-		BotCallbackPromise cb=new BotCallbackPromise();
+		BotCallbackPromise cb=new BotCallbackPromise(1);
 		callBack.put(uid, cb.getBotCallback());
 		jo.addProperty("echo", uid);
 		this.send(jo.toString());
@@ -337,9 +334,9 @@ public class NapCatAIConnector extends WebSocketClient {
 			QQMcp.create(state, ""+state.groupId, tos,imageCollector,skillSet.contains("sdxl-nsfw")?nsfwImageCollector:null,emojis).addTool(state.tools);
 		}
 		if(skillSet.contains("sdxl"))
-			SDXLMcp.create(state, tos, lora,false,resourceLock).addTool(state.tools);
+			SDXLMcp.createLocal(state, tos, lora,false,resourceLock).addTool(state.tools);
 		if(skillSet.contains("sdxl-nsfw"))
-			SDXLMcp.create(state, tos, lora,true,resourceLock).addTool(state.tools);
+			SDXLMcp.createLocal(state, tos, lora,true,resourceLock).addTool(state.tools);
 		CrontabMcp.setPath(new File(dataFolder,"crontab.json"));
 		if(skillSet.contains("cron"))
 			CrontabMcp.create(state.botId, str->{
@@ -535,8 +532,7 @@ public class NapCatAIConnector extends WebSocketClient {
 										mes.add(() -> {
 											try {
 												byte[] data=getImageBytes(fid);
-												state.addUsage(new TOSUsage(data.length));
-												String path = tos.uploadIfNotExists(data);
+												String path = tos.uploadIfNotExists(data,state::addUsage);
 												return new PlainText("<image id=\"" + path + "\" />");
 											} catch (Exception e) {
 												e.printStackTrace();
@@ -581,7 +577,7 @@ public class NapCatAIConnector extends WebSocketClient {
 	public void sendLastMessage(AIGroupSession state,OrderHandle handle,float price) {
 		state.printReasoning();
 		HistoryItem hi = state.getLast();
-		String msg=state.getLast().getDisplayContent().toString().trim();
+		String msg=state.getLast().getDisplayContent().getPlainText().trim();
 		String priceStr="";
 		if(state.outputPrice) {
 			priceStr+="token:"+Math.round(price);

@@ -44,8 +44,8 @@ public class DirectHistoryItem implements HistoryItem {
 	}
 
 	@Override
-	public CharSequence getDisplayContent() {
-		return context.toText();
+	public MessageContents getDisplayContent() {
+		return context;
 	}
 	@Override
 	public MessageContents getReasoningContent() {

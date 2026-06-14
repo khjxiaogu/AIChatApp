@@ -41,6 +41,7 @@ import java.util.NoSuchElementException;
 import com.google.gson.Gson;
 import com.khjxiaogu.aiwuxia.state.GsonHelper;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
@@ -77,7 +78,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 
 	/** 用于 Gson 序列化/反序列化重度字段的 POJO。 */
 	static class HeavyData {
-		String content;
+		MutableMessageContents content;
 		MutableMessageContents context;
 		MutableMessageContents reasoner;
 		ApplicationState lastState;
@@ -225,7 +226,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 		}
 		// 确保 displayContent 至少为 ""
 		if (item.displayContent == null) {
-			item.displayContent = "";
+			item.displayContent = new MutableMessageContents();
 		}
 	}
 
@@ -273,7 +274,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	/**
 	 * 生成新的唯一标识符。
 	 */
-	private synchronized int newUniqueId() {
+	private  int newUniqueId() {
 		return ++idCounter;
 	}
 
@@ -282,7 +283,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	// ── HistoryHolder 实现 ────────────────────────────────
 
 	@Override
-	public synchronized boolean isEmpty() {
+	public  boolean isEmpty() {
 		return size() == 0;
 	}
 
@@ -300,7 +301,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized HistoryItem add(Role role, String content,
+	public  HistoryItem add(Role role,MessageContents content,
 			MessageContents fullContent, MessageContents reasoner,
 			boolean isValidContext) {
 		int id = newUniqueId();
@@ -326,9 +327,11 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 		item.prevIdentifier = prevId;
 		item.role = role;
 		item.shouldSend = isValidContext;
-		item.displayContent = content;
-		item.contextContent = new MutableMessageContents(fullContent);
-		item.reasonContent = new MutableMessageContents(reasoner);
+		item.displayContent = new MutableMessageContents(content);
+		if(fullContent!=null)
+			item.contextContent = new MutableMessageContents(fullContent);
+		if(reasoner!=null)
+			item.reasonContent = new MutableMessageContents(reasoner);
 		item.lastState = null;
 		item.dirty = true;
 		cache.put(id, item);
@@ -337,7 +340,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized void clear() {
+	public  void clear() {
 		try (Statement stmt = conn.createStatement()) {
 			stmt.execute("DELETE FROM history");
 		} catch (SQLException e) {
@@ -355,7 +358,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized void removeOf(int identifier) {
+	public  void removeOf(int identifier) {
 		SqliteHistoryItem item = loadItem(identifier);
 		if (item != null) {
 			item.deleted = true;
@@ -379,8 +382,8 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized HistoryItem removeLast() {
-		SqliteHistoryItem last = (SqliteHistoryItem) peekLast();
+	public  HistoryItem removeLast() {
+		SqliteHistoryItem last = peekLast();
 		if (last != null) {
 			removeOf(last.identifier);
 		}
@@ -388,7 +391,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized HistoryItem deleteLast() {
+	public  HistoryItem deleteLast() {
 		SqliteHistoryItem last = peekLast();
 		if (last != null) {
 			setDeleted(last, true);
@@ -435,7 +438,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	// ── 元数据 setter ─────────────────────────────────────
 
 	@Override
-	public synchronized void setValidContext(HistoryItem hi, boolean sendable) {
+	public  void setValidContext(HistoryItem hi, boolean sendable) {
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -450,7 +453,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized void setDeleted(HistoryItem hi, boolean sendable) {
+	public  void setDeleted(HistoryItem hi, boolean sendable) {
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -467,7 +470,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized void setAudioId(HistoryItem hi, String audioId) {
+	public  void setAudioId(HistoryItem hi, String audioId) {
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -482,7 +485,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized void setSendReasoner(HistoryItem hi, boolean sendReasoner) {
+	public  void setSendReasoner(HistoryItem hi, boolean sendReasoner) {
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -497,7 +500,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized void setTokenLength(HistoryItem hi, long l) {
+	public  void setTokenLength(HistoryItem hi, long l) {
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -512,7 +515,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	@Override
-	public synchronized void setLastState(HistoryItem hi, ApplicationState lastState) {
+	public  void setLastState(HistoryItem hi, ApplicationState lastState) {
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -524,65 +527,42 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	// ── 追加操作 ──────────────────────────────────────────
 
 	@Override
-	public synchronized void appendLine(String content, boolean addToContext) {
-		SqliteHistoryItem item = (SqliteHistoryItem) peekLast();
+	public  void appendLine(String content, boolean addToContext) {
+		append(content+"\n",addToContext);
+	}
+
+	@Override
+	public  void append(String content, boolean addToContext) {
+		SqliteHistoryItem item = peekLast();
 		if (item == null)
 			return;
 
 		item.ensureLoaded();
 
-		if (item.shouldSend) {
-			if (!addToContext) {
-				// 冻结上下文：如果尚未显式设置，则用当前显示内容创建快照
-				if (item.contextContent == null && item.displayContent != null) {
-					item.contextContent = new MutableMessageContents(
-							item.displayContent);
-				}
-			} else {
-				if (item.contextContent != null) {
-					item.contextContent = mutableContext(item.contextContent);
-					((MutableMessageContents) item.contextContent)
-							.append(content).append("\n");
-				}
+		if (!addToContext) {
+			// 冻结上下文：如果尚未显式设置，则用当前显示内容创建快照
+			if (item.contextContent == null) {
+				if(item.displayContent != null)
+					item.contextContent = new MutableMessageContents(item.displayContent);
+				else
+					item.contextContent = new MutableMessageContents();
 			}
+		}else {
+			if(item.contextContent!=null)
+				item.contextContent.append(content);
 		}
-
-		item.displayContent = (item.displayContent != null
-				? item.displayContent : "") + content + "\n";
+		
+		if (item.displayContent == null) {
+			item.displayContent = new MutableMessageContents();
+			
+		}
+		item.displayContent.append(content);
 		item.dirty = true;
 	}
 
 	@Override
-	public synchronized void append(String content, boolean addToContext) {
-		SqliteHistoryItem item = (SqliteHistoryItem) peekLast();
-		if (item == null)
-			return;
-
-		item.ensureLoaded();
-
-		if (item.shouldSend) {
-			if (!addToContext) {
-				if (item.contextContent == null && item.displayContent != null) {
-					item.contextContent = new MutableMessageContents(
-							item.displayContent);
-				}
-			} else {
-				if (item.contextContent != null) {
-					item.contextContent = mutableContext(item.contextContent);
-					((MutableMessageContents) item.contextContent)
-							.append(content);
-				}
-			}
-		}
-
-		item.displayContent = (item.displayContent != null
-				? item.displayContent : "") + content;
-		item.dirty = true;
-	}
-
-	@Override
-	public synchronized void appendContext(String content) {
-		SqliteHistoryItem item = (SqliteHistoryItem) peekLast();
+	public  void appendContext(String content) {
+		SqliteHistoryItem item = peekLast();
 		if (item == null)
 			return;
 
@@ -591,27 +571,9 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 		if (item.contextContent == null) {
 			item.contextContent = new MutableMessageContents(content);
 		} else {
-			item.contextContent = mutableContext(item.contextContent);
-			((MutableMessageContents) item.contextContent).append(content);
+			item.contextContent.append(content);
 		}
 		item.dirty = true;
-	}
-
-	/**
-	 * 确保 {@code mc} 是一个可变的 {@link MutableMessageContents}。
-	 * <p>
-	 * 如果已经是，则直接返回；否则创建一个新的
-	 * {@link MutableMessageContents} 并拷贝原有内容。
-	 * </p>
-	 */
-	private static MutableMessageContents mutableContext(MessageContents mc) {
-		if (mc instanceof MutableMessageContents)
-			return (MutableMessageContents) mc;
-		MutableMessageContents result = new MutableMessageContents();
-		for (com.khjxiaogu.aiwuxia.state.history.message.MessageContent c : mc) {
-			result.add(c);
-		}
-		return result;
 	}
 
 	// ── flush ─────────────────────────────────────────────
@@ -628,7 +590,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	 * </ol>
 	 */
 	@Override
-	public synchronized void flush() {
+	public  void flush() {
 		// 步骤 1：写入所有脏条目
 		for (SqliteHistoryItem item : cache.values()) {
 			if (item.dirty) {
@@ -791,5 +753,48 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 		if (last != null) {
 			this.setLastState(last, lastState);
 		}
+	}
+
+	@Override
+	public void append(MessageContent content, boolean addToContext) {
+		SqliteHistoryItem item = peekLast();
+		if (item == null)
+			return;
+
+		item.ensureLoaded();
+
+		if (!addToContext) {
+			// 冻结上下文：如果尚未显式设置，则用当前显示内容创建快照
+			if (item.contextContent == null) {
+				if(item.displayContent != null)
+					item.contextContent = new MutableMessageContents(item.displayContent);
+				else
+					item.contextContent = new MutableMessageContents();
+			}
+		}else {
+			if(item.contextContent!=null)
+				item.contextContent.add(content);
+		}
+		
+		if (item.displayContent == null) {
+			item.displayContent = new MutableMessageContents();
+			
+		}
+		item.displayContent.add(content);
+		item.dirty = true;
+	}
+	@Override
+	public void appendReasoner(MessageContent current) {
+		SqliteHistoryItem item = peekLast();
+		if (item == null)
+			return;
+
+		item.ensureLoaded();
+
+		if (item.reasonContent == null) {
+			item.reasonContent = new MutableMessageContents();
+		}
+		item.reasonContent.add(current);
+		item.dirty = true;
 	}
 }

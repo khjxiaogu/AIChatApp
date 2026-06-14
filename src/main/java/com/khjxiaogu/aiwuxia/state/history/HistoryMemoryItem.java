@@ -58,7 +58,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	/** 条目关联的角色 */
 	private Role role;
 	/** 显示内容（始终写入） */
-	private StringBuilder content;
+	private MutableMessageContents content;
 	/** 发送给 LLM 的上下文内容（可为 null，null 时使用 content 的副本） */
 	private MutableMessageContents sendContent;
 	/** 推理内容（可为 null） */
@@ -104,7 +104,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	HistoryMemoryItem(Role role, String content, boolean shouldSend) {
 		super();
 		this.setContextContent(null);
-		this.content = new StringBuilder(content);
+		this.content = new MutableMessageContents(content);
 		this.setRole(role);
 		this.shouldSend = shouldSend;
 	}
@@ -119,7 +119,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	HistoryMemoryItem(Role role, String content, MessageContents fullContent) {
 		super();
 		this.setRole(role);
-		this.content = new StringBuilder(content);
+		this.content = new MutableMessageContents(content);
 		this.sendContent = new MutableMessageContents(fullContent);
 		this.shouldSend = true;
 	}
@@ -136,7 +136,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 		super();
 		this.setIdentifier(identifier);
 		this.setRole(role);
-		this.content = new StringBuilder(content);
+		this.content = new MutableMessageContents(content);
 		this.sendContent = new MutableMessageContents(fullContent);
 		this.shouldSend = true;
 	}
@@ -155,7 +155,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 		this.setIdentifier(identifier);
 		this.setRole(role);
 		if (content != null)
-			this.content = new StringBuilder(content);
+			this.content = new MutableMessageContents(content);
 		this.sendContent = new MutableMessageContents(fullContent);
 		this.shouldSend = shouldSend;
 	}
@@ -170,13 +170,13 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	 * @param reasoner    推理内容，可为 null
 	 * @param shouldSend  是否为有效的上下文
 	 */
-	HistoryMemoryItem(int identifier, Role role, String content, MessageContents fullContent, MessageContents reasoner,
+	HistoryMemoryItem(int identifier, Role role, MessageContents content, MessageContents fullContent, MessageContents reasoner,
 			boolean shouldSend) {
 		super();
 		this.setIdentifier(identifier);
 		this.setRole(role);
 		if (content != null)
-			this.content = new StringBuilder(content);
+			this.content = new MutableMessageContents(content);
 		if (fullContent != null)
 			this.sendContent = new MutableMessageContents(fullContent);
 		if (reasoner != null)
@@ -196,7 +196,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 		super();
 		this.setIdentifier(identifier);
 		this.setRole(role);
-		this.content = new StringBuilder(content);
+		this.content = new MutableMessageContents(content);
 		this.shouldSend = shouldSend;
 	}
 
@@ -213,11 +213,11 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	public MutableMessageContents getContextContent() {
 		if (sendContent != null)
 			return sendContent;
-		return new MutableMessageContents(content.toString());
+		return new MutableMessageContents(content);
 	}
 
 	@Override
-	public CharSequence getDisplayContent() {
+	public MessageContents getDisplayContent() {
 		return content;
 	}
 
@@ -310,6 +310,20 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 			}
 		}
 		this.content.append(content);
+	}
+
+	@Override
+	public void append(MessageContent mc, boolean shouldSend) {
+		if (this.shouldSend) {
+			if (!shouldSend) {
+				createContextContent();
+			} else {
+				if (sendContent != null) {
+					sendContent.add(mc.copy());
+				}
+			}
+		}
+		this.content.add(mc.copy());
 	}
 
 	/**

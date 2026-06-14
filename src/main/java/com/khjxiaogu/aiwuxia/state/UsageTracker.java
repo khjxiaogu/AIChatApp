@@ -42,7 +42,8 @@ public class UsageTracker {
 			} else if (json.isJsonObject()) {
 				JsonObject rdt = json.getAsJsonObject();
 				tracker.usages.put(DeepseekUsage.class, context.deserialize(json, DeepseekUsage.class));
-				tracker.usages.put(VolcanoVoiceUsage.class, new VolcanoVoiceUsage(rdt.get("voice_tokens").getAsInt()));
+				if(rdt.has("voice_tokens"))
+					tracker.usages.put(VolcanoVoiceUsage.class, new VolcanoVoiceUsage(rdt.get("voice_tokens").getAsInt()));
 
 			}
 			return tracker;

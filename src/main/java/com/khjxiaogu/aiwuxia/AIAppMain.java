@@ -69,7 +69,7 @@ public class AIAppMain {
 		return sb.toString();
 	}
 	public static void main(String[] args) throws Throwable {
-		String name="fengxitalk";
+		String name="fengyitalk";
 		int idx=1;
 		try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
@@ -83,8 +83,8 @@ public class AIAppMain {
 		File dataFolder=new File("save");
 
 		VoiceModelHandler.init(dataFolder);
-		File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
-		//File saveData =new File(new File(dataFolder,"saveData"), "dbf0b38ff80644689aabe14d031253cc.json");//
+		//File saveData = new File(new File(dataFolder,"saveData"), "save+"+name+idx+".json");
+		File saveData =new File(new File(dataFolder,"saveData"), "savefengyi2.json");//
 		
 		File modelFolder=new File(dataFolder,"apps/"+name);
 		File metaFile=new File(modelFolder,"meta.json");

@@ -32,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
@@ -78,7 +79,7 @@ public class AISummary {
 				if(hi.getRole()!=Role.SYSTEM) {
 					if(hi.getRole()==Role.USER)
 						summary.append("【主角】：");
-					summary.append(hi.getDisplayContent()).append("\n");
+					summary.append(hi.getDisplayContent().toText()).append("\n");
 				}
 				if(len>60000) {
 					len=0;

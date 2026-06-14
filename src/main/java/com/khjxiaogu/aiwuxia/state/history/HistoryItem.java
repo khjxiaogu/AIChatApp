@@ -35,7 +35,7 @@ public interface HistoryItem {
 	 *
 	 * @return 显示内容的字符序列，可能为 null
 	 */
-	CharSequence getDisplayContent();
+	MessageContents getDisplayContent();
 
 	/**
 	 * 获取该历史条目关联的角色。

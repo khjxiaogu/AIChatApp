@@ -63,7 +63,7 @@ import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.util.concurrent.UnorderedThreadPoolEventExecutor;
 
-public class WebSocketAISession extends AISession implements WebsocketEvents {
+public class WebSocketAISession extends AISession implements WebsocketEvents,ChatIdentity {
 
 	ChannelGroup conn=new DefaultChannelGroup(new UnorderedThreadPoolEventExecutor(3));
 	protected final AIChatService parent;
@@ -86,12 +86,16 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	public void onOpen(Channel conn, FullHttpRequest handshake) {
 		
 		this.conn.add(conn);
-
+		try {
+			provideInitialHint().get();
+		} catch (InterruptedException | ExecutionException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 		if(super.getStage()!=ApplicationStage.INITIALIZE) {
 			requireMoreMessages();
-		}else {
-			provideInitialHint();
 		}
+		
 		getAiapp().prepareScene(this);
 		JsonArray models=new JsonArray();
 		for(String s:attributes.models) {
@@ -266,9 +270,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 	}
 
 	@Override
-	public void postMessage(int id, Role role, String message) {
+	public void postMessage(int id, Role role, MessageContents message) {
 		super.postMessage(id, role, message);
-		sendFrame(JsonBuilder.object().add("id", id).add("title", getRoleName(role)).add("message", message).end().toString());
+		sendFrame(JsonBuilder.object().add("id", id).add("title", getRoleName(role)).add("message", message.toText()).end().toString());
 	}
 	public void sendFrame(String content) {
 		conn.writeAndFlush(new TextWebSocketFrame(content));
@@ -312,6 +316,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents {
 			parent.markRelease(this);
 		}
 	}
+	@Override
 	public String getChatId() {
 		return chatId;
 	}

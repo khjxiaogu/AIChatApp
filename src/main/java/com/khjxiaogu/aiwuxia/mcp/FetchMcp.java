@@ -114,7 +114,7 @@ public class FetchMcp {
 				byte[] imageData = FileUtil.readAll(connection.getInputStream());
 
 				state.addUsage(new TOSUsage(imageData.length));
-				return "图片id："+tos.uploadIfNotExists(imageData);
+				return "图片id："+tos.uploadIfNotExists(imageData,state::addUsage);
 			}
 			// 其他不支持的类型，不下载正文
 			else {

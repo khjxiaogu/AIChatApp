@@ -300,9 +300,9 @@ public class AICharaTalkMain extends AIApplication {
 				if(last.startsWith("==对话==")) {
 					status.setValue(1);
 				}else{//对话部分错误，督促AI重新生成一份
-					System.out.println(last);
-					logger.info("retry because header error");
-					throw new RegenerateNeededException(oldstate);
+					sendContent.append("==对话==").append("\n");
+					content.append(last).append("\n");
+					status.setValue(1);
 				}
 
 			}else if(status.isValue(1)) {//处理演出
