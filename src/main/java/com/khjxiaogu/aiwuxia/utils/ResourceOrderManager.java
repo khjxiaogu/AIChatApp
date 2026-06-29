@@ -1,8 +1,9 @@
 package com.khjxiaogu.aiwuxia.utils;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -20,7 +21,7 @@ public class ResourceOrderManager {
 
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition condition = lock.newCondition();
-    private final Set<Long> completed = new HashSet<>();
+    private final Set<Long> completed = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private long nextSequence = 1;       // 下一个分配的序号
     private long currentSequence = 1;    // 当前应执行的序号
     private volatile OrderHandleImpl currentHolder; // 当前持有资源的句柄
@@ -86,6 +87,7 @@ public class ResourceOrderManager {
         private volatile State state = State.INIT;
         private int refCount;          // 引用计数，受 refLock 保护
         private boolean completedCalled = false; // 防止重复 complete
+        private final Object cancelLock = new Object();
         private boolean cancelCalled = false; 
         private final List<Exception> forkerStacks   = new ArrayList<>(); // 受 refLock 保护
         private final Exception registar;
@@ -120,36 +122,36 @@ public class ResourceOrderManager {
                     throw new IllegalStateException("Handle already completed, cannot fork");
                 }
                 refCount++;
-                forkerStacks.add(new Exception("fork() called"));
-                return (ResourceAccess) () -> releaseRef();
-            }
-        }
-
-        @Override
-        public void cancel() {
-            boolean shouldComplete = false;
-            synchronized (refLock) {
-                if (cancelCalled) return;
-                cancelCalled = true;
-                if (refCount > 0) {
-                    refCount--;
-                    if (refCount == 0 && !completedCalled) {
-                        completedCalled = true;
-                        state = State.COMPLETED;
-                        shouldComplete = true;
+                Exception forkerStack = new Exception("fork() called");
+                forkerStacks.add(forkerStack);
+                return (ResourceAccess) () -> {
+                    synchronized (refLock) {
+                        forkerStacks.remove(forkerStack);
                     }
-                }
-            }
-            if (shouldComplete) {
-                manager.complete(sequence);
+                    releaseRef();
+                };
             }
         }
 
         @Override
         public void close() {
-            cancel();
+        	if (!cancelCalled) {
+	            synchronized(cancelLock) {
+	            	if (!cancelCalled) {
+	            		cancelCalled = true;
+	            		releaseRef();
+	            	}
+	            }
+        	}
         }
-
+        private boolean shouldComplete() {
+        	if (refCount == 0 && !completedCalled) {
+                completedCalled = true;
+                state = State.COMPLETED;
+                return true;
+            }
+        	return false;
+        }
         /**
          * 释放一个引用（由资源访问对象或 fork 子句柄调用）
          */
@@ -158,11 +160,7 @@ public class ResourceOrderManager {
             synchronized (refLock) {
                 if (refCount > 0) {
                     refCount--;
-                    if (refCount == 0 && !completedCalled) {
-                        completedCalled = true;
-                        state = State.COMPLETED;
-                        shouldComplete = true;
-                    }
+                    shouldComplete=shouldComplete();
                 }
             }
             if (shouldComplete) {
@@ -241,14 +239,9 @@ public class ResourceOrderManager {
          * 只有所有派生子句柄、原 handle 以及获取的 ResourceAccess 都关闭后，才释放顺序槽位。
          */
         ResourceAccess fork();
-        /**
-         * 放弃本次资源调用，跳过当前 Agent 的顺序。
-         * 若已经获取了资源访问权，则不应调用此方法。
-         */
-        void cancel();
 
         /**
-         * 关闭凭证，等同于 {@link #cancel()}。
+         * 关闭凭证。
          */
         @Override
         void close();
