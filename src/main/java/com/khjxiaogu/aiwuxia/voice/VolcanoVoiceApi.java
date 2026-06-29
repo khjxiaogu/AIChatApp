@@ -50,7 +50,7 @@ public class VolcanoVoiceApi implements VoiceModel {
 		this.botids=gs.fromJson(FileUtil.readString(new File(file,"volcanovoice.json")), Map.class);
 	}
 	@Override
-	public CompletableFuture<VoiceGenerationResult> getAudioData(String roleName, String uid, String text, String rid,
+	public CompletableFuture<ModelGenerationResult> getAudioData(String roleName, String uid, String text, String rid,
 			Consumer<UsageIntf<?>> usageListener) {
 		String appid = System.getProperty("volcappid");
 		String accessToken = System.getProperty("volcsecret");
@@ -67,7 +67,7 @@ public class VolcanoVoiceApi implements VoiceModel {
 			if (data.has("data")) {
 				usageListener.accept(new VolcanoVoiceUsage(text.length()));
 				return CompletableFuture.completedFuture(
-						new VoiceGenerationResult(Base64.getDecoder().decode(data.get("data").getAsString()), "mp3"));
+						new ModelGenerationResult(Base64.getDecoder().decode(data.get("data").getAsString()), "mp3"));
 			}
 
 			return CompletableFuture.failedFuture(new IOException("API Returned " + data));

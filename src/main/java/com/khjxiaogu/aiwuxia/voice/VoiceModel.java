@@ -44,7 +44,7 @@ public interface VoiceModel {
 	 * @param messageId 请求消息的全局唯一ID，用于追踪和唯一标识本次音频合成请求
 	 * @return 生成的音频数据，以字节数组(byte[])形式返回，格式一般为mp3
 	 */
-	CompletableFuture<VoiceGenerationResult> getAudioData(String roleName, String uid, String text, String messageId,Consumer<UsageIntf<?>> usageListener);
+	CompletableFuture<ModelGenerationResult> getAudioData(String roleName, String uid, String text, String messageId,Consumer<UsageIntf<?>> usageListener);
 	boolean canProcessVoice(String roleName);
 	boolean isHinted(String modelName);
 

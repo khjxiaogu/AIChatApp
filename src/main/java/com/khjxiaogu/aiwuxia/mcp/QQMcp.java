@@ -77,7 +77,7 @@ public class QQMcp {
 						}catch(Throwable t) {
 							t.printStackTrace();
 						}
-						return "参数格式错误";
+						return "参数格式错误，该错误是因为图片ID长度不是72导致，请检查输入。";
 					}).build());
 		}else {
 			tools.register(new ToolData.Builder("send_image", "发送聊天图片")
@@ -90,7 +90,7 @@ public class QQMcp {
 						}catch(Throwable t) {
 							t.printStackTrace();
 						}
-						return "参数格式错误";
+						return "参数格式错误，该错误是因为图片ID长度不是72导致，请检查输入。";
 					}).build());
 		}
 		if(!images.isEmpty())

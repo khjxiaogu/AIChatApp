@@ -72,7 +72,7 @@ public class PainterSession extends AISession implements WebsocketEvents,ChatIde
 		MultiModalMcp.create(par.getPainterStorage(), this::addUsage).addTool(this.tools);
         MultiModalMcp.createOutput(this,par.getPainterStorage(), Collections.emptyMap(),this::addUsage).addTool(this.tools);
 
-        SDXLMcp.createRemoteLocal(this, par.getPainterStorage(), par.lora,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true).addTool(this.tools);
+        SDXLMcp.createRemoteLocal(this, par.getPainterStorage(), par.lora,par.chara,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true).addTool(this.tools);
         FetchMcp.create(this, par.getPainterStorage());
     }
 

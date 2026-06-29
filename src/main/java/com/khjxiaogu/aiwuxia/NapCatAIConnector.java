@@ -77,9 +77,12 @@ import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.MusicMcp;
 import com.khjxiaogu.aiwuxia.mcp.QQMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
+import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfiguration;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
-import com.khjxiaogu.aiwuxia.objectstorage.TOSUsage;
+import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
+import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
+import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -98,7 +101,7 @@ import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager;
 import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager.OrderHandle;
 import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager.ResourceAccess;
 import com.khjxiaogu.aiwuxia.vision.ImageNoise;
-import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
+import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
 import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
@@ -107,7 +110,7 @@ public class NapCatAIConnector extends WebSocketClient {
 	List<AIGroupSession> states=new ArrayList<>();
 
 	Deque<Mid2Bid> mbid=new ArrayDeque<>(200);
-	TOStorage tos;
+	ObjectStorageProvider tos;
 	static class Mid2Bid{
 		String mid;
 		long bid;
@@ -123,9 +126,20 @@ public class NapCatAIConnector extends WebSocketClient {
 	public NapCatAIConnector(File dataFolder, String url,
 			String token, AIGroupSession... states) throws JsonSyntaxException, IOException, InterruptedException {
 		super(URI.create("ws://" + url), Map.of("Authorization", "Bearer " + token));
-		tos = new TOStorage(
-				JsonParser.parseString(FileUtil.readString(new File(dataFolder, "tos.json"))).getAsJsonObject());
-
+		try {
+			File tosConfigFile = new File(dataFolder, "tos.json");
+			if (tosConfigFile.exists()) {
+				JsonObject tosCfg = JsonParser.parseString(FileUtil.readString(tosConfigFile)).getAsJsonObject();
+				tos = new DelegatingStorage(new File(dataFolder, "ircimages"), new TOStorage(tosCfg));
+				System.out.println("绘画图片存储: 本地+TOS");
+			} else {
+				tos = new LocalStorage(new File(dataFolder, "ircimages"));
+				System.out.println("绘画图片存储: 仅本地");
+			}
+		} catch (Exception e) {
+			tos = new LocalStorage(new File(dataFolder, "ircimages"));
+			System.out.println("绘画图片存储: 仅本地 (TOS初始化失败)");
+		}
 
 		imgKey = JsonParser.parseString(FileUtil.readString(new File(dataFolder, "img.json"))).getAsJsonObject();
 		connectBlocking();
@@ -231,8 +245,13 @@ public class NapCatAIConnector extends WebSocketClient {
 		if(lfn.exists()) {
 			JsonObject refimg=JsonParser.parseString(FileUtil.readString(lfn)).getAsJsonObject();
 			for(String key:refimg.keySet()) {
-				JsonObject jo=refimg.get(key).getAsJsonObject();
-				lora.put(key, new LoraConfigurations(jo.get("key").getAsString(),jo.get("weight").getAsFloat()));
+				if(refimg.get(key).isJsonObject()) {
+					JsonObject jo=refimg.get(key).getAsJsonObject();
+					lora.put(key, new LoraConfigurations(new LoraConfiguration(jo)));
+				}else if(refimg.get(key).isJsonArray()) {
+					JsonArray ja=refimg.get(key).getAsJsonArray();
+					lora.put(key, new LoraConfigurations(ja));
+				}
 			}
 		}
 		Map<String, String> refimage = new LinkedHashMap<>();
@@ -333,10 +352,11 @@ public class NapCatAIConnector extends WebSocketClient {
 		if(skillSet.contains("qq")) {
 			QQMcp.create(state, ""+state.groupId, tos,imageCollector,skillSet.contains("sdxl-nsfw")?nsfwImageCollector:null,emojis).addTool(state.tools);
 		}
+		
 		if(skillSet.contains("sdxl"))
-			SDXLMcp.createLocal(state, tos, lora,false,resourceLock).addTool(state.tools);
+			SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock).addTool(state.tools);
 		if(skillSet.contains("sdxl-nsfw"))
-			SDXLMcp.createLocal(state, tos, lora,true,resourceLock).addTool(state.tools);
+			SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
 		CrontabMcp.setPath(new File(dataFolder,"crontab.json"));
 		if(skillSet.contains("cron"))
 			CrontabMcp.create(state.botId, str->{
@@ -584,12 +604,13 @@ public class NapCatAIConnector extends WebSocketClient {
 		}
 		
 		final String toWritePrice=priceStr;
-		AutoCloseable closable=handle.fork();
+		ResourceAccess closable=handle.fork();
 		if (hi.getRole() == Role.ASSISTANT) {
 			sendMessage.submit(()->{
 				
-				beforeSendMessage(state);
+				
 				try {
+					beforeSendMessage(state);
 					if(msg==null||msg.isEmpty()) {
 						JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
 								.add("group_id", state.groupId)
@@ -601,10 +622,8 @@ public class NapCatAIConnector extends WebSocketClient {
 						notifyOtherAgents(state, msg, mid);
 						
 					}else {
-						CompletableFuture<VoiceGenerationResult> dataFuture;
-						try (ResourcePermit l=resourceLock.acquire(2)){
-							dataFuture =VoiceModelHandler.getAudioData("", state.getRoleName(Role.ASSISTANT),"qbot", msg.replaceAll("枫茜", "枫西").replaceAll("茜茜", "西西"),UUID.randomUUID().toString(), state::addUsage);
-						}
+						CompletableFuture<ModelGenerationResult> dataFuture =VoiceModelHandler.getAudioData("", state.getRoleName(Role.ASSISTANT),"qbot", msg.replaceAll("枫茜", "枫西").replaceAll("茜茜", "西西"),UUID.randomUUID().toString(), state::addUsage);
+						
 						try(ResourceAccess ac=handle.acquire()){
 							
 							JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
@@ -639,18 +658,14 @@ public class NapCatAIConnector extends WebSocketClient {
 						e1.printStackTrace();
 					}
 				}finally {
-					try {
-						closable.close();
-					} catch (Exception e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					}
+					closable.close();
 				}
 				
 			});
 			
 
-		}
+		}else
+			closable.close();
 	}
 	ResourceOrderManager manager=new ResourceOrderManager();
 	Object globalLock=new Object();

@@ -52,7 +52,7 @@ public class VoiceModelHandler {
 	 * @return 生成的音频数据，以字节数组(byte[])形式返回，格式一般为mp3。
 	 * @throws IOException 当调用音频大模型服务过程中发生输入输出异常时抛出，如网络连接失败、服务响应异常等
 	 */
-	public static CompletableFuture<VoiceGenerationResult> getAudioData(String modelHint,String roleName, String uid, String text, String messageId, Consumer<UsageIntf<?>> usageListener){
+	public static CompletableFuture<ModelGenerationResult> getAudioData(String modelHint,String roleName, String uid, String text, String messageId, Consumer<UsageIntf<?>> usageListener){
 		return models.stream()
     	        .filter(p -> p.isHinted(modelHint))
     	        .filter(p -> p.canProcessVoice(roleName))

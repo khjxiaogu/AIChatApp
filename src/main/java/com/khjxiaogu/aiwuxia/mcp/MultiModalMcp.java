@@ -55,11 +55,11 @@ public class MultiModalMcp {
 							state.appendCh(Role.ASSISTANT, new ImageContent(fn), false);
 							return "发送成功";
 						}
-						return "图片id不存在";
+						return "图片id不存在"+(fn.length()==72?"":"，该错误是因为图片ID长度不是72导致，请检查输入")+"。";
 					}catch(Throwable t) {
 						t.printStackTrace();
 					}
-					return "参数格式错误";
+					return "参数格式错误。";
 				}).build());
 		
 		if(!images.isEmpty())
@@ -78,7 +78,7 @@ public class MultiModalMcp {
 					}catch(Throwable t) {
 						t.printStackTrace();
 					}
-					return "参数格式错误";
+					return "参数格式错误，该错误是因为图片ID长度不是72导致，请检查输入。";
 				}).build());
 		return tools;
 	}
@@ -97,7 +97,7 @@ public class MultiModalMcp {
 				Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 						.multimodal(MultimodalType.IMAGE_ONLY);
 				builder.addHistoryItem(Role.SYSTEM,
-						"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。最后要输出图片分辨率。");
+						"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置等信息，并原样提供图片中所有文本原文内容。最后要输出图片分辨率，图片中人物所在位置等信息。");
 
 				builder.addHistoryItem(
 						new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(id,addUsage))));

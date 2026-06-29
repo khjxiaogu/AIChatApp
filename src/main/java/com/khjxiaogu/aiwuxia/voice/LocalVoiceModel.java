@@ -27,46 +27,64 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 /**
- * 本地部署语音模型的交互器，提供对本地语音合成服务的静态访问入口。
+ * 本地部署模型的交互器，提供对本地模型服务的静态访问入口。
  * 该类封装了 {@link LocalModelHandshaker} 的单例实例，并通过静态方法
  * 暴露其核心功能，便于应用程序其他部分调用。
- * 主要用于检查本地语音服务是否在线，以及异步请求音频数据。
+ * 支持多种模型类型的调用，包括音频合成等。
  */
 public class LocalVoiceModel {
 
-    /** 单例的本地模型握手器实例，负责管理与本地语音服务的 WebSocket 连接 */
+    /** 单例的本地模型握手器实例，负责管理与本地模型服务的 WebSocket 连接 */
     public static final LocalModelHandshaker lhs = new LocalModelHandshaker();
 
     /**
-     * 检查本地语音服务是否有在线可用的连接。
+     * 检查是否有支持指定模型类型的在线服务。
      *
-     * @return 如果至少有一个活跃的 WebSocket 连接则返回 true，否则返回 false
-     * @see LocalModelHandshaker#hasOnlineService()
+     * @param modelType 模型类型
+     * @return 如果至少有一个支持该类型的活跃连接则返回 true
+     */
+    public static boolean hasOnlineService(ModelType modelType) {
+        return lhs.hasOnlineService(modelType);
+    }
+
+    /**
+     * 检查是否有任何在线可用的连接。
+     *
+     * @return 如果至少有一个活跃的 WebSocket 连接则返回 true
      */
     public static boolean hasOnlineService() {
         return lhs.hasOnlineService();
     }
 
     /**
-     * 异步请求音频数据。
-     * 向本地语音服务发送合成请求，并返回一个 {@link CompletableFuture}，
-     * 当音频数据准备好或发生错误/超时时，该 Future 将完成。
+     * 通用模型请求方法。指定模型类型，由系统选择合适的连接发送请求。
      *
-     * @param chara  角色标识（如角色名称或 ID）
-     * @param emote  表情标识（如高兴、悲伤等）
-     * @param reqid  请求唯一标识符，用于关联响应
-     * @param text   要合成语音的文本内容
-     * @return 包含音频字节数组的 CompletableFuture；如果服务不可用或请求失败，可能返回 null
-     * @see LocalModelHandshaker#requireAudio(String, String, String, String)
+     * @param modelType 请求的模型类型
+     * @param reqid     请求唯一 ID
+     * @param request   完整的请求 JSON 对象
+     * @return 包含响应数据的 CompletableFuture
      */
-    public static CompletableFuture<VoiceGenerationResult> requireAudio(String chara, String reqid, JsonArray content,Consumer<UsageIntf<?>> usageListener) {
-    	
-    	return lhs.requireAudio(chara, reqid, content,usageListener);
+    public static CompletableFuture<ModelGenerationResult> require(ModelType modelType, String reqid, JsonObject request) {
+        return lhs.require(modelType, reqid, request);
     }
-    public static CompletableFuture<VoiceGenerationResult> registerTask(String reqid) {
-    	
-    	return lhs.registerTask(reqid);
+
+    /**
+     * 异步请求音频数据。
+     *
+     * @param chara  角色标识
+     * @param reqid  请求唯一标识符
+     * @param content 要合成语音的文本内容数组
+     * @param usageListener 用量回调
+     * @return 包含音频字节数组的 CompletableFuture
+     */
+    public static CompletableFuture<ModelGenerationResult> requireAudio(String chara, String reqid, JsonArray content, Consumer<UsageIntf<?>> usageListener) {
+        return lhs.requireAudio(chara, reqid, content, usageListener);
+    }
+
+    public static CompletableFuture<ModelGenerationResult> registerTask(String reqid) {
+        return lhs.registerTask(reqid);
     }
 }

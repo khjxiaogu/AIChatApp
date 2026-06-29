@@ -168,6 +168,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				);
 	}
 	public final Map<String, LoraConfigurations> lora = new LinkedHashMap<>();
+	public final List<String> chara;
 	public final String urlbase;
 	/**
 	 * 构造AI对话服务，初始化数据库连接、文件目录和AI应用。
@@ -196,6 +197,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				lora.put(key, new LoraConfigurations(jo.get("key").getAsString(),jo.get("weight").getAsFloat()));
 			}
 		}
+		chara=SDXLMcp.readLinesFromFile(new File(path,"promptdo.txt"));
 		logger.info("正在链接SQLITE信息数据库...");
 		try {
 			database = DriverManager.getConnection("jdbc:sqlite:" + new File(path, "messages.db"));
@@ -941,7 +943,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		@GetBy(DataIn.class) byte[] data,
 		@Header("Authorization") String auth) {
 		if (auth != null && auth.startsWith("Bearer ") && System.getProperty("localVoiceToken", "").equals(auth.split(" ")[1])) {
-			if(LocalVoiceModel.lhs.onMessage(reqid, data))
+			if(LocalVoiceModel.lhs.onMessage(reqid, data, type))
 			return new ResultDTO(200);
 			return new ResultDTO(500);
 		}

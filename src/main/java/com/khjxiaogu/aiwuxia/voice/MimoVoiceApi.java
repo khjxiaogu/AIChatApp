@@ -19,7 +19,7 @@ public class MimoVoiceApi implements VoiceModel {
 	final File sampleVoice;
 	Gson gson=new Gson();
 	@Override
-	public CompletableFuture<VoiceGenerationResult> getAudioData(String roleName,String uid, String text,String messageId,Consumer<UsageIntf<?>> usageListener) {
+	public CompletableFuture<ModelGenerationResult> getAudioData(String roleName,String uid, String text,String messageId,Consumer<UsageIntf<?>> usageListener) {
 		try {
 			String caption="";
 			File captionFile=new File(sampleVoice,roleName+".txt");
@@ -49,7 +49,7 @@ public class MimoVoiceApi implements VoiceModel {
 				PcmToWavConverter converter=new PcmToWavConverter(24000);
 				converter.addAudioChunk(scheme.choices.get(0).message.audio.data);
 				usageListener.accept(new LocalVoiceUsage(text.length()));
-				return new VoiceGenerationResult(converter.saveAsWav(),"wav");
+				return new ModelGenerationResult(converter.saveAsWav(),"wav");
 			} catch (IOException e) {
 				throw new RuntimeException(e);
 			}

@@ -77,7 +77,7 @@ public class VoiceModelLocalServer extends AbstractServiceClass {
     public ResultDTO dataPost(@Query("reqid") String reqid,
                               @Query("type") String type,
                               @GetBy(DataIn.class) byte[] data) {
-        LocalVoiceModel.lhs.onMessage(reqid, data);
+        LocalVoiceModel.lhs.onMessage(reqid, data, type);
         return new ResultDTO(200);
     }
 

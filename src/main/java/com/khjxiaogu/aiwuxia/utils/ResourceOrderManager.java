@@ -44,6 +44,7 @@ public class ResourceOrderManager {
         private int refCount;          // 引用计数，受 manager.lock 保护
         private boolean completedCalled = false; // 防止重复 complete
         private boolean cancelCalled = false; 
+        private Exception acquirer;
         OrderHandleImpl(long sequence, ResourceOrderManager manager) {
             this.sequence = sequence;
             this.manager = manager;
@@ -53,7 +54,7 @@ public class ResourceOrderManager {
         @Override
         public ResourceAccess acquire() throws InterruptedException {
             if (state == State.ACQUIRED) {
-                throw new IllegalStateException("Handle already used");
+            	return fork();
             }
             if (state == State.COMPLETED) {
                 throw new IllegalStateException("Handle already completed");
@@ -62,7 +63,7 @@ public class ResourceOrderManager {
         }
 
         @Override
-        public AutoCloseable fork() {
+        public ResourceAccess fork() {
             manager.lock.lock();
             try {
                 if (state == State.COMPLETED) {
@@ -70,7 +71,7 @@ public class ResourceOrderManager {
                 }
                 refCount++;
                 // 返回一个子句柄，close 时减少引用计数
-                return (AutoCloseable) () -> {
+                return (ResourceAccess) () -> {
                     manager.lock.lock();
                     try {
                         if (refCount > 0) {
@@ -178,6 +179,7 @@ public class ResourceOrderManager {
             if (!handle.compareAndSetState(OrderHandleImpl.State.INIT, OrderHandleImpl.State.ACQUIRED)) {
                 throw new IllegalStateException("Concurrent state change");
             }
+            handle.acquirer=new Exception();
             return new ResourceAccessImpl(seq, this);
         } finally {
             lock.unlock();
@@ -240,7 +242,7 @@ public class ResourceOrderManager {
          * 派生一个新的 AutoCloseable 子句柄，该子句柄关闭时会释放一个引用。
          * 只有所有派生子句柄、原 handle 以及获取的 ResourceAccess 都关闭后，才释放顺序槽位。
          */
-        AutoCloseable fork();
+        ResourceAccess fork();
         /**
          * 放弃本次资源调用，跳过当前 Agent 的顺序。
          * 若已经获取了资源访问权，则不应调用此方法。

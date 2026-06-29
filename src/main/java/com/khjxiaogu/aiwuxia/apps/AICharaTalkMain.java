@@ -54,7 +54,7 @@ import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
 import com.khjxiaogu.aiwuxia.subagent.HistoryCompacter;
 import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
 import com.khjxiaogu.aiwuxia.utils.SequentialStateExecutor;
-import com.khjxiaogu.aiwuxia.voice.VoiceGenerationResult;
+import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceTagger;
 
@@ -415,9 +415,9 @@ public class AICharaTalkMain extends AIApplication {
 				logger.info("正在生成语音："+ftext);
 				File aud=new File(basePath,"voice");
 				aud.mkdirs();
-				CompletableFuture<VoiceGenerationResult> data=VoiceModelHandler.getAudioData(state.getExtraData().voiceModel,getRoleName(state, Role.ASSISTANT),state.user, ftext, faudioId, state::addUsage);
+				CompletableFuture<ModelGenerationResult> data=VoiceModelHandler.getAudioData(state.getExtraData().voiceModel,getRoleName(state, Role.ASSISTANT),state.user, ftext, faudioId, state::addUsage);
 				
-				VoiceGenerationResult rslt=data.get();
+				ModelGenerationResult rslt=data.get();
 				try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
 					fos.write(rslt.audioData);
 				};

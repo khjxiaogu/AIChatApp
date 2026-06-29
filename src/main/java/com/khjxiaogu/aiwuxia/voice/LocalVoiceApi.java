@@ -22,7 +22,7 @@ public class LocalVoiceApi implements VoiceModel {
 		vt=new VoiceTagger(file);
 	}
 	@Override
-	public CompletableFuture<VoiceGenerationResult> getAudioData(String roleName, String uid, String text,
+	public CompletableFuture<ModelGenerationResult> getAudioData(String roleName, String uid, String text,
 			String messageId,Consumer<UsageIntf<?>> usageListener) {
 		System.out.println("local voice");
 		return vt.extractTalkContent(roleName, text, usageListener).thenCompose(s->LocalVoiceModel.requireAudio(botids.get(roleName), messageId, s, usageListener));
