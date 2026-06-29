@@ -1,6 +1,11 @@
 package com.khjxiaogu.aiwuxia.utils;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -18,6 +23,43 @@ public class ResourceOrderManager {
     private final Set<Long> completed = new HashSet<>();
     private long nextSequence = 1;       // 下一个分配的序号
     private long currentSequence = 1;    // 当前应执行的序号
+    private volatile OrderHandleImpl currentHolder; // 当前持有资源的句柄
+    private final ScheduledExecutorService deadlockDetector =
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "ResourceOrderManager-deadlock-detector");
+            t.setDaemon(true);
+            return t;
+        });
+    public ResourceOrderManager() {
+        deadlockDetector.scheduleWithFixedDelay(() -> {
+            OrderHandleImpl holder = currentHolder;
+            if (holder != null) {
+                long elapsed = System.currentTimeMillis() - holder.acquireTimestamp;
+                if (elapsed > 120_000) {
+                    System.err.println("[DEADLOCK] ResourceOrderManager lock held for "
+                        + elapsed + "ms by sequence " + holder.getSequence()
+                        + ", refCount=" + holder.refCount);
+                    holder.registar.printStackTrace();
+                    // snapshot lists under refLock
+                    List<Exception> forkers;
+                    synchronized (holder.refLock) {
+                        forkers   = new ArrayList<>(holder.forkerStacks);
+                    }
+                    for (int i = 0; i < forkers.size(); i++) {
+                        System.err.println("[DEADLOCK] Forker #" + (i + 1) + ":");
+                        forkers.get(i).printStackTrace(System.err);
+                    }
+                }
+            }
+        }, 10, 10, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 关闭死锁检测器，在不再需要使用此管理器时调用。
+     */
+    public void shutdown() {
+        deadlockDetector.shutdownNow();
+    }
 
     /**
      * 注册一个 AI Agent，分配触发顺序序号。
@@ -40,62 +82,66 @@ public class ResourceOrderManager {
     private static class OrderHandleImpl implements OrderHandle {
         private final long sequence;
         private final ResourceOrderManager manager;
+        private final Object refLock = new Object(); // 保护 refCount / completedCalled / cancelCalled
         private volatile State state = State.INIT;
-        private int refCount;          // 引用计数，受 manager.lock 保护
+        private int refCount;          // 引用计数，受 refLock 保护
         private boolean completedCalled = false; // 防止重复 complete
         private boolean cancelCalled = false; 
-        private Exception acquirer;
+        private final List<Exception> forkerStacks   = new ArrayList<>(); // 受 refLock 保护
+        private final Exception registar;
+        volatile long acquireTimestamp;
         OrderHandleImpl(long sequence, ResourceOrderManager manager) {
             this.sequence = sequence;
             this.manager = manager;
             this.refCount = 1;         // 自身占用一个引用
+            this.registar=new Exception();
         }
 
         @Override
         public ResourceAccess acquire() throws InterruptedException {
-            if (state == State.ACQUIRED) {
-            	return fork();
-            }
-            if (state == State.COMPLETED) {
+        	if (state == State.COMPLETED) {
                 throw new IllegalStateException("Handle already completed");
             }
-            return manager.doAcquire(this);
+        	if (state == State.INIT) {
+	            synchronized (refLock) {
+	                if (state == State.INIT) {
+	                	manager.doAcquire(this);
+	                    state = State.ACQUIRED;
+	                }
+	            }
+        	}
+            return fork();
         }
 
         @Override
         public ResourceAccess fork() {
-            manager.lock.lock();
-            try {
+            synchronized (refLock) {
                 if (state == State.COMPLETED) {
                     throw new IllegalStateException("Handle already completed, cannot fork");
                 }
                 refCount++;
-                // 返回一个子句柄，close 时减少引用计数
-                return (ResourceAccess) () -> {
-                    manager.lock.lock();
-                    try {
-                        if (refCount > 0) {
-                            refCount--;
-                            tryComplete();
-                        }
-                    } finally {
-                        manager.lock.unlock();
-                    }
-                };
-            } finally {
-                manager.lock.unlock();
+                forkerStacks.add(new Exception("fork() called"));
+                return (ResourceAccess) () -> releaseRef();
             }
         }
 
         @Override
         public void cancel() {
-            manager.lock.lock();
-            try {
+            boolean shouldComplete = false;
+            synchronized (refLock) {
                 if (cancelCalled) return;
-                cancelCalled=true;
-                releaseRef();      // 释放自身引用
-            } finally {
-                manager.lock.unlock();
+                cancelCalled = true;
+                if (refCount > 0) {
+                    refCount--;
+                    if (refCount == 0 && !completedCalled) {
+                        completedCalled = true;
+                        state = State.COMPLETED;
+                        shouldComplete = true;
+                    }
+                }
+            }
+            if (shouldComplete) {
+                manager.complete(sequence);
             }
         }
 
@@ -105,54 +151,27 @@ public class ResourceOrderManager {
         }
 
         /**
-         * 增加引用计数（在成功获取资源时调用）
-         */
-        @SuppressWarnings("unused")
-		void addRef() {
-            manager.lock.lock();
-            try {
-                refCount++;
-            } finally {
-                manager.lock.unlock();
-            }
-        }
-
-        /**
          * 释放一个引用（由资源访问对象或 fork 子句柄调用）
          */
         void releaseRef() {
-            manager.lock.lock();
-            try {
+            boolean shouldComplete = false;
+            synchronized (refLock) {
                 if (refCount > 0) {
                     refCount--;
-                    tryComplete();
+                    if (refCount == 0 && !completedCalled) {
+                        completedCalled = true;
+                        state = State.COMPLETED;
+                        shouldComplete = true;
+                    }
                 }
-            } finally {
-                manager.lock.unlock();
             }
-        }
-
-        /**
-         * 当引用计数归零时，真正完成顺序槽位
-         */
-        private void tryComplete() {
-            if (refCount == 0 && !completedCalled) {
-                completedCalled = true;
+            if (shouldComplete) {
                 manager.complete(sequence);
-                state=State.COMPLETED;
             }
         }
 
         long getSequence() {
             return sequence;
-        }
-
-        boolean compareAndSetState(State expected, State newState) {
-            if (state == expected) {
-                state = newState;
-                return true;
-            }
-            return false;
         }
 
         enum State {
@@ -161,9 +180,9 @@ public class ResourceOrderManager {
     }
 
     /**
-     * 等待直到轮到此凭证，然后返回资源访问对象。
+     * 等待直到轮到此凭证，并标记为已获取。
      */
-    private ResourceAccess doAcquire(OrderHandleImpl handle) throws InterruptedException {
+    private void doAcquire(OrderHandleImpl handle) throws InterruptedException {
         lock.lock();
         try {
             long seq = handle.getSequence();
@@ -171,16 +190,13 @@ public class ResourceOrderManager {
             while (currentSequence != seq && !completed.contains(seq)) {
                 condition.await();
             }
-            // 检查是否被取消（completed包含seq 或 状态已变为RELEASED）
-            if (completed.contains(seq) || handle.state == OrderHandleImpl.State.COMPLETED) {
+            // 检查是否被取消
+            if (completed.contains(seq)) {
                 throw new IllegalStateException("Resource access cancelled before acquisition");
             }
-            // 此时 currentSequence == seq，且未取消，标记已获取
-            if (!handle.compareAndSetState(OrderHandleImpl.State.INIT, OrderHandleImpl.State.ACQUIRED)) {
-                throw new IllegalStateException("Concurrent state change");
-            }
-            handle.acquirer=new Exception();
-            return new ResourceAccessImpl(seq, this);
+            // state already set to ACQUIRED by caller
+            handle.acquireTimestamp = System.currentTimeMillis();
+            this.currentHolder = handle;
         } finally {
             lock.unlock();
         }
@@ -193,6 +209,10 @@ public class ResourceOrderManager {
         lock.lock();
         try {
             completed.add(seq);
+            // 如果完成的是当前持有者的序号，清除 currentHolder
+            if (currentHolder != null && currentHolder.getSequence() == seq) {
+                currentHolder = null;
+            }
             // 将当前序号向后推进到第一个未完成的序号
             while (completed.contains(currentSequence)) {
                 currentSequence++;
@@ -200,28 +220,6 @@ public class ResourceOrderManager {
             condition.signalAll();
         } finally {
             lock.unlock();
-        }
-    }
-
-    /**
-     * 资源访问对象，实现 AutoCloseable，close 时释放顺序。
-     */
-    private static class ResourceAccessImpl implements ResourceAccess {
-        private final long sequence;
-        private final ResourceOrderManager manager;
-        private boolean closed = false;
-
-        ResourceAccessImpl(long sequence, ResourceOrderManager manager) {
-            this.sequence = sequence;
-            this.manager = manager;
-        }
-
-        @Override
-        public void close() {
-            if (!closed) {
-                closed = true;
-                manager.complete(sequence);
-            }
         }
     }
 
