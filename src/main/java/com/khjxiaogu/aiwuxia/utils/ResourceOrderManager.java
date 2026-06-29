@@ -214,7 +214,7 @@ public class ResourceOrderManager {
                 currentHolder = null;
             }
             // 将当前序号向后推进到第一个未完成的序号
-            while (completed.contains(currentSequence)) {
+            while (completed.remove(currentSequence)) {
                 currentSequence++;
             }
             condition.signalAll();
