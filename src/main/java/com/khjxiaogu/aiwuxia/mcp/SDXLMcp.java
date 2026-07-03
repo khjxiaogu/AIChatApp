@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiFunction;
@@ -29,6 +30,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
@@ -49,6 +51,8 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
+import com.khjxiaogu.aiwuxia.voice.LocalModel;
+import com.khjxiaogu.aiwuxia.voice.ModelType;
 
 public class SDXLMcp {
 	public static class LoraConfigurations{
@@ -233,6 +237,10 @@ public class SDXLMcp {
 		sb.deleteCharAt(sb.length()-1);
 		return sb.toString();
     }
+    public static MCPTools createRemoteLocalModel(PainterSession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,Function<String,String> urlGetter,boolean isNsfw) {
+		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,data)->LocalModel.require(ModelType.SDXL,UUID.randomUUID().toString(), JsonBuilder.object().add("path", url).add("data", data).end()).thenApply(t->JsonParser.parseString(new String(t.bodyData,StandardCharsets.UTF_8)).getAsJsonObject());
+		return create(state,tos,lora,charas,isNsfw,urlGetter,func);
+	}
 	public static MCPTools createRemoteLocal(PainterSession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,Function<String,String> urlGetter,boolean isNsfw) {
 		BiFunction<String,String,CompletableFuture<JsonObject>> func=state::requestLocal;
 		return create(state,tos,lora,charas,isNsfw,urlGetter,func);
@@ -243,7 +251,7 @@ public class SDXLMcp {
 				return HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
 				.header("Accept", "application/json")
 				.header("Content-Type", "application/json; utf-8")
-				.url("/sdapi/v1/txt2img")
+				.url(url)
 				.post()
 				.send(payload.toString())
 				.readJson();
@@ -429,8 +437,8 @@ public class SDXLMcp {
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
-									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误，并给出依据。"
-									+ "判定标准：直接裸露性器官，或者包含血腥暴力等内容。仅擦边不属于。");
+									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误（包括肢体错误，人物重复等等），并给出依据。"
+									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
 									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,state::addUsage))));
@@ -451,6 +459,7 @@ public class SDXLMcp {
 		tools.register(new ToolData.Builder("regional_image",
 				"使用Stable Diffusion XL搭配分区提示词生成图片，不需要包含画质提示词，提示词必须是纯英文，生成后需要使用其他工具发送。")
 				.putParam("picture_id", "如果要使用图生图，务必在这里填上图片ID，否则不填或留空")
+				.putParam("strength", "如果不使用图生图，该参数无效。重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。")
 				.putParam("common_positive", "共用正面提示词")
 				.putParam("first_positive", "第一区域提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("second_positive", "第二区域提示词，必须是纯英文，不需要包含画质提示词。")
@@ -501,9 +510,17 @@ public class SDXLMcp {
 						try {
 							byte[] image;
 							if(jo.has("picture_id")&&jo.get("picture_id").getAsString().length()>20) {
-								image=generateRegionalImage2Image(urlGetter.apply(jo.get("picture_id").getAsString()),prompt,negative,30,
+								float strength=1;
+								if(jo.has("strength")) {
+									JsonPrimitive jes=jo.get("strength").getAsJsonPrimitive();
+									if(jes.isString())
+										strength=Float.parseFloat(jes.getAsString());
+									else if(jes.isNumber())
+										strength=jes.getAsFloat();
+								}
+								image=generateRegionalImage2Image(urlGetter.apply(jo.get("picture_id").getAsString()),prompt,negative,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
 										its[0],
-										its[1],isRow,ratio,func);
+										its[1],isRow,ratio,strength*0.2f+0.6f,func);
 							}else{
 								image=generateRegionalImage(prompt,negative,30,
 										its[0],
@@ -513,8 +530,8 @@ public class SDXLMcp {
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
-									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误，并给出依据。"
-									+ "判定标准：直接裸露性器官，或者包含血腥暴力等内容。仅擦边不属于。");
+									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误（包括肢体错误，人物重复等等），并给出依据。"
+									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
 									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,state::addUsage))));
@@ -537,6 +554,7 @@ public class SDXLMcp {
 				.putParam("positive", "正面提示词，必须是纯英文。")
 				.putParam("negative", "负面提示词，必须是纯英文。")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
+				.putParam("strength", "重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
 				.tool((data) -> {
 					try {
@@ -549,6 +567,14 @@ public class SDXLMcp {
 						String prompt=jo.get("positive").getAsString();
 						String negative=jo.get("negative").getAsString();
 						String pid=jo.get("picture_id").getAsString();
+						float strength=1;
+						if(jo.has("strength")) {
+							JsonPrimitive jes=jo.get("strength").getAsJsonPrimitive();
+							if(jes.isString())
+								strength=Float.parseFloat(jes.getAsString());
+							else if(jes.isNumber())
+								strength=jes.getAsFloat();
+						}
 						prompt=appendCommonPrompt(prompt,commonPositive);
 						negative=appendCommonPrompt(negative,commonNegatives);
 						Set<LoraConfigurations> loras=addLoras(prompt,lora);
@@ -558,17 +584,17 @@ public class SDXLMcp {
 						try {
 
 							byte[] image=generateImage2Image(urlGetter.apply(pid),prompt,negative
-									,30,
+									,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
 									its[0],
-									its[1],func);
+									its[1],strength*0.2f+0.6f,func);
 
 							
 							String fn = tos.uploadIfNotExists(image,state::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
-									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误，并给出依据。"
-									+ "判定标准：直接裸露性器官，或者包含血腥暴力等内容。仅擦边不属于。");
+									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误（包括肢体错误，人物重复等等），并给出依据。"
+									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
 									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,state::addUsage))));
@@ -652,7 +678,7 @@ public class SDXLMcp {
 		}
 		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
 	}
-	public static byte[] generateImage2Image(String baseImg,String prompt, String negativePrompt, int steps, int width, int height,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
+	public static byte[] generateImage2Image(String baseImg,String prompt, String negativePrompt, int steps, int width, int height,float denoising,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
 		JsonObject payload = new JsonObject();
 		payload.add("init_images", JsonBuilder.array().add(baseImg).end());
 		payload.addProperty("prompt", prompt);
@@ -666,7 +692,7 @@ public class SDXLMcp {
 
 		
 		payload.addProperty("resize_mode", 0);
-		payload.addProperty("denoising_strength", 0.8);
+		payload.addProperty("denoising_strength", denoising);
 		JsonObject jsonResponse;
 		try {
 			jsonResponse = connector.apply("/sdapi/v1/img2img", payload.toString()).get();
@@ -677,7 +703,7 @@ public class SDXLMcp {
 		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
 		
 	}
-	public static byte[] generateRegionalImage2Image(String baseImg,String prompt, String negativePrompt, int steps, int width, int height,boolean isRow,String ratio,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
+	public static byte[] generateRegionalImage2Image(String baseImg,String prompt, String negativePrompt, int steps, int width, int height,boolean isRow,String ratio,float denoising,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
 		JsonObject payload = new JsonObject();
 		payload.add("init_images", JsonBuilder.array().add(baseImg).end());
 		payload.addProperty("prompt", prompt);
@@ -711,7 +737,7 @@ public class SDXLMcp {
 				.add(false).end().end().end());
 		
 		payload.addProperty("resize_mode", 0);
-		payload.addProperty("denoising_strength", 0.8);
+		payload.addProperty("denoising_strength", denoising);
 		JsonObject jsonResponse;
 		try {
 			jsonResponse = connector.apply("/sdapi/v1/img2img", payload.toString()).get();

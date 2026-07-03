@@ -419,7 +419,7 @@ public class AICharaTalkMain extends AIApplication {
 				
 				ModelGenerationResult rslt=data.get();
 				try(FileOutputStream fos=new FileOutputStream(new File(aud,faudioId+".mp3"))){
-					fos.write(rslt.audioData);
+					fos.write(rslt.bodyData);
 				};
 				return true;
 			} catch (Exception e) {

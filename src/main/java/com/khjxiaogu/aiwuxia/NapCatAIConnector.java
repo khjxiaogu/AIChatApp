@@ -168,6 +168,7 @@ public class NapCatAIConnector extends WebSocketClient {
 					float priceBefore=sess.getTokens();
 					sess.getAiapp().doRegen(sess);
 					sendLastMessage(sess,handle,sess.getTokens()-priceBefore);
+	
 				}
 			}
 			
@@ -628,7 +629,7 @@ public class NapCatAIConnector extends WebSocketClient {
 							
 							JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
 									.add("group_id", state.groupId)
-									.object("message").add("type", "record").object("data").add("file", toDataUrl(dataFuture.get().audioData)).end().end()
+									.object("message").add("type", "record").object("data").add("file", toDataUrl(dataFuture.get().bodyData)).end().end()
 									.end().end())
 							.get();
 							

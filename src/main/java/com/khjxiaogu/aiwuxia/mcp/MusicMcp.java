@@ -19,7 +19,7 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
-import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
+import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
 
 import kotlin.text.Charsets;
@@ -143,7 +143,7 @@ public class MusicMcp {
 						try {
 							
 					        String reqid=UUID.randomUUID().toString();
-					        CompletableFuture<ModelGenerationResult> cf=LocalVoiceModel.registerTask(reqid);
+					        CompletableFuture<ModelGenerationResult> cf=LocalModel.registerTask(reqid);
 					        CompletableFuture.runAsync(()->{
 								try (ResourcePermit l=lock.acquire(4)){
 									System.out.println(HttpRequestBuilder.create("http",svsHost).url("?url="+URLEncoder.encode(url, Charsets.UTF_8)+"&name="+URLEncoder.encode(fnout, Charsets.UTF_8)+"&voice="+voiceId+"&reqid="+reqid).get().readString());
@@ -155,7 +155,7 @@ public class MusicMcp {
 					        cf.thenApply(vg->{
 					        	try {
 						        	
-						        	FileUtil.transfer(vg.audioData, fileout);
+						        	FileUtil.transfer(vg.bodyData, fileout);
 						        	return fileout.getName();
 					        	} catch (IOException e) {
 									e.printStackTrace();

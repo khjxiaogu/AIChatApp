@@ -9,6 +9,9 @@ import java.util.function.Function;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 
 public class HistoryCompactor {
 	public static interface DoHistoryCompact{
@@ -24,7 +27,22 @@ public class HistoryCompactor {
 			HistoryItem hi=it.next();
 			long tokenLen=hi.getTokenLength();
 			if(tokenLen==0) {
-				history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+				boolean shouldContainReasoner=false;
+				if(hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
+					for(MessageContent msgc:hi.getReasoningContent()) {
+						if(msgc instanceof ToolContent) {
+							shouldContainReasoner=true;
+							break;
+						}
+					}
+					if(shouldContainReasoner) {
+						for(MessageContent msgc:hi.getReasoningContent()) {
+							tokenLen+=(TokenSimulatedCounter.fastCountLength( msgc.toText()));
+							
+						}
+					}
+				}tokenLen+=TokenSimulatedCounter.fastCountLength(hi.getContextContent());
+				history.setTokenLength(hi,tokenLen);
 			}
 			len+=tokenLen;
 			if(hi.maySendReasoner()&&hi.getRole()==Role.ASSISTANT)

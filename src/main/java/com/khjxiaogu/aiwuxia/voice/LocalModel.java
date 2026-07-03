@@ -35,7 +35,7 @@ import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
  * 暴露其核心功能，便于应用程序其他部分调用。
  * 支持多种模型类型的调用，包括音频合成等。
  */
-public class LocalVoiceModel {
+public class LocalModel {
 
     /** 单例的本地模型握手器实例，负责管理与本地模型服务的 WebSocket 连接 */
     public static final LocalModelHandshaker lhs = new LocalModelHandshaker();

@@ -140,7 +140,7 @@ public class AIGroupSession extends AISession {
 		CallContext last=null;
 		synchronized(queueLock) {
 	        DateFormat formatter = DateFormat.getDateTimeInstance();
-			content=new MutableMessageContents("当前时间："+formatter.format(new Date())+"\n");
+			content=new MutableMessageContents("<system>当前时间："+formatter.format(new Date())+"，注意遵守系统提示词和系统规则，不要声称自己关机了或者累了，全程使用中文对话。</system>\n");
 			for(CallContext cctx:important) {
 				for(Supplier<MessageContent> cmsg:cctx.getter)
 					content.add(cmsg.get());

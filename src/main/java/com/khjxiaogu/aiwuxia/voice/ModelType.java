@@ -1,7 +1,8 @@
 package com.khjxiaogu.aiwuxia.voice;
 
 public enum ModelType {
-    AUDIO;
+    AUDIO,
+    SDXL;
 
     public static ModelType fromString(String s) {
         if (s == null) return null;

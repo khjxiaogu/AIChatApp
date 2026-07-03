@@ -75,7 +75,7 @@ import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
-import com.khjxiaogu.aiwuxia.voice.LocalVoiceModel;
+import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
@@ -921,7 +921,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public void voiceWebSocket(Request req, Response res) {
 		String auth = req.getHeaders().get(HttpHeaderNames.AUTHORIZATION);
 		if (auth != null && auth.startsWith("Bearer ") && System.getProperty("localVoiceToken", "").equals(auth.split(" ")[1]))
-			res.suscribeWebsocketEvents(LocalVoiceModel.lhs);
+			res.suscribeWebsocketEvents(LocalModel.lhs);
 		else
 			res.write(404);
 	}
@@ -943,7 +943,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		@GetBy(DataIn.class) byte[] data,
 		@Header("Authorization") String auth) {
 		if (auth != null && auth.startsWith("Bearer ") && System.getProperty("localVoiceToken", "").equals(auth.split(" ")[1])) {
-			if(LocalVoiceModel.lhs.onMessage(reqid, data, type))
+			if(LocalModel.lhs.onMessage(reqid, data, type))
 			return new ResultDTO(200);
 			return new ResultDTO(500);
 		}

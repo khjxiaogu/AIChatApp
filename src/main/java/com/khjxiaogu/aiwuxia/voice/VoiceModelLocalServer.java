@@ -50,7 +50,7 @@ public class VoiceModelLocalServer extends AbstractServiceClass {
 
     /**
      * WebSocket 端点，用于与本地模型服务建立长连接。
-     * 此方法将传入的请求和响应对象与 {@link LocalVoiceModel#lhs} 握手器绑定，
+     * 此方法将传入的请求和响应对象与 {@link LocalModel#lhs} 握手器绑定，
      * 从而将 WebSocket 连接交由 {@link LocalModelHandshaker} 处理。
      *
      * @param req HTTP 请求对象（包含握手信息）
@@ -58,13 +58,13 @@ public class VoiceModelLocalServer extends AbstractServiceClass {
      */
     @HttpPath("/kh$localModelDeploy")
     public void voiceWebSocket(Request req, Response res) {
-        res.suscribeWebsocketEvents(LocalVoiceModel.lhs);
+        res.suscribeWebsocketEvents(LocalModel.lhs);
     }
 
     /**
      * HTTP POST 端点，用于接收本地模型产出的数据（如音频字节数组）。
      * 该端点通常由模型服务在生成结果后调用，将数据通过 HTTP 推送给服务器。
-     * 接收到的数据会通过 {@link LocalVoiceModel#lhs} 的 {@code onMessage} 方法传递给等待的请求。
+     * 接收到的数据会通过 {@link LocalModel#lhs} 的 {@code onMessage} 方法传递给等待的请求。
      *
      * @param reqid 请求唯一标识符，用于关联到原始请求
      * @param type  数据类型（目前可能固定为某种类型，如音频）
@@ -77,7 +77,7 @@ public class VoiceModelLocalServer extends AbstractServiceClass {
     public ResultDTO dataPost(@Query("reqid") String reqid,
                               @Query("type") String type,
                               @GetBy(DataIn.class) byte[] data) {
-        LocalVoiceModel.lhs.onMessage(reqid, data, type);
+        LocalModel.lhs.onMessage(reqid, data, type);
         return new ResultDTO(200);
     }
 

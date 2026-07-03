@@ -25,11 +25,11 @@ public class LocalVoiceApi implements VoiceModel {
 	public CompletableFuture<ModelGenerationResult> getAudioData(String roleName, String uid, String text,
 			String messageId,Consumer<UsageIntf<?>> usageListener) {
 		System.out.println("local voice");
-		return vt.extractTalkContent(roleName, text, usageListener).thenCompose(s->LocalVoiceModel.requireAudio(botids.get(roleName), messageId, s, usageListener));
+		return vt.extractTalkContent(roleName, text, usageListener).thenCompose(s->LocalModel.requireAudio(botids.get(roleName), messageId, s, usageListener));
 	}
 	@Override
 	public boolean canProcessVoice(String roleName) {
-		return botids.containsKey(roleName)&&LocalVoiceModel.hasOnlineService();
+		return botids.containsKey(roleName)&&LocalModel.hasOnlineService();
 	}
 	@Override
 	public boolean isHinted(String modelName) {
