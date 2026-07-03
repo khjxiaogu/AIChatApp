@@ -70,7 +70,7 @@ public class AIAppMain {
 	}
 	public static void main(String[] args) throws Throwable {
 		String name="fengyitalk";
-		int idx=1;
+
 		try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception e) {

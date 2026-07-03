@@ -28,19 +28,15 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
-import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -140,6 +136,15 @@ public class AIGroupApplication extends AIApplication {
 		
 		return oldstate;
 	}
+	public void compactHistory(AISession state) throws IOException {
+		HistoryHolder history = state.getHistory();
+		if (history != null && !history.isEmpty()) {
+			HistoryCompactor.compact(history, 0, -1, h->h==Role.USER?"":(this.charaName+"："), s->{
+				state.setLastSummary(makeSummaryrequest(state,s.toString()));
+				state.setDialogRows((int) (history.getContextLimit()-5));
+			});
+		}
+	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 
 		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY)
@@ -151,7 +156,7 @@ public class AIGroupApplication extends AIApplication {
 		// b.object().add("role", "system").add("content", "目前对话轮次："+row).end();
 		HistoryHolder history = state.getHistory();
 		if (history != null && !history.isEmpty()) {
-			HistoryCompactor.compact(history, 100000, 20000, h->getRoleName(state,h)+"：", s->{
+			HistoryCompactor.compact(history, 100000, 20000, h->h==Role.USER?"":(this.charaName+"："), s->{
 				state.setLastSummary(makeSummaryrequest(state,s.toString()));
 				state.setDialogRows((int) (history.getContextLimit()-5));
 			});
