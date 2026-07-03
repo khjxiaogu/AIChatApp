@@ -5,7 +5,6 @@ import java.nio.ByteBuffer;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -157,7 +156,11 @@ public class LocalModelClient extends WebSocketClient {
         super.close();
     }
 
-    /**
+    public Set<ModelType> getModelTypes() {
+		return modelTypes;
+	}
+
+	/**
      * 构建器，用于配置和创建 {@link LocalModelClient} 实例。
      */
     public static class Builder {

@@ -68,6 +68,7 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
+import com.khjxiaogu.aiwuxia.apps.AIGroupApplication;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
@@ -92,7 +93,6 @@ import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession.CurrentContext;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
-import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.BotCallback;
 import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -491,7 +491,7 @@ public class NapCatAIConnector extends WebSocketClient {
 					if(containsAt.isEmpty()&&replyId!=-1) {
 						containsAt.add(replyId);
 					}
-					for(AIGroupSession state:states) {
+					outer:for(AIGroupSession state:states) {
 						if (msg.get("group_id").getAsLong() == state.groupId) {
 							boolean containsAtMe = containsAt.contains(state.botId);
 							
@@ -504,6 +504,7 @@ public class NapCatAIConnector extends WebSocketClient {
 							long senderid = senderObj.get("user_id").getAsLong();
 							StringBuilder textContent=new StringBuilder();
 							if (senderid != state.botId) {
+								
 								JsonArray ja = msg.get("raw").getAsJsonObject().get("elements").getAsJsonArray();
 								
 								List<Supplier<MessageContent>> mes = new ArrayList<>();
@@ -561,6 +562,15 @@ public class NapCatAIConnector extends WebSocketClient {
 	
 										});
 									}
+								}
+								if(senderid==1905387052L) {
+									if (containsAtMe) {
+										if(textContent.toString().contains("##清理上下文")) {
+											((AIGroupApplication) state.getAiapp()).compactHistory(state);
+											continue outer;
+										}
+									}
+									
 								}
 								if (hasText) {
 									mes.add(() -> new PlainText("</message>"));
