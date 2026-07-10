@@ -330,7 +330,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				parent.consumePaidTokens(user, actualCost);
 			}
 			
-		}
+		}else
 		if(!attributes.freeNow) {
 			int actualCost=(int) Math.floor(usage.getEquivantTokens());
 			if(actualCost>0) {
