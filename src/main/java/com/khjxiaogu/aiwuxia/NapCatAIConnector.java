@@ -568,6 +568,10 @@ public class NapCatAIConnector extends WebSocketClient {
 									if (containsAtMe) {
 										if(textContent.toString().contains("##清理上下文")) {
 											((AIGroupApplication) state.getAiapp()).compactHistory(state);
+											JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
+													.add("group_id", state.groupId)
+													.object("message").add("type", "text").object("data").add("text", "已处理").end().end()
+													.end().end()).get();
 											continue outer;
 										}
 									}

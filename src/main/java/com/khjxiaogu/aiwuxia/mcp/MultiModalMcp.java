@@ -101,11 +101,16 @@ public class MultiModalMcp {
 
 				builder.addHistoryItem(
 						new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(id,addUsage))));
-				AIOutput output=LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).streamed().build());
-				output.addUsageListener(addUsage);
-				FileUtil.printAndCollectContent(output.getReasoner());
-				String caption= FileUtil.printAndCollectContent(
-					output.getContent());
+				builder.modelHint("volces").temperature(1.3f).maxTokens(3000).streamed();
+				String caption="";
+				for(int t=0;t<4;t++) {
+					AIOutput output=LLMConnector.call(builder.build());
+					output.addUsageListener(addUsage);
+					FileUtil.printAndCollectContent(output.getReasoner());
+					caption= FileUtil.printAndCollectContent(output.getContent());
+					if(caption.length()>=100)
+						break;
+				}
 				tos.upload(id+".caption", caption.getBytes(StandardCharsets.UTF_8), addUsage);
 				return caption;
 			} catch (ModelRouteException | IOException e) {

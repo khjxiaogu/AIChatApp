@@ -71,15 +71,15 @@ public class VolcanoModelProvider implements ModelProvider{
 		else if(request.hasModelProperty("code"))
 			return "doubao-seed-2-0-code-260428";
 		else if(request.hasModelProperty("mini"))
-			return "doubao-seed-2-0-mini-260428";
+			return "doubao-seed-2-0-mini-260215";
 		switch(request.taskType) {
 		case CODE:return "doubao-seed-2-0-code-260428";
 		case LOGIC:
 		case ANALYSIS:return "doubao-seed-2-0-pro-260428";
 		case STORY:
-			return "doubao-seed-2-0-lite-260428";
+			return "doubao-seed-2-0-lite-260215";
 		}
-		return "doubao-seed-2-0-lite-260428";
+		return "doubao-seed-2-0-lite-260215";
 	}
 	public VolcanoUsage getModelUsage(AIRequest request) {
 		if(request.hasModelProperty("mini"))

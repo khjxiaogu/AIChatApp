@@ -145,6 +145,7 @@ public class AIRequest {
     
     public final List<HistoryItem> history;
     public final Map<String,ToolData> tools;
+    public final int maxToolCall;
     /**
      * 私有构造函数，通过 Builder 创建实例。
      *
@@ -167,6 +168,7 @@ public class AIRequest {
         this.history=builder.history;
         this.format=builder.format;
         this.prefix=builder.prefix;
+        this.maxToolCall=builder.maxToolCall;
         if(hasModelProperty("reasoning"))
 			category=ModelCategory.REASONING;
 		else if(hasModelProperty("non-reasoning"))
@@ -247,6 +249,7 @@ public class AIRequest {
         private String modelHint=null;
         private String user="";
         private String prefix;
+        private int maxToolCall=10;
         Builder(String user){
         	this.user=user;
         }
@@ -271,6 +274,10 @@ public class AIRequest {
         public Builder strength(ReasoningStrength strength) {
             this.strength = strength;
             this.category = ModelCategory.REASONING;
+            return this;
+        }
+        public Builder maxToolCall(int maxToolCall) {
+            this.maxToolCall = maxToolCall;
             return this;
         }
 

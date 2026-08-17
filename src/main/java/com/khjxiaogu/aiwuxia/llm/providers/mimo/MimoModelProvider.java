@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.llm.providers.deepseek;
+package com.khjxiaogu.aiwuxia.llm.providers.mimo;
 
 import java.io.IOException;
 import java.util.Map.Entry;
@@ -35,11 +35,10 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
-import com.khjxiaogu.aiwuxia.llm.HistoryRequestBuilder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
-import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
+import com.khjxiaogu.aiwuxia.llm.HistoryRequestBuilder;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
@@ -54,11 +53,11 @@ import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
-public class DeepseekModelProvider implements ModelProvider{
-	SimpleLogger logger=new SimpleLogger("Deepseek");
+public class MimoModelProvider implements ModelProvider{
+	SimpleLogger logger=new SimpleLogger("Mimo");
 	@Override
 	public boolean supports(AIRequest request) {
-		return request.multimodal==MultimodalType.TEXT_ONLY;
+		return request.multimodal.canSupport(true, false, true, true);
 	}
 
 	@Override
@@ -74,13 +73,13 @@ public class DeepseekModelProvider implements ModelProvider{
 		JsonObject jo=createRequest(request);
 		jo.addProperty("stream", true);
 		String tosend = gs.toJson(jo);
-		JsonObject retjs = HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
+		JsonObject retjs = HttpRequestBuilder.create("api.xiaomimimo.com").url("/v1/chat/completions")
 				.header("Content-Type", "application/json")
-				.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
+				.header("Authorization", "Bearer "+System.getProperty("mimotoken"))
 	
 				.post(true).send(tosend).readJson();
 		//System.out.println(ppgs.toJson(retjs));
-		RespScheme resp = gs.fromJson(retjs, RespScheme.class);
+		RespScheme resp = gs.fromJson(retjs, MimoRespScheme.class);
 		logger.info("=================Usage===============");
 		logger.info(resp.getUsage());
 		return resp;
@@ -117,9 +116,9 @@ public class DeepseekModelProvider implements ModelProvider{
 		
 		jo.add("messages", HistoryRequestBuilder.createRequest(request));
 		if(request.hasModelProperty("pro"))
-			jo.addProperty("model", "deepseek-v4-pro");
+			jo.addProperty("model", "mimo-v2.5-pro");
 		else
-			jo.addProperty("model", "deepseek-v4-flash");
+			jo.addProperty("model", "mimo-v2.5");
 		if(!request.tools.isEmpty()) {
 			JsonArray ja=new JsonArray();
 			for(ToolData val:request.tools.values()) {
@@ -133,10 +132,10 @@ public class DeepseekModelProvider implements ModelProvider{
 			jo.add("response_format", JsonBuilder.object("type", "json_object"));
 		if(request.category==ModelCategory.REASONING) {
 			jo.add("thinking", JsonBuilder.object("type","enabled"));
-			if(request.strength==ReasoningStrength.STRONG)
+			/*if(request.strength==ReasoningStrength.STRONG)
 				jo.addProperty("reasoning_effort", "max");
 			else
-				jo.addProperty("reasoning_effort", "high");
+				jo.addProperty("reasoning_effort", "high");*/
 		}else {
 			jo.add("thinking", JsonBuilder.object("type","disabled"));
 		}
@@ -144,10 +143,10 @@ public class DeepseekModelProvider implements ModelProvider{
 		jo.addProperty("max_tokens", request.maxToken);
 		return jo;
 	}
-	private static DeepseekUsage createUsage(AIRequest request) {
+	private static MimoUsage createUsage(AIRequest request) {
 		if(request.hasModelProperty("pro"))
-			return new DeepseekProUsage();
-		return new DeepseekUsage();
+			return new MimoProUsage();
+		return new MimoUsage();
 		
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
@@ -155,7 +154,7 @@ public class DeepseekModelProvider implements ModelProvider{
 		JsonArray ja=jo.get("messages").getAsJsonArray();
 		jo.addProperty("stream", true);
 		StreamedAIOutput readable=new StreamedAIOutput();
-		DeepseekUsage usage=createUsage(request);
+		MimoUsage usage=createUsage(request);
 		boolean usesTool=!request.tools.isEmpty();
 		exec.submit(()->{
 			try {
@@ -166,11 +165,11 @@ public class DeepseekModelProvider implements ModelProvider{
 					shouldContinueRequest.set(false);
 
 					//System.out.println(ja);
-					DeepseekUsage crnusage=createUsage(request);
+					MimoUsage crnusage=createUsage(request);
 					MutableMessageContents reasoner=new MutableMessageContents();
-						HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
+						HttpRequestBuilder.create("api.xiaomimimo.com").url("/v1/chat/completions")
 								.header("Content-Type", "application/json")
-								.header("Authorization", "Bearer "+System.getProperty("deepseektoken"))
+								.header("Authorization", "Bearer "+System.getProperty("mimotoken"))
 			
 								.post(true).send(gs.toJson(jo)).readSSE((ev,s)->{
 									if(readable.isInterrupted()) {
@@ -184,69 +183,69 @@ public class DeepseekModelProvider implements ModelProvider{
 									}
 									//if(readable.isEnded())
 									//	throw new ClientTruncatedException();
-									DeepseekRespScheme scheme=gs.fromJson(s, DeepseekRespScheme.class);
-									Choice choice=scheme.choices.get(0);
-									if(choice.delta.reasoning_content!=null&&!choice.delta.reasoning_content.isEmpty()) {
-										readable.putReasoner(new PlainText(choice.delta.reasoning_content));
-										reasoner.append(choice.delta.reasoning_content);
-									}
-									if(choice.delta.content!=null&&!choice.delta.content.isEmpty()) {
-										if(!usesTool) {
-											readable.getReasoner().setEnded();
+									MimoRespScheme scheme=gs.fromJson(s, MimoRespScheme.class);
+									if(!scheme.choices.isEmpty()) {
+										Choice choice=scheme.choices.get(0);
+										if(choice.delta.reasoning_content!=null&&!choice.delta.reasoning_content.isEmpty()) {
+											readable.putReasoner(new PlainText(choice.delta.reasoning_content));
+											reasoner.append(choice.delta.reasoning_content);
 										}
-										readable.putContent(choice.delta.content);
-										reasoner.append(choice.delta.content);
-									}
-									if(choice.delta.tool_calls!=null) {
-										for(ToolCall tc:choice.delta.tool_calls) {
-											toolCalls.collect(tc);
-										}
-									}
-									if("tool_calls".equals(choice.finish_reason)) {
-										
-										
-										ToolCallContent toolcall=new ToolCallContent(toolCalls.build());
-										if(!reasoner.isEmpty()) {
-											ja.add(HistoryRequestBuilder.createReasonerMessage(reasoner.toText(),toolcall.getToolCalls()));
-										}
-										readable.putReasoner(toolcall);
-										if(remainToolCalls.decrementAndGet()<=0) {
-											for(ToolCall i:toolcall.getToolCalls()) {
-												ToolContent tool=new ToolContent(i.id,"已达最大工具调用轮次，请暂停工作并明确用户指示。");
-												ja.add(HistoryRequestBuilder.createToolMessage(tool));
-												readable.putReasoner(tool);
-												continue;
+										if(choice.delta.content!=null&&!choice.delta.content.isEmpty()) {
+											if(!usesTool) {
+												readable.getReasoner().setEnded();
 											}
-										}else {
-											for(ToolCall i:toolcall.getToolCalls()) {
-												ToolData data=request.tools.get(i.function.name);
-												if(data==null) {
-													ToolContent tool=new ToolContent(i.id,"tool不存在或已禁用。");
+											readable.putContent(choice.delta.content);
+											reasoner.append(choice.delta.content);
+										}
+										if(choice.delta.tool_calls!=null) {
+											for(ToolCall tc:choice.delta.tool_calls) {
+												toolCalls.collect(tc);
+											}
+										}
+										if("tool_calls".equals(choice.finish_reason)) {
+	
+											ToolCallContent toolcall=new ToolCallContent(toolCalls.build());
+											if(!reasoner.isEmpty()) {
+												ja.add(HistoryRequestBuilder.createReasonerMessage(reasoner.toText(),toolcall.getToolCalls()));
+											}
+											readable.putReasoner(toolcall);
+											if(remainToolCalls.decrementAndGet()<=0) {
+												for(ToolCall i:toolcall.getToolCalls()) {
+													ToolContent tool=new ToolContent(i.id,"已达最大工具调用轮次，请暂停工作并明确用户指示。");
 													ja.add(HistoryRequestBuilder.createToolMessage(tool));
 													readable.putReasoner(tool);
 													continue;
 												}
-												try {
-													String result=data.tool.run(i.function.arguments);
+											}else {
+												for(ToolCall i:toolcall.getToolCalls()) {
+													ToolData data=request.tools.get(i.function.name);
+													if(data==null) {
+														ToolContent tool=new ToolContent(i.id,"tool不存在或已禁用。");
+														ja.add(HistoryRequestBuilder.createToolMessage(tool));
+														readable.putReasoner(tool);
+														continue;
+													}
+													try {
+														String result=data.tool.run(i.function.arguments);
+														
+														ToolContent tool=new ToolContent(i.id,result);
+														ja.add(HistoryRequestBuilder.createToolMessage(tool));
+														
+														readable.putReasoner(tool);
+													}catch(Throwable ex) {
+														ex.printStackTrace();
+														ToolContent tool=new ToolContent(i.id,"tool发生内部错误。");
+														ja.add(HistoryRequestBuilder.createToolMessage(tool));
+														readable.putReasoner(tool);
+													}
 													
-													ToolContent tool=new ToolContent(i.id,result);
-													ja.add(HistoryRequestBuilder.createToolMessage(tool));
-													
-													readable.putReasoner(tool);
-												}catch(Throwable ex) {
-													ex.printStackTrace();
-													ToolContent tool=new ToolContent(i.id,"tool发生内部错误。");
-													ja.add(HistoryRequestBuilder.createToolMessage(tool));
-													readable.putReasoner(tool);
 												}
-												
 											}
+											shouldContinueRequest.set(true);
+											
+											
 										}
-										shouldContinueRequest.set(true);
-										
-										
 									}
-										
 									if(scheme.usage!=null)
 										crnusage.set(scheme.usage);
 									return true;

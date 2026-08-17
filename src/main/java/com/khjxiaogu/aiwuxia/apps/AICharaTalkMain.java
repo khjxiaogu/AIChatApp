@@ -313,9 +313,8 @@ public class AICharaTalkMain extends AIApplication {
 						cf=this.generateVoice(state, content.toString(), audioId);
 					}
 					continue;
-				} else {
-					content.append(last).append("\n");
 				}
+				content.append(last).append("\n");
 				
 			} else if (status.isValue(3)) {
 				
@@ -339,6 +338,11 @@ public class AICharaTalkMain extends AIApplication {
 			logger.info("regenerate as truncated");
 			throw new RegenerateNeededException(oldstate);
 		}
+		if(state.getState().perks.isEmpty()){//truncated
+			logger.info("regenerate as no scene");
+			throw new RegenerateNeededException(oldstate);
+		}
+			
 		status.setValue(4);
 		if(state.isAudioSession()&&audioId==null) {
 			audioId=UUID.randomUUID().toString();

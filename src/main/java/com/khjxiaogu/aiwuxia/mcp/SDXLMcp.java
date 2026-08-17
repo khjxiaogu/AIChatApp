@@ -351,8 +351,12 @@ public class SDXLMcp {
 		for(String s:"(masterpiece),(best quality),(absurdres)".split(",")) {
 			commonPositive.add(new PromptClass(s));
 		}
-		if(!isNsfw)
+		if(!isNsfw) {
 			commonNegatives.add(new PromptClass("nsfw","((nsfw))"));
+			commonNegatives.add(new PromptClass("nipples","((nipples))"));
+			commonNegatives.add(new PromptClass("pussy","((pussy))"));
+			commonNegatives.add(new PromptClass("penis","((penis))"));
+		}
 
 		if(charas!=null)
 		tools.register(new ToolData.Builder("search_character", "通过关键词搜索特定角色的提示词，返回相符的提示词，以,隔开")
@@ -436,15 +440,23 @@ public class SDXLMcp {
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
-									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误（包括肢体错误，人物重复等等），并给出依据。"
+									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。"
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
 									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,state::addUsage))));
-							AIOutput output=LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build());
-							output.addUsageListener(state::addUsage);
-							String caption= FileUtil.printAndCollectContent(
-								output.getContent());
+							builder.temperature(1.3f).maxTokens(3000).streamed();
+							String caption="";
+							for(int i=0;i<3;i++)
+								try {
+									AIOutput output=LLMConnector.call(builder.build());
+									output.addUsageListener(state::addUsage);
+									caption= FileUtil.printAndCollectContent(output.getContent());
+									break;
+								}catch(Exception err) {
+									err.printStackTrace();
+								}
+							
 							return "生成成功，图片id为："+fn+"。"+extras+caption;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -529,15 +541,23 @@ public class SDXLMcp {
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
-									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误（包括肢体错误，人物重复等等），并给出依据。"
+									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。"
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
 									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,state::addUsage))));
-							AIOutput output=LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build());
-							output.addUsageListener(state::addUsage);
-							String caption= FileUtil.printAndCollectContent(
-								output.getContent());
+							builder.temperature(1.3f).maxTokens(3000).streamed();
+							String caption="";
+							for(int i=0;i<3;i++)
+								try {
+									AIOutput output=LLMConnector.call(builder.build());
+									output.addUsageListener(state::addUsage);
+									caption= FileUtil.printAndCollectContent(output.getContent());
+									break;
+								}catch(Exception err) {
+									err.printStackTrace();
+								}
+							
 							return "生成成功，图片id为："+fn+"。"+caption;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -592,7 +612,7 @@ public class SDXLMcp {
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
-									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。也需要判断图片是否包含AI生成错误（包括肢体错误，人物重复等等），并给出依据。"
+									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。"
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
