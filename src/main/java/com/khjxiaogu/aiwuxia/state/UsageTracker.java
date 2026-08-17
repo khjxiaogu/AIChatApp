@@ -15,12 +15,14 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonSerializationContext;
 import com.google.gson.JsonSerializer;
 import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekUsage;
+import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekV4Usage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceUsage;
 
 public class UsageTracker {
 	public static class Serilizer implements JsonSerializer<UsageTracker>, JsonDeserializer<UsageTracker> {
 
+		@SuppressWarnings("rawtypes")
 		@Override
 		public UsageTracker deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
 			UsageTracker tracker = new UsageTracker();
@@ -45,6 +47,13 @@ public class UsageTracker {
 				if(rdt.has("voice_tokens"))
 					tracker.usages.put(VolcanoVoiceUsage.class, new VolcanoVoiceUsage(rdt.get("voice_tokens").getAsInt()));
 
+			}
+			if(!tracker.usages.containsKey(TotalCredits.class)) {
+				TotalCredits tcp=new TotalCredits();
+				for(UsageIntf intfs:tracker.usages.values()) {
+					tcp.add(intfs.getEquivantTokens());
+				}
+				tracker.usages.put(TotalCredits.class, tcp);
 			}
 			return tracker;
 		}
@@ -75,6 +84,8 @@ public class UsageTracker {
 			orig.add(uit);
 		else
 			usages.put(type, uit);
+		((TotalCredits)usages.get(TotalCredits.class)).add(uit.getEquivantTokens());
+		
 	}
 
 	public float getTotalTokenPrice() {
