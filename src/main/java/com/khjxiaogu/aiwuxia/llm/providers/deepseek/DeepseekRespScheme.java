@@ -3,12 +3,12 @@ package com.khjxiaogu.aiwuxia.llm.providers.deepseek;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 
 class DeepseekRespScheme extends RespScheme {
-	DeepseekUsage usage;
+	DeepseekV4Usage usage;
 	public DeepseekRespScheme() {
 	}
 
 	@Override
-	public DeepseekUsage getUsage() {
+	public DeepseekV4Usage getUsage() {
 		return usage;
 	}
 

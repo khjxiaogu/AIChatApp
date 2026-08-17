@@ -144,10 +144,10 @@ public class DeepseekModelProvider implements ModelProvider{
 		jo.addProperty("max_tokens", request.maxToken);
 		return jo;
 	}
-	private static DeepseekUsage createUsage(AIRequest request) {
+	private static DeepseekV4Usage createUsage(AIRequest request) {
 		if(request.hasModelProperty("pro"))
-			return new DeepseekProUsage();
-		return new DeepseekUsage();
+			return new DeepseekV4ProUsage();
+		return new DeepseekV4Usage();
 		
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
@@ -155,7 +155,7 @@ public class DeepseekModelProvider implements ModelProvider{
 		JsonArray ja=jo.get("messages").getAsJsonArray();
 		jo.addProperty("stream", true);
 		StreamedAIOutput readable=new StreamedAIOutput();
-		DeepseekUsage usage=createUsage(request);
+		DeepseekV4Usage usage=createUsage(request);
 		boolean usesTool=!request.tools.isEmpty();
 		exec.submit(()->{
 			try {
@@ -166,7 +166,7 @@ public class DeepseekModelProvider implements ModelProvider{
 					shouldContinueRequest.set(false);
 
 					//System.out.println(ja);
-					DeepseekUsage crnusage=createUsage(request);
+					DeepseekV4Usage crnusage=createUsage(request);
 					MutableMessageContents reasoner=new MutableMessageContents();
 						HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 								.header("Content-Type", "application/json")
@@ -251,6 +251,7 @@ public class DeepseekModelProvider implements ModelProvider{
 										crnusage.set(scheme.usage);
 									return true;
 								});
+						crnusage.zoomEquivantly();
 						usage.add(crnusage);
 				}
 			} catch (Exception e) {
@@ -262,6 +263,7 @@ public class DeepseekModelProvider implements ModelProvider{
 			logger.info("=================Usage===============\n");
 			logger.info(usage);
 			logger.info("finish generation");
+			
 			readable.setUsage(usage);
 			readable.endContent();
 		});
