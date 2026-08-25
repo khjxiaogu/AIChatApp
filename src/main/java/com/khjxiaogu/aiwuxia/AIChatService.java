@@ -1518,7 +1518,13 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 */
 	public void markRelease(ChatIdentity painterSession) {
 		logger.info("AI " + painterSession.getChatId() + " UnLoaded");
+		try {
+			painterSession.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 		uidsockets.remove(painterSession.getChatId());
+		
 	}
 
 	@Override

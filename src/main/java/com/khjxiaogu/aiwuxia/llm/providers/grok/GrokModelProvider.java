@@ -129,8 +129,11 @@ public class GrokModelProvider implements ModelProvider {
 						.send(tosend).readSSE((ev, s) -> {
 							if (readable.isInterrupted()) {
 								logger.info("interrupted generation");
-								readable.setUsage(usage);
-								readable.endContent();
+								try {
+									readable.setUsage(usage);
+								}finally {
+									readable.endContent();
+								}
 								return false;
 							}
 							if (s == null || "[DONE]".equals(s)) {
@@ -138,8 +141,11 @@ public class GrokModelProvider implements ModelProvider {
 								logger.info("=================Usage===============\n");
 								logger.info(usage);
 								logger.info("finish generation");
-								readable.setUsage(usage);
-								readable.endContent();
+								try {
+									readable.setUsage(usage);
+								}finally {
+									readable.endContent();
+								}
 								return false;
 							}
 							// if(readable.isEnded())

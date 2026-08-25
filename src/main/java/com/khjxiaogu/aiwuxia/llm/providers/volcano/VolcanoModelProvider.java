@@ -200,8 +200,11 @@ public class VolcanoModelProvider implements ModelProvider{
 							logger.info(usage);
 							logger.info("interrupted generation");
 							usage.zoomEquivantly();
-							readable.setUsage(usage);
-							readable.endContent();
+							try {
+								readable.setUsage(usage);
+							}finally {
+								readable.endContent();
+							}
 							return false;
 						}
 						if(s==null||"[DONE]".equals(s)) {
@@ -210,8 +213,11 @@ public class VolcanoModelProvider implements ModelProvider{
 							logger.info(usage);
 							logger.info("finish generation");
 							usage.zoomEquivantly();
-							readable.setUsage(usage);
-							readable.endContent();
+							try {
+								readable.setUsage(usage);
+							}finally {
+								readable.endContent();
+							}
 							return false;
 						}
 						//if(readable.isEnded())

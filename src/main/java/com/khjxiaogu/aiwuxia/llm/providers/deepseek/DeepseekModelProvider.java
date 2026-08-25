@@ -338,9 +338,11 @@ public class DeepseekModelProvider implements ModelProvider{
 			logger.info("=================Usage===============\n");
 			logger.info(usage);
 			logger.info("finish generation");
-			
-			readable.setUsage(usage);
-			readable.endContent();
+			try {
+				readable.setUsage(usage);
+			}finally {
+				readable.endContent();
+			}
 		});
 	
 		return readable;
