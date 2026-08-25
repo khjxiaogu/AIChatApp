@@ -15,7 +15,6 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonSerializationContext;
 import com.google.gson.JsonSerializer;
 import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekUsage;
-import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekV4Usage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.voice.VolcanoVoiceUsage;
 
@@ -73,9 +72,13 @@ public class UsageTracker {
 
 	Map<Class<?>, UsageIntf<?>> usages = new LinkedHashMap<>();
 
-	public UsageTracker() {
+	private UsageTracker() {
 	}
-
+	public static UsageTracker create() {
+		UsageTracker ut=new UsageTracker();
+		ut.usages.put(TotalCredits.class, new TotalCredits());
+		return ut;
+	}
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	public synchronized void add(UsageIntf uit) {
 		Class<?> type = uit.getClass();

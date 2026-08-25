@@ -52,7 +52,7 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 /**
  * AI会话类，管理与特定用户的对话历史、推理过程和状态。 该类提供了添加消息、管理历史条目、处理推理内容以及控制会话状态的功能。
  */
-public class AISession implements ISaveData{
+public class AISession implements ISaveData,AutoCloseable{
 
 	/**
 	 * 对话会话的额外状态数据，封装了与 UI 状态、对话轮次、使用统计等相关的信息。
@@ -69,7 +69,7 @@ public class AISession implements ISaveData{
 		/** 当前对话阶段（如初始化、进行中、结束等） */
 		private ApplicationStage stage = ApplicationStage.INITIALIZE;
 		/** 会话的使用量统计（如 token 消耗、费用等） */
-		private UsageTracker usage = new UsageTracker();
+		private UsageTracker usage = UsageTracker.create();
 		/** 标记是否为音频会话，影响处理逻辑（如语音识别、语音合成） */
 		public boolean isAudioSession = false;
 		
@@ -89,7 +89,7 @@ public class AISession implements ISaveData{
 	/**
 	 * 单线程执行器，用于串行执行会话中的命令操作（如处理用户输入、生成回复）。 确保在多线程环境下指令按提交顺序依次执行，避免并发状态不一致。
 	 */
-	protected ExecutorService commandExec = Executors.newFixedThreadPool(1);
+	protected final ExecutorService commandExec;
 	/** 标记当前是否正在生成 AI 输出（用于避免重复触发或状态冲突） */
 	volatile transient boolean isGenerating;
 
@@ -106,6 +106,10 @@ public class AISession implements ISaveData{
 		this.data = data;
 		this.user = user;
 		this.aiapp = aiapp;
+		commandExec = Executors.newSingleThreadExecutor(r -> {
+	        Thread t = new Thread(r, "ai-session-"+user);
+	        return t;
+	    });
 	}
 
 	/**
@@ -767,5 +771,10 @@ public class AISession implements ISaveData{
 
 	public void onModifyComplete() {
 		flush();
+	}
+
+	@Override
+	public void close(){
+		commandExec.shutdown();
 	}
 }

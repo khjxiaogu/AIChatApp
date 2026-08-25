@@ -1,5 +1,7 @@
 package com.khjxiaogu.aiwuxia.state.session;
 
-public interface ChatIdentity {
+import java.io.Closeable;
+
+public interface ChatIdentity extends Closeable {
 	String getChatId();
 }
