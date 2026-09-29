@@ -92,11 +92,7 @@ public class UsageTracker {
 	}
 
 	public float getTotalTokenPrice() {
-		float val = 0;
-		for (UsageIntf<?> ri : usages.values()) {
-			val += ri.getEquivantTokens();
-		}
-		return val;
+		return (float) ((TotalCredits)usages.get(TotalCredits.class)).getEquivantTokens();
 	}
 
 	public String calculatePrice() {
