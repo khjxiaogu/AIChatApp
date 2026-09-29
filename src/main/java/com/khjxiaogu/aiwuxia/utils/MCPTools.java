@@ -23,4 +23,7 @@ public class MCPTools {
     public void addTool(Collection<ToolData> col) {
     	col.addAll(tools.values());
     }
+    public void addTool(MCPTools col) {
+    	col.tools.putAll(tools);
+    }
 }

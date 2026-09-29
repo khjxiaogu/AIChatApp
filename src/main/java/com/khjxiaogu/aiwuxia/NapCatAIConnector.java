@@ -77,6 +77,7 @@ import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.MusicMcp;
 import com.khjxiaogu.aiwuxia.mcp.QQMcp;
+import com.khjxiaogu.aiwuxia.mcp.SDXLAgentMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfiguration;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
@@ -357,6 +358,11 @@ public class NapCatAIConnector extends WebSocketClient {
 			SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock).addTool(state.tools);
 		if(skillSet.contains("sdxl-nsfw"))
 			SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
+
+		if(skillSet.contains("sdxl-agent"))
+			SDXLAgentMcp.createImage(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock).addTool(state.tools);
+		if(skillSet.contains("sdxl-agent-nsfw"))
+			SDXLAgentMcp.createImage(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
 		CrontabMcp.setPath(new File(dataFolder,"crontab.json"));
 		if(skillSet.contains("cron"))
 			CrontabMcp.create(state.botId, str->{
