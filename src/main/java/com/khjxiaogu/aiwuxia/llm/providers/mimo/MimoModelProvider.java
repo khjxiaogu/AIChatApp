@@ -270,6 +270,6 @@ public class MimoModelProvider implements ModelProvider{
 
 	@Override
 	public boolean supportsHinted(AIRequest request) {
-		return request.isModelNamed("deepseek");
+		return request.isModelNamed("mimo");
 	}
 }
