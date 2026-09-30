@@ -81,7 +81,7 @@ public class GrokUsage implements UsageIntf<GrokUsage> {
 		long cached=prompt_tokens_details.cached_tokens;
 		long uncached=prompt_tokens-cached;
 		
-		return ((completion_tokens+completion_tokens_details.reasoning_tokens)*.5d+cached*.05d+uncached*.2d)*(7d/2d);
+		return ((completion_tokens+completion_tokens_details.reasoning_tokens)*2.5d+cached*.2d+uncached*1.25d)*(7d/2d);
 	}
 
 
