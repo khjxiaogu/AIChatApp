@@ -206,7 +206,7 @@ public class DeepseekModelProvider implements ModelProvider{
 										
 										
 										ToolCallContent toolcall=new ToolCallContent(toolCalls.build());
-										if(!reasoner.isEmpty()) {
+										if(!reasoner.isEmpty()||!toolcall.getToolCalls().isEmpty()) {
 											ja.add(HistoryRequestBuilder.createReasonerMessage(reasoner.toText(),toolcall.getToolCalls()));
 										}
 										readable.putReasoner(toolcall);
@@ -255,6 +255,7 @@ public class DeepseekModelProvider implements ModelProvider{
 						usage.add(crnusage);
 				}
 			} catch (Exception e) {
+				System.out.println(gs.toJson(jo));
 				e.printStackTrace();
 				if(e instanceof IOException)
 					readable.exception((IOException)e);
