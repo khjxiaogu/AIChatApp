@@ -116,9 +116,9 @@ public class MimoModelProvider implements ModelProvider{
 		
 		jo.add("messages", HistoryRequestBuilder.createRequest(request));
 		if(request.hasModelProperty("pro"))
-			jo.addProperty("model", "mimo-v2.5-pro");
+			jo.addProperty("model", "mimo-v2.6-pro");
 		else
-			jo.addProperty("model", "mimo-v2.5");
+			jo.addProperty("model", "mimo-v2.6-flash");
 		if(!request.tools.isEmpty()) {
 			JsonArray ja=new JsonArray();
 			for(ToolData val:request.tools.values()) {

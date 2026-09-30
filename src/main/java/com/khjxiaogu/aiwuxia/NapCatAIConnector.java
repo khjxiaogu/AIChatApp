@@ -361,9 +361,9 @@ public class NapCatAIConnector extends WebSocketClient {
 			SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
 
 		if(skillSet.contains("sdxl-agent"))
-			SDXLAgentMcp.createImage(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock).addTool(state.tools);
+			SDXLAgentMcp.createImage(new File(dataFolder,"painteragent"),state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock).addTool(state.tools);
 		if(skillSet.contains("sdxl-agent-nsfw"))
-			SDXLAgentMcp.createImage(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
+			SDXLAgentMcp.createImage(new File(dataFolder,"painteragent"),state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
 		CrontabMcp.setPath(new File(dataFolder,"crontab.json"));
 		if(skillSet.contains("cron"))
 			CrontabMcp.create(state.botId, str->{

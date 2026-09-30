@@ -71,7 +71,7 @@ public class VoiceTagger {
 			prompt.append("**第一人称说话人**\n").append(role).append("\n");
 		prompt.append("**待处理角色话语**\n");
 		prompt.append(lastText);
-		Builder b=AIRequest.builder("voiceTagger").modelHint("").taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192);
+		Builder b=AIRequest.builder("voiceTagger").modelHint("mimo").taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192);
 		b.addHistoryItem(Role.SYSTEM, sysprompt);
 
 		b.addHistoryItem(Role.USER, prompt.toString());
@@ -89,7 +89,12 @@ public class VoiceTagger {
 					String speech=output.getContentText();
 					try {
 						System.out.println(speech);
-						JsonArray ja=JsonParser.parseString(speech).getAsJsonArray();
+						JsonElement jex=JsonParser.parseString(speech);
+						JsonArray ja;
+						if(jex.isJsonArray())
+							ja=jex.getAsJsonArray();
+						else
+							ja=jex.getAsJsonObject().get("data").getAsJsonArray();
 						for(JsonElement je:ja) {
 							if(je.isJsonObject()) {
 								JsonObject jo=je.getAsJsonObject();
