@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekModelProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokModelProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.mimo.MimoModelProvider;
+import com.khjxiaogu.aiwuxia.llm.providers.siliconflow.SiliconFlowModelProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.volcano.VolcanoModelProvider;
 /**
  * LLM（大语言模型）连接器，提供统一的静态入口来调用 AI 模型。
@@ -79,6 +80,10 @@ public class LLMConnector {
             providers.add(new VolcanoModelProvider());
         if (System.getProperty("groktoken") != null)
             providers.add(new GrokModelProvider());
+
+        if (System.getProperty("silicontoken") != null)
+            providers.add(new SiliconFlowModelProvider());
+        
         router = new DefaultModelRouter(providers);
     }
 
