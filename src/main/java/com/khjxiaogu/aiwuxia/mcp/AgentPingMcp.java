@@ -2,16 +2,17 @@ package com.khjxiaogu.aiwuxia.mcp;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiConsumer;
+import java.util.concurrent.CompletableFuture;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.llm.AgentMessager;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
 public class AgentPingMcp {
-	public static Map<String,BiConsumer<String,String>> agents=new HashMap<>();
-	public static MCPTools create(String name,BiConsumer<String,String> onping) {
+	public static Map<String,AgentMessager> agents=new HashMap<>();
+	public static MCPTools create(String name,AgentMessager onping) {
 		agents.put(name, onping);
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("online_character", "获取现在在线的角色。")
@@ -33,10 +34,10 @@ public class AgentPingMcp {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					String chara=jo.get("character").getAsString().trim();
 					String message=jo.get("message").getAsString();
-					BiConsumer<String, String> call=agents.get(chara);
+					AgentMessager call=agents.get(chara);
 					if(call==null)
 						return "角色不在线或不存在";
-					call.accept(name,message);
+					call.sendAsyncTool("ping_character",CompletableFuture.completedFuture("<message senderName=\"" + chara + "\">"+message));
 					return "呼叫成功";
 				}).build());
 

@@ -37,7 +37,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -51,8 +50,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 import javax.imageio.ImageIO;
@@ -69,6 +66,7 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.AIGroupApplication;
+import com.khjxiaogu.aiwuxia.llm.AgentMessager;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
@@ -235,6 +233,18 @@ public class NapCatAIConnector extends WebSocketClient {
         ImageNoise.addLaplaceNoise(scaledImage, 17);
         return scaledImage;
     }
+    public void addFutureTask(AIGroupSession state,String name,CompletableFuture<String> future) {
+    	future.thenAccept(t->{
+    		state.addMessage(0, "", Arrays.asList(()->new PlainText("<tool name=\""+name+"\">"+t+"</tool>")),true);
+    		submitMessage(state);
+    		
+    	}).exceptionally(exc->{
+    		state.addMessage(0, "", Arrays.asList(()->new PlainText("<tool name=\""+name+"\">"+"失败，原因："+exc.getMessage()+"</tool>")),true);
+    		submitMessage(state);
+    		return null;
+    	});
+    	
+    }
 	public void addTools(AIGroupSession state,File dataFolder,JsonObject config) throws IOException {
 		Set<String> skillSet=new HashSet<>();
 		if(config.has("tools")) {
@@ -271,80 +281,71 @@ public class NapCatAIConnector extends WebSocketClient {
 				emojis.put(je,jo.get(je).getAsString());
 			}
 		}
-		Function<String,String> imageCollector = image -> {
-			try {
-				beforeSendMessage(state);
-				JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-						.object("message").add("type", "image").object("data").add("file", image).end().end().end()
-						.end()).get();
+		AgentMessager callback=new AgentMessager() {
 
-				appendMid(jo.get("message_id").getAsString(),state.botId);
-				return "发送图片成功，消息id："+jo.get("message_id").getAsString();
-			} catch(Exception e) {
-				e.printStackTrace();
-				return "发送失败";
+			@Override
+			public void sendAsyncTool(String tool, CompletableFuture<String> result) {
+				addFutureTask(state,tool,result);
 			}
-		};
-		Function<String,String> nsfwImageCollector = image -> {
-			beforeSendMessage(state);
-			/*try {
-				
-				JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-						.object("message").add("type", "image").object("data").add("file", image).end().end().end()
-						.end()).get();
 
-				appendMid(jo.get("message_id").getAsString(),state.botId);
-				return "发送图片成功，消息id："+jo.get("message_id").getAsString();
-			} catch(Exception e) {*/
-				//e.printStackTrace();
-				String url="https://www.khjxiaogu.com/works/imgView.html?img="+URLEncoder.encode(image,StandardCharsets.UTF_8);
-				try(ByteArrayOutputStream baos=new ByteArrayOutputStream()){
-					try(InputStream bais=FileUtil.fetch(image)){
-						BufferedImage bi=ImageIO.read(bais);
-						BufferedImage bo=shrinkToQuarter(bi);
-						ImageIO.write(bo, "jpg", baos);
-					}
-					JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-							.array("message").object().add("type", "image").object("data").add("file", toDataUrl(baos.toByteArray())).end().end().object().add("type", "text").object("data").add("text",url).end().end().end().end()
-							.end()).get();
-	
-					appendMid(jo.get("message_id").getAsString(),state.botId);
-					return "发送图片成功，消息id："+jo.get("message_id").getAsString();
-				} catch(Exception e2) {
-					e2.printStackTrace();
-					try {
-						JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-								.array("message").object().add("type", "text").object("data").add("text", url).end().end().end().end()
-								.end()).get();
-						appendMid(jo.get("message_id").getAsString(),state.botId);
-						return "发送图片成功，消息id："+jo.get("message_id").getAsString();
-					} catch(Exception e3) {
-						e3.printStackTrace();
-						return "发送失败";
-					}
-				}
-			//}
-		};
-		Consumer<String> imageIdCollector = image -> {
-			state.addMessage(0, "", Arrays.asList(()->new PlainText("<tool>图片生成成功，尚未发送，图片id："+image+"</tool>")),true);
-			submitMessage(state);
-		};
-		Consumer<String> videoCollector = image -> {
-			this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-					.object("message").add("type", "video").object("data").add("file", image).end().end().end()
-					.end(),(code,jo)->{
-						if(code==0) {
+			@Override
+			public CompletableFuture<String> sendMusic(String tool, CompletableFuture<String> url) {
+				return url.thenCompose(t->sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
+					.add("group_id", state.groupId).object("message").add("type", "record").object("data")
+					.add("file", t).end().end().end().end()))
+				.thenApply(jo->"发送音频消息id："+jo.get("message_id").getAsString());
+			}
 
+			@Override
+			public CompletableFuture<String> sendVideo(String tool, CompletableFuture<String> url) {
+				return url.thenCompose(video->sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
+					.object("message").add("type", "video").object("data").add("file", video).end().end().end()
+					.end())).thenApply(jo->"发送生成视频消息成功，消息id："+jo.get("message_id").getAsString());
+			}
+
+			@Override
+			public CompletableFuture<String> sendImage(String tool, CompletableFuture<String> url,boolean censored) {
+				if(censored) {
+					url.thenApply(image->{
+						String readerUrl="https://www.khjxiaogu.com/works/imgView.html?img="+URLEncoder.encode(image,StandardCharsets.UTF_8);
+						try(ByteArrayOutputStream baos=new ByteArrayOutputStream()){
+							try(InputStream bais=FileUtil.fetch(image)){
+								BufferedImage bi=ImageIO.read(bais);
+								BufferedImage bo=shrinkToQuarter(bi);
+								ImageIO.write(bo, "jpg", baos);
+							}
+							JsonObject jo=sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
+									.array("message").object().add("type", "image").object("data").add("file", FileUtil.toDataUrl(baos.toByteArray())).end().end().object().add("type", "text").object("data").add("text",readerUrl).end().end().end().end()
+									.end()).get();
+			
 							appendMid(jo.get("message_id").getAsString(),state.botId);
-							state.addMessage(0, "", Arrays.asList(()->new PlainText("<tool>发送生成视频消息成功，消息id："+jo.get("message_id").getAsString()+"</tool>")),true);
-							submitMessage(state);
+							return "发送图片成功，消息id："+jo.get("message_id").getAsString();
+						} catch(Exception e2) {
+							e2.printStackTrace();
+							try {
+								JsonObject jo=sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
+										.array("message").object().add("type", "text").object("data").add("text", readerUrl).end().end().end().end()
+										.end()).get();
+								appendMid(jo.get("message_id").getAsString(),state.botId);
+								return "发送图片成功，消息id："+jo.get("message_id").getAsString();
+							} catch(Exception e3) {
+								e3.printStackTrace();
+								return "发送失败";
+							}
 						}
 					});
-		};
-		Consumer<Throwable> exceptCollector = exc -> {
-			state.addMessage(0, "", Arrays.asList(()->new PlainText("生成失败，原因："+exc.getMessage())),true);
-			submitMessage(state);
-		};
+				}
+				return url.thenCompose(t->sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
+					.object("message").add("type", "image").object("data").add("file", t).end().end().end().end()))
+				.thenApply(jo->"发送图片消息id："+jo.get("message_id").getAsString());
+			}
+
+			@Override
+			public void addToolStatus(String tool, CompletableFuture<String> result) {
+
+				result.thenAccept(msg->state.addStatus("<tool name=\""+tool+"\">"+msg+"</tool>"))
+				.exceptionally(t->{state.addStatus("<tool name=\""+tool+"\">失败</tool>");return null;});
+			}};
 		if(skillSet.contains("fetch"))
 			FetchMcp.create(state, tos).addTool(state.tools);
 
@@ -352,7 +353,7 @@ public class NapCatAIConnector extends WebSocketClient {
 			MultiModalMcp.create(tos,state::addUsage).addTool(state.tools);
 
 		if(skillSet.contains("qq")) {
-			QQMcp.create(state, ""+state.groupId, tos,imageCollector,skillSet.contains("sdxl-nsfw")?nsfwImageCollector:null,emojis).addTool(state.tools);
+			QQMcp.create(state, ""+state.groupId, tos,callback,emojis).addTool(state.tools);
 		}
 		
 		if(skillSet.contains("sdxl"))
@@ -361,57 +362,20 @@ public class NapCatAIConnector extends WebSocketClient {
 			SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
 
 		if(skillSet.contains("sdxl-agent"))
-			SDXLAgentMcp.createImage(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock).addTool(state.tools);
+			SDXLAgentMcp.createImage(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),callback,false,resourceLock).addTool(state.tools);
 		if(skillSet.contains("sdxl-agent-nsfw"))
-			SDXLAgentMcp.createImage(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
+			SDXLAgentMcp.createImage(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),callback,true,resourceLock).addTool(state.tools);
 		CrontabMcp.setPath(new File(dataFolder,"crontab.json"));
 		if(skillSet.contains("cron"))
-			CrontabMcp.create(state.botId, str->{
-			state.addMessage(0,"",Arrays.asList(()->new PlainText("<trigger>"+str+"</trigger>")),true);
-			submitMessage(state);
-		}).addTool(state.tools);
+			CrontabMcp.create(state.botId, callback).addTool(state.tools);
 		if(skillSet.contains("music"))
-			MusicMcp.create(new File(dataFolder,"music"),config.get("voice").getAsString(),state.getRoleName(Role.ASSISTANT), fn->{
-			try {
-				this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
-						.add("group_id", state.groupId).object("message").add("type", "record").object("data")
-						.add("file", toDataUrl(FileUtil.readAll(fn))).end().end().end().end(),(code,jo)->{
-							if(code==0) {
-
-								appendMid(jo.get("message_id").getAsString(),state.botId);
-								state.addStatus("发送音频消息id："+jo.get("message_id").getAsString()+"\n");
-							}
-						});
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-			
-		}, fn -> {
-			
-			state.addMessage(0,"",Arrays.asList(()->new PlainText("<tool>歌声音频生成成功，已放到本地歌曲列表，名为：“"+fn+"”</tool>")),true);
-			submitMessage(state);
-		},url -> {
-			try {
-				beforeSendMessage(state);
-				JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
-						.add("group_id", state.groupId).object("message").add("type", "record").object("data")
-						.add("file", url).end().end().end().end()).get();
-				appendMid(jo.get("message_id").getAsString(),state.botId);
-				return "发送音乐成功，消息id："+jo.get("message_id").getAsString();
-			} catch(Exception e) {
-				e.printStackTrace();
-				return "发送失败";
-			}
-		},resourceLock).addTool(state.tools);
+			MusicMcp.create(new File(dataFolder,"music"),config.get("voice").getAsString(),state.getRoleName(Role.ASSISTANT),callback,resourceLock).addTool(state.tools);
 		if(skillSet.contains("seedimage"))
-			SeedreamMcp.createImage(state,imgKey, imageIdCollector,exceptCollector, refimage, tos).addTool(state.tools);
+			SeedreamMcp.createImage(state,imgKey, callback, refimage, tos).addTool(state.tools);
 		if(skillSet.contains("seedvideo"))
-			SeedreamMcp.createVideo(imgKey, videoCollector,exceptCollector, refimage, tos,state).addTool(state.tools);
+			SeedreamMcp.createVideo(imgKey, callback, refimage, tos,state).addTool(state.tools);
 		//SeedreamMcp.create(imgKey, imageCollector, refimage, tos).addTool(state.tools);
-		AgentPingMcp.create(state.getRoleName(Role.ASSISTANT), (from,msg) -> {
-			state.addMessage(state.botId, msg, Arrays.asList(()->new PlainText("<message senderName=\"" + from + "\">"+msg)),true);
-			submitMessage(state);
-		}).addTool(state.tools);
+		AgentPingMcp.create(state.getRoleName(Role.ASSISTANT), callback).addTool(state.tools);
 
 	}
 
@@ -574,7 +538,7 @@ public class NapCatAIConnector extends WebSocketClient {
 									if (containsAtMe) {
 										if(textContent.toString().contains("##清理上下文")) {
 											((AIGroupApplication) state.getAiapp()).compactHistory(state);
-											JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
+											this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
 													.add("group_id", state.groupId)
 													.object("message").add("type", "text").object("data").add("text", "已处理").end().end()
 													.end().end()).get();
@@ -649,7 +613,7 @@ public class NapCatAIConnector extends WebSocketClient {
 							
 							JsonObject jo=this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
 									.add("group_id", state.groupId)
-									.object("message").add("type", "record").object("data").add("file", toDataUrl(dataFuture.get().bodyData)).end().end()
+									.object("message").add("type", "record").object("data").add("file", FileUtil.toDataUrl(dataFuture.get().bodyData)).end().end()
 									.end().end())
 							.get();
 							
@@ -717,13 +681,6 @@ public class NapCatAIConnector extends WebSocketClient {
 		});
 	}
 
-	public static String toDataUrl(byte[] data) {
-		if (data == null) {
-			throw new IllegalArgumentException("字节数组不能为 null");
-		}
-		String base64 = Base64.getEncoder().encodeToString(data);
-		return "data:;base64," + base64;
-	}
 
 	@Override
 	public void onClose(int code, String reason, boolean remote) {
@@ -736,6 +693,7 @@ public class NapCatAIConnector extends WebSocketClient {
 		close(CloseFrame.NORMAL, e.toString());
 	}
 
+	@SuppressWarnings("resource")
 	public static void main(String[] args) throws Throwable {
 		try {
 			LLMConnector.initDefault();

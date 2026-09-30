@@ -15,17 +15,18 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
+import com.khjxiaogu.aiwuxia.llm.AgentMessager;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
@@ -175,7 +176,7 @@ public class CrontabMcp {
 	    }
 	}
 	static TimedTodoManager manager;
-	static Map<Long,Consumer<String>> triggers;
+	static Map<Long,AgentMessager> triggers;
 	static File savepath;
 	public static void setPath(File path) {
 		savepath=path;
@@ -184,13 +185,13 @@ public class CrontabMcp {
 		if(manager==null) {
 			triggers=new HashMap<>();
 			manager=new TimedTodoManager(savepath, (id,str)->{
-				Consumer<String> csm=triggers.get(id);
+				AgentMessager csm=triggers.get(id);
 				if(csm!=null)
-					csm.accept(str);
+					csm.sendAsyncTool("timed_trigger",CompletableFuture.completedFuture(str));
 			});
 		}
 	}
-	public static MCPTools create(long id,Consumer<String> trigger) throws IOException {
+	public static MCPTools create(long id,AgentMessager trigger) throws IOException {
 		init();
 		triggers.put(id, trigger);
 		MCPTools tools=new MCPTools();

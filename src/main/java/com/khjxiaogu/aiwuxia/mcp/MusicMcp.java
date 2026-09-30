@@ -5,13 +5,13 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
-import java.util.function.Function;
+import java.util.concurrent.ExecutionException;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.llm.AgentMessager;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
@@ -25,7 +25,7 @@ import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
 import kotlin.text.Charsets;
 
 public class MusicMcp {
-	public static MCPTools create(File localFolder,String voiceId,String name,Consumer<File> sendMusic,Consumer<String> genMusic,Function<String,String> sendMusicUrl,ResourceLock lock) {
+	public static MCPTools create(File localFolder,String voiceId,String name,AgentMessager genMusic,ResourceLock lock) {
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("list_music", "获取本地歌曲列表，可以用于发送进行歌唱或者播放")
 				.tool((data) -> {
@@ -43,8 +43,25 @@ public class MusicMcp {
 					if(!new File(localFolder,fn).exists())
 						return "文件不存在，请查询文件列表并检查输入";
 					;
-					sendMusic.accept(new File(localFolder,fn));
-					return "发送成功";
+					try {
+						return genMusic.sendMusic("send_music", CompletableFuture.supplyAsync(()->{
+							try {
+								return FileUtil.toDataUrl(FileUtil.readAll(new File(localFolder,fn)));
+							} catch (IOException e) {
+								e.printStackTrace();
+								throw new RuntimeException(e);
+							}
+							
+						}))
+						.get();
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					} catch (ExecutionException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+					return "发送失败";
 				}).build());
 		String svsHost=System.getProperty("svsHost");
 		if(svsHost!=null) {
@@ -152,17 +169,17 @@ public class MusicMcp {
 									e.printStackTrace();
 								}
 					        });
-					        cf.thenApply(vg->{
+					        genMusic.sendAsyncTool("sing_music",cf.thenApply(vg->{
 					        	try {
 						        	
 						        	FileUtil.transfer(vg.bodyData, fileout);
-						        	return fileout.getName();
+						        	return "歌声音频生成成功，已放到本地歌曲列表，名为：“"+fileout.getName()+"”";
 					        	} catch (IOException e) {
 									e.printStackTrace();
 									throw new RuntimeException(e);
 								}
 					        	
-					        }).thenAccept(genMusic);
+					        }));
 						} catch (Exception e) {
 							// TODO Auto-generated catch block
 							e.printStackTrace();
@@ -180,7 +197,7 @@ public class MusicMcp {
 							String url=queryRealUrl(mid);
 							if(!FileUtil.isExistent(url))
 								return "该音乐无法下载";
-							return sendMusicUrl.apply(url);
+							return genMusic.sendMusic("", CompletableFuture.completedFuture(url)).get();
 						} catch (Exception e) {
 							// TODO Auto-generated catch block
 							e.printStackTrace();

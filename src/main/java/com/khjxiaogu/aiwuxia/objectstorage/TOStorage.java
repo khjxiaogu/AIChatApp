@@ -66,14 +66,14 @@ public class TOStorage implements ObjectStorageProvider {
 			System.out.println("Put object success, the object's etag is " + output.getEtag());
 
 			try {
-				Thread.currentThread().sleep(300);
+				Thread.sleep(300);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 				throw new IOException("interrupted");
 			}
 			while(!exists(fn,addUsage)) {
 				try {
-					Thread.currentThread().sleep(300);
+					Thread.sleep(300);
 				} catch (InterruptedException e) {
 					e.printStackTrace();
 					throw new IOException("interrupted");

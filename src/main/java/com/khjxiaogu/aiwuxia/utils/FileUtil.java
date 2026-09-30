@@ -34,6 +34,7 @@ import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.function.Consumer;
 
 import javax.swing.JFileChooser;
@@ -55,6 +56,14 @@ public class FileUtil {
 			throw e;
 		}
 	}
+	public static String toDataUrl(byte[] data) {
+		if (data == null) {
+			throw new IllegalArgumentException("字节数组不能为 null");
+		}
+		String base64 = Base64.getEncoder().encodeToString(data);
+		return "data:;base64," + base64;
+	}
+
 	public static void transferWithListener(InputStream i,OutputStream os,Consumer<Long> readed) throws IOException {
 		int nRead;
 		byte[] data = new byte[16384];
