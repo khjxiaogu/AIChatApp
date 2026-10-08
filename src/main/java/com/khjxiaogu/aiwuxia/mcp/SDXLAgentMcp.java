@@ -39,13 +39,15 @@ public class SDXLAgentMcp {
 				FileUtil.readString(new File(path, "charaset.txt")).replace("\r", "")+
 				FileUtil.readString(new File(path, "rules.txt")).replace("\r", "")+
 				(isNsfw?"":"\n3.禁止返回被判定为NSFW的图片，如果遇到类似情况你可以多尝试能否生成正常图片，如果两次均不能生成则输出失败和原因。");
-		tools.register(new ToolData.Builder("sdxl_agent", "调用多模态模型生成图片，同一张图片只能有0-2个角色，每次调用该工具都会创建一个新的无状态subagent。")
+		tools.register(new ToolData.Builder("sdxl_agent", "调用多模态模型生成图片，同一张图片只能有0-2个角色，每次调用该工具都会创建一个新的无状态subagent，提示词只需描述画面大致内容即可，不要详细描述画面内容，涉及角色也只需描述角色名字，不要描述角色特征。")
 				.putParam("reference", "参考图列表，包含多个图片id以英文逗号,分隔，只允许包含相关图片。")
 				.putParam("prompt", "提示词，使用中文自然语言详细描述整个画面的细节，不包含参考图的人物特征，使用“图一”“图二”等引用参考图，不得包含图片id，必须说明每个参考图的作用，描述人物时请写全名或者图片编号，禁止使用一切其他代称。比如“画面参考图2，图1角色身着图3所示服装。”")
 				.tool((data) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					System.out.println(data);
-					String ref=jo.get("reference").getAsString();
+					String ref="";
+					if(jo.has("reference"))
+						ref=jo.get("reference").getAsString();
 					String[] refs=ref.split(",");
 					List<String> links=new ArrayList<>();
 					List<String> errors=new ArrayList<>();
