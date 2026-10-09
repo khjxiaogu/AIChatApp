@@ -275,12 +275,6 @@ public class SiliconFlowModelProvider implements ModelProvider{
 								.header("Authorization", "Bearer "+System.getProperty("silicontoken"))
 			
 								.post(true).send(gs.toJson(jo)).readSSE((ev,s)->{
-									if(readable.isInterrupted()) {
-										logger.info("interrupted generation");
-										
-										shouldContinueRequest.set(false);
-										return false;
-									}
 									if(s==null||"[DONE]".equals(s)) {
 										return false;
 									}
@@ -306,7 +300,13 @@ public class SiliconFlowModelProvider implements ModelProvider{
 											}
 										}
 										if("tool_calls".equals(choice.finish_reason)) {
-	
+
+											if(readable.isInterrupted()) {
+												logger.info("interrupted generation");
+												
+												shouldContinueRequest.set(false);
+												return true;
+											}
 											ToolCallContent toolcall=new ToolCallContent(toolCalls.build());
 											if(!reasoner.isEmpty()) {
 												ja.add(createReasonerMessage(reasoner.toText(),toolcall.getToolCalls()));
@@ -334,6 +334,12 @@ public class SiliconFlowModelProvider implements ModelProvider{
 													readable.putReasoner(tool);
 												}
 												
+											}
+											if(readable.isInterrupted()) {
+												logger.info("interrupted generation");
+												
+												shouldContinueRequest.set(false);
+												return true;
 											}
 											shouldContinueRequest.set(true);
 											

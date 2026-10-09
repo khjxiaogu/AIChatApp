@@ -171,12 +171,6 @@ public class MimoModelProvider implements ModelProvider{
 								.header("Authorization", "Bearer "+System.getProperty("mimotoken"))
 			
 								.post(true).send(gs.toJson(jo)).readSSE((ev,s)->{
-									if(readable.isInterrupted()) {
-										logger.info("interrupted generation");
-										
-										shouldContinueRequest.set(false);
-										return false;
-									}
 									if(s==null||"[DONE]".equals(s)) {
 										return false;
 									}
@@ -202,7 +196,13 @@ public class MimoModelProvider implements ModelProvider{
 											}
 										}
 										if("tool_calls".equals(choice.finish_reason)) {
-	
+
+											if(readable.isInterrupted()) {
+												logger.info("interrupted generation");
+												
+												shouldContinueRequest.set(false);
+												return true;
+											}
 											ToolCallContent toolcall=new ToolCallContent(toolCalls.build());
 											if(!reasoner.isEmpty()) {
 												ja.add(HistoryRequestBuilder.createReasonerMessage(reasoner.toText(),toolcall.getToolCalls()));
@@ -239,6 +239,13 @@ public class MimoModelProvider implements ModelProvider{
 													}
 													
 												}
+											}
+
+											if(readable.isInterrupted()) {
+												logger.info("interrupted generation");
+												
+												shouldContinueRequest.set(false);
+												return true;
 											}
 											shouldContinueRequest.set(true);
 											

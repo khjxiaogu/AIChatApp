@@ -1,7 +1,9 @@
 package com.khjxiaogu.aiwuxia.voice;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Set;
@@ -76,20 +78,60 @@ public class LocalModelClient extends WebSocketClient {
         t.setDaemon(true);
         return t;
     });
+    public static URI addModelType(String uri, Set<ModelType> modelTypes) {
+        if (uri == null) {
+            return null;
+        }
+        // 对参数值进行 URL 编码，避免特殊字符导致 URI 无效
+        String value="";
+        for(ModelType mt:modelTypes) {
+        	value+=mt.name().toLowerCase()+",";
+        }
+        String encodedValue = URLEncoder.encode(value, StandardCharsets.UTF_8);
+        String param = "model_type=" + encodedValue;
 
-    private LocalModelClient(URI serverUri, Map<String, String> httpHeaders,
+        // 1. 分离 fragment（# 之后的部分）
+        String fragment = "";
+        int fragmentIndex = uri.indexOf('#');
+        if (fragmentIndex != -1) {
+            fragment = uri.substring(fragmentIndex);
+            uri = uri.substring(0, fragmentIndex);
+        }
+
+        // 2. 判断是否已包含查询字符串（?）
+        int queryIndex = uri.indexOf('?');
+        if (queryIndex != -1) {
+            // 已有查询字符串
+            if (queryIndex == uri.length() - 1) {
+                // 以 ? 结尾，直接追加参数
+                uri += param;
+            } else {
+                // 已有其他参数，用 & 连接
+                uri += "&" + param;
+            }
+        } else {
+            // 没有查询字符串，用 ? 连接
+            uri += "?" + param;
+        }
+
+        // 3. 重新附加 fragment
+        return URI.create(uri + fragment);
+    }
+
+    protected LocalModelClient(URI serverUri, Map<String, String> httpHeaders,
                              RequestHandler handler, Set<ModelType> modelTypes,
                              boolean autoReconnect, long reconnectIntervalMs) {
-        super(serverUri, httpHeaders);
+        super(addModelType(serverUri.toString(),modelTypes), httpHeaders);
         this.handler = handler;
         this.modelTypes = modelTypes;
         this.autoReconnect = autoReconnect;
         this.reconnectIntervalMs = reconnectIntervalMs;
     }
-
+    boolean opened;
     @Override
     public void onOpen(ServerHandshake handshake) {
         System.out.println("[LocalModelClient] connected to " + getURI());
+        opened=true;
     }
 
     @Override
@@ -126,10 +168,11 @@ public class LocalModelClient extends WebSocketClient {
 
     @Override
     public void onClose(int code, String reason, boolean remote) {
+    	opened=false;
         System.out.println("[LocalModelClient] disconnected: " + code + " " + reason);
         if (autoReconnect && !closed) {
             reconnectTimer.schedule(() -> {
-                if (!closed) {
+                if (!closed&&!opened) {
                     System.out.println("[LocalModelClient] reconnecting...");
                     try {
                         reconnectBlocking();
@@ -143,14 +186,28 @@ public class LocalModelClient extends WebSocketClient {
 
     @Override
     public void onError(Exception e) {
+    	opened=false;
         System.err.println("[LocalModelClient] error: " + e.getMessage());
+        if (autoReconnect && !closed) {
+            reconnectTimer.schedule(() -> {
+                if (!closed&&!opened) {
+                    System.out.println("[LocalModelClient] reconnecting...");
+                    try {
+                        reconnectBlocking();
+                    } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }, reconnectIntervalMs, TimeUnit.MILLISECONDS);
+        }
     }
 
     /**
      * 关闭连接并停止自动重连。
      */
-    @Override
-    public void close() {
+    public void closeService() {
+
+        System.err.println("[LocalModelClient] closed ");
         closed = true;
         reconnectTimer.shutdownNow();
         super.close();

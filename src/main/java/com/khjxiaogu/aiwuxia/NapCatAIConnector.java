@@ -100,6 +100,7 @@ import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager;
 import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager.OrderHandle;
 import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager.ResourceAccess;
 import com.khjxiaogu.aiwuxia.vision.ImageNoise;
+import com.khjxiaogu.aiwuxia.vision.SDXLLocalModelClient;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
@@ -125,6 +126,9 @@ public class NapCatAIConnector extends WebSocketClient {
 	public NapCatAIConnector(File dataFolder, String url,
 			String token, AIGroupSession... states) throws JsonSyntaxException, IOException, InterruptedException {
 		super(URI.create("ws://" + url), Map.of("Authorization", "Bearer " + token));
+		SDXLLocalModelClient lmc=new SDXLLocalModelClient(URI.create("wss://khjxiaogu.com/aichat/kh$localModelDeploy"), resourceLock, true, 1000);
+		lmc.connectBlocking();
+		
 		try {
 			File tosConfigFile = new File(dataFolder, "tos.json");
 			if (tosConfigFile.exists()) {
@@ -139,7 +143,6 @@ public class NapCatAIConnector extends WebSocketClient {
 			tos = new LocalStorage(new File(dataFolder, "ircimages"));
 			System.out.println("绘画图片存储: 仅本地 (TOS初始化失败)");
 		}
-
 		imgKey = JsonParser.parseString(FileUtil.readString(new File(dataFolder, "img.json"))).getAsJsonObject();
 		connectBlocking();
 		for(AIGroupSession sess:states) {

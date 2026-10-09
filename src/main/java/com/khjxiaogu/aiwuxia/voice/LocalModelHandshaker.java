@@ -24,6 +24,7 @@
 package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashSet;
@@ -119,7 +120,9 @@ public class LocalModelHandshaker implements WebsocketEvents {
 
     @Override
     public void onOpen(Channel conn, FullHttpRequest handshake) {
+
         Set<ModelType> modelTypes = parseModelTypes(handshake.uri());
+        System.err.println("[LocalModel] connected from "+conn.remoteAddress().toString()+" provider: " + Arrays.toString(modelTypes.toArray()));
         channelModelTypes.put(conn, modelTypes);
         for (ModelType type : modelTypes) {
             typedPools.computeIfAbsent(type, k -> new LinkedBlockingQueue<>()).offer(conn);
@@ -151,7 +154,6 @@ public class LocalModelHandshaker implements WebsocketEvents {
     public void onMessage(Channel conn, String message) {
         JsonObject jo = JsonParser.parseString(message).getAsJsonObject();
         CompletableFuture<ModelGenerationResult> future = ars.remove(jo.get("reqid").getAsString());
-        System.out.println("received " + message + " future=" + future);
         if (future != null) {
             if (jo.has("error")) {
                 future.completeExceptionally(new IOException(jo.get("error").getAsString()));

@@ -34,6 +34,7 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
@@ -92,6 +93,16 @@ public class AISession implements ISaveData,AutoCloseable{
 	protected final ExecutorService commandExec;
 	/** 标记当前是否正在生成 AI 输出（用于避免重复触发或状态冲突） */
 	volatile transient boolean isGenerating;
+	
+	volatile transient AIOutput currentOutput;
+
+	public AIOutput getCurrentOutput() {
+		return currentOutput;
+	}
+
+	public void setCurrentOutput(AIOutput currentOutput) {
+		this.currentOutput = currentOutput;
+	}
 
 	/**
 	 * 构造一个 AI 会话实例。
@@ -430,7 +441,11 @@ public class AISession implements ISaveData,AutoCloseable{
 	public void onGenComplete() {
 		setUpdated();
 		isGenerating = false;
+		this.currentOutput=null;
 		data.flush();
+	}
+	public boolean isAvailable() {
+		return true;
 	}
 
 	/**

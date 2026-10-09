@@ -77,6 +77,7 @@ public class AIGroupApplication extends AIApplication {
 	}
 	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
+		state.setCurrentOutput(resp);
 		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
 		

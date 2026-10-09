@@ -50,6 +50,7 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
+import com.khjxiaogu.aiwuxia.vision.LocalSDXLUsage;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelType;
 
@@ -390,6 +391,7 @@ public class SDXLMcp {
 							for(String key:datax.keySet()) {
 								sb.append(key).append(",");
 							}
+							state.addUsage(new LocalSDXLUsage(0,1));
 							return sb.toString();
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -399,7 +401,6 @@ public class SDXLMcp {
 					}
 					return "参数格式错误";
 				}).build());
-		
 		
 		tools.register(new ToolData.Builder("sdxl_gen_image",
 				"使用Stable Diffusion XL生成图片，生成后需要使用其他工具发送。")
@@ -426,6 +427,7 @@ public class SDXLMcp {
 						prompt=prompt+processLoraConfigurations(loras);
 						if(loras.size()>1)
 							extras="生成多人图片需要使用regional_image，使用该工具生成图片可能混乱，需要检查。";
+
 						
 						System.out.println(prompt);
 						System.out.println(negative);
@@ -456,7 +458,7 @@ public class SDXLMcp {
 								}catch(Exception err) {
 									err.printStackTrace();
 								}
-							
+							state.addUsage(new LocalSDXLUsage(1,0));
 							return "生成成功，图片id为："+fn+"。"+extras+caption;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -537,6 +539,7 @@ public class SDXLMcp {
 										its[0],
 										its[1],isRow,ratio,func);
 							}
+							
 							String fn = tos.uploadIfNotExists(image,state::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
@@ -557,7 +560,7 @@ public class SDXLMcp {
 								}catch(Exception err) {
 									err.printStackTrace();
 								}
-							
+							state.addUsage(new LocalSDXLUsage(2,0));
 							return "生成成功，图片id为："+fn+"。"+caption;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -621,7 +624,7 @@ public class SDXLMcp {
 							output.addUsageListener(state::addUsage);
 							String caption= FileUtil.printAndCollectContent(
 								output.getContent());
-
+							state.addUsage(new LocalSDXLUsage(1,0));
 							return "生成成功，图片id为："+fn+"。"+caption;
 						} catch (IOException e) {
 							e.printStackTrace();

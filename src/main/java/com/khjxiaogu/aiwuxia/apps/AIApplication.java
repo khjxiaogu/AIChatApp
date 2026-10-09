@@ -94,12 +94,17 @@ public abstract class AIApplication {
 	}
 	protected MessageHandler checkTokenUse=(state,ret) ->{
 		if(state.canGenerate()) {
+			if(!state.isAvailable()) {
+
+				state.sendNotice("该服务暂不可用，请联系网站管理员。");
+				state.refillChatBox(ret);
+				return null;
+			}
 			return ret;
-		}else {
-			state.sendNotice("token限额已达到，明天再来吧！");
-			state.refillChatBox(ret);
-			return null;
 		}
+		state.sendNotice("token限额已达到！查看配额页面获取更多信息。");
+		state.refillChatBox(ret);
+		return null;
 	};
     /**
      * 默认的“撤回与重新生成”消息处理器。

@@ -19,6 +19,7 @@ import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
@@ -35,6 +36,8 @@ import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
+import com.khjxiaogu.aiwuxia.voice.LocalModel;
+import com.khjxiaogu.aiwuxia.voice.ModelType;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
 import io.netty.channel.Channel;
@@ -70,11 +73,32 @@ public class PainterSession extends AISession implements WebsocketEvents,ChatIde
         this.attributes = attr;
 		MultiModalMcp.create(par.getPainterStorage(), this::addUsage).addTool(this.tools);
         MultiModalMcp.createOutput(this,par.getPainterStorage(), Collections.emptyMap(),this::addUsage).addTool(this.tools);
-
-        SDXLMcp.createRemoteLocal(this, par.getPainterStorage(), par.lora,par.chara,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true).addTool(this.tools);
+        SDXLMcp.createRemoteLocalModel(this,par.getPainterStorage(), par.lora,par.chara,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true).addTool(this.tools);
+        //SDXLMcp.createRemoteLocal(this, par.getPainterStorage(), par.lora,par.chara,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true).addTool(this.tools);
         FetchMcp.create(this, par.getPainterStorage());
     }
 
+	@Override
+	public void addUsage(UsageIntf<?> usage) {
+		if(attributes.paidOnly) {
+			int actualCost=(int) Math.ceil(usage.getEquivantTokens());
+		
+			if(actualCost>0) {
+				parent.getLogger().info("已消费："+actualCost);
+				parent.consumePaidTokens(user, actualCost);
+			}
+			
+		}else
+		if(!attributes.freeNow) {
+			int actualCost=(int) Math.floor(usage.getEquivantTokens());
+			if(actualCost>0) {
+				parent.getLogger().info("已消费："+actualCost);
+				parent.consumeTokens(user, actualCost);
+			}
+		}
+		
+		super.addStatUsage(usage);
+	}
     @Override
     public void onOpen(Channel conn, FullHttpRequest handshake) {
         this.conn.add(conn);
@@ -129,13 +153,31 @@ public class PainterSession extends AISession implements WebsocketEvents,ChatIde
                 } else {
                     sendNotice("操作太快啦，请稍后再试");
                 }
+            } else if ("stop".equals(type)) {
+                if (getCurrentOutput()!=null) {
+                	getCurrentOutput().interrupt();
+                } else {
+                    sendNotice("操作太快啦，请稍后再试");
+                }
             } else if ("requestBackLog".equals(type)) {
                 requireMoreMessages();
             }
         }
     }
 
-    public void addPendingUserMessage(String content) {
+	@Override
+	public boolean canGenerate() {
+		if(attributes.paidOnly)
+			return parent.hasAnyPaidTokenRemaining(user);
+		if(!attributes.freeNow)
+			return parent.hasAnyTokenRemaining(user);
+		return true;
+	}
+    @Override
+	public boolean isAvailable() {
+		return LocalModel.hasOnlineService(ModelType.SDXL);
+	}
+	public void addPendingUserMessage(String content) {
     	appendLine(Role.USER, content, true);
     	this.flush();
     }
