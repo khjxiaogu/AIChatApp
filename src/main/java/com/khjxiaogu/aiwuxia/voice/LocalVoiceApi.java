@@ -29,7 +29,7 @@ public class LocalVoiceApi implements VoiceModel {
 	}
 	@Override
 	public boolean canProcessVoice(String roleName) {
-		return botids.containsKey(roleName)&&LocalModel.hasOnlineService();
+		return botids.containsKey(roleName)&&LocalModel.hasOnlineService(ModelType.AUDIO);
 	}
 	@Override
 	public boolean isHinted(String modelName) {

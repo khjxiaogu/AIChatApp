@@ -78,6 +78,7 @@ public class AIPainterApplication extends AIApplication {
 	}
 	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
+		state.setCurrentOutput(resp);
 		resp.addUsageListener(state::addUsage);
 		return precessResponse(resp, state);
 		
@@ -103,6 +104,8 @@ public class AIPainterApplication extends AIApplication {
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		StringBuilder sendContent=new StringBuilder();
+
+		state.setCurrentOutput(resp);
 		handleReasonerContent(resp,state);
 		while (true) {
 			last=reader.readLine();

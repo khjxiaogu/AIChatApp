@@ -50,6 +50,7 @@ public class HistoryRequestBuilder {
 					for(MessageContent msgc:hi.getReasoningContent()) {
 						if(msgc instanceof ToolContent) {
 							messages.add(createToolMessage((ToolContent) msgc));
+							hasPrevious=false;
 						}else if(msgc instanceof ToolCallContent){
 							if(hasPrevious) {
 								messages.get(messages.size()-1).getAsJsonObject().add("tool_calls", gs.toJsonTree(((ToolCallContent) msgc).getToolCalls()));

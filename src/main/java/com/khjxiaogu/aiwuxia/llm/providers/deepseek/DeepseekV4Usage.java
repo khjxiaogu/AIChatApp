@@ -65,7 +65,7 @@ public class DeepseekV4Usage implements UsageIntf<DeepseekV4Usage> {
         ZoneId shanghai = ZoneId.of("Asia/Shanghai");
         ZonedDateTime now = ZonedDateTime.now(shanghai);
         int hour = now.getHour();
-        boolean isPeak = (hour >= 9 && hour < 12) || (hour >= 14 && hour < 18);
+        boolean isPeak = ((hour >= 9 && hour < 12) || (hour >= 14 && hour < 18))&&now.getDayOfWeek().getValue()<6;
         float factor = isPeak ? 2.0f : 1.0f;
 
         if (factor != 1.0f) {
