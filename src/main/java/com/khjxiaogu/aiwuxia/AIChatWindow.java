@@ -341,6 +341,16 @@ public class AIChatWindow extends JFrame {
         return JOptionPane.showInputDialog(null, prompt);
     }
     
+    /**
+     * 弹出确认对话框，用于需要用户许可的操作（如工具调用）。
+     *
+     * @param message 询问内容
+     * @return 用户选择“是”返回 true
+     */
+    public boolean confirm(String message) {
+        return JOptionPane.showConfirmDialog(null, message, "需要确认", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION;
+    }
+    
     public void showMessage(String message) {
         JOptionPane.showMessageDialog(null, message);
     }

@@ -25,10 +25,12 @@ package com.khjxiaogu.aiwuxia.llm;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPolicy;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
@@ -144,8 +146,15 @@ public class AIRequest {
     public final String prefix;
     
     public final List<HistoryItem> history;
-    public final Map<String,ToolData> tools;
-    public final int maxToolCall;
+    /**
+     * 工具调用管理器：同时承载本次请求的工具注册表与调用规则（次数、权限、许可）。
+     * <p>
+     * 由会话/应用提供（{@code ToolCallManager.builder()...build()}），提供者不再自行维护
+     * 工具列表与规则；为 null 表示本次请求不提供任何工具。
+     * 单次生成的调用状态由 {@code ToolCallContext.create(toolCallManager, ...)} 承载。
+     * </p>
+     */
+    public final ToolCallManager toolCallManager;
     /**
      * 私有构造函数，通过 Builder 创建实例。
      *
@@ -168,7 +177,7 @@ public class AIRequest {
         this.history=builder.history;
         this.format=builder.format;
         this.prefix=builder.prefix;
-        this.maxToolCall=builder.maxToolCall;
+        this.toolCallManager=builder.buildToolCallManager();
         if(hasModelProperty("reasoning"))
 			category=ModelCategory.REASONING;
 		else if(hasModelProperty("non-reasoning"))
@@ -186,13 +195,31 @@ public class AIRequest {
 			}
 		}
         this.strength=strength;
-        this.tools=new LinkedHashMap<>();
-        for(ToolData td:builder.tools) {
-        	tools.put(td.name,td);
-        }
     }
     public boolean isModelNamed(String name) {
     	return modelHint.length>0&&modelHint[0].equals(name);
+    }
+    /**
+     * 获取本次请求的工具调用管理器，未提供时为 null。
+     */
+    public ToolCallManager getToolCallManager() {
+    	return toolCallManager;
+    }
+    /**
+     * 获取本次请求可用的工具表（名称 → 工具）。
+     * <p>未提供管理器时返回空表，便于提供者统一处理“无工具”的情况。</p>
+     */
+    public Map<String,ToolData> getTools() {
+    	return toolCallManager==null?Collections.emptyMap():toolCallManager.getTools();
+    }
+    /**
+     * 工具调用轮次上限，等同 {@link ToolCallPolicy#getMaxRounds()}。
+     *
+     * @deprecated 请通过 {@link #getToolCallManager()} 与 {@code ToolCallContext} 统一管理调用次数。
+     */
+    @Deprecated
+    public int getMaxToolCall() {
+    	return toolCallManager==null?ToolCallPolicy.DEFAULT_MAX_ROUNDS:toolCallManager.getPolicy().getMaxRounds();
     }
     public String getModelName() {
     	return modelHint.length>0?modelHint[0]:"";
@@ -205,12 +232,18 @@ public class AIRequest {
     	return false;
     }
     /**
-     * 创建一个新的 Builder 实例，用于构建 AIRequest。
+     * 基于会话创建 Builder：会话提供可用工具与管理策略，共同装配成
+     * {@link ToolCallManager} 交给请求。
      *
+     * @param session 会话
      * @return Builder 对象
      */
     public static Builder builder(AISession session) {
-        return new Builder(session.user).modelHint(session.getExtraData().modelHint).addTools(session.getAvailableTools());
+        return new Builder(session.user).modelHint(session.getExtraData().modelHint)
+        		.toolCallManager(ToolCallManager.builder()
+        				.tools(session.getAvailableTools())
+        				.policy(session.getToolCallPolicy())
+        				.build());
     }
 	public static Builder builder(String user) {
 		return new Builder(user);
@@ -243,13 +276,15 @@ public class AIRequest {
         private MultimodalType multimodal = MultimodalType.TEXT_ONLY;
         private ResponseFormat format = ResponseFormat.TEXT;
         private List<HistoryItem> history=new ArrayList<>(200);
-        private List<ToolData> tools=new ArrayList<>();
+        /** 工具注册与规则构建器（未显式提供管理器时使用） */
+        private ToolCallManager.Builder toolManagerBuilder=ToolCallManager.builder();
+        /** 显式提供的工具调用管理器，为 null 表示由 toolManagerBuilder 构建 */
+        private ToolCallManager toolCallManager;
         private int max_tokens=1024;
         private float temperature=2.0f;
         private String modelHint=null;
         private String user="";
         private String prefix;
-        private int maxToolCall=10;
         Builder(String user){
         	this.user=user;
         }
@@ -276,9 +311,83 @@ public class AIRequest {
             this.category = ModelCategory.REASONING;
             return this;
         }
-        public Builder maxToolCall(int maxToolCall) {
-            this.maxToolCall = maxToolCall;
+        /**
+         * 设置工具调用管理器（工具注册表 + 调用次数/权限/许可规则）。
+         * <p>
+         * 调用本方法后再使用 {@link #addTool}/{@link #addTools}/{@link #toolCallPolicy} 等方法，
+         * 会以该管理器为基础继续追加。
+         * </p>
+         *
+         * @param manager 工具调用管理器，为 null 表示不提供工具
+         * @return 当前 Builder 实例
+         */
+        public Builder toolCallManager(ToolCallManager manager) {
+            this.toolCallManager = manager;
+            this.toolManagerBuilder = null;
             return this;
+        }
+        /**
+         * 注册单个工具（集成到 {@link ToolCallManager} 中）。
+         *
+         * @param tool 工具定义
+         * @return 当前 Builder 实例
+         */
+        public Builder addTool(ToolData tool) {
+            mutableToolManagerBuilder().tool(tool);
+            return this;
+        }
+        /**
+         * 批量注册工具（集成到 {@link ToolCallManager} 中）。
+         *
+         * @param tools 工具定义集合
+         * @return 当前 Builder 实例
+         */
+        public Builder addTools(Collection<ToolData> tools) {
+            mutableToolManagerBuilder().tools(tools);
+            return this;
+        }
+        /**
+         * 设置工具调用管理策略（调用次数、权限、许可），由 {@code ToolCallManager} 执行。
+         *
+         * @param policy 管理策略，为 null 时使用默认策略
+         * @return 当前 Builder 实例
+         */
+        public Builder toolCallPolicy(ToolCallPolicy policy) {
+            mutableToolManagerBuilder().policy(policy);
+            return this;
+        }
+        /**
+         * 设置工具调用轮次上限。
+         * <p>调用次数、权限、许可等完整规则请使用 {@link #toolCallPolicy(ToolCallPolicy)}
+         * 或直接提供 {@link ToolCallManager}。</p>
+         *
+         * @param maxToolCall 最大工具调用轮次，小于等于 0 表示不限制
+         * @return 当前 Builder 实例
+         */
+        public Builder maxToolCall(int maxToolCall) {
+            mutableToolManagerBuilder().maxRounds(maxToolCall);
+            return this;
+        }
+        /**
+         * 获取当前可变的工具管理器构建器：若此前显式提供了管理器，则以其工具与策略为基础
+         * 转为可变构建器，保证后续注册与显式管理器叠加而不是互相覆盖。
+         */
+        private ToolCallManager.Builder mutableToolManagerBuilder() {
+            if (toolManagerBuilder == null) {
+                toolManagerBuilder = toolCallManager == null ? ToolCallManager.builder() : toolCallManager.toBuilder();
+                toolCallManager = null;
+            }
+            return toolManagerBuilder;
+        }
+        /**
+         * 构建本次请求的工具调用管理器；未注册任何工具且未设置任何规则时返回 null，
+         * 表示本次请求不提供工具。
+         */
+        private ToolCallManager buildToolCallManager() {
+            if (toolCallManager != null) {
+                return toolCallManager;
+            }
+            return toolManagerBuilder == null || toolManagerBuilder.isEmpty() ? null : toolManagerBuilder.build();
         }
 
         /**
@@ -354,10 +463,6 @@ public class AIRequest {
         public AIRequest build() {
             return new AIRequest(this);
         }
-        public Builder addTool(ToolData tool) {
-        	tools.add(tool);
-        	return this;
-        } 
         public Builder addHistoryItem(HistoryItem hi) {
         	history.add(hi);
         	return this;
@@ -375,10 +480,6 @@ public class AIRequest {
             stream(true);
             return this;
         }
-		public Builder addTools(Collection<ToolData> tools) {
-			this.tools.addAll(tools);
-			return this;
-		}
     }
 
 

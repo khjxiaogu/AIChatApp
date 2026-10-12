@@ -802,8 +802,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO painterUploadImage(@PostQuery("conversation_id") String cid,
 		@PostQuery("image") HttpData imageData) {
 		try {
-			if (cid == null || cid.isEmpty() || imageData == null) {
-				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "missing conversation_id or image").end());
+			if (cid == null || cid.isEmpty()) {
+				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "缺少会话ID（conversation_id）").end());
+			}
+			if (imageData == null) {
+				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "没有收到图片数据（image 字段为空）").end());
 			}
 			AISession session = uidsockets.get(cid);
 			if (session != null&&session instanceof PainterSession) {
@@ -815,11 +818,21 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				session.flush();
 				return new ResultDTO(200, JsonBuilder.object().add("code", 0).add("message", "success").end());
 			}
-			
+			if (session == null) {
+				return new ResultDTO(409, JsonBuilder.object().add("code", -1)
+						.add("message", "对话连接不存在或已释放，请刷新页面后重试").end());
+			}
+			return new ResultDTO(409, JsonBuilder.object().add("code", -1)
+					.add("message", "当前对话不是绘画会话，无法上传图片").end());
 		} catch (Exception e) {
 			getLogger().printStackTrace(e);
+			String detail = e.getClass().getSimpleName();
+			if (e.getMessage() != null && !e.getMessage().isEmpty()) {
+				detail = detail + "：" + e.getMessage();
+			}
+			return new ResultDTO(500, JsonBuilder.object().add("code", -1)
+					.add("message", "服务器上传失败（" + detail + "）").end());
 		}
-		return new ResultDTO(500, JsonBuilder.object().add("code", -1).add("message", "upload failed").end());
 	}
 
 	/**

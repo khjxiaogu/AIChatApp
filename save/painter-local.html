@@ -796,15 +796,15 @@ var main=new Vue({
                 return;
             }
             if (msg.type === 'status') {
-                this.isWaitingResponse = !!msg.generating;
+                this.isWaitingResponse = !!msg.status;
                 return;
             }
             if (msg.type === 'notice') {
-                this.showTempTip(msg.content || msg.message || '');
+                this.showTempTip(msg.content || msg.message || msg.notice || '');
                 return;
             }
             if (msg.type === 'sendbox') {
-                this.inputText = msg.content || '';
+                this.inputText = msg.sendbox || msg.content || '';
                 return;
             }
             if (msg.type === 'batch_messages' && msg.messages) {
@@ -859,8 +859,10 @@ var main=new Vue({
                 this.scrollToBottom();
                 return;
             }
-            if (msg.type === 'remove' && msg.id != null) {
-                this.messages = this.messages.filter((m, idx) => idx !== msg.id);
+            if (msg.type === 'remove' && (msg.id != null || msg.remove != null)) {
+                // 服务端下发的标识符是历史记录id：新协议字段为 id，旧协议字段为 remove
+                const removedId = msg.id != null ? msg.id : msg.remove;
+                this.messages = this.messages.filter((m, idx) => idx !== removedId);
                 return;
             }
             // 查找目标assistant消息：优先按id匹配，其次找最后一条无id的assistant，否则新建
@@ -897,16 +899,18 @@ var main=new Vue({
                 targetMsg.thinkingSegments = targetMsg.thinkingSegments || [];
                 targetMsg.thinkingSegments.push({ type: 'tool', toolName: msg.tool_name });
             } else if (msg.type === 'content') {
+                // 结构化内容用 content，纯文本增量为旧协议字段 delta
+                const raw = msg.content !== undefined ? msg.content : msg.delta;
                 let text = '';
-                if (Array.isArray(msg.content)) {
-                    for (const item of msg.content) {
+                if (Array.isArray(raw)) {
+                    for (const item of raw) {
                         if (typeof item === 'string') text += item;
                         else if (item.type === 'text') text += item.text || '';
                         else if (item.description) text += item.description;
                         else if (item.result) text += item.result;
                     }
                 } else {
-                    text = msg.content || '';
+                    text = raw || '';
                 }
                 if (text) {
                     targetMsg.contentItems = targetMsg.contentItems || [];

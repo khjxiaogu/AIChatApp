@@ -25,7 +25,6 @@ package com.khjxiaogu.aiwuxia.llm.providers.siliconflow;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
-import java.util.List;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,19 +43,16 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
+import com.khjxiaogu.aiwuxia.llm.HistoryRequestBuilder;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
-import com.khjxiaogu.aiwuxia.llm.scheme.ToolCallCollector;
-import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
-import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallHistory;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
-import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
-import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -148,67 +144,15 @@ public class SiliconFlowModelProvider implements ModelProvider{
 		return "deepseek-ai/DeepSeek-V3.2";
 	}
 	private static JsonObject createRequest(AIRequest request) {
-		JsonArray messages=new JsonArray();
-		for(HistoryItem hi:request.history) {
-			boolean shouldContainReasoner=false;
-			boolean shouldSkipContent=false;
-			if(hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
-				for(MessageContent msgc:hi.getReasoningContent()) {
-					if(msgc instanceof ToolContent) {
-						shouldContainReasoner=true;
-						break;
-					}
-				}
-				boolean hasPrevious=false;
-				if(shouldContainReasoner) {
-					for(MessageContent msgc:hi.getReasoningContent()) {
-						if(msgc instanceof ToolContent) {
-							messages.add(createToolMessage((ToolContent) msgc));
-						}else if(msgc instanceof ToolCallContent){
-							if(hasPrevious) {
-								messages.get(messages.size()-1).getAsJsonObject().add("tool_calls", gs.toJsonTree(((ToolCallContent) msgc).getToolCalls()));
-							}else {
-	
-								messages.add(createReasonerMessage("",((ToolCallContent) msgc).getToolCalls()));
-							}
-						}else {
-							hasPrevious=true;
-							messages.add(createReasonerMessage(msgc.toText(),null));
-						}
-					}
-					if(hasPrevious) {
-						messages.get(messages.size()-1).getAsJsonObject().addProperty("content", hi.getContextContent().toText());
-						shouldSkipContent=true;
-					}
-				}
-			}
-			
-			if(!shouldSkipContent) {
-				JsonObject msg=new JsonObject();
-				msg.addProperty("role", hi.getRole().getRoleName());
-				msg.addProperty("content", hi.getContextContent().toText());
-				messages.add(msg);
-			}
-			
-		}
-		
-		if(request.prefix!=null&&request.category!=ModelCategory.REASONING) {
-			JsonObject msg=new JsonObject();
-			msg.addProperty("role", "assistant");
-			msg.addProperty("content", request.prefix);
-			msg.addProperty("prefix", true);
-			messages.add(msg);
-		}
-			
 		JsonObject jo=new JsonObject();
-		
-		jo.add("messages", messages);
+		// 历史消息（含工具调用与工具结果）统一由 HistoryRequestBuilder 构造
+		jo.add("messages", HistoryRequestBuilder.createRequest(request));
 		
 		jo.addProperty("model", mapModelName(request));
 		
-		if(!request.tools.isEmpty()) {
+		if(!request.getTools().isEmpty()) {
 			JsonArray ja=new JsonArray();
-			for(ToolData val:request.tools.values()) {
+			for(ToolData val:request.getTools().values()) {
 				ja.add(createSchema(val));
 			}
 			jo.add("tools", ja);
@@ -237,34 +181,19 @@ public class SiliconFlowModelProvider implements ModelProvider{
 		jo.addProperty("max_tokens", request.maxToken);
 		return jo;
 	}
-	public static JsonObject createToolMessage(ToolContent tool) {
-		JsonObject toolmsg=new JsonObject();
-		toolmsg.addProperty("role", Role.TOOL.getRoleName());
-		toolmsg.addProperty("tool_call_id", tool.getToolId());
-		toolmsg.addProperty("content", tool.getResult());
-		return toolmsg;
-	}
-	public static JsonObject createReasonerMessage(String message,List<ToolCall> toolcalls) {
-		JsonObject messageContent=new JsonObject();
-		messageContent.addProperty("role", Role.ASSISTANT.getRoleName());
-	
-		messageContent.addProperty("reasoning_content", message);
-		if(toolcalls!=null)
-			messageContent.add("tool_calls", gs.toJsonTree(toolcalls));
-		return messageContent;
-	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
 		JsonObject jo=createRequest(request);
 		JsonArray ja=jo.get("messages").getAsJsonArray();
 		jo.addProperty("stream", true);
 		StreamedAIOutput readable=new StreamedAIOutput();
 		SiliconUsage usage=createUsage(request);
-		boolean usesTool=!request.tools.isEmpty();
+		boolean usesTool=!request.getTools().isEmpty();
+		// 工具调用的收集、次数限制、权限、许可与执行统一交给 ToolCallManager
+		ToolCallContext toolContext=ToolCallContext.create(request.getToolCallManager(), readable, ToolCallHistory.of(ja));
 		exec.submit(()->{
 			try {
 				AtomicBoolean shouldContinueRequest =new AtomicBoolean(true);
 				while(shouldContinueRequest.get()) {
-					ToolCallCollector toolCalls=new ToolCallCollector();
 					shouldContinueRequest.set(false);
 
 					//System.out.println(ja);
@@ -294,56 +223,12 @@ public class SiliconFlowModelProvider implements ModelProvider{
 											readable.putContent(choice.delta.content);
 											reasoner.append(choice.delta.content);
 										}
-										if(choice.delta.tool_calls!=null) {
-											for(ToolCall tc:choice.delta.tool_calls) {
-												toolCalls.collect(tc);
-											}
-										}
+										toolContext.collect(choice.delta.tool_calls);
 										if("tool_calls".equals(choice.finish_reason)) {
-
-											if(readable.isInterrupted()) {
+											ToolCallContext.ProcessResult result=toolContext.process(reasoner.toText());
+											shouldContinueRequest.set(result!=null&&result.shouldContinue());
+											if(result!=null&&result.isInterrupted())
 												logger.info("interrupted generation");
-												
-												shouldContinueRequest.set(false);
-												return true;
-											}
-											ToolCallContent toolcall=new ToolCallContent(toolCalls.build());
-											if(!reasoner.isEmpty()) {
-												ja.add(createReasonerMessage(reasoner.toText(),toolcall.getToolCalls()));
-											}
-											readable.putReasoner(toolcall);
-											for(ToolCall i:toolcall.getToolCalls()) {
-												ToolData data=request.tools.get(i.function.name);
-												if(data==null) {
-													ToolContent tool=new ToolContent(i.id,"tool不存在或已禁用。");
-													ja.add(createToolMessage(tool));
-													readable.putReasoner(tool);
-													continue;
-												}
-												try {
-													String result=data.tool.run(i.function.arguments);
-													
-													ToolContent tool=new ToolContent(i.id,result);
-													ja.add(createToolMessage(tool));
-													
-													readable.putReasoner(tool);
-												}catch(Throwable ex) {
-													ex.printStackTrace();
-													ToolContent tool=new ToolContent(i.id,"tool发生内部错误。");
-													ja.add(createToolMessage(tool));
-													readable.putReasoner(tool);
-												}
-												
-											}
-											if(readable.isInterrupted()) {
-												logger.info("interrupted generation");
-												
-												shouldContinueRequest.set(false);
-												return true;
-											}
-											shouldContinueRequest.set(true);
-											
-											
 										}
 									}
 									if(scheme.usage!=null)

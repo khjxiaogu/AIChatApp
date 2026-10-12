@@ -27,7 +27,6 @@ import java.io.IOException;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -43,13 +42,11 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
-import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
-import com.khjxiaogu.aiwuxia.llm.scheme.ToolCallCollector;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallHistory;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
-import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
-import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -120,9 +117,9 @@ public class DeepseekModelProvider implements ModelProvider{
 			jo.addProperty("model", "deepseek-v4-pro");
 		else
 			jo.addProperty("model", "deepseek-v4-flash");
-		if(!request.tools.isEmpty()) {
+		if(!request.getTools().isEmpty()) {
 			JsonArray ja=new JsonArray();
-			for(ToolData val:request.tools.values()) {
+			for(ToolData val:request.getTools().values()) {
 				ja.add(createSchema(val));
 			}
 			jo.add("tools", ja);
@@ -156,13 +153,13 @@ public class DeepseekModelProvider implements ModelProvider{
 		jo.addProperty("stream", true);
 		StreamedAIOutput readable=new StreamedAIOutput();
 		DeepseekV4Usage usage=createUsage(request);
-		boolean usesTool=!request.tools.isEmpty();
+		boolean usesTool=!request.getTools().isEmpty();
+		// 工具调用的收集、次数限制、权限、许可与执行统一交给 ToolCallManager
+		ToolCallContext toolContext=ToolCallContext.create(request.getToolCallManager(), readable, ToolCallHistory.of(ja));
 		exec.submit(()->{
 			try {
 				AtomicBoolean shouldContinueRequest =new AtomicBoolean(true);
-				AtomicInteger remainToolCalls=new AtomicInteger(request.maxToolCall);
 				while(shouldContinueRequest.get()) {
-					ToolCallCollector toolCalls=new ToolCallCollector();
 					shouldContinueRequest.set(false);
 
 					//System.out.println(ja);
@@ -192,66 +189,12 @@ public class DeepseekModelProvider implements ModelProvider{
 										readable.putContent(choice.delta.content);
 										reasoner.append(choice.delta.content);
 									}
-									if(choice.delta.tool_calls!=null) {
-										for(ToolCall tc:choice.delta.tool_calls) {
-											toolCalls.collect(tc);
-										}
-									}
+									toolContext.collect(choice.delta.tool_calls);
 									if("tool_calls".equals(choice.finish_reason)) {
-										if(readable.isInterrupted()) {
+										ToolCallContext.ProcessResult result=toolContext.process(reasoner.toText());
+										shouldContinueRequest.set(result!=null&&result.shouldContinue());
+										if(result!=null&&result.isInterrupted())
 											logger.info("interrupted generation");
-											
-											shouldContinueRequest.set(false);
-											return true;
-										}
-										
-										ToolCallContent toolcall=new ToolCallContent(toolCalls.build());
-										if(!reasoner.isEmpty()||!toolcall.getToolCalls().isEmpty()) {
-											ja.add(HistoryRequestBuilder.createReasonerMessage(reasoner.toText(),toolcall.getToolCalls()));
-										}
-										readable.putReasoner(toolcall);
-										if(remainToolCalls.decrementAndGet()<=0) {
-											for(ToolCall i:toolcall.getToolCalls()) {
-												ToolContent tool=new ToolContent(i.id,"已达最大工具调用轮次，请暂停工作并明确用户指示。");
-												ja.add(HistoryRequestBuilder.createToolMessage(tool));
-												readable.putReasoner(tool);
-												continue;
-											}
-										}else {
-											for(ToolCall i:toolcall.getToolCalls()) {
-												ToolData data=request.tools.get(i.function.name);
-												if(data==null) {
-													ToolContent tool=new ToolContent(i.id,"tool不存在或已禁用。");
-													ja.add(HistoryRequestBuilder.createToolMessage(tool));
-													readable.putReasoner(tool);
-													continue;
-												}
-												try {
-													String result=data.tool.run(i.function.arguments);
-													
-													ToolContent tool=new ToolContent(i.id,result);
-													ja.add(HistoryRequestBuilder.createToolMessage(tool));
-													
-													readable.putReasoner(tool);
-												}catch(Throwable ex) {
-													ex.printStackTrace();
-													ToolContent tool=new ToolContent(i.id,"tool发生内部错误。");
-													ja.add(HistoryRequestBuilder.createToolMessage(tool));
-													readable.putReasoner(tool);
-												}
-												
-											}
-										}
-
-										if(readable.isInterrupted()) {
-											logger.info("interrupted generation");
-											
-											shouldContinueRequest.set(false);
-											return true;
-										}
-										shouldContinueRequest.set(true);
-										
-										
 									}
 										
 									if(scheme.usage!=null)

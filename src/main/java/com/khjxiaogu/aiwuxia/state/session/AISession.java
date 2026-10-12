@@ -38,6 +38,11 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalManager;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPermission;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPolicy;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -95,6 +100,15 @@ public class AISession implements ISaveData,AutoCloseable{
 	volatile transient boolean isGenerating;
 	
 	volatile transient AIOutput currentOutput;
+
+	/**
+	 * 工具调用许可管理器：同一会话的许可请求串行询问，等待方阻塞至用户答复或超时。
+	 * <p>
+	 * 通过 {@link #requestToolCallApproval(ToolApprovalRequest)} 询问用户，
+	 * 通过 {@link #completeToolApproval(String, boolean)} 回填答复。
+	 * </p>
+	 */
+	protected final ToolApprovalManager toolApprovalManager = new ToolApprovalManager(this::requestToolCallApproval);
 
 	public AIOutput getCurrentOutput() {
 		return currentOutput;
@@ -743,11 +757,176 @@ public class AISession implements ISaveData,AutoCloseable{
 	public String getRoleName(Role role) {
 		return aiapp.getRoleName(this, role);
 	}
+	/**
+	 * 获取当前会话可用的工具列表。
+	 * <p>
+	 * 子类通过重写本方法决定“模型能看到哪些工具”，这是工具权限的第一道闸门；
+	 * 运行期的调用次数、权限与许可规则请通过 {@link #getToolCallPolicy()} 提供。
+	 * </p>
+	 *
+	 * @return 可用工具列表，默认空
+	 */
 	public List<ToolData> getAvailableTools(){
 		return Collections.emptyList();
 	};
+
 	/**
-	 * @param content  
+	 * 获取本会话的工具调用管理策略（调用次数、权限、许可）。
+	 * <p>
+	 * 该策略会与 {@link #getAvailableTools()} 一起，在 {@code AIRequest.builder(session)} 中
+	 * 装配成 {@code ToolCallManager} 交给请求，并统一由 {@code ToolCallContext} 执行，
+	 * 会话本身不再参与工具调用的执行过程。子类可重写此方法或其细粒度钩子
+	 * （{@link #getToolCallPermission()}、{@link #getToolCallApprover()}、
+	 * {@link #getMaxToolCallRounds()}、{@link #getMaxToolCalls()}、
+	 * {@link #getToolCallLimits()}）来收紧或放宽限制。
+	 * </p>
+	 *
+	 * @return 工具调用管理策略
+	 */
+	public ToolCallPolicy getToolCallPolicy() {
+		return ToolCallPolicy.builder()
+				.maxRounds(getMaxToolCallRounds())
+				.maxCalls(getMaxToolCalls())
+				.toolLimits(getToolCallLimits())
+				.permission(getToolCallPermission())
+				.approver(getToolCallApprover())
+				.build();
+	}
+
+	/**
+	 * 各工具的执行次数上限（工具名称 → 该工具在单次生成中最多执行几次）。
+	 * <p>
+	 * 未列出的工具不受单独限制；某项小于等于 0 也表示该工具不受单独限制。
+	 * </p>
+	 *
+	 * @return 工具名称到次数上限的映射，默认空（不限制单个工具）
+	 */
+	public Map<String, Integer> getToolCallLimits() {
+		return Collections.emptyMap();
+	}
+
+	/**
+	 * 工具调用轮次上限（模型每请求一批工具调用记为一轮）。
+	 *
+	 * @return 最大轮次，小于等于 0 表示不限制，默认 {@link ToolCallPolicy#DEFAULT_MAX_ROUNDS}
+	 */
+	public int getMaxToolCallRounds() {
+		return ToolCallPolicy.DEFAULT_MAX_ROUNDS;
+	}
+
+	/**
+	 * 工具调用总次数上限（单个工具的成功执行记一次）。
+	 *
+	 * @return 最大次数，小于等于 0 表示不限制，默认 0
+	 */
+	public int getMaxToolCalls() {
+		return 0;
+	}
+
+	/**
+	 * 本会话的工具调用权限策略，默认全部允许。
+	 *
+	 * @return 权限策略
+	 */
+	public ToolCallPermission getToolCallPermission() {
+		return ToolCallPermission.allowAll();
+	}
+
+	/**
+	 * 本会话的工具调用许可方，默认自动许可。
+	 * <p>
+	 * 需要用户确认的场景可重写 {@link #getToolCallPermission()} 让目标工具返回
+	 * {@code ToolCallDecision.ask(...)}，并在此返回 {@link #getUserApprovalApprover()}
+	 * （或自建的 {@link ToolCallApprover}）以阻塞等待用户答复。
+	 * </p>
+	 * <p>
+	 * 注意：本方法由模型生成线程调用；答复必须由<b>另一个线程</b>回填
+	 * （见 {@link #completeToolApproval(String, boolean)}），不得在生成线程所占用的事件循环里
+	 * 同步等待，否则会死锁。
+	 * </p>
+	 *
+	 * @return 许可方
+	 */
+	public ToolCallApprover getToolCallApprover() {
+		return ToolCallApprover.autoApprove();
+	}
+
+	/**
+	 * 获取本会话的工具调用许可管理器（同一会话串行询问、超时按拒绝处理）。
+	 *
+	 * @return 许可管理器
+	 */
+	public ToolApprovalManager getToolApprovalManager() {
+		return toolApprovalManager;
+	}
+
+	/**
+	 * 阻塞等待用户许可的许可方，可直接由 {@link #getToolCallApprover()} 返回。
+	 *
+	 * @return 许可方
+	 */
+	public ToolCallApprover getUserApprovalApprover() {
+		return toolApprovalManager.approverFor(user);
+	}
+
+	/**
+	 * 异步发起一次工具调用许可请求。
+	 * <p>
+	 * 默认实现直接拒绝（失败关闭）；子类应重写本方法把请求交给用户
+	 * （例如通过 WebSocket 下发确认框），并在收到答复后调用
+	 * {@link #completeToolApproval(String, boolean)}。实现不得阻塞等待答复。
+	 * </p>
+	 *
+	 * @param request 许可请求记录
+	 */
+	protected void requestToolCallApproval(ToolApprovalRequest request) {
+		request.deny();
+	}
+
+	/**
+	 * 回填一次工具调用许可答复（会话收到用户答复时调用）。
+	 * <p>
+	 * 该方法必须在发起工具调用的线程之外的线程上调用，否则等待方无法被唤醒。
+	 * </p>
+	 *
+	 * @param requestId 请求 id
+	 * @param approved  是否许可
+	 * @return 答复是否被接受（请求不存在、已超时或重复答复时返回 false）
+	 */
+	public boolean completeToolApproval(String requestId, boolean approved) {
+		return toolApprovalManager.complete(requestId, approved);
+	}
+
+	/**
+	 * 放弃本会话全部待答复的许可请求（例如连接断开），一律按拒绝处理。
+	 */
+	public void cancelToolApprovals() {
+		toolApprovalManager.cancelAll(user);
+	}
+
+	/**
+	 * 处理读取到的推理内容：工具调用通知会话，其余内容追加到推理缓冲区。
+	 * <p>
+	 * 供各 AI 应用的推理流读取循环统一调用，避免每个应用各自判断工具调用类型。
+	 * </p>
+	 *
+	 * @param current 从 {@code AIOutput#getReasoner()} 读取到的一段内容
+	 */
+	public void acceptReasonerContent(MessageContent current) {
+		if (current instanceof ToolCallContent) {
+			onToolcall((ToolCallContent) current);
+		}
+		appendReasoner(current);
+	}
+
+	/**
+	 * 工具调用通知钩子。
+	 * <p>
+	 * 当 {@code ToolCallManager} 决定发起一批工具调用并写入推理流时被调用，
+	 * 仅用于对外通知/展示，工具的执行与计数由 {@code ToolCallManager} 负责。
+	 * </p>
+	 *
+	 * @param content 本批工具调用内容
 	 */
 	public void onToolcall(ToolCallContent content) {
 		
@@ -790,6 +969,8 @@ public class AISession implements ISaveData,AutoCloseable{
 
 	@Override
 	public void close(){
+		// 释放可能正在等待用户许可的生成线程
+		cancelToolApprovals();
 		commandExec.shutdown();
 	}
 }

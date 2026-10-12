@@ -274,6 +274,28 @@
         .scroll-to-bottom {
             cursor: pointer;
         }
+        /* 断线/重连提示条 */
+        .conn-tip {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 6px 12px;
+            font-size: 0.78rem;
+            color: #92400e;
+            background: #fef3c7;
+            border-bottom: 1px solid #fde68a;
+        }
+        .conn-tip .conn-spinner {
+            width: 11px;
+            height: 11px;
+            flex-shrink: 0;
+            border: 2px solid #fcd34d;
+            border-top-color: #b45309;
+            border-radius: 50%;
+            animation: historySpin 0.8s linear infinite;
+        }
         /* 向上滚动加载历史记录 */
         .history-tip {
             align-self: center;
@@ -513,6 +535,12 @@
         <div class="conv-id">{{ conversationId }}</div>
     </div>
 
+    <!-- 断线/重连提示 -->
+    <div v-if="connTip" class="conn-tip">
+        <span class="conn-spinner"></span>
+        <span>{{ connTip }}</span>
+    </div>
+
     <div class="messages-container" ref="messageContainer" @scroll="onMessagesScroll">
         <!-- 向上滚动加载更早的历史记录 -->
         <div v-if="isLoadingMore" class="history-tip loading">正在加载更早的消息</div>
@@ -524,7 +552,7 @@
                     <div v-for="(part, pIdx) in msg.contentItems" :key="'u'+pIdx">
                         <div v-if="part.type === 'text'" style="white-space: pre-wrap;">{{ part.content }}</div>
                         <div v-if="part.type === 'image'" class="message-image">
-                            <img v-if="part.image_url" :src="part.image_url" alt="用户上传图片" @click.stop="fullscreenImage = part.image_url" style="cursor:pointer" />
+                            <img v-if="part.image_url" :src="part.image_url" alt="用户上传图片" @click.stop="openFullscreen(part.image_url)" style="cursor:pointer" />
                             <div v-else class="image-placeholder">加载中...</div>
                         </div>
                         <div v-if="part.type === 'video'" class="message-image">
@@ -549,7 +577,7 @@
                     <div v-for="(item, cIdx) in msg.contentItems" :key="'c'+cIdx">
                         <div v-if="item.type === 'text' && item.content" class="final-content">{{ item.content }}</div>
                         <div v-if="item.type === 'image'" class="message-image">
-                            <img v-if="item.image_url" :src="item.image_url" alt="AI生成的图片" @click.stop="fullscreenImage = item.image_url" style="cursor:pointer" />
+                            <img v-if="item.image_url" :src="item.image_url" alt="AI生成的图片" @click.stop="openFullscreen(item.image_url)" style="cursor:pointer" />
                             <div v-else class="image-placeholder">加载中...</div>
                         </div>
                         <div v-if="item.type === 'video'" class="message-image">
@@ -577,7 +605,7 @@
         </div>
     </div>
     <!-- 全屏看图 -->
-    <div class="fullscreen-overlay" v-if="fullscreenImage" @click="fullscreenImage = null">
+    <div class="fullscreen-overlay" v-if="fullscreenImage" @click="closeFullscreen">
         <img :src="fullscreenImage" />
     </div>
 </div>
@@ -617,6 +645,10 @@ function getOrCreateConversationId(on_loaded) {
 
 // ----------------------------- 后端接口
 
+// 心跳：定期发送带唯一id的ping，超时未收到同id的pong即判定连接已断开并主动重连
+const HEARTBEAT_INTERVAL = 10000;  // 发送间隔
+const HEARTBEAT_TIMEOUT = 10000;   // 等待pong的超时时间
+
 // WebSocket连接 - 连接真实后端
 function createWebSocketConnection(conversationId) {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -625,13 +657,27 @@ function createWebSocketConnection(conversationId) {
 }
 
 // 图片上传 - 调用真实后端接口
+// 失败时返回 { code:-1, httpStatus, message }，其中 message 为可展示的真实失败原因
 async function realUploadImage(file, conversationId) {
     const formData = new FormData();
     formData.append('conversation_id', conversationId);
     formData.append('image', file);
-    const resp = await fetch('painter/uploadImage', { method: 'POST', body: formData });
-    const data = await resp.json();
-    if (data.code === 0) {
+    let resp;
+    try {
+        resp = await fetch('painter/uploadImage', { method: 'POST', body: formData });
+    } catch (err) {
+        // 请求根本没发出去（断网、跨域、被拦截等）
+        return { code: -1, httpStatus: 0, message: '网络请求失败：' + (err && err.message ? err.message : String(err)) };
+    }
+    // 不假设响应一定是JSON：先取原文，再尝试解析，保留原始内容作为兜底原因
+    const raw = await resp.text().catch(() => '');
+    let data = null;
+    try {
+        data = raw ? JSON.parse(raw) : null;
+    } catch (e) {
+        data = null;
+    }
+    if (resp.ok && data && data.code === 0) {
         const reader = new FileReader();
         const previewDataUrl = await new Promise((resolve) => {
             reader.onload = (e) => resolve(e.target.result);
@@ -639,7 +685,20 @@ async function realUploadImage(file, conversationId) {
         });
         return { code: 0, imageId: data.imageId, previewDataUrl };
     }
-    return { code: -1, message: data.message };
+    // 依次尝试：后端消息字段 -> 响应原文（去掉HTML标签）-> HTTP状态文本
+    let reason = data && (data.message || data.msg || data.error);
+    if (!reason && raw) {
+        reason = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+    }
+    if (!reason) {
+        reason = resp.statusText || '未知错误';
+    }
+    return {
+        code: -1,
+        httpStatus: resp.status,
+        // HTTP 层正常但业务码失败时只展示业务原因，避免出现误导性的"（HTTP 200）"
+        message: resp.ok ? reason : (reason + '（HTTP ' + resp.status + '）')
+    };
 }
 
 // 根据图片ID获取图片URL - 调用真实后端接口
@@ -673,15 +732,21 @@ var main=new Vue({
         hasMoreHistory: false,     // 服务端是否还有更早的历史可加载
         historyTopReached: false,  // 用户是否已经滚动到最早的历史记录
         suppressAutoScroll: false, // 插入历史记录期间抑制"自动滚动到底部"
+        pinnedToBottom: true,      // 用户当前是否停留在底部（不在底部时不自动滚动，避免翻阅历史时被拽回）
+        connTip: null,             // 断线/重连提示文案，null 表示连接正常不显示
     },
     async mounted() {
-        this._onKeydown = (e) => { if (e.key === 'Escape') this.fullscreenImage = null; };
+        this._onKeydown = (e) => { if (e.key === 'Escape' && this.fullscreenImage) this.closeFullscreen(); };
         document.addEventListener('keydown', this._onKeydown);
+        // 浏览器"后退"：全屏看图时只关闭图片，不离开页面
+        this._onPopState = () => this.onPopState();
+        window.addEventListener('popstate', this._onPopState);
 		this.initAfterUrl();
     },
     beforeDestroy() {
         document.removeEventListener('keydown', this._onKeydown);
-        if (this.ws) this.ws.close();
+        window.removeEventListener('popstate', this._onPopState);
+        this.disconnect();
         if (this.urlCheckTimer) clearInterval(this.urlCheckTimer);
     },
     watch: {
@@ -708,7 +773,7 @@ var main=new Vue({
             	getOrCreateConversationId(cid => {
                 this.conversationId = cid;
                 this.initWebSocket();
-                this.scrollToBottom();
+                this.scrollToBottom(true);
             });
         },
         loadChatList() {
@@ -725,7 +790,8 @@ var main=new Vue({
             const newUrl = `${window.location.pathname}?conversation_id=${chatid}`;
             window.history.replaceState({}, '', newUrl);
             this._reconnectAttempts = 0;
-            if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+            // 主动断开旧连接且不让它自动重连，再连到新的会话
+            this.disconnect();
             this.initWebSocket();
         },
         createNewChat() {
@@ -739,8 +805,8 @@ var main=new Vue({
                     const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
                     window.history.replaceState({}, '', newUrl);
                     this._reconnectAttempts = 0;
-                    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
-                    if (this.ws) this.ws.close();
+                    // 主动断开旧连接且不让它自动重连（disconnect 会摘掉监听、清掉重连定时器），再建立新连接
+                    this.disconnect();
                     this.initWebSocket();
                     this.loadChatList();
                 });
@@ -780,25 +846,46 @@ var main=new Vue({
                 body: JSON.stringify(result),
             }).catch(err => console.error("发送local_response失败", err));
         },
+        // 主动断开连接并且不再自动重连：停心跳、清重连定时器、摘掉所有监听后再关闭
+        disconnect() {
+            this.stopHeartbeat();
+            if (this._reconnectTimer) {
+                clearTimeout(this._reconnectTimer);
+                this._reconnectTimer = null;
+            }
+            this._closeSocket();
+            this._connReason = null;
+            this._connAttempt = 0;
+            this.hideConnTip();
+        },
+        // 仅关闭当前socket：先摘掉回调再close，避免触发onclose里的自动重连
+        _closeSocket() {
+            const ws = this.ws;
+            this.ws = null;
+            if (!ws) return;
+            try {
+                ws.onopen = ws.onmessage = ws.onerror = ws.onclose = () => {};
+                ws.close();
+            } catch (err) {
+                console.log(err);
+            }
+        },
         initWebSocket() {
             if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
-			if(this.ws){
-			try{
-			this.ws.onclose = () => {};
-			
-			this.ws.onerror = () => {};
-			this.ws.onopen = () => {};
-			this.ws.onmessage = () => {};
-			this.ws.close();
-			}catch(err){
-				console.log(err)
-			}
-			this.ws=null;
-			}
+            // 换连接时保留断线提示，避免重连过程中提示条闪烁
+            this.stopHeartbeat();
+            this._closeSocket();
             this.ws = createWebSocketConnection(this.conversationId);
             this.ws.onopen = () => {
                 console.log('WebSocket 已连接, 会话ID:', this.conversationId);
                 this._reconnectAttempts = 0;
+                this.startHeartbeat();
+                // 之前处于断线状态的话，恢复后提示用户
+                if (this.hideConnTip()) {
+                    this._connReason = null;
+                    this._connAttempt = 0;
+                    this.showTempTip('已重新连接');
+                }
             };
             this.ws.onmessage = (event) => {
                 try {
@@ -812,14 +899,120 @@ var main=new Vue({
                 console.error("WebSocket 错误", err);
                 this.isWaitingResponse = false;
                 this.isLoadingMore = false;
+                this.stopHeartbeat();
+                this.showConnTip('error');
             };
             this.ws.onclose = () => {
                 console.log("WebSocket 连接关闭");
+                this.stopHeartbeat();
                 if (this.isWaitingResponse) this.isWaitingResponse = false;
                 this.isLoadingMore = false;
                 this.ws = null;
+                this.showConnTip('closed');
                 this._scheduleReconnect();
             };
+        },
+        // ------------------------- 全屏看图
+        // 打开时压入一条历史记录，使浏览器"后退"只关闭图片而不会离开页面
+        openFullscreen(url) {
+            if (!url) return;
+            if (!this.fullscreenImage) {
+                try {
+                    history.pushState({ painterFullscreen: true }, '');
+                    this._fullscreenPushed = true;
+                } catch (err) {
+                    // 受限环境（如 file:// 或沙箱 iframe）可能不允许 pushState，降级为普通开关
+                    this._fullscreenPushed = false;
+                    console.warn('pushState 失败，浏览器后退键无法只关闭图片', err);
+                }
+            }
+            this.fullscreenImage = url;
+        },
+        // 关闭并消费掉压入的历史记录，避免历史栈里残留多余条目
+        closeFullscreen() {
+            if (!this.fullscreenImage) return;
+            this.fullscreenImage = null;
+            if (this._fullscreenPushed) {
+                this._fullscreenPushed = false;
+                history.back();
+            }
+        },
+        // 浏览器后退：全屏图片开着时只关闭它
+        onPopState() {
+            this._fullscreenPushed = false;
+            this.fullscreenImage = null;
+        },
+        // ------------------------- 心跳保活
+        // 定期发送带唯一id的ping；若超时没有收到同一个id的pong，说明连接已经半开/失效，主动断开重连
+        startHeartbeat() {
+            this.stopHeartbeat();
+            this._pendingPings = new Map();
+            this._pingSeq = 0;
+            this._pingTimer = setInterval(() => this.sendPing(), HEARTBEAT_INTERVAL);
+            this.sendPing();   // 建连后立即发一次，尽早发现无效连接
+        },
+        stopHeartbeat() {
+            if (this._pingTimer) {
+                clearInterval(this._pingTimer);
+                this._pingTimer = null;
+            }
+            if (this._pendingPings) {
+                for (const timer of this._pendingPings.values()) clearTimeout(timer);
+                this._pendingPings.clear();
+            }
+        },
+        sendPing() {
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+            const id = Date.now().toString(36) + '-' + (++this._pingSeq);
+            const timer = setTimeout(() => this.onHeartbeatTimeout(id), HEARTBEAT_TIMEOUT);
+            this._pendingPings.set(id, timer);
+            try {
+                this.ws.send(JSON.stringify({ type: 'ping', id: id }));
+            } catch (err) {
+                console.warn('发送ping失败', err);
+                clearTimeout(timer);
+                this._pendingPings.delete(id);
+            }
+        },
+        onPong(msg) {
+            if (!this._pendingPings || msg.id == null) return;
+            const key = String(msg.id);
+            const timer = this._pendingPings.get(key);
+            if (timer != null) {
+                clearTimeout(timer);
+                this._pendingPings.delete(key);
+            }
+        },
+        onHeartbeatTimeout(id) {
+            // 已经被pong清掉的超时不再处理
+            if (!this._pendingPings || !this._pendingPings.has(id)) return;
+            this._pendingPings.delete(id);
+            console.warn('心跳超时：' + HEARTBEAT_TIMEOUT + 'ms 内未收到 pong(' + id + ')，判定连接已断开，主动重连');
+            this.stopHeartbeat();
+            this.showConnTip('timeout');
+            // initWebSocket 内部会关闭旧连接并建立新连接；不重置重连计数，失败时仍按退避策略重试
+            this.initWebSocket();
+        },
+        // 断线/重连提示：reason 区分原因（timeout/error/closed），显示在页面顶部的提示条上
+        showConnTip(reason, attempt) {
+            if (reason) this._connReason = reason;
+            if (attempt != null) this._connAttempt = attempt;
+            if (!this._connReason) this._connReason = 'closed';
+            let label;
+            if (this._connReason === 'timeout') {
+                label = '连接超时';
+            } else if (this._connReason === 'error') {
+                label = '连接错误';
+            } else {
+                label = '连接断开';
+            }
+            const times = this._connAttempt > 1 ? '（第 ' + this._connAttempt + ' 次重试）' : '';
+            this.connTip = label + '，正在重新连接' + times + '…';
+        },
+        hideConnTip() {
+            if (!this.connTip) return false;
+            this.connTip = null;
+            return true;   // 返回之前是否处于断线提示状态
         },
         _scheduleReconnect() {
             if (this._reconnectTimer) return;
@@ -830,11 +1023,17 @@ var main=new Vue({
 				if(this.ws) return;
                 this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
                 console.log(`WebSocket 重连 (第${this._reconnectAttempts}次)`);
+                // 保留断线原因，只更新重试次数，便于用户判断当前处于第几次尝试
+                this.showConnTip(null, this._reconnectAttempts);
                 this.initWebSocket();
             }, delay);
         },
         // 处理服务端返回的流式/单次消息（支持thinking/tool_call/content/image/status/batch_messages/message/notice/done）
         handleWebSocketMessage(msg) {
+            if (msg.type === 'pong') {
+                this.onPong(msg);
+                return;
+            }
             if (msg.type === 'done') {
                 this.isWaitingResponse = false;
                 return;
@@ -844,15 +1043,15 @@ var main=new Vue({
                 return;
             }
             if (msg.type === 'status') {
-                this.isWaitingResponse = !!msg.generating;
+                this.isWaitingResponse = !!msg.status;
                 return;
             }
             if (msg.type === 'notice') {
-                this.showTempTip(msg.content || msg.message || '');
+                this.showTempTip(msg.content || msg.message || msg.notice || '');
                 return;
             }
             if (msg.type === 'sendbox') {
-                this.inputText = msg.content || '';
+                this.inputText = msg.sendbox || msg.content || '';
                 return;
             }
             if (msg.type === 'batch_messages' && msg.messages) {
@@ -886,13 +1085,14 @@ var main=new Vue({
                 this.scrollToBottom();
                 return;
             }
-            if (msg.type === 'remove' && msg.id != null) {
-                // 后端下发的id是历史记录标识符，优先按id匹配，兼容旧的按序号删除
-                const ridx = this.messages.findIndex(m => m._id === msg.id);
+            if (msg.type === 'remove' && (msg.id != null || msg.remove != null)) {
+                // 后端下发的id是历史记录标识符（旧协议字段为 remove），优先按id匹配，兼容旧的按序号删除
+                const removedId = msg.id != null ? msg.id : msg.remove;
+                const ridx = this.messages.findIndex(m => m._id === removedId);
                 if (ridx >= 0) {
                     this.messages.splice(ridx, 1);
                 } else {
-                    this.messages = this.messages.filter((m, idx) => idx !== msg.id);
+                    this.messages = this.messages.filter((m, idx) => idx !== removedId);
                 }
                 return;
             }
@@ -930,20 +1130,21 @@ var main=new Vue({
                 targetMsg.thinkingSegments = targetMsg.thinkingSegments || [];
                 targetMsg.thinkingSegments.push({ type: 'tool', toolName: msg.tool_name });
             } else if (msg.type === 'content') {
-				const parsed = this.parseContentArray(msg.content);
+				const raw = msg.content !== undefined ? msg.content : msg.delta;
+				const parsed = this.parseContentArray(raw);
                 let text = '';
 				targetMsg.contentItems = targetMsg.contentItems || [];
                 const lastItem = targetMsg.contentItems.length ? targetMsg.contentItems[targetMsg.contentItems.length - 1] : null;
                     
-                if (Array.isArray(msg.content)) {
+                if (Array.isArray(raw)) {
                     for (const item of parsed.contentItems) {
                        targetMsg.contentItems.push(item);
                     }
                 } else {
 					if (lastItem && lastItem.type === 'text') {
-                        lastItem.content += msg.content || '';
+                        lastItem.content += raw || '';
                     } else {
-                        targetMsg.contentItems.push({ type: 'text', content: msg.content || '' });
+                        targetMsg.contentItems.push({ type: 'text', content: raw || '' });
                     }
                 }
 				this.resolveAllPartUrls();
@@ -1033,7 +1234,7 @@ var main=new Vue({
                 this.messages = kept.concat(incoming);
                 this.historyTopReached = false;
                 this.resolveAllPartUrls();
-                this.scrollToBottom();
+                this.scrollToBottom(true);
             }
         },
         // 切换/新建对话时重置分页状态
@@ -1042,11 +1243,16 @@ var main=new Vue({
             this.hasMoreHistory = false;
             this.historyTopReached = false;
             this.suppressAutoScroll = false;
+            this.pinnedToBottom = true;
         },
         // 向上滚动到顶部附近时请求更早的历史记录
         onMessagesScroll() {
             const c = this.$refs.messageContainer;
-            if (!c || this.suppressAutoScroll) return;
+            if (!c) return;
+            // 无论是否正在插入历史，都要先记录"是否还在底部"：
+            // 内容增长本身不会触发scroll事件，所以这个标志只在真实滚动时更新，正好用于"粘底"判断
+            this.pinnedToBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) <= 60;
+            if (this.suppressAutoScroll) return;
             if (c.scrollTop > 60) return;
             if (this.hasMoreHistory) {
                 this.loadMoreHistory();
@@ -1136,7 +1342,7 @@ var main=new Vue({
                 setTimeout(() => { if(this.ws) this.ws.send(payload); }, 200);
             }
             this.inputText = '';
-            this.scrollToBottom();
+            this.scrollToBottom(true);
         },
         // 触发AI生成
         triggerGenerate() {
@@ -1144,7 +1350,7 @@ var main=new Vue({
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: "generate" }));
                 this.isWaitingResponse = true;
-                this.scrollToBottom();
+                this.scrollToBottom(true);
             }
         },
 		triggerStop() {
@@ -1179,16 +1385,22 @@ var main=new Vue({
                         // 展示一个临时toast风格
                         this.showTempTip("图片已上传，已加入对话上下文，可继续发送文字提问");
                     } else {
-                        alert("图片上传失败");
+                        this.showUploadError(res);
                     }
                 } catch (err) {
                     console.error("上传异常", err);
-                    alert("图片上传失败");
+                    this.showUploadError({ message: (err && err.message ? err.message : String(err)) });
                 }
             };
             reader.readAsDataURL(file);
             // 清空input value 以便重新选择同一文件可触发
             this.$refs.fileInput.value = '';
+        },
+        // 上传失败：把后端返回的真实原因展示出来，便于定位问题
+        showUploadError(res) {
+            const reason = (res && res.message) ? res.message : '未知错误';
+            console.error("图片上传失败：", res);
+            alert("图片上传失败：" + reason);
         },
         showTempTip(msg) {
             // 临时提示
@@ -1206,9 +1418,12 @@ var main=new Vue({
             document.querySelector(".messages-container").appendChild(tipDiv);
             setTimeout(() => tipDiv.remove(), 2500);
         },
-        scrollToBottom() {
+        scrollToBottom(force) {
             // 正在插入更早的历史记录时不要抢滚动位置
-            if (this.suppressAutoScroll) return;
+            if (this.suppressAutoScroll && !force) return;
+            // 用户正在向上翻阅历史时不要把他拽回底部（图片加载、流式输出等后续更新同样受此约束）
+            if (!force && !this.pinnedToBottom) return;
+            if (force) this.pinnedToBottom = true;
             this.$nextTick(() => {
                 const container = this.$refs.messageContainer;
                 if (container) container.scrollTop = container.scrollHeight;

@@ -45,7 +45,6 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
-import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -89,11 +88,7 @@ public class AIGroupApplication extends AIApplication {
 			MessageContent current=br.read();
 			if(current==null)
 				break;
-			if(current instanceof ToolCallContent) {
-				state.onToolcall((ToolCallContent) current);
-			}
-			state.appendReasoner(current);
-			
+			state.acceptReasonerContent(current);
 		}
 	}
 	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {

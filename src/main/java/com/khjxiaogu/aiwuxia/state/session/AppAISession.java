@@ -30,6 +30,7 @@ import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.AIChatWindow;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 
@@ -55,6 +56,16 @@ public class AppAISession extends AISession {
 	public void requestUserInput(String input, String prompt, Consumer<String> consumer) {
 		consumer.accept(window.prompt(prompt));
 		
+	}
+
+	/**
+	 * 桌面端直接在生成线程上弹窗询问：答复在本方法返回前回填，等待方随即被唤醒。
+	 */
+	@Override
+	protected void requestToolCallApproval(ToolApprovalRequest request) {
+		request.setResult(window.confirm("模型请求执行工具（" + request.getToolName() + "），是否允许？\n"
+				+ (request.getReason() == null ? "" : "原因：" + request.getReason() + "\n")
+				+ "参数：" + request.getArguments()));
 	}
 
 	@Override
