@@ -50,6 +50,11 @@ public class PainterSession extends AISession implements WebsocketEvents,ChatIde
         .registerTypeAdapter(MessageContents.class, new MessageContents.Serilizer<>())
         .create();
 
+    /** 单页历史记录条数 */
+    private static final int HISTORY_PAGE_SIZE = 20;
+    /** 单页历史记录条数上限，防止客户端一次请求过多 */
+    private static final int HISTORY_PAGE_MAX = 100;
+
     ChannelGroup conn = new DefaultChannelGroup(new UnorderedThreadPoolEventExecutor(3));
     protected final AIChatService parent;
     private final String chatId;
@@ -130,7 +135,16 @@ public class PainterSession extends AISession implements WebsocketEvents,ChatIde
                     sendNotice("操作太快啦，请稍后再试");
                 }
             } else if ("requestBackLog".equals(type)) {
-                requireMoreMessages();
+                // 支持向上滚动加载更多：before_id 指定只加载比该ID更早的记录，缺省(或<=0)则加载最新一页
+                int beforeId = -1;
+                if (jo.has("before_id") && !jo.get("before_id").isJsonNull()) {
+                    beforeId = jo.get("before_id").getAsInt();
+                }
+                int limit = HISTORY_PAGE_SIZE;
+                if (jo.has("limit") && !jo.get("limit").isJsonNull()) {
+                    limit = jo.get("limit").getAsInt();
+                }
+                requireMoreMessages(beforeId, limit);
             }
         }
     }
@@ -146,16 +160,44 @@ public class PainterSession extends AISession implements WebsocketEvents,ChatIde
     		this.appendCh(Role.USER, content, true);
     	}
     }
+    /**
+     * 请求最新一页历史记录（连接建立时的初始加载）。
+     */
     public void requireMoreMessages() {
-        int i = 0;
+        requireMoreMessages(-1, HISTORY_PAGE_SIZE);
+    }
+
+    /**
+     * 分页请求历史记录。
+     * <p>
+     * 历史条目按标识符升序排列，本方法从最新往最旧遍历，取 {@code beforeId} 之前的
+     * {@code limit} 条记录发送给客户端，并告知是否还有更早的记录。
+     * 客户端向上滚动时携带当前最旧记录的标识符作为 {@code beforeId} 即可继续加载。
+     * </p>
+     *
+     * @param beforeId 只返回标识符严格小于该值的历史条目；小于等于0表示从最新记录开始（初始加载）
+     * @param limit    本页最多返回的条目数
+     */
+    public synchronized void requireMoreMessages(int beforeId, int limit) {
+        if (limit <= 0) {
+            limit = HISTORY_PAGE_SIZE;
+        } else if (limit > HISTORY_PAGE_MAX) {
+            limit = HISTORY_PAGE_MAX;
+        }
         List<HistoryItem> his = new ArrayList<>();
+        boolean hasMore = false;
         for (Iterator<HistoryItem> it = getHistory().reverseIterator(); it.hasNext();) {
             HistoryItem hisitem = it.next();
+            if (beforeId > 0 && hisitem.getIdentifier() >= beforeId) continue;
+            if (his.size() >= limit) {
+                // 已经取满一页且还有更旧的记录
+                hasMore = true;
+                break;
+            }
             his.add(0, hisitem);
-            i++;
-            if (i >= 20) break;
         }
-        postMessages(his);
+        // beforeId > 0 说明这是向上滚动加载的历史页，客户端需要插入到列表最前面
+        postMessages(his, beforeId > 0, hasMore);
     }
 
     @Override
@@ -225,6 +267,17 @@ public class PainterSession extends AISession implements WebsocketEvents,ChatIde
 
     @Override
     public void postMessages(List<HistoryItem> items) {
+        postMessages(items, false, false);
+    }
+
+    /**
+     * 批量发送历史记录，并附带分页信息。
+     *
+     * @param items   按时间从旧到新排列的历史条目
+     * @param prepend {@code true} 表示这批记录比客户端已有的记录更早，客户端应插入到列表最前面
+     * @param hasMore 是否还有更早的历史记录可以继续加载
+     */
+    public void postMessages(List<HistoryItem> items, boolean prepend, boolean hasMore) {
         super.postMessages(items);
         JsonArrayBuilder<JsonObjectBuilder<JsonObject>> ja = JsonBuilder.object().array("messages");
         for (HistoryItem i : items) {
@@ -251,7 +304,15 @@ public class PainterSession extends AISession implements WebsocketEvents,ChatIde
         }
         JsonObjectBuilder<JsonObject> outer = ja.end();
         outer.add("type", "batch_messages");
-        sendFrame(outer.end().toString());
+        outer.add("prepend", prepend);
+        outer.add("hasMore", hasMore);
+        JsonObject frame = outer.end();
+        if (!items.isEmpty()) {
+            // 客户端可用 oldestId 作为下一次向上滚动的游标
+            frame.addProperty("oldestId", items.get(0).getIdentifier());
+            frame.addProperty("newestId", items.get(items.size() - 1).getIdentifier());
+        }
+        sendFrame(frame.toString());
     }
 
     @Override

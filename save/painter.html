@@ -7,39 +7,63 @@
     <!-- Vue 2 CDN -->
     <script src="vue.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
 
-        body {
-            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-            background: #f5f7fb;
-            height: 100vh;
-            overflow: hidden;
-        }
+		html,
+		body {
+			height: 100%;
+			overflow: hidden;
+		}
 
-        #app {
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            background: white;
-            max-width: 1000px;
-            margin: 0 auto;
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.05);
-        }
+		body {
+			font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+			background: #f5f7fb;
+			height: 100vh;          /* 回退 */
+			height: 100dvh;         /* 现代浏览器：跟随可视视口 */
+			overflow: hidden;
+			overscroll-behavior: none;
+		}
 
-        /* 头部信息 */
-        .chat-header {
-            padding: 16px 20px;
-            background: #ffffff;
-            border-bottom: 1px solid #e9ecef;
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            flex-shrink: 0;
-        }
+		#app {
+			display: flex;
+			flex-direction: column;
+			background: white;
+			max-width: 1000px;
+			margin: 0 auto;
+			height: 100%;           /* 由 body 的 100dvh 决定 */
+			min-height: 0;          /* 关键：允许内部 flex 子项收缩 */
+			overflow: hidden;       /* 防止内容溢出错位 */
+			box-shadow: 0 0 20px rgba(0, 0, 0, 0.05);
+		}
+
+		/* 头部信息 */
+		.chat-header {
+			padding: 10px 20px;
+			background: #ffffff;
+			border-bottom: 1px solid #e9ecef;
+			display: flex;
+			align-items: baseline;
+			justify-content: space-between;
+			flex-shrink: 0;         /* 关键：不被压缩 */
+		}
+
+		/* 消息列表区域 */
+		.messages-container {
+			flex: 1 1 auto;         /* 占满剩余空间 */
+			min-height: 0;          /* 关键：否则内容多时会撑破 #app */
+			overflow-y: auto;
+			padding: 20px 16px;
+			background: #fafcff;
+			display: flex;
+			flex-direction: column;
+			gap: 18px;
+			overscroll-behavior: contain;  /* 滚动到底不带动外层 */
+			-webkit-overflow-scrolling: touch;
+		}
         .chat-header h2 {
             font-size: 1.25rem;
             font-weight: 600;
@@ -52,17 +76,6 @@
             border-radius: 20px;
             color: #4a627a;
             font-family: monospace;
-        }
-
-        /* 消息列表区域 */
-        .messages-container {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px 16px;
-            background: #fafcff;
-            display: flex;
-            flex-direction: column;
-            gap: 18px;
         }
 
         /* 消息通用样式 */
@@ -120,7 +133,7 @@
             font-size: 0.75rem;
             font-weight: 500;
             color: #1e40af;
-            margin-top: 8px;
+            margin-top: 0px;
             margin-right: 8px;
         }
         .tool-call-label {
@@ -160,11 +173,12 @@
         .input-area {
             background: white;
             border-top: 1px solid #e9ecef;
-            padding: 12px 16px 20px;
+            padding: 0px;
             display: flex;
             flex-direction: column;
             gap: 10px;
             flex-shrink: 0;
+			bottom: 0px;
         }
         .image-preview-bar {
             display: flex;
@@ -179,23 +193,40 @@
             border: 1px solid #cbd5e1;
             background: #f8fafc;
         }
-        .input-row {
-            display: flex;
-            gap: 12px;
-            align-items: flex-end;
-        }
-        .input-row textarea {
-            flex: 1;
-            border: 1px solid #cbd5e6;
-            border-radius: 24px;
-            padding: 10px 16px;
-            font-size: 0.9rem;
-            resize: none;
-            font-family: inherit;
-            background: #ffffff;
-            transition: 0.2s;
-            max-height: 120px;
-        }
+		.input-row {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 12px;
+			align-items: flex-end;
+			flex-shrink: 0;         /* 关键：不被压缩 */
+			padding: 10px 16px;
+			padding-bottom: 2px; /* 底部安全区 */
+			background: #fff;
+			border-top: 1px solid #e9ecef;
+		}
+
+		.input-row textarea {
+			flex: 1 1 100%;       /* 关键 2：移动端独占一行 */
+			min-width: 0;         /* 关键 3：防止 textarea 撑破容器 */
+			box-sizing: border-box;
+			/* 其余保持不变 */
+			border: 1px solid #cbd5e6;
+			border-radius: 24px;
+			padding: 10px 16px;
+			font-size: 0.9rem;
+			resize: none;
+			font-family: inherit;
+			background: #ffffff;
+			transition: 0.2s;
+			max-height: 120px;
+		}
+
+		/* PC 端：恢复同行 */
+		@media (min-width: 640px) {
+			.input-row textarea {
+				flex: 1 1 0;      /* basis 归零，与按钮并排 */
+			}
+		}
         .input-row textarea:focus {
             outline: none;
             border-color: #1e6fdf;
@@ -243,6 +274,32 @@
         .scroll-to-bottom {
             cursor: pointer;
         }
+        /* 向上滚动加载历史记录 */
+        .history-tip {
+            align-self: center;
+            flex-shrink: 0;
+            font-size: 0.72rem;
+            color: #8196b0;
+            background: #f1f5f9;
+            border-radius: 20px;
+            padding: 4px 14px;
+            user-select: none;
+        }
+        .history-tip.loading::after {
+            content: '';
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            margin-left: 6px;
+            border: 2px solid #cbd5e1;
+            border-top-color: #1e6fdf;
+            border-radius: 50%;
+            vertical-align: -1px;
+            animation: historySpin 0.8s linear infinite;
+        }
+        @keyframes historySpin {
+            to { transform: rotate(360deg); }
+        }
         hr {
             margin: 6px 0;
         }
@@ -264,23 +321,208 @@
             border-radius: 8px;
             box-shadow: 0 4px 30px rgba(0,0,0,0.5);
         }
+        /* 侧边栏 */
+        .sidebar-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 9000;
+        }
+        .sidebar {
+            position: fixed;
+            top: 0; left: 0; bottom: 0;
+            width: 280px;
+            background: #fff;
+            box-shadow: 2px 0 20px rgba(0,0,0,0.1);
+            z-index: 9001;
+            display: flex;
+            flex-direction: column;
+            animation: slideIn 0.2s ease;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(0); }
+        }
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .sidebar-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            color: #1e2a3e;
+        }
+        .sidebar-close {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: #5b6e8c;
+            padding: 4px 8px;
+        }
+        .sidebar-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+        .sidebar-item {
+            padding: 12px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f3f5;
+            transition: background 0.15s;
+        }
+        .sidebar-item:hover {
+            background: #f8f9fc;
+        }
+        .sidebar-item.active {
+            background: #eef2ff;
+            border-left: 3px solid #1e6fdf;
+        }
+        .sidebar-item-name {
+            font-size: 0.9rem;
+            color: #1e2a3e;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .sidebar-item-time {
+            font-size: 0.7rem;
+            color: #8196b0;
+            margin-top: 4px;
+        }
+        .sidebar-new {
+            margin: 8px 16px;
+            padding: 10px;
+            text-align: center;
+            background: #1e6fdf;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .sidebar-new:hover {
+            background: #1558b0;
+        }
+        .menu-btn {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: #5b6e8c;
+            padding: 4px 8px;
+        }
+        /* URL输入弹窗 */
+        .url-modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+        .url-modal {
+            background: white;
+            border-radius: 16px;
+            padding: 28px 32px;
+            width: 90%;
+            max-width: 480px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        .url-modal h3 {
+            margin: 0 0 8px;
+            font-size: 1.1rem;
+            color: #1e2a3e;
+        }
+        .url-modal p {
+            margin: 0 0 16px;
+            font-size: 0.85rem;
+            color: #5b6e8c;
+        }
+        .url-modal input {
+            width: 100%;
+            border: 1px solid #cbd5e6;
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 0.9rem;
+            font-family: monospace;
+            outline: none;
+            transition: 0.2s;
+        }
+        .url-modal input:focus {
+            border-color: #1e6fdf;
+            box-shadow: 0 0 0 2px rgba(30,111,223,0.2);
+        }
+        .url-modal .btn-row {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .url-modal .btn-cancel {
+            background: #f1f3f5;
+            color: #2c3e50;
+            border: 1px solid #d1d9e8;
+        }
+        .url-status {
+            font-size: 0.75rem;
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .url-status .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .url-status .dot.ok { background: #22c55e; }
+        .url-status .dot.err { background: #ef4444; }
+        .url-status .dot.pending { background: #eab308; }
     </style>
 </head>
 <body>
 <div id="app">
-    <div class="chat-header">
-        <h2>🧠 思维链 · AI 伙伴</h2>
-        <div class="conv-id">会话ID: {{ conversationId }}</div>
+
+    <!-- 侧边栏 -->
+    <div class="sidebar-overlay" v-if="showSidebar" @click="showSidebar = false"></div>
+    <div class="sidebar" v-if="showSidebar">
+        <div class="sidebar-header">
+            <h3>对话列表</h3>
+            <button class="sidebar-close" @click="showSidebar = false">&times;</button>
+        </div>
+        <div class="sidebar-new" @click="createNewChat">+ 新建对话</div>
+        <div class="sidebar-list">
+            <div v-for="chat in chatList" :key="chat.chatid"
+                 :class="['sidebar-item', chat.chatid === conversationId ? 'active' : '']"
+                 @click="switchChat(chat.chatid)">
+                <div class="sidebar-item-name">{{ chat.name }}</div>
+                <div class="sidebar-item-time">{{ formatTime(chat.time) }}</div>
+            </div>
+            <div v-if="!chatList.length" style="padding:20px;text-align:center;color:#8196b0;font-size:0.85rem;">暂无对话</div>
+        </div>
     </div>
 
-    <div class="messages-container" ref="messageContainer">
-        <div v-for="(msg, idx) in messages" :key="idx" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
+    <div class="chat-header">
+        <button class="menu-btn" @click="loadChatList(); showSidebar = true">&#9776;</button>
+        <h2>绘画</h2>
+        <div class="conv-id">{{ conversationId }}</div>
+    </div>
+
+    <div class="messages-container" ref="messageContainer" @scroll="onMessagesScroll">
+        <!-- 向上滚动加载更早的历史记录 -->
+        <div v-if="isLoadingMore" class="history-tip loading">正在加载更早的消息</div>
+        <div v-else-if="historyTopReached && !hasMoreHistory" class="history-tip">没有更多历史记录了</div>
+        <div v-for="(msg, idx) in messages" :key="msg._id != null ? 'm' + msg._id : 'n' + idx" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
             <div class="message-bubble">
                 <!-- 用户消息：支持文本和图片 -->
                 <div v-if="msg.role === 'user'">
-                    <div v-if="msg.text" style="white-space: pre-wrap;">{{ msg.text }}</div>
-                    <div v-for="(part, pIdx) in msg.parts" :key="'u'+pIdx">
-                        <div v-if="part.type === 'text'" style="white-space: pre-wrap;">{{ part.text }}</div>
+                    <div v-for="(part, pIdx) in msg.contentItems" :key="'u'+pIdx">
+                        <div v-if="part.type === 'text'" style="white-space: pre-wrap;">{{ part.content }}</div>
                         <div v-if="part.type === 'image'" class="message-image">
                             <img v-if="part.image_url" :src="part.image_url" alt="用户上传图片" @click.stop="fullscreenImage = part.image_url" style="cursor:pointer" />
                             <div v-else class="image-placeholder">加载中...</div>
@@ -289,9 +531,7 @@
                             <video :src="part.video_url" controls style="width:100%;"></video>
                         </div>
                     </div>
-                    <div v-if="msg.imageUrl" class="message-image">
-                        <img :src="msg.imageUrl" alt="用户上传图片" @click.stop="fullscreenImage = msg.imageUrl" style="cursor:pointer" />
-                    </div>
+                    <button v-if="!isWaitingResponse&&idx==messages.length-1" @click="triggerGenerate" :disabled="isWaitingResponse" style="background:#27ae60;margin-top:10px">生成</button>
                 </div>
 
                 <!-- AI 消息：支持思维链 + 按顺序排列的内容 -->
@@ -324,16 +564,17 @@
         <div v-if="isWaitingResponse" class="loading-indicator" style="align-self: flex-start; margin-left: 12px;">
             <span>思考中</span>
         </div>
+
 </div>
     <div class="input-area">
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
             <button @click="sendTextMessage" :disabled="isWaitingResponse || (!inputText.trim() && !uploadedImageId)">发送</button>
-            <button @click="triggerGenerate" :disabled="isWaitingResponse" style="background:#27ae60;">生成</button>
-            <button class="upload-btn" @click="triggerFileUpload" :disabled="isWaitingResponse">📎 图片</button>
+			<button @click="triggerStop" :disabled="!isWaitingResponse">停止</button>
+
+            <button class="upload-btn" @click="triggerFileUpload" :disabled="isWaitingResponse">图片</button>
             <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" @change="onFileSelected" />
         </div>
-        <div style="font-size: 12px; color:#8196b0; padding-left: 8px;">💡 输入消息后点击"发送"添加到对话，点击"生成"触发AI回复</div>
     </div>
     <!-- 全屏看图 -->
     <div class="fullscreen-overlay" v-if="fullscreenImage" @click="fullscreenImage = null">
@@ -379,7 +620,7 @@ function getOrCreateConversationId(on_loaded) {
 // WebSocket连接 - 连接真实后端
 function createWebSocketConnection(conversationId) {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.host}/aichat/chatsocket?chatid=${conversationId}&app=painterirc`;
+    const wsUrl = `${protocol}//khjxiaogu.com/aichat/chatsocket?chatid=${conversationId}&app=painterirc`;
     return new WebSocket(wsUrl);
 }
 
@@ -403,7 +644,7 @@ async function realUploadImage(file, conversationId) {
 
 // 根据图片ID获取图片URL - 调用真实后端接口
 async function fetchImageById(imageId, conversationId) {
-    return `painter/image?conversation_id=${encodeURIComponent(conversationId)}&image_id=${encodeURIComponent(imageId)}`;
+    return `https://www.khjxiaogu.com/aichat/painter/image?image_id=${encodeURIComponent(imageId)}`;
 }
 
 // Vue 主应用
@@ -411,30 +652,37 @@ var main=new Vue({
     el: '#app',
     data: {
         conversationId: '',
-        messages: [],        // 消息列表 { role, _id?, text?, parts?, imageUrl?, thinkingSegments[], contentItems[], imageId? 等 }
+        messages: [],
         inputText: '',
         isWaitingResponse: false,
-        ws: null,            // websocket 实例
-        // 图片上传暂存
+        ws: null,
         selectedFile: null,
         uploadedImageId: null,
         fullscreenImage: null,
+        // 侧边栏
+        showSidebar: false,
+        chatList: [],
+        // 本地代理模式
+        showUrlModal: false,
+        localUrl: '',
+        localUrlInput: '',
+        urlValid: null,
+        urlCheckTimer: null,
+        // 历史记录分页：向上滚动加载更多
+        isLoadingMore: false,      // 是否正在加载更早的历史
+        hasMoreHistory: false,     // 服务端是否还有更早的历史可加载
+        historyTopReached: false,  // 用户是否已经滚动到最早的历史记录
+        suppressAutoScroll: false, // 插入历史记录期间抑制"自动滚动到底部"
     },
-    mounted() {
+    async mounted() {
         this._onKeydown = (e) => { if (e.key === 'Escape') this.fullscreenImage = null; };
         document.addEventListener('keydown', this._onKeydown);
-        getOrCreateConversationId(cid=>{
-			this.conversationId=cid;
-        	this.initWebSocket();
-            this.scrollToBottom();
-        });
-        
+		this.initAfterUrl();
     },
     beforeDestroy() {
         document.removeEventListener('keydown', this._onKeydown);
-        if (this.ws) {
-            this.ws.close();
-        }
+        if (this.ws) this.ws.close();
+        if (this.urlCheckTimer) clearInterval(this.urlCheckTimer);
     },
     watch: {
         messages: {
@@ -443,10 +691,114 @@ var main=new Vue({
         }
     },
     methods: {
+        async confirmLocalUrl() {
+            const url = this.localUrlInput.trim();
+            if (!url) return;
+            this.localUrl = url.replace(/\/+$/, '');
+            localStorage.setItem('painter_local_url', this.localUrl);
+            this.urlValid = null;
+            await this.checkUrlValidity();
+            if(this.urlValid){
+	            this.startUrlCheck();
+	            this.initAfterUrl();
+            }
+        },
+        initAfterUrl() {
+			if(!this.ws)
+            	getOrCreateConversationId(cid => {
+                this.conversationId = cid;
+                this.initWebSocket();
+                this.scrollToBottom();
+            });
+        },
+        loadChatList() {
+            fetch("querychat?appid=painterirc&uid=undefined")
+                .then(p => p.json())
+                .then(list => { this.chatList = list || []; });
+        },
+        switchChat(chatid) {
+            if (chatid === this.conversationId) { this.showSidebar = false; return; }
+            this.showSidebar = false;
+            this.messages = [];
+            this.resetHistoryPaging();
+            this.conversationId = chatid;
+            const newUrl = `${window.location.pathname}?conversation_id=${chatid}`;
+            window.history.replaceState({}, '', newUrl);
+            this._reconnectAttempts = 0;
+            if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+            this.initWebSocket();
+        },
+        createNewChat() {
+            this.showSidebar = false;
+            fetch("createid?appid=painterirc")
+                .then(p => p.text())
+                .then(cid => {
+                    this.messages = [];
+                    this.resetHistoryPaging();
+                    this.conversationId = cid;
+                    const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
+                    window.history.replaceState({}, '', newUrl);
+                    this._reconnectAttempts = 0;
+                    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+                    if (this.ws) this.ws.close();
+                    this.initWebSocket();
+                    this.loadChatList();
+                });
+        },
+        formatTime(ts) {
+            if (!ts) return '';
+            try {
+                const d = new Date(parseInt(ts));
+                return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+            } catch(e) { return ts; }
+        },
+        async checkUrlValidity() {
+        },
+        startUrlCheck() {
+        },
+        async handleLocalRequest(msg) {
+            const requestId = msg.request_id;
+            const path = msg.path || '';
+            const body = msg.body || '';
+            const targetUrl = this.localUrl + path;
+            try {
+                const resp = await fetch(targetUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; utf-8', "Accept": "application/json" },
+                    body: body,
+                });
+                const data = await resp.json();
+                this.sendLocalResponse(requestId, { code: resp.status, data: data });
+            } catch (err) {
+                this.sendLocalResponse(requestId, { code: -1, data: { message: err.message || String(err)} });
+            }
+        },
+        sendLocalResponse(requestId, result) {
+            fetch('painter/localResponse?conversation_id='+this.conversationId+'&request_id='+requestId, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(result),
+            }).catch(err => console.error("发送local_response失败", err));
+        },
         initWebSocket() {
+            if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+			if(this.ws){
+			try{
+			this.ws.onclose = () => {};
+			
+			this.ws.onerror = () => {};
+			this.ws.onopen = () => {};
+			this.ws.onmessage = () => {};
+			this.ws.close();
+			}catch(err){
+				console.log(err)
+			}
+			this.ws=null;
+			}
             this.ws = createWebSocketConnection(this.conversationId);
             this.ws.onopen = () => {
                 console.log('WebSocket 已连接, 会话ID:', this.conversationId);
+                this._reconnectAttempts = 0;
             };
             this.ws.onmessage = (event) => {
                 try {
@@ -459,16 +811,36 @@ var main=new Vue({
             this.ws.onerror = (err) => {
                 console.error("WebSocket 错误", err);
                 this.isWaitingResponse = false;
+                this.isLoadingMore = false;
             };
             this.ws.onclose = () => {
                 console.log("WebSocket 连接关闭");
                 if (this.isWaitingResponse) this.isWaitingResponse = false;
+                this.isLoadingMore = false;
+                this.ws = null;
+                this._scheduleReconnect();
             };
+        },
+        _scheduleReconnect() {
+            if (this._reconnectTimer) return;
+			
+            const delay = this._reconnectAttempts < 3 ? 0 : 5000;
+            this._reconnectTimer = setTimeout(() => {
+                this._reconnectTimer = null;
+				if(this.ws) return;
+                this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
+                console.log(`WebSocket 重连 (第${this._reconnectAttempts}次)`);
+                this.initWebSocket();
+            }, delay);
         },
         // 处理服务端返回的流式/单次消息（支持thinking/tool_call/content/image/status/batch_messages/message/notice/done）
         handleWebSocketMessage(msg) {
             if (msg.type === 'done') {
                 this.isWaitingResponse = false;
+                return;
+            }
+            if (msg.type === 'local_request') {
+                this.handleLocalRequest(msg);
                 return;
             }
             if (msg.type === 'status') {
@@ -484,32 +856,7 @@ var main=new Vue({
                 return;
             }
             if (msg.type === 'batch_messages' && msg.messages) {
-                for (const m of msg.messages) {
-                    const parsed = this.parseContentArray(m.content);
-                    const isUser = m.title === '你';
-                    const thinkingSegs = [];
-                    if (!isUser && Array.isArray(m.thinking)) {
-                        for (const seg of m.thinking) {
-                            if (typeof seg === 'string') {
-                                thinkingSegs.push({ type: 'text', content: seg });
-                            } else if (seg && seg.type === 'tool_call') {
-                                thinkingSegs.push({ type: 'tool', toolName: seg.tool_name || seg.toolName || '' });
-                            } else if (seg && seg.content != null) {
-                                thinkingSegs.push({ type: 'text', content: seg.content });
-                            }
-                        }
-                    }
-                    this.messages.push({
-                        role: isUser ? 'user' : 'assistant',
-                        text: isUser ? parsed.text : '',
-                        parts: isUser ? [] : parsed.parts,
-                        thinkingSegments: thinkingSegs,
-                        contentItems: isUser ? [] : parsed.contentItems,
-                        imageUrl: null,
-                        imageId: null,
-                    });
-                }
-                this.resolveAllPartUrls();
+                this.handleBatchMessages(msg);
                 return;
             }
             if (msg.type === 'message') {
@@ -525,19 +872,14 @@ var main=new Vue({
                 if (existing) {
                     if (!isUser) {
                         existing._id = msg.id;
-                        existing.parts = parsed.parts;
                         existing.contentItems = parsed.contentItems;
                     }
                 } else {
                     this.messages.push({
                         _id: msg.id,
                         role: isUser ? 'user' : 'assistant',
-                        text: isUser ? parsed.text : '',
-                        parts: isUser ? [] : parsed.parts,
                         thinkingSegments: [],
-                        contentItems: isUser ? [] : parsed.contentItems,
-                        imageUrl: null,
-                        imageId: null,
+                        contentItems: parsed.contentItems
                     });
                 }
                 this.resolveAllPartUrls();
@@ -545,7 +887,13 @@ var main=new Vue({
                 return;
             }
             if (msg.type === 'remove' && msg.id != null) {
-                this.messages = this.messages.filter((m, idx) => idx !== msg.id);
+                // 后端下发的id是历史记录标识符，优先按id匹配，兼容旧的按序号删除
+                const ridx = this.messages.findIndex(m => m._id === msg.id);
+                if (ridx >= 0) {
+                    this.messages.splice(ridx, 1);
+                } else {
+                    this.messages = this.messages.filter((m, idx) => idx !== msg.id);
+                }
                 return;
             }
             // 查找目标assistant消息：优先按id匹配，其次找最后一条无id的assistant，否则新建
@@ -563,11 +911,8 @@ var main=new Vue({
                 targetMsg = {
                     _id: msg.id || null,
                     role: 'assistant',
-                    parts: [],
                     thinkingSegments: [],
-                    contentItems: [],
-                    imageUrl: null,
-                    imageId: null,
+                    contentItems: []
                 };
                 this.messages.push(targetMsg);
             } else if (msg.id && !targetMsg._id) {
@@ -585,26 +930,23 @@ var main=new Vue({
                 targetMsg.thinkingSegments = targetMsg.thinkingSegments || [];
                 targetMsg.thinkingSegments.push({ type: 'tool', toolName: msg.tool_name });
             } else if (msg.type === 'content') {
+				const parsed = this.parseContentArray(msg.content);
                 let text = '';
+				targetMsg.contentItems = targetMsg.contentItems || [];
+                const lastItem = targetMsg.contentItems.length ? targetMsg.contentItems[targetMsg.contentItems.length - 1] : null;
+                    
                 if (Array.isArray(msg.content)) {
-                    for (const item of msg.content) {
-                        if (typeof item === 'string') text += item;
-                        else if (item.type === 'text') text += item.text || '';
-                        else if (item.description) text += item.description;
-                        else if (item.result) text += item.result;
+                    for (const item of parsed.contentItems) {
+                       targetMsg.contentItems.push(item);
                     }
                 } else {
-                    text = msg.content || '';
-                }
-                if (text) {
-                    targetMsg.contentItems = targetMsg.contentItems || [];
-                    const lastItem = targetMsg.contentItems.length ? targetMsg.contentItems[targetMsg.contentItems.length - 1] : null;
-                    if (lastItem && lastItem.type === 'text') {
-                        lastItem.content += text;
+					if (lastItem && lastItem.type === 'text') {
+                        lastItem.content += msg.content || '';
                     } else {
-                        targetMsg.contentItems.push({ type: 'text', content: text });
+                        targetMsg.contentItems.push({ type: 'text', content: msg.content || '' });
                     }
                 }
+				this.resolveAllPartUrls();
             } else if (msg.type === 'image') {
                 const imageId = msg.image_id;
                 targetMsg.imageId = imageId;
@@ -613,40 +955,137 @@ var main=new Vue({
                 targetMsg.contentItems.push(imgItem);
                 this.loadImageById(imageId).then(imgUrl => {
                     imgItem.image_url = imgUrl;
-                    targetMsg.imageUrl = imgUrl;
                     this.$forceUpdate();
                     this.scrollToBottom();
                 }).catch(err => {
                     console.error("加载图片失败", err);
                     imgItem.image_url = '';
-                    targetMsg.imageUrl = '';
                 });
             }
             this.scrollToBottom();
         },
+        // 把服务端 batch_messages 里的一条记录转换成界面消息
+        buildBatchMessage(m) {
+            const parsed = this.parseContentArray(m.content);
+            const isUser = m.title === '你';
+            const thinkingSegs = [];
+            if (!isUser && Array.isArray(m.thinking)) {
+                for (const seg of m.thinking) {
+                    if (typeof seg === 'string') {
+                        thinkingSegs.push({ type: 'text', content: seg });
+                    } else if (seg && seg.type === 'tool_call') {
+                        thinkingSegs.push({ type: 'tool', toolName: seg.tool_name || seg.toolName || '' });
+                    } else if (seg && seg.content != null) {
+                        thinkingSegs.push({ type: 'text', content: seg.content });
+                    }
+                }
+            }
+            return {
+                _id: m.id != null ? m.id : null,
+                role: isUser ? 'user' : 'assistant',
+                thinkingSegments: thinkingSegs,
+                contentItems: parsed.contentItems
+            };
+        },
+        // 处理一批历史记录：初始加载/重连替换最新一页，向上滚动加载时插入到最前面并保持滚动位置
+        handleBatchMessages(msg) {
+            const prepend = !!msg.prepend;
+            const container = this.$refs.messageContainer;
+            const prevScrollHeight = container ? container.scrollHeight : 0;
+            const prevScrollTop = container ? container.scrollTop : 0;
+            const incoming = [];
+            if (prepend) {
+                // 按标识符去重，避免重复插入
+                const known = new Set();
+                for (const m of this.messages) {
+                    if (m._id != null) known.add(m._id);
+                }
+                for (const m of msg.messages) {
+                    if (m.id != null) {
+                        if (known.has(m.id)) continue;
+                        known.add(m.id);
+                    }
+                    incoming.push(this.buildBatchMessage(m));
+                }
+            } else {
+                for (const m of msg.messages) {
+                    incoming.push(this.buildBatchMessage(m));
+                }
+            }
+            this.hasMoreHistory = !!msg.hasMore;
+            this.isLoadingMore = false;
+            if (prepend) {
+                // 插入历史记录会把内容撑高：先抑制自动滚动到底部，再恢复原来的视口位置
+                this.suppressAutoScroll = true;
+                if (incoming.length) this.messages.unshift(...incoming);
+                this.resolveAllPartUrls();
+                this.$nextTick(() => {
+                    const c = this.$refs.messageContainer;
+                    if (c) c.scrollTop = c.scrollHeight - prevScrollHeight + prevScrollTop;
+                    this.suppressAutoScroll = false;
+                });
+            } else {
+                // 服务端每次连接都会下发最新一页，这里替换最新范围，同时保留本地已加载的更早记录
+                const oldestIncoming = incoming.length ? incoming[0]._id : null;
+                const kept = (oldestIncoming != null)
+                    ? this.messages.filter(m => m._id != null && m._id < oldestIncoming)
+                    : this.messages;
+                this.messages = kept.concat(incoming);
+                this.historyTopReached = false;
+                this.resolveAllPartUrls();
+                this.scrollToBottom();
+            }
+        },
+        // 切换/新建对话时重置分页状态
+        resetHistoryPaging() {
+            this.isLoadingMore = false;
+            this.hasMoreHistory = false;
+            this.historyTopReached = false;
+            this.suppressAutoScroll = false;
+        },
+        // 向上滚动到顶部附近时请求更早的历史记录
+        onMessagesScroll() {
+            const c = this.$refs.messageContainer;
+            if (!c || this.suppressAutoScroll) return;
+            if (c.scrollTop > 60) return;
+            if (this.hasMoreHistory) {
+                this.loadMoreHistory();
+            } else {
+                this.historyTopReached = true;
+            }
+        },
+        loadMoreHistory() {
+            if (this.isLoadingMore || !this.hasMoreHistory) return;
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+            // 以当前最旧的一条记录作为游标，向后端请求更早的一页
+            let beforeId = null;
+            for (const m of this.messages) {
+                if (m._id != null && (beforeId === null || m._id < beforeId)) beforeId = m._id;
+            }
+            this.isLoadingMore = true;
+            this.ws.send(JSON.stringify({
+                type: 'requestBackLog',
+                before_id: beforeId === null ? 0 : beforeId
+            }));
+        },
         parseContentArray(content) {
-            const result = { text: '', parts: [], contentItems: [] };
+            const result = { contentItems: [] };
             if (!content) return result;
             const items = Array.isArray(content) ? content : (typeof content === 'string' ? [{ type: 'text', text: content }] : []);
             for (const item of items) {
                 if (typeof item === 'string') {
-                    result.text += item;
                     result.contentItems.push({ type: 'text', content: item });
                 } else if (item.type === 'text') {
                     const t = item.text || '';
-                    result.text += t;
                     if (t) result.contentItems.push({ type: 'text', content: t });
                 } else if (item.type === 'image') {
                     const p = { type: 'image', image_id: item.image_url, image_url: null, description: item.description || '' };
-                    result.parts.push(p);
                     result.contentItems.push(p);
                 } else if (item.type === 'video') {
                     const p = { type: 'video', video_url: item.video_url, description: item.description || '' };
-                    result.parts.push(p);
                     result.contentItems.push(p);
                 } else {
                     const t = item.description || item.result || '';
-                    result.text += t;
                     if (t) result.contentItems.push({ type: 'text', content: t });
                 }
             }
@@ -668,9 +1107,6 @@ var main=new Vue({
         },
         resolveAllPartUrls() {
             for (const msg of this.messages) {
-                if (msg.parts && msg.parts.length) {
-                    this.resolvePartUrls(msg.parts);
-                }
                 if (msg.contentItems && msg.contentItems.length) {
                     this.resolvePartUrls(msg.contentItems);
                 }
@@ -684,12 +1120,12 @@ var main=new Vue({
         sendTextMessage() {
             if (this.isWaitingResponse) return;
             const text = this.inputText.trim();
-            if (!text && !this.uploadedImageId) {
+            if (!text) {
                 return;
             }
             const payload = JSON.stringify({
                 type: "message",
-                content: text || "（附带图片消息）",
+                content: text,
                 conversation_id: this.conversationId
             });
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -708,15 +1144,13 @@ var main=new Vue({
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: "generate" }));
                 this.isWaitingResponse = true;
-                this.messages.push({
-                    role: 'assistant',
-                    parts: [],
-                    thinkingSegments: [],
-                    contentItems: [],
-                    imageUrl: null,
-                    imageId: null,
-                });
                 this.scrollToBottom();
+            }
+        },
+		triggerStop() {
+            if (!this.isWaitingResponse) return;
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: "stop" }));
             }
         },
         // 触发文件选择
@@ -769,10 +1203,12 @@ var main=new Vue({
             tipDiv.style.borderRadius = '30px';
             tipDiv.style.fontSize = '12px';
             tipDiv.style.zIndex = 1000;
-            document.body.appendChild(tipDiv);
+            document.querySelector(".messages-container").appendChild(tipDiv);
             setTimeout(() => tipDiv.remove(), 2500);
         },
         scrollToBottom() {
+            // 正在插入更早的历史记录时不要抢滚动位置
+            if (this.suppressAutoScroll) return;
             this.$nextTick(() => {
                 const container = this.$refs.messageContainer;
                 if (container) container.scrollTop = container.scrollHeight;
