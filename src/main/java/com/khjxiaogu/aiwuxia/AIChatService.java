@@ -662,6 +662,19 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO featherjs() throws IOException {
 		return new ResultDTO(200, new File(parent, "feather.min.js"));
 	}
+
+	/**
+	 * HTTP GET端点：返回galgame、trpg、ptrpg、custom四个页面共用的样式表。
+	 *
+	 * @return 包含文件内容的ResultDTO
+	 * @throws IOException 如果文件读取失败
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/chat-common.css")
+	@Adapter
+	public ResultDTO chatCommonCss() throws IOException {
+		return new ResultDTO(200, new File(parent, "chat-common.css"));
+	}
 	@HttpMethod("GET")
 	@HttpPath("/echarts.min.js")
 	@Adapter

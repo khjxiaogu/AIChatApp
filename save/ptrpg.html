@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI智能对话</title>
+	<script src="feather.min.js"></script>
+    <script src="vue.js"></script>
+	
+    <link rel="stylesheet" href="chat-common.css">
+    <style>
+		strong {
+			font-weight: normal;
+		}
+        .front-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .front-layer img {
+            height: 100%;
+            width: auto;
+            display: block;
+            flex-shrink: 0;
+        }
+		@media (min-width: 769px) {
+		    .dialog-layer {
+		        flex-direction: row;
+		    }
+		    .button-group {
+		        display: flex;
+		        flex-direction: row;
+				flex-wrap: wrap;
+		        gap: 8px;
+		    }
+		}
+		@media (max-width: 768px) {
+			.dialog-layer {
+                height: calc( 80vh - 70px );
+            }
+		}
+    </style>
+</head>
+<body>
+    <div id="app" @click="showDialog=true;unlockWebAudio();"  @contextmenu.prevent="showDialog=false">
+        <div class="layer bg-layer">
+            <img :src="bgurl" alt="背景" class="bg-image" v-if="bgurl">
+        </div>
+        <div class="layer fg-layer">
+            <div class="fg-container">
+                <div class="front-layer">
+                    <img :src="flurl" alt="人物" v-if="flurl">
+                </div>
+                <div class="side-layer">
+                    <img :src="fsurl" alt="人物" v-if="fsurl">
+                </div>
+            </div>
+        </div>
+		<div class="layer dialog-layer" :style="{ bottom: inputBarHeight + 'px' }" v-if="!showHistory&&showDialog">
+		    <div class="messages-container" ref="msgContainer">
+		        <div v-for="(msg, idx) in recentMessages"  :key="idx" >
+					<div v-for="msg2 in msg.text.split('\n')">
+						<template v-if="msg2.length>0"><template v-if="msg.title !== '系统'&&msg.title!=''">【{{ msg.title }}】「</template><span v-html="msg.title !== ''?msg2:renderMarkdown(msg2)"></span><template v-if="msg.title !== '系统'&&msg.title!=''">」</template></template>
+					</div>
+				</div>
+		    </div>
+		    <div class="dialog-sidebar">
+		        <div class="typing-area" v-if="typing">
+		            <span class="typing-text">生成中</span>
+		            <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+		        </div>
+		        <div class="button-group">
+		            <button class="btn toolbar-btn" @click="openHistory"><i data-feather="file-text"></i>历史</button>
+		            <button class="btn toolbar-btn" @click="refreshMessages"  v-show="prepared&&!typing"><i data-feather="refresh-ccw"></i>重说</button>
+		            <button class="btn toolbar-btn" @click="undoLastOwn"  v-show="prepared&&!typing"><i data-feather="x"></i>撤回</button>
+		            <button class="btn toolbar-btn" @click="openSettings" v-show="prepared"><i data-feather="settings"></i>设置</button>
+					<button class="btn toolbar-btn" v-show="prepared&&!typing" @click.stop="showDialog=false"><i data-feather="eye-off"></i>隐藏</button>
+					
+					<button class="btn toolbar-btn" v-show="prepared&&!typing&&isVoiceUsable&&messages[messages.length-1].audioId==undefined" @click="triggerRead()"><i data-feather="message-circle"></i>朗读</button>
+				</div>
+		    </div>
+		</div>
+        <div class="layer history-layer" v-if="showHistory"  :style="{ bottom: inputBarHeight + 'px' }">
+            <div class="history-header">
+                <h2><i data-feather="file-text"></i> 历史记录</h2>
+				
+				<span style="display:flex">
+                <button class="close-history" @click="closeHistory"><i data-feather="x"></i></button></span>
+            </div>
+            <div class="history-content" ref="histlay">
+               <table>
+                <tr v-for="(msg, idx) in messages" :key="'hist-'+idx">
+					<td><a v-show="msg.audioId" style="float:right" @click="playSoundWithWebAudio(msg.audioId)"><i data-feather="play-circle"></i></a></td>
+					<td>
+						
+						<div v-for="(msg2,index2) in msg.text.split('\n')">
+							<template v-if="msg.title !== '系统'&&msg.title!=''&&index2==0">【{{ msg.title }}】</template><span v-html="msg.title !== ''?msg2:renderMarkdown(msg2)"></span>
+						</div>
+					</td>
+					
+                </tr>
+                </table>
+            </div>
+        </div>
+				<!-- 设置界面浮层 -->
+		<div class="layer setting-layer" v-if="showSettings" @click.self="closeSettings">
+			<div class="setting-container">
+				<div class="setting-header">
+					<h3><i data-feather="settings"></i> 设置</h3>
+					<button class="close-setting" @click="closeSettings"><i data-feather="x"></i></button>
+				</div>
+				<div class="setting-content">
+					<!-- 模型选择区域 -->
+					<div class="model-selector">
+						<label>选择模型</label>
+						<select v-model="selectedModel" @change="onModelChange">
+							<option value="">默认模型</option>
+							<option v-for="m in availableModels" :key="m.key" :value="m.key">{{ m.name }}</option>
+						</select>
+					</div>
+					<!-- 导出按钮（原功能保留） -->
+					<button class="btn setting-export-btn" @click="exportHistory">
+						<i data-feather="download"></i> 导出对话记录
+						
+					</button>
+					<button class="btn setting-export-btn" @click="exportMemory">
+						<i data-feather="download"></i> 导出记忆
+					</button>
+					<button class="btn setting-export-btn" v-show="isVoiceUsable" @click="setVoiceEnabled(!isVoiceEnabled)"><span v-if="isVoiceEnabled"><i data-feather="volume"></i></span><span v-if="!isVoiceEnabled"><i data-feather="volume-x"></i></span>语音</button>
+					
+				</div>
+			</div>
+		</div>
+        <div class="bottom-input-bar" ref="bottomBar" v-if="prepared">
+            <textarea 
+                ref="messageInput"
+                class="auto-textarea" 
+                placeholder="输入消息..." 
+                v-model="newMessage"
+				
+                @input="adjustTextareaHeight"
+                @keydown.enter.exact.prevent="sendUserMessage" 
+                rows="1"></textarea>
+            <button class="send-btn" @click="sendUserMessage">发送</button>
+        </div>
+    </div>
+
+    <script>
+
+		var pageQueries={};
+		var searchStr = location.toString();
+		searchStr = searchStr.substr(searchStr.indexOf("?")+1);
+		searchStr=searchStr.replace("#","");
+		var searchs = searchStr.split("&");
+		var isFirstSelect=false;
+		for(var i=0;i<searchs.length;i++){
+			var rq = searchs[i].split("=");
+			pageQueries[rq[0]]=rq[1];
+		}
+		feather.replace();
+		let msgs=new Vue({
+		         el: '#app',
+		         data: {
+		             messages: [
+		             ],
+		             newMessage: '',
+		             showHistory: false,
+					 showDialog: true,
+					 typing: false, 
+		             inputBarHeight: 70,  // 初始值，与 CSS min-height 一致
+					 wssocket: undefined,
+					 prepared: false,
+					 isSideLoading: false,
+					 isFrontLoading:false,
+					 isBackLoading:false,
+					 isAnimateBlocking:false,
+					 fsurl:'',
+					 bgurl:'',
+					 flurl:'',
+					 appId:'',
+					 chatId:'',
+					 price:'0.00',
+					 handlerQueue:[],
+					 url:'/aichat',
+					 audioCtx:null,
+					 isUnlocked:false,
+					 isVoiceUsable:false,
+					 isVoiceEnabled:false,
+					 model:"",
+					 showSettings: false,       // 控制设置界面显隐
+					 availableModels: [],       // 可用模型列表
+					 selectedModel: '',
+		         },
+				 computed: {
+				     recentMessages() {
+				         return this.messages.slice(-1);  // 取最后3条
+				     }
+				 },
+		         methods: {
+					initChat(){
+						let aid=pageQueries.chara
+						fetch("querychat?appid="+aid)
+						.then(p=>p.json())
+						.then(p=>{
+							if(p.length>0){
+								document.title="AI"+p[0].app+"-"+p[0].name;
+								this.openApp(aid,p[0].chatid)
+							}else
+								fetch("createid?appid="+aid)
+								.then(p=>p.text())
+								.then(p=>this.openApp(aid,p))
+							
+							
+						})
+					},
+					renderMarkdown(mdt){
+						if(!mdt)return mdt;
+					  let text = mdt.replace(/```[\s\S]*?```/g, '')
+											 .replace(/`([^`]+)`/g, '$1');
+					  // 去掉标题（# 等）
+					  text = text.replace(/^#{1,6}\s+/gm, '');
+					  // 去掉粗体/斜体
+					  text = text.replace(/(\*\*|__)(.*?)\1/g, '$2')
+								 .replace(/(\*|_)(.*?)\1/g, '$2');
+					  // 去掉链接 [text](url) → text
+					  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+					  // 去掉图片 ![alt](url) → alt（或空）
+					  text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+					  // 去掉行内 HTML 标签（可选，简单去除）
+					  text = text.replace(/<[^>]+>/g, '');
+					  // 去掉引用符号 >
+					  text = text.replace(/^\s*>\s+/gm, '');
+					  // 去掉列表标记（-、*、+、数字.）
+					  text = text.replace(/^(\s*[-*+]\s+|\s*\.\s+)/gm, '');
+					  // 清理多余空行
+					  text = text.replace(/\n{2,}/g, '\n\n');
+					  return text.trim();
+					},
+					speak(sent){
+						if(sent=="")return;
+						this.wssocket.send(JSON.stringify({message:sent}));
+					},
+					setVoiceEnabled(nw){
+						this.wssocket.send(JSON.stringify({operation:"setVoiceEnabled",voiceEnabled:nw}));
+						this.unlockWebAudio();
+					},
+					setSideImage(newSrc) {
+					    // 如果新地址与当前相同且图片已加载
+					    if (newSrc === this.fsurl && !this.isSideLoading) {
+					        return;
+					    }
+						if (newSrc == ''){
+							this.fsurl = ''
+							return;
+						}
+					    // 设置加载状态
+					    // 创建一个新Image对象预加载图片
+					    const img = new Image();
+					    img.onload = () => {
+							if(this.isSideLoading){
+								this.isSideLoading = false;
+								this.fsurl = newSrc;
+							}
+							this.notifyProcessQueue();
+					    };
+					    img.onerror = (err) => {
+					        this.isSideLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+					    // 开始加载（设置src会触发请求）
+						this.isSideLoading = true;
+					    img.src = newSrc;
+					},
+					setFrontImage(newSrc) {
+					    // 如果新地址与当前相同且图片已加载
+					    if (newSrc === this.flurl && !this.isFrontLoading) {
+					        return;
+					    }
+						if (newSrc == ''){
+							this.flurl = ''
+							return;
+						}
+					    // 设置加载状态
+					    // 创建一个新Image对象预加载图片
+					    const img = new Image();
+					    img.onload = () => {
+							if(this.isFrontLoading){
+								this.isFrontLoading = false;
+								this.flurl = newSrc;
+							}
+							this.notifyProcessQueue();
+					    };
+					    img.onerror = (err) => {
+					        this.isFrontLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+					    // 开始加载（设置src会触发请求）
+						this.isFrontLoading = true;
+					    img.src = newSrc;
+					},
+					setBackImage(newSrc) {
+					    // 如果新地址与当前相同且图片已加载
+					    if (newSrc === this.bgurl && !this.isBackLoading) {
+					        return;
+					    }
+						if (newSrc == ''){
+							this.bgurl = ''
+							return;
+						}
+					    // 设置加载状态
+					    
+					    // 创建一个新Image对象预加载图片
+					    const img = new Image();
+					    img.onload = () => {
+							if(this.isBackLoading){
+								this.isBackLoading = false;
+								this.bgurl = newSrc;
+							}
+							this.notifyProcessQueue();
+					    };
+					    img.onerror = (err) => {
+					        this.isBackLoading = false;
+					        console.error('图片加载失败', err);
+					    };
+					    // 开始加载（设置src会触发请求）
+						this.isBackLoading = true;
+					    img.src = newSrc;
+					},
+					exportHistory(){
+						const form = document.createElement('form');
+						form.method = 'POST';
+						form.action = "exportChat?app="+this.appId+"&chatid="+this.chatId+"&uid="+pageQueries.userId;
+						form.target = 'downloadFrame'; // 指定 iframe
+
+						// 添加隐藏的 iframe（若不存在）
+						let iframe = document.getElementById('downloadFrame');
+						if (!iframe) {
+						iframe = document.createElement('iframe');
+						iframe.id = 'downloadFrame';
+						iframe.name = 'downloadFrame';
+						iframe.style.display = 'none';
+						document.body.appendChild(iframe);
+						}
+
+						document.body.appendChild(form);
+						form.submit();
+						document.body.removeChild(form); // 提交后移除表单
+					},
+					exportMemory(){
+						const form = document.createElement('form');
+						form.method = 'POST';
+						form.action = "exportMemory?app="+this.appId+"&chatid="+this.chatId+"&uid="+pageQueries.userId;
+						form.target = 'downloadFrame';
+						let iframe = document.getElementById('downloadFrame');
+						if (!iframe) {
+						    iframe = document.createElement('iframe');
+						    iframe.id = 'downloadFrame';
+						    iframe.name = 'downloadFrame';
+						    iframe.style.display = 'none';
+						    document.body.appendChild(iframe);
+						}
+						document.body.appendChild(form);
+						form.submit();
+						document.body.removeChild(form);
+					},
+					open(done){
+						this.isSideLoading=false;
+						this.isFrontLoading=false;
+						this.isBackLoading=false;
+						this.isAnimateBlocking=false;
+						this.typing=false;
+						let _this=this;
+						this.wssocket=new WebSocket((location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId);
+						this.wssocket.onopen=function(){
+							_this.prepared=true;
+							window.onbeforeunload = function() {
+							    this.wssocket.onclose = function () {}; // disable onclose handler first
+							    this.wssocket.close();
+							};
+							
+							_this.wssocket.onerror=function(ev){
+								_this.wssocket.onerror=function(){};
+								console.info(ev);
+								setTimeout(_this.open,500);
+								_this.prepared=false;
+								
+							}
+							if(done)
+								done();
+							fetch("querychat?appid="+_this.appId)
+								.then(p=>p.json())
+								.then(p=>{
+									if(p.length>0){
+										document.title="AI-"+p[0].app+"-"+p[0].name;
+									}
+								})
+						};
+						this.wssocket.onclose=function(ev){var rev=ev?ev:event;setTimeout(_this.open,500);_this.prepared=false;if(rev.reason!="")alert(rev.reason);}
+						this.wssocket.onerror=function(ev){console.info(ev);_this.wssocket.onclose=function(){};_this.prepared=false;alert("连接服务器失败！");};
+						this.wssocket.onmessage = function(ev) {
+							var rev=ev?ev:event;
+							var param=eval("("+rev.data+")");
+
+							if(param.scene!=undefined){
+								let scene_data='';
+								if(param.scene_data){
+									scene_data="resource/"+param.scene_data;
+								}
+								if(param.scene=='front')
+									_this.setFrontImage(scene_data)
+								if(param.scene=='side')
+									_this.setSideImage(scene_data)
+								if(param.scene=='back')
+									_this.setBackImage(scene_data)
+								
+							}
+							if(param.sendbox!=undefined){
+								_this.newMessage=param.sendbox;
+							}
+							if(param.isVoiceEnabled!=undefined)
+								_this.isVoiceEnabled=param.isVoiceEnabled;
+							if(param.notice!=undefined)
+								alert(param.notice);
+							if(param.input!=undefined){
+								var text=prompt(param.prompt);
+								if(text!=null&&text!="")
+									_this.wssocket.send(JSON.stringify({operation:"prompt",input:param.input,content:text}));
+								
+							}
+							
+							if(param.models!=undefined){
+								_this.availableModels=param.models
+							}
+							if(param.model!=undefined){
+								_this.model=param.model
+							}
+							if(param.isVoiceUsable!=undefined){
+								_this.isVoiceUsable=param.isVoiceUsable;
+							}
+							if(param.audioId!=undefined){
+								_this.playSoundWithWebAudio(param.audioId);
+							
+							}
+							if(param.price!=undefined){
+								console.info(param.price)
+								_this.price=param.price.substr(0,param.price.indexOf(".")+3);
+							}
+							_this.handlerQueue.push(param)
+							_this.notifyProcessQueue();
+								
+						};
+					},
+					notifyProcessQueue(){
+						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.isAnimateBlocking){
+							this.processQueue();
+						}
+					},
+					processQueue(){
+						
+						while(this.handlerQueue.length>0){
+							this.handleTextMessage(this.handlerQueue.shift());
+							if(this.isSideLoading||this.isFrontLoading||this.isBackLoading||this.isAnimateBlocking)
+								break;
+						}
+						
+					},
+					handleTextMessage(message){
+						if(message.delta!=undefined){
+							this.appendMsg(message.id,message.delta);
+						}
+						if(message.remove!=undefined){
+							this.removeMessage(message.remove);
+						}
+						if(message.message!=undefined){
+							let messageContent=message.message;
+							let _this=this;
+							var ch=0;
+							this.addMessage(message.id,message.title,"");
+							var func=() => {
+								if(ch>=messageContent.length||!_this.isAnimateBlocking){
+									_this.isAnimateBlocking=false;
+									_this.notifyProcessQueue();
+									return;
+								}
+								_this.appendMsg(message.id,messageContent[ch]);
+								ch++;
+								setTimeout(func,50);
+							}
+							this.isAnimateBlocking=true;
+							func(); // 每个字符间隔50ms
+						}
+						if(message.messages!=undefined){
+							this.messages.splice(0,this.messages.length)
+							for(var i=0;i<message.messages.length;i++){
+								
+								this.addMessage(message.messages[i].id,message.messages[i].title,message.messages[i].message,message.messages[i].audioId);
+							}
+							console.info(message.messages.length)
+						}
+						if(message.audioId!=undefined){
+							this.setAudioId(message.id,message.audioId);
+						}
+						if(message.status!=undefined)
+							this.typing=(message.status==1);
+					},
+					openApp(app,id,done){
+						if(this.wssocket){
+							this.wssocket.onclose=function(){};
+							this.wssocket.close();
+							}
+						this.chatId=id;
+						this.appId=app;
+						this.messages.splice(0,this.messages.length);
+						this.open(done);
+					},
+					triggerRead(){
+						this.wssocket.send(JSON.stringify({operation:"genVoice"}));
+					},
+					// ...原有方法
+					refreshMessages() {
+						this.wssocket.send(JSON.stringify({operation:"regen"}));
+					},
+					undoLastOwn() {
+					    // 查找最后一个自己发送的消息并删除
+						this.wssocket.send(JSON.stringify({operation:"revert"}));
+					},
+					// 可以添加一个方法来切换typing状态，或由其他事件触发
+					toggleTyping() {
+					    this.typing = !this.typing;
+					},
+		             // 调整 textarea 高度，并更新底部输入栏的整体高度
+		             adjustTextareaHeight() {
+		                 this.$nextTick(() => {
+		                     const textarea = this.$refs.messageInput;
+		                     if (!textarea) return;
+		                     // 重置高度，再设置为 scrollHeight
+		                     textarea.style.height = 'auto';
+		                     textarea.style.height = textarea.scrollHeight + 'px';
+
+		                     // 获取整个底部栏的高度并更新 data
+		                     const bottomBar = this.$refs.bottomBar;
+		                     if (bottomBar) {
+		                         this.inputBarHeight = bottomBar.offsetHeight;
+		                     }
+		                 });
+		             },
+		             // 发送消息
+		             addMessage(id,title,text,aid) {
+		                 this.messages.push({ text: text, title: title, id: id , audioId:aid });
+		                 // 重置 textarea 高度并更新底部栏高度
+		                 this.$nextTick(() => {
+		                     const textarea = this.$refs.messageInput;
+		                     if (textarea) {
+		                         textarea.style.height = 'auto';
+		                         textarea.style.height = textarea.scrollHeight + 'px';
+		                     }
+		                     const bottomBar = this.$refs.bottomBar;
+		                     if (bottomBar) {
+		                         this.inputBarHeight = bottomBar.offsetHeight;
+		                     }
+		                     // 滚动消息容器到底部
+		                     const container = this.$refs.msgContainer;
+		                     if (container) container.scrollTop = container.scrollHeight;
+		                 });
+		             },
+					 setAudioId(id,audioId){
+						for(var i=0;i<this.messages.length;i++){
+							if(this.messages[i].id==id){
+								this.messages[i].audioId=audioId;
+								break;
+							}
+						}
+					 
+					 },
+					 unlockWebAudio() {
+						if (this.audioCtx && this.audioCtx.state === 'running') return;
+						
+						// 创建 AudioContext（需在用户手势中）
+						this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+						
+						// 创建一个极短的静音缓冲区来启动上下文
+						const buffer = this.audioCtx.createBuffer(1, 1, 22050);
+						const source = this.audioCtx.createBufferSource();
+						source.buffer = buffer;
+						source.connect(this.audioCtx.destination);
+						source.start();
+						console.log('Web Audio 尝试解锁');
+						// 如果上下文是 suspended 状态，则恢复
+						if (this.audioCtx.state === 'suspended') {
+							this.audioCtx.resume().then(() => {
+								isUnlocked = true;
+								console.log('Web Audio 已解锁');
+							});
+						} else {
+							isUnlocked = true;
+						}
+					},
+					playSoundWithWebAudio(url) {
+						if (!isUnlocked || !this.audioCtx) return;
+						
+						fetch("voice/"+url+".mp3")
+							.then(response => response.arrayBuffer())
+							.then(arrayBuffer => this.audioCtx.decodeAudioData(arrayBuffer))
+							.then(audioBuffer => {
+								const source = this.audioCtx.createBufferSource();
+								source.buffer = audioBuffer;
+								source.connect(this.audioCtx.destination);
+								source.start();
+							});
+					},
+					 appendMsg(id,msg){
+						for(var i=0;i<this.messages.length;i++){
+							if(this.messages[i].id==id){
+								this.messages[i].text+=msg;
+								break;
+							}
+						}
+						this.$nextTick(() => {
+		                     const textarea = this.$refs.messageInput;
+		                     if (textarea) {
+		                         textarea.style.height = 'auto';
+		                         textarea.style.height = textarea.scrollHeight + 'px';
+		                     }
+		                     const bottomBar = this.$refs.bottomBar;
+		                     if (bottomBar) {
+		                         this.inputBarHeight = bottomBar.offsetHeight;
+		                     }
+		                     // 滚动消息容器到底部
+		                     const container = this.$refs.msgContainer;
+		                     if (container) container.scrollTop = container.scrollHeight;
+		                 });
+					},
+					 removeMessage(id){
+						for(var i=0;i<this.messages.length;i++){
+							if(this.messages[i].id==id){
+								this.messages.splice(i,1);
+								break;
+							}
+						}
+						if(this.messages.length<4)
+							this.requestHistory();
+					 },
+					 sendMessage(content){
+						if(!this.typing)
+							this.speak(content);
+					 },
+					 sendUserMessage(content){
+						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.typing){
+							if(this.newMessage!=''&&this.wssocket!=undefined&&this.wssocket.readyState==1){
+	 							this.sendMessage(this.newMessage);
+								this.typing=true;
+							}
+						}
+	 				 },
+					 requestHistory(){
+						var data={requestBackLog:true}
+						this.wssocket.send(JSON.stringify(data));
+					 },
+		             openHistory() {
+		                 this.showHistory = true;
+						  this.$nextTick(() => {
+						 this.$refs["histlay"].scrollTop= this.$refs["histlay"].scrollHeight;
+						 });
+		             },
+		             closeHistory() {
+		                 this.showHistory = false;
+		             },
+					 openSettings() {
+						this.showSettings = true;
+						// 同步当前 model 值到下拉框
+						this.selectedModel = this.model || '';
+					},
+					// 关闭设置界面
+					closeSettings() {
+						this.showSettings = false;
+					},
+					// 模型切换时调用接口
+					onModelChange() {
+						const modelValue = this.selectedModel;   // 空字符串代表默认
+						// 更新 data.model
+						if (!this.wssocket) return;
+						this.wssocket.send(JSON.stringify({operation:"model",model:modelValue}));
+					},
+		         },
+		         watch: {
+		             messages: {
+		                 handler() {
+		                     this.$nextTick(() => {
+		                         const container = this.$refs.msgContainer;
+		                         if (container) container.scrollTop = container.scrollHeight;
+		                     });
+		                 },
+		                 deep: true
+		             }
+		         },
+		         mounted() {
+		             // 初始化：滚动消息到底部，计算输入栏高度
+		             this.$nextTick(() => {
+		                 const container = this.$refs.msgContainer;
+		                 if (container) container.scrollTop = container.scrollHeight;
+		                 this.adjustTextareaHeight();
+		             });
+		         }
+		     });
+		setTimeout(msgs.initChat,500)
+    </script>
+
+    <!-- 说明：底部输入框始终可见，且z-index最高。对话框和历史图层都预留了bottom:70px空间，不会被遮挡 -->
+</body>
+</html>

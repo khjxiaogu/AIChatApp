@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>用量统计</title>
+    <title>用量统计 · 模型价格</title>
     <script src="feather.min.js"></script>
     <script src="vue.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <style>
+        /* ===== 基础样式 (源自 html1) ===== */
         * {
             margin: 0;
             padding: 0;
@@ -36,7 +37,6 @@
             padding: 20px 18px;
             margin-bottom: 20px;
             transition: all 0.2s ease;
-            
         }
 
         .card-header {
@@ -145,7 +145,7 @@
             background: #eef2f6;
             margin: 12px 0 8px 0;
         }
-        /* 刷新按钮 */
+
         .refresh-btn {
             background: white;
             border: 1px solid #cbd5e1;
@@ -196,7 +196,6 @@
             font-size: 13px;
         }
 
-        /* 免费与付费配色 */
         .free-color {
             color: #3b82f6;
         }
@@ -204,7 +203,7 @@
             color: #f97316;
         }
 
-        /* CDK 兑换区域样式 */
+        /* CDK 兑换区域 */
         .cdk-section {
             margin-top: 16px;
             padding-top: 12px;
@@ -283,10 +282,160 @@
             }
         }
 
-        /* 简单图标占位 */
         .icon-em {
             font-weight: 600;
             font-style: normal;
+        }
+
+        /* ===== 合并自 html2 的模型价格表格样式 (适配卡片) ===== */
+        .price-card-inner {
+            /* 原 .price-card 内部样式微调，作为卡片内容 */
+        }
+        .conversion-badge {
+            background: #f0f4fe;
+            border-left: 4px solid #2b5fd9;
+            padding: 16px 20px;
+            border-radius: 18px;
+            margin-bottom: 24px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .conversion-text {
+            display: flex;
+            align-items: center;
+            gap: 8px 24px;
+            flex-wrap: wrap;
+        }
+        .conversion-text strong {
+            font-size: 1.2rem;
+            background: #1a3fb0;
+            color: white;
+            padding: 4px 16px;
+            border-radius: 40px;
+            font-weight: 500;
+        }
+        .conversion-text .formula {
+            color: #1f2a4a;
+            background: #e9ecf5;
+            padding: 6px 16px;
+            border-radius: 30px;
+            font-size: 0.95rem;
+        }
+        .discount-note {
+            background: #fff6e0;
+            border-radius: 40px;
+            padding: 6px 18px;
+            color: #a86800;
+            font-weight: 500;
+            font-size: 0.9rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .discount-note i {
+            font-size: 1.2em;
+        }
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 8px 0 16px;
+            border-radius: 20px;
+            border: 1px solid #e2e7f0;
+            background: white;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 680px;
+            white-space: nowrap;
+        }
+        th {
+            text-align: left;
+            padding: 18px 16px;
+            background: #fafbff;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            color: #2c3e68;
+            border-bottom: 2px solid #d9e0eb;
+        }
+        td {
+            padding: 10px 16px;
+            border-bottom: 1px solid #eaedf2;
+            color: #121f3f;
+            font-size: 1rem;
+        }
+        tr:last-child td {
+            border-bottom: none;
+        }
+        .model-name {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .badge-doubao {
+            background: #fdefd4;
+            color: #b55f0a;
+            font-size: 0.7rem;
+            font-weight: 500;
+            padding: 2px 10px;
+            border-radius: 30px;
+            margin-left: 6px;
+            white-space: nowrap;
+        }
+        .price-unit {
+            font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
+            font-weight: 500;
+        }
+        .price-number {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #0b1c3a;
+        }
+        .price-sub {
+            color: #5b6f8c;
+            font-size: 0.8rem;
+            margin-left: 6px;
+            font-weight: 400;
+        }
+        .footnote {
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px dashed #cbd2e0;
+            color: #3e4e6b;
+            font-size: 0.9rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px 36px;
+			flex-direction: column;
+        }
+        .footnote-item {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+        .asterisk {
+            color: #c75200;
+            font-weight: 700;
+            margin-right: 4px;
+        }
+        .highlight {
+            background: #eef6ff;
+            border-radius: 12px;
+        }
+        .model-group-header {
+            background-color: #f8faff;
+        }
+        /* 确保卡片内标题与整体协调 */
+        .card .conversion-badge {
+            margin-top: 4px;
+        }
+        /* 兼容移动端表格 */
+        @media (max-width: 640px) {
+            .conversion-text strong { font-size: 1rem; }
         }
     </style>
 </head>
@@ -309,9 +458,9 @@
             <div class="card">
                 <div class="card-header">
                     <span>今日用量总览</span>
-					 <button class="refresh-btn" @click="location.href='index'">
-                    <i data-feather="home"></i> 返回主页
-                </button>
+                    <button class="refresh-btn" @click="location.href='index'">
+                        <i data-feather="home"></i> 返回主页
+                    </button>
                 </div>
                 <div class="stats-grid">
                     <div class="stat-item" style="background: #f0f9ff;">
@@ -342,11 +491,10 @@
                             今日补充配额使用量
                         </div>
                         <div class="flex-between" style="margin-bottom: 8px;">
-                        <span class="stat-number" style="font-size: 26px; color:#ea580c;">
-                            {{ formatNumber(paidCost)}} <span class="stat-unit">Token</span>
-                           
-                        </span>
-                         <span class="badge">已用补充配额</span>
+                            <span class="stat-number" style="font-size: 26px; color:#ea580c;">
+                                {{ formatNumber(paidCost)}} <span class="stat-unit">Token</span>
+                            </span>
+                            <span class="badge">已用补充配额</span>
                         </div>
                         
                         <div class="cdk-section">
@@ -366,7 +514,6 @@
                     </div>
                 </div>
 
-                <!-- 附加关键数值摘要 (剩余付费额度已在上面展示) -->
                 <div style="margin-top: 12px; background: #f1f5f9; border-radius: 20px; padding: 10px 12px; font-size: 12px; display: flex; justify-content: space-between;">
                     <span>基础配额总额: {{ formatNumber(freeTotal) }}</span>
                     <span>累计基础配额已用: {{ formatNumber(freeCost) }}</span>
@@ -374,7 +521,7 @@
                 </div>
             </div>
 
-            <!-- 近30日用量统计柱状图 (堆叠柱状图：免费+付费) -->
+            <!-- 近30日用量统计柱状图 -->
             <div class="card">
                 <div class="card-header">
                     <span>近30日用量趋势</span>
@@ -386,139 +533,264 @@
                     <span style="display: inline-block; width: 12px; height: 12px; background: #f97316; border-radius: 2px;"></span> 补充配额
                 </div>
             </div>
+
+            <!-- ===== 合并自 html2：模型价格倍率卡片 ===== -->
+            <div class="card">
+                <div class="card-header">
+                    <span>模型消耗倍率</span>
+                    <span style="font-size: 13px; font-weight: normal; margin-left: auto; color: #5b6e8c;">配额 / token</span>
+                </div>
+
+                <!-- 价格表格 -->
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>模型</th>
+                                <th>输出</th>
+                                <th>输入</th>
+                                <th>缓存输入</th>
+                                <th>平均对话消耗</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="model in modelList" :key="model.id" :class="{ 'highlight': model.isDoubao }">
+                                <td>
+                                    <div class="model-name">
+                                        {{ model.displayName }}
+                                    </div>
+                                    <div style="font-size:0.8rem; color:#64748b; margin-top:4px;" v-if="model.originalNote">
+                                        {{ model.originalNote }}
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="price-number">{{ formatQuota(model.outputPrice) }}</span>
+                                    <span class="price-sub">配额</span>
+                                    <div style="font-size:0.75rem; color:#7c8aa5;">≈ {{ model.outputPrice }}/1M</div>
+                                </td>
+                                <td>
+                                    <span class="price-number">{{ formatQuota(model.inputPrice) }}</span>
+                                    <span class="price-sub">配额</span>
+                                    <div style="font-size:0.75rem; color:#7c8aa5;">≈ {{ model.inputPrice }}/1M</div>
+                                </td>
+                                <td>
+                                    <span class="price-number">{{ formatQuota(model.cachePrice) }}</span>
+                                    <span class="price-sub">配额</span>
+                                    <div style="font-size:0.75rem; color:#7c8aa5;">≈ {{ model.cachePrice }}/1M</div>
+                                </td>
+								<td>
+                                    <span class="price-number">{{ (model.cachePrice*model.tokenizer*42000+model.inputPrice*600+model.outputPrice*500)/2 }}</span>
+                                    <span class="price-sub">配额</span>
+                                    <div style="font-size:0.75rem; color:#7c8aa5;">≈ {{ (model.cachePrice*model.tokenizer*42000+model.inputPrice*600+model.outputPrice*model.tokenizer*500)/1000000 }}</div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 脚注说明 -->
+                <div class="footnote">
+                    <div class="footnote-item">
+                        <span class="asterisk">*</span> 
+                        <span><strong>豆包 Seed2 系列</strong> (轻量/普通/专业) 标注消耗为<strong>消耗上限</strong>，实际消耗会根据上下文实际长度享有一定折扣，具体以实时消耗数据为准。</span>
+                    </div>
+                    <div class="footnote-item">
+                        <span class="asterisk">*</span> 
+                        <span><strong>Deepseek V4 系列</strong>高峰期为北京时间9:00-12:00和14:00-18:00，期间费用双倍消耗。</span>
+                    </div>
+                    <div class="footnote-item">
+                        <span class="asterisk">*</span> 
+                        <span>多轮对话中重复的历史消息所消耗的token可按<strong>缓存输入</strong>计算消耗，但是每个模型缓存是独立的，切换模型需要重新缓存。</span>
+                    </div>
+                    <div class="footnote-item">
+                        <span class="asterisk">*</span> 
+                        <span>在使用<strong>推理模型</strong>时，模型会产生构思内容，为了沉浸感，这部分内容不会显示在对话之中，但是推理内容仍需按照输出消耗配额 </span>
+                    </div>
+					<div class="footnote-item">
+                        <span class="asterisk">*</span> 
+                        <span><strong>平均消耗</strong>为根据历史统计数据计算的每次对话平均配额消耗，实际平均值取决于具体对话情况，该数值仅供参考</span>
+                    </div>
+					<div class="footnote-item">
+                        <span class="asterisk">*</span> 
+                        <span><strong>语音合成</strong>限时免额度，每句只需要消耗约250配额进行语气推理。</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
 
 <script>
-	var pageQueries={};
-	var searchStr = location.toString();
-	searchStr = searchStr.substr(searchStr.indexOf("?")+1);
-	searchStr=searchStr.replace("#","");
-	var searchs = searchStr.split("&");
-	var isFirstSelect=false;
-	for(var i=0;i<searchs.length;i++){
-		var rq = searchs[i].split("=");
-		pageQueries[rq[0]]=rq[1];
-	}
-	feather.replace();
-	async function fetchDailyUsage(start,end) {
-		
-		return fetch("useHistory?uid="+pageQueries.uid+"&start="+start+"&end="+end)
-		.then(p=>{
-			if (p.status === 200) {
-					return p.json();
-			    } else {
-			    	return p.text().then(r=>{return Promise.reject(r);});
-			    }
-			
-		})
-	}
-	async function fetchTodayUsage() {
-		
-		return fetch("useToday?uid="+pageQueries.uid)
-		.then(p=>{
-			if (p.status === 200) {
-					return p.json();
-			    } else {
-			    	return p.text().then(r=>{return Promise.reject(r);});
-			    }
-			
-		})
-	}
-	
-	// 模拟CDK兑换接口（实际开发时替换为真实接口）
-	async function exchangeCdkApi(cdkCode) {
-		// 此处模拟后端API调用，实际应替换为真实fetch请求
-		// 示例：return fetch("/exchangeCdk", { method: "POST", body: JSON.stringify({uid, cdkCode}) })
-		return fetch("redeem?uid="+pageQueries.uid+"&cdk="+cdkCode)
-		.then(p=>{
-			if (p.status === 200) {
-					return p.text();
-			    } else {
-			    	return p.text().then(r=>{return Promise.reject(r);});
-			    }
-			
-		})
-	}
+    var pageQueries = {};
+    var searchStr = location.toString();
+    searchStr = searchStr.substr(searchStr.indexOf("?") + 1);
+    searchStr = searchStr.replace("#", "");
+    var searchs = searchStr.split("&");
+    for (var i = 0; i < searchs.length; i++) {
+        var rq = searchs[i].split("=");
+        pageQueries[rq[0]] = rq[1];
+    }
+    feather.replace();
 
-    var vue=new Vue({
+    async function fetchDailyUsage(start, end) {
+        return fetch("useHistory?uid=" + pageQueries.uid + "&start=" + start + "&end=" + end)
+            .then(p => {
+                if (p.status === 200) {
+                    return p.json();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
+    async function fetchTodayUsage() {
+        return fetch("useToday?uid=" + pageQueries.uid)
+            .then(p => {
+                if (p.status === 200) {
+                    return p.json();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
+    async function exchangeCdkApi(cdkCode) {
+        return fetch("redeem?uid=" + pageQueries.uid + "&cdk=" + cdkCode)
+            .then(p => {
+                if (p.status === 200) {
+                    return p.text();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
+    var vue = new Vue({
         el: '#app',
         data() {
             return {
                 loading: true,
                 error: null,
-                // 后端数据
-                tokenRemaining: null,    // { freeTotal, paidRemaining, freeCost, paidCost }
-                dailyUsageList: [],      // [{ date, freeUsed, paidUsed }]
+                tokenRemaining: null,
+                dailyUsageList: [],
                 chartInstance: null,
-                // CDK兑换相关
                 cdkCode: '',
                 exchangeLoading: false,
                 cdkMessage: '',
-                cdkMessageType: 'info'   // 'info' or 'error'
+                cdkMessageType: 'info',
+                modelList: [
+                    {
+                        id: 'deepseek-flash',
+                        displayName: 'Deepseek v4.1 对话',
+                        outputPrice: 4.5,
+                        inputPrice: 1.5,
+                        cachePrice: 0.05,
+                        originalNote: '高峰期双倍价格',
+						tokenizer:0.6
+                    },
+					{
+                        id: 'deepseek-Pro',
+                        displayName: 'Deepseek v4.1 专业',
+                        outputPrice: 13.5,
+                        inputPrice: 4.5,
+                        cachePrice: 0.15,
+                        originalNote: '高峰期双倍价格',
+						tokenizer:0.6
+                    },
+					{
+                        id: 'deepseek-3.',
+                        displayName: 'Deepseek v3.2',
+                        outputPrice: 6.0,
+                        inputPrice: 4.0,
+                        cachePrice: 0.4,
+                        originalNote: '',
+						tokenizer:0.6
+                    },
+                    {
+                        id: 'grok',
+                        displayName: 'Grok',
+                        outputPrice: 17.5,
+                        inputPrice: 8.75,
+                        cachePrice: 1.4,
+                        originalNote: '',
+						tokenizer:1
+                    },
+                    {
+                        id: 'doubao-lite',
+                        displayName: '豆包 Seed2 · 轻量',
+                        outputPrice: 4.0,
+                        inputPrice: 0.4,
+                        cachePrice: 0.08,
+                        originalNote: '价格上限 · 实际有折扣',
+						tokenizer:0.6
+                    },
+                    {
+                        id: 'doubao-normal',
+                        displayName: '豆包 Seed2 · 普通',
+                        outputPrice: 5.4,
+                        inputPrice: 0.9,
+                        cachePrice: 0.18,
+                        originalNote: '价格上限 · 实际有折扣',
+						tokenizer:0.6
+                    },
+                    {
+                        id: 'doubao-pro',
+                        displayName: '豆包 Seed2 · 专业',
+                        outputPrice: 24.0,
+                        inputPrice: 4.8,
+                        cachePrice: 0.96,
+                        originalNote: '价格上限 · 实际有折扣',
+						tokenizer:0.6
+                    }
+                ]
             };
         },
         computed: {
-            // 免费总额度
             freeTotal() {
                 return this.tokenRemaining ? this.tokenRemaining.freeTotal : 0;
             },
-            // 累计免费已用量
             freeCost() {
                 return this.tokenRemaining ? this.tokenRemaining.freeCost : 0;
             },
-            // 剩余免费额度
             freeRemaining() {
                 return Math.max(0, this.freeTotal - this.freeCost);
             },
-            // 免费使用占比 (累计)
             freeUsagePercent() {
                 if (this.freeTotal <= 0) return 0;
                 let percent = (this.freeCost / this.freeTotal) * 100;
                 return Math.min(100, percent.toFixed(1));
             },
-            // 剩余付费额度
             paidRemaining() {
                 return this.tokenRemaining ? this.tokenRemaining.paidRemaining : 0;
             },
             paidCost() {
                 return this.tokenRemaining ? this.tokenRemaining.paidCost : 0;
             },
-            // 累计付费消耗 (总付费额度 - 剩余付费额度) 但需要从历史中汇总，展示用
             totalPaidConsumed() {
                 if (!this.dailyUsageList.length) return 0;
                 return this.dailyUsageList.reduce((sum, day) => sum + (day.paidUsed || 0), 0);
             },
-            // 今日数据 (从dailyUsageList中获取最后一条，因为最后一条日期就是今天)
             todayData() {
                 if (!this.dailyUsageList.length) return { freeUsed: 0, paidUsed: 0, date: '' };
-                // 确保最后一个日期是今天 (mock生成保证)
                 return this.dailyUsageList[this.dailyUsageList.length - 1];
             },
-            // 今日免费使用量
             todayFreeUsed() {
                 return this.todayData.freeUsed || 0;
             },
-            // 今日付费使用量
             todayPaidUsed() {
                 return this.todayData.paidUsed || 0;
             },
-            // 今日免费使用量 / 免费总额度 的百分比 (当日免费额度使用量/总量)
             todayFreePercent() {
                 if (this.freeTotal <= 0) return 0;
                 let percent = (this.todayFreeUsed / this.freeTotal) * 100;
                 return percent.toFixed(1);
             },
-            // 准备柱状图所需数据: xAxis日期列表, 免费系列, 付费系列
             chartData() {
                 if (!this.dailyUsageList.length) return { dates: [], freeSeries: [], paidSeries: [] };
                 const dates = [];
                 const freeData = [];
                 const paidData = [];
-                // 为了柱状图美观，只展示近30天，直接使用全部
                 this.dailyUsageList.forEach(item => {
-                    // 格式化日期显示为 MM-dd 更紧凑
                     const parts = item.date.split('-');
                     const shortDate = `${parts[1]}/${parts[2]}`;
                     dates.push(shortDate);
@@ -554,58 +826,59 @@
                 if (num === undefined || num === null) return '0';
                 return Number(num).toLocaleString('zh-CN');
             },
-       	    pad(n) {
-				return n.toString().padStart(2, '0');
+            pad(n) {
+                return n.toString().padStart(2, '0');
             },
-			formatDate(date) {
-       	        const y = date.getFullYear();
-       	        const m = this.pad(date.getMonth() + 1);
-       	        const d = this.pad(date.getDate());
-       	        return `${y}-${m}-${d}`;
-       	    },
+            formatDate(date) {
+                const y = date.getFullYear();
+                const m = this.pad(date.getMonth() + 1);
+                const d = this.pad(date.getDate());
+                return `${y}-${m}-${d}`;
+            },
+            formatQuota(priceInYuan) {
+                if (priceInYuan === undefined || priceInYuan === null) return '—';
+                const quotaPerToken = priceInYuan * 0.5;
+                let formatted = quotaPerToken.toFixed(6).replace(/\.?0+$/, '');
+                if (formatted === '' || formatted === '-') formatted = '0';
+                return formatted;
+            },
             loadData() {
                 this.loading = true;
-               	fetchTodayUsage().then(data=>{
-               		this.tokenRemaining = data;
-               		this.loading = false;
-               	    const now = new Date();
-               	    const year = now.getFullYear();
-               	    const month = now.getMonth(); // 0-11
-               	    // 本月初：月份的第一天 00:00:00
-               	    const startDate = new Date(year, month, 1, 0, 0, 0, 0);
-               	    // 本月末：下个月的第一天减去1毫秒
-               	    const endDate = new Date(year, month + 1, 1, 0, 0, 0, 0);
-               	 	endDate.setDate(-1)
-               	    
-               		fetchDailyUsage(this.formatDate(startDate),this.formatDate(endDate)).then(data=>{
-						var datum={}
-						for(let o of data)
-							datum[o.date]=o
-               			
-						var list=[];
-               	        // 生成从 today - days + 1 到 today 的日期
-               	        for (let i = 1; i <endDate.getDate(); i++) {
-               	            const date = new Date(now);
-               	            date.setDate(i);
-               	            const dateStr=this.formatDate(date);
-               	            const dat=datum[dateStr]||{}
-               	            list.push({
-               	                date: dateStr,
-               	                freeUsed: dat.freeUsed||0,
-               	                paidUsed: dat.paidUsed||0
-               	            });
-               	        }
-                   		this.dailyUsageList = list; 
-                   	}).catch(err=>{
-    					this.error=err;
-                   	})
-               	}).catch(err=>{
-					this.error=err;
-               	})
-               	
-               	
+                fetchTodayUsage().then(data => {
+                    this.tokenRemaining = data;
+                    this.loading = false;
+                    const now = new Date();
+                    const year = now.getFullYear();
+                    const month = now.getMonth();
+                    const startDate = new Date(year, month, 1, 0, 0, 0, 0);
+                    const endDate = new Date(year, month + 1, 1, 0, 0, 0, 0);
+                    endDate.setDate(-1);
+                    
+                    fetchDailyUsage(this.formatDate(startDate), this.formatDate(endDate)).then(data => {
+                        var datum = {};
+                        for (let o of data)
+                            datum[o.date] = o;
+                        
+                        var list = [];
+                        for (let i = 1; i < endDate.getDate(); i++) {
+                            const date = new Date(now);
+                            date.setDate(i);
+                            const dateStr = this.formatDate(date);
+                            const dat = datum[dateStr] || {};
+                            list.push({
+                                date: dateStr,
+                                freeUsed: dat.freeUsed || 0,
+                                paidUsed: dat.paidUsed || 0
+                            });
+                        }
+                        this.dailyUsageList = list;
+                    }).catch(err => {
+                        this.error = err;
+                    });
+                }).catch(err => {
+                    this.error = err;
+                });
             },
-            // CDK 兑换方法
             exchangeCdk() {
                 if (!this.cdkCode || this.cdkCode.trim() === '') {
                     this.cdkMessage = '请输入CDK兑换码';
@@ -614,28 +887,27 @@
                 }
                 this.exchangeLoading = true;
                 this.cdkMessage = '';
-                   // 调用CDK兑换接口（此处替换为真实后端API）
-                   exchangeCdkApi(this.cdkCode.trim())
-                   .then(r=>{
-                   	this.cdkMessage=r;
-                   	this.cdkMessageType = 'success';
-                   	setTimeout(this.loadData,500);
-                   	setTimeout(() => {
-                           if (this.cdkMessage) {
-                               this.cdkMessage = '';
-                           }
-                       }, 3000);
-                	this.exchangeLoading=false;
-                   }).catch(r=>{
-                   	this.cdkMessage=r;
-                   	this.cdkMessageType = 'error';
-                   	setTimeout(() => {
-                           if (this.cdkMessage) {
-                               this.cdkMessage = '';
-                           }
-                       }, 3000);
-                	this.exchangeLoading=false;
-                   });
+                exchangeCdkApi(this.cdkCode.trim())
+                    .then(r => {
+                        this.cdkMessage = r;
+                        this.cdkMessageType = 'success';
+                        setTimeout(this.loadData, 500);
+                        setTimeout(() => {
+                            if (this.cdkMessage) {
+                                this.cdkMessage = '';
+                            }
+                        }, 3000);
+                        this.exchangeLoading = false;
+                    }).catch(r => {
+                        this.cdkMessage = r;
+                        this.cdkMessageType = 'error';
+                        setTimeout(() => {
+                            if (this.cdkMessage) {
+                                this.cdkMessage = '';
+                            }
+                        }, 3000);
+                        this.exchangeLoading = false;
+                    });
             },
             renderChart() {
                 if (!this.$refs.chartDom) return;
@@ -657,10 +929,7 @@
                         borderWidth: 1,
                         textStyle: { color: '#1e293b', fontSize: 12 }
                     },
-                    legend: {
-                        show: false,   // 使用自定义图例代替，节省空间
-                        // 但为了移动端不拥挤，我们手动在外部展示图例，内部隐藏
-                    },
+                    legend: { show: false },
                     grid: {
                         left: '8%',
                         right: '5%',
@@ -725,7 +994,6 @@
                             emphasis: { focus: 'series' }
                         }
                     ],
-                    // 移动端优化：如果宽度不够，开启 dataZoom 可选，为了更好体验加简单缩放
                     dataZoom: dates.length > 24 ? [{
                         type: 'inside',
                         start: 0,
@@ -734,12 +1002,9 @@
                         moveOnMouseMove: true,
                         moveOnMouseWheel: true
                     }] : [],
-                    toolbox: {
-                        show: false,
-                    }
+                    toolbox: { show: false }
                 };
                 this.chartInstance.setOption(option, true);
-                // 调整尺寸适应容器
                 setTimeout(() => {
                     if (this.chartInstance) this.chartInstance.resize();
                 }, 100);
