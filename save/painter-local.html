@@ -1,11 +1,14 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="day-mode">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>AI智能绘画 · 本地模式</title>
+    <link rel="stylesheet" href="sidebar.css">
     <!-- Vue 2 CDN -->
     <script src="vue.js"></script>
+    <script src="heartbeat.js"></script>
+    <script src="ai-protocol.js"></script>
     <style>
         * {
             margin: 0;
@@ -264,100 +267,7 @@
             border-radius: 8px;
             box-shadow: 0 4px 30px rgba(0,0,0,0.5);
         }
-        /* 侧边栏 */
-        .sidebar-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.3);
-            z-index: 9000;
-        }
-        .sidebar {
-            position: fixed;
-            top: 0; left: 0; bottom: 0;
-            width: 280px;
-            background: #fff;
-            box-shadow: 2px 0 20px rgba(0,0,0,0.1);
-            z-index: 9001;
-            display: flex;
-            flex-direction: column;
-            animation: slideIn 0.2s ease;
-        }
-        @keyframes slideIn {
-            from { transform: translateX(-100%); }
-            to { transform: translateX(0); }
-        }
-        .sidebar-header {
-            padding: 16px;
-            border-bottom: 1px solid #e9ecef;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        .sidebar-header h3 {
-            margin: 0;
-            font-size: 1rem;
-            color: #1e2a3e;
-        }
-        .sidebar-close {
-            background: none;
-            border: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            color: #5b6e8c;
-            padding: 4px 8px;
-        }
-        .sidebar-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px 0;
-        }
-        .sidebar-item {
-            padding: 12px 16px;
-            cursor: pointer;
-            border-bottom: 1px solid #f1f3f5;
-            transition: background 0.15s;
-        }
-        .sidebar-item:hover {
-            background: #f8f9fc;
-        }
-        .sidebar-item.active {
-            background: #eef2ff;
-            border-left: 3px solid #1e6fdf;
-        }
-        .sidebar-item-name {
-            font-size: 0.9rem;
-            color: #1e2a3e;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .sidebar-item-time {
-            font-size: 0.7rem;
-            color: #8196b0;
-            margin-top: 4px;
-        }
-        .sidebar-new {
-            margin: 8px 16px;
-            padding: 10px;
-            text-align: center;
-            background: #1e6fdf;
-            color: white;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-        .sidebar-new:hover {
-            background: #1558b0;
-        }
-        .menu-btn {
-            background: none;
-            border: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            color: #5b6e8c;
-            padding: 4px 8px;
-        }
+        /* 侧边栏样式见 sidebar.css（custom / painter / painter-local 共用） */
         /* URL输入弹窗 */
         .url-modal-overlay {
             position: fixed;
@@ -448,27 +358,29 @@
         </div>
     </div>
 
-    <!-- 侧边栏 -->
+    <!-- 侧边栏（结构与配色见 sidebar.css，与 custom / painter 统一） -->
     <div class="sidebar-overlay" v-if="showSidebar" @click="showSidebar = false"></div>
-    <div class="sidebar" v-if="showSidebar">
+    <div class="chat-sidebar" :class="{ open: showSidebar }">
         <div class="sidebar-header">
             <h3>对话列表</h3>
-            <button class="sidebar-close" @click="showSidebar = false">&times;</button>
+            <button class="sidebar-close" @click.stop="showSidebar = false">&times;</button>
         </div>
-        <div class="sidebar-new" @click="createNewChat">+ 新建对话</div>
-        <div class="sidebar-list">
+        <div class="sidebar-action-btn" @click="createNewChat">+ 新建对话</div>
+        <div class="chat-list" v-if="chatList.length">
             <div v-for="chat in chatList" :key="chat.chatid"
-                 :class="['sidebar-item', chat.chatid === conversationId ? 'active' : '']"
+                 class="chat-item" :class="{ active: chat.chatid === conversationId }"
                  @click="switchChat(chat.chatid)">
-                <div class="sidebar-item-name">{{ chat.name }}</div>
-                <div class="sidebar-item-time">{{ formatTime(chat.time) }}</div>
+                <div class="chat-info">
+                    <div class="chat-name">{{ chat.name }}</div>
+                    <div class="chat-time">{{ formatTime(chat.time) }}</div>
+                </div>
             </div>
-            <div v-if="!chatList.length" style="padding:20px;text-align:center;color:#8196b0;font-size:0.85rem;">暂无对话</div>
         </div>
+        <div v-else class="chat-empty">暂无对话</div>
     </div>
 
     <div class="chat-header">
-        <button class="menu-btn" @click="loadChatList; showSidebar = true">&#9776;</button>
+        <button class="sidebar-toggle" @click="loadChatList; showSidebar = true">&#9776;</button>
         <h2>SD提示词交互式应用</h2>
         <div class="conv-id">会话ID: {{ conversationId }}</div>
     </div>
@@ -488,7 +400,7 @@
                             <video :src="part.video_url" controls style="width:100%;"></video>
                         </div>
                     </div>
-                    <button v-if="!isWaitingResponse&&idx==messages.length-1" @click="triggerGenerate" :disabled="isWaitingResponse" style="background:#27ae60;margin-top:10px">生成</button>
+                    <button v-if="!aiGenerating&&idx==messages.length-1" @click="triggerGenerate" :disabled="aiGenerating" style="background:#27ae60;margin-top:10px">生成</button>
                 </div>
 
                 <!-- AI 消息：支持思维链 + 按顺序排列的内容 -->
@@ -518,7 +430,7 @@
         </div>
 
         <!-- 加载状态: AI正在思考/调用工具 -->
-        <div v-if="isWaitingResponse" class="loading-indicator" style="align-self: flex-start; margin-left: 12px;">
+        <div v-if="aiGenerating" class="loading-indicator" style="align-self: flex-start; margin-left: 12px;">
             <span>思考中</span>
         </div>
         
@@ -526,9 +438,9 @@
     <div class="input-area">
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
-            <button @click="sendTextMessage" :disabled="isWaitingResponse || (!inputText.trim() && !uploadedImageId)">发送</button>
+            <button @click="sendTextMessage" :disabled="aiGenerating || (!inputText.trim() && !uploadedImageId)">发送</button>
             
-            <button class="upload-btn" @click="triggerFileUpload" :disabled="isWaitingResponse">📎 图片</button>
+            <button class="upload-btn" @click="triggerFileUpload" :disabled="aiGenerating">📎 图片</button>
             <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" @change="onFileSelected" />
         </div>
         <div style="font-size: 12px; color:#8196b0; padding-left: 8px;">💡 输入消息后点击"发送"添加到对话，点击"生成"触发AI回复</div>
@@ -574,12 +486,8 @@ function getOrCreateConversationId(on_loaded) {
 
 // ----------------------------- 后端接口
 
-// WebSocket连接 - 连接真实后端
-function createWebSocketConnection(conversationId) {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.host}/aichat/chatsocket?chatid=${conversationId}&app=painterirc`;
-    return new WebSocket(wsUrl);
-}
+// WebSocket 连接的建立、重连与心跳由公共协议层（ai-protocol.js + heartbeat.js）负责，
+// 本页只需要提供 aiSocketUrl() 并实现各帧钩子。
 
 // 图片上传 - 调用真实后端接口
 async function realUploadImage(file, conversationId) {
@@ -607,12 +515,12 @@ async function fetchImageById(imageId, conversationId) {
 // Vue 主应用
 var main=new Vue({
     el: '#app',
+    // 连接/重连/心跳/帧路由/历史分页由公共协议层提供
+    mixins: [AIProtocolMixin],
     data: {
         conversationId: '',
         messages: [],
         inputText: '',
-        isWaitingResponse: false,
-        ws: null,
         selectedFile: null,
         uploadedImageId: null,
         fullscreenImage: null,
@@ -644,8 +552,6 @@ var main=new Vue({
     },
     beforeDestroy() {
         document.removeEventListener('keydown', this._onKeydown);
-        if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
-        if (this.ws) this.ws.close();
         if (this.urlCheckTimer) clearInterval(this.urlCheckTimer);
     },
     watch: {
@@ -668,11 +574,10 @@ var main=new Vue({
             }
         },
         initAfterUrl() {
-			if(!this.ws)
+			if(!this.aiConnected)
             	getOrCreateConversationId(cid => {
                 this.conversationId = cid;
-                this.initWebSocket();
-                this.scrollToBottom();
+                this.aiConnect();
             });
         },
         loadChatList() {
@@ -684,13 +589,12 @@ var main=new Vue({
             if (chatid === this.conversationId) { this.showSidebar = false; return; }
             this.showSidebar = false;
             this.messages = [];
+            this.aiResetHistory();
             this.conversationId = chatid;
             const newUrl = `${window.location.pathname}?conversation_id=${chatid}`;
             window.history.replaceState({}, '', newUrl);
-            this._reconnectAttempts = 0;
-            if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
-            if (this.ws) this.ws.close();
-            this.initWebSocket();
+            // aiConnect 会先主动断开旧连接（不会触发自动重连），再连到新会话
+            this.aiConnect();
         },
         createNewChat() {
             this.showSidebar = false;
@@ -698,13 +602,11 @@ var main=new Vue({
                 .then(p => p.text())
                 .then(cid => {
                     this.messages = [];
+                    this.aiResetHistory();
                     this.conversationId = cid;
                     const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
                     window.history.replaceState({}, '', newUrl);
-                    this._reconnectAttempts = 0;
-                    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
-                    if (this.ws) this.ws.close();
-                    this.initWebSocket();
+                    this.aiConnect();
                     this.loadChatList();
                 });
         },
@@ -749,194 +651,169 @@ var main=new Vue({
                 body: JSON.stringify(result),
             }).catch(err => console.error("发送local_response失败", err));
         },
-        initWebSocket() {
-            if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
-            this.ws = createWebSocketConnection(this.conversationId);
-            this.ws.onopen = () => {
-                console.log('WebSocket 已连接, 会话ID:', this.conversationId);
-                this._reconnectAttempts = 0;
-            };
-            this.ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    this.handleWebSocketMessage(data);
-                } catch(e) {
-                    console.warn("解析消息失败", e);
-                }
-            };
-            this.ws.onerror = (err) => {
-                console.error("WebSocket 错误", err);
-                this.isWaitingResponse = false;
-            };
-            this.ws.onclose = () => {
-                console.log("WebSocket 连接关闭");
-                if (this.isWaitingResponse) this.isWaitingResponse = false;
-                this.ws = null;
-                this._scheduleReconnect();
-            };
+        /* ================= 公共协议层（ai-protocol.js）：连接与帧钩子 ================= */
+        // 连接地址（本地模式与普通绘画页共用同一后端）
+        aiSocketUrl() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return `${protocol}//${location.host}/aichat/chatsocket?chatid=${this.conversationId}&app=painterirc`;
         },
-        _scheduleReconnect() {
-            if (this._reconnectTimer) return;
-            const delay = this._reconnectAttempts < 3 ? 0 : 5000;
-            this._reconnectTimer = setTimeout(() => {
-                this._reconnectTimer = null;
-                this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
-                console.log(`WebSocket 重连 (第${this._reconnectAttempts}次)`);
-                this.initWebSocket();
-            }, delay);
+        aiOnSocketOpen() {
+            console.log('WebSocket 已连接, 会话ID:', this.conversationId);
+            this.scrollToBottom(true);
         },
-        // 处理服务端返回的流式/单次消息（支持thinking/tool_call/content/image/status/batch_messages/message/notice/done）
-        handleWebSocketMessage(msg) {
-            if (msg.type === 'done') {
-                this.isWaitingResponse = false;
-                return;
-            }
-            if (msg.type === 'local_request') {
-                this.handleLocalRequest(msg);
-                return;
-            }
-            if (msg.type === 'status') {
-                this.isWaitingResponse = !!msg.status;
-                return;
-            }
-            if (msg.type === 'notice') {
-                this.showTempTip(msg.content || msg.message || msg.notice || '');
-                return;
-            }
-            if (msg.type === 'sendbox') {
-                this.inputText = msg.sendbox || msg.content || '';
-                return;
-            }
-            if (msg.type === 'batch_messages' && msg.messages) {
-                for (const m of msg.messages) {
-                    const parsed = this.parseContentArray(m.content);
-                    const isUser = m.title === '你';
-                    const thinkingSegs = [];
-                    if (!isUser && Array.isArray(m.thinking)) {
-                        for (const seg of m.thinking) {
-                            if (typeof seg === 'string') {
-                                thinkingSegs.push({ type: 'text', content: seg });
-                            } else if (seg && seg.type === 'tool_call') {
-                                thinkingSegs.push({ type: 'tool', toolName: seg.tool_name || seg.toolName || '' });
-                            } else if (seg && seg.content != null) {
-                                thinkingSegs.push({ type: 'text', content: seg.content });
-                            }
-                        }
-                    }
-                    this.messages.push({
-                        role: isUser ? 'user' : 'assistant',
-                        thinkingSegments: thinkingSegs,
-                        contentItems: parsed.contentItems
-                    });
-                }
-                this.resolveAllPartUrls();
-                return;
-            }
-            if (msg.type === 'message') {
-                const parsed = this.parseContentArray(msg.content);
-                const isUser = msg.title === '你';
-                let existing = this.messages.find(m => m._id === msg.id);
-                if (!existing && !isUser) {
-                    const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
-                    if (last && last.role === 'assistant' && !last._id) {
-                        existing = last;
-                    }
-                }
-                if (existing) {
-                    if (!isUser) {
-                        existing._id = msg.id;
-                        existing.contentItems = parsed.contentItems;
-                    }
-                } else {
-                    this.messages.push({
-                        _id: msg.id,
-                        role: isUser ? 'user' : 'assistant',
-                        thinkingSegments: [],
-                        contentItems: parsed.contentItems
-                    });
-                }
-                this.resolveAllPartUrls();
-                this.scrollToBottom();
-                return;
-            }
-            if (msg.type === 'remove' && (msg.id != null || msg.remove != null)) {
-                // 服务端下发的标识符是历史记录id：新协议字段为 id，旧协议字段为 remove
-                const removedId = msg.id != null ? msg.id : msg.remove;
-                this.messages = this.messages.filter((m, idx) => idx !== removedId);
-                return;
-            }
-            // 查找目标assistant消息：优先按id匹配，其次找最后一条无id的assistant，否则新建
-            let targetMsg = null;
-            if (msg.id) {
-                targetMsg = this.messages.find(m => m._id === msg.id);
-            }
-            if (!targetMsg) {
+        aiOnConnState(state) {
+            // 断线期间不要再显示"思考中"
+            if (state !== 'connected') this.aiGenerating = false;
+        },
+        // 状态帧：生成状态
+        aiOnSendbox(text) {
+            this.inputText = text || '';
+        },
+        aiOnNotice(text) {
+            if (text) this.showTempTip(text);
+        },
+        aiOnLocalRequest(frame) {
+            this.handleLocalRequest(frame);
+        },
+        // 找到（必要时新建）当前流式输出的助手消息
+        painterTargetMessage(id) {
+            let target = id ? this.messages.find(m => m._id === id) : null;
+            if (!target) {
                 const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
-                if (last && last.role === 'assistant') {
-                    targetMsg = last;
-                }
+                if (last && last.role === 'assistant') target = last;
             }
-            if (!targetMsg) {
-                targetMsg = {
-                    _id: msg.id || null,
-                    role: 'assistant',
-                    thinkingSegments: [],
-                    contentItems: []
-                };
-                this.messages.push(targetMsg);
-            } else if (msg.id && !targetMsg._id) {
-                targetMsg._id = msg.id;
+            if (!target) {
+                target = { _id: id || null, role: 'assistant', thinkingSegments: [], contentItems: [] };
+                this.messages.push(target);
+            } else if (id && !target._id) {
+                target._id = id;
             }
-            if (msg.type === 'thinking') {
-                targetMsg.thinkingSegments = targetMsg.thinkingSegments || [];
-                const lastSeg = targetMsg.thinkingSegments.length ? targetMsg.thinkingSegments[targetMsg.thinkingSegments.length - 1] : null;
-                if (lastSeg && lastSeg.type === 'text') {
-                    lastSeg.content += msg.content;
-                } else {
-                    targetMsg.thinkingSegments.push({ type: 'text', content: msg.content });
-                }
-            } else if (msg.type === 'tool_call') {
-                targetMsg.thinkingSegments = targetMsg.thinkingSegments || [];
-                targetMsg.thinkingSegments.push({ type: 'tool', toolName: msg.tool_name });
-            } else if (msg.type === 'content') {
-                // 结构化内容用 content，纯文本增量为旧协议字段 delta
-                const raw = msg.content !== undefined ? msg.content : msg.delta;
-                let text = '';
-                if (Array.isArray(raw)) {
-                    for (const item of raw) {
-                        if (typeof item === 'string') text += item;
-                        else if (item.type === 'text') text += item.text || '';
-                        else if (item.description) text += item.description;
-                        else if (item.result) text += item.result;
-                    }
-                } else {
-                    text = raw || '';
-                }
-                if (text) {
-                    targetMsg.contentItems = targetMsg.contentItems || [];
-                    const lastItem = targetMsg.contentItems.length ? targetMsg.contentItems[targetMsg.contentItems.length - 1] : null;
-                    if (lastItem && lastItem.type === 'text') {
-                        lastItem.content += text;
-                    } else {
-                        targetMsg.contentItems.push({ type: 'text', content: text });
-                    }
-                }
-            } else if (msg.type === 'image') {
-                const imageId = msg.image_id;
-                targetMsg.imageId = imageId;
-                targetMsg.contentItems = targetMsg.contentItems || [];
-                const imgItem = { type: 'image', image_id: imageId, image_url: null };
-                targetMsg.contentItems.push(imgItem);
-                this.loadImageById(imageId).then(imgUrl => {
-                    imgItem.image_url = imgUrl;
-                    this.$forceUpdate();
-                    this.scrollToBottom();
-                }).catch(err => {
-                    console.error("加载图片失败", err);
-                    imgItem.image_url = '';
-                });
+            return target;
+        },
+        aiOnThinking(frame) {
+            const target = this.painterTargetMessage(frame.id);
+            target.thinkingSegments = target.thinkingSegments || [];
+            const lastSeg = target.thinkingSegments.length ? target.thinkingSegments[target.thinkingSegments.length - 1] : null;
+            if (lastSeg && lastSeg.type === 'text') {
+                lastSeg.content += frame.content;
+            } else {
+                target.thinkingSegments.push({ type: 'text', content: frame.content });
             }
             this.scrollToBottom();
+        },
+        aiOnToolCall(frame) {
+            const target = this.painterTargetMessage(frame.id);
+            target.thinkingSegments = target.thinkingSegments || [];
+            target.thinkingSegments.push({ type: 'tool', toolName: frame.tool_name });
+            this.scrollToBottom();
+        },
+        aiOnContent(frame) {
+            const target = this.painterTargetMessage(frame.id);
+            const raw = frame.content;
+            const parsed = this.parseContentArray(raw);
+            target.contentItems = target.contentItems || [];
+            if (Array.isArray(raw)) {
+                for (const item of parsed.contentItems) {
+                    target.contentItems.push(item);
+                }
+            } else {
+                const lastItem = target.contentItems.length ? target.contentItems[target.contentItems.length - 1] : null;
+                if (lastItem && lastItem.type === 'text') {
+                    lastItem.content += raw || '';
+                } else {
+                    target.contentItems.push({ type: 'text', content: raw || '' });
+                }
+            }
+            this.resolveAllPartUrls();
+            this.scrollToBottom();
+        },
+        aiOnMessage(frame) {
+            const parsed = this.parseContentArray(frame.content);
+            const isUser = this.aiIsUserMessage(frame);
+            let existing = this.messages.find(m => m._id === frame.id);
+            if (!existing && !isUser) {
+                const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
+                if (last && last.role === 'assistant' && !last._id) existing = last;
+            }
+            if (existing) {
+                if (!isUser) {
+                    existing._id = frame.id;
+                    existing.contentItems = parsed.contentItems;
+                }
+            } else {
+                this.messages.push({
+                    _id: frame.id,
+                    role: isUser ? 'user' : 'assistant',
+                    thinkingSegments: [],
+                    contentItems: parsed.contentItems
+                });
+            }
+            this.resolveAllPartUrls();
+            this.scrollToBottom();
+        },
+        aiOnRemove(frame) {
+            const removedId = frame.id;
+            const ridx = this.messages.findIndex(m => m._id === removedId);
+            if (ridx >= 0) {
+                this.messages.splice(ridx, 1);
+            } else {
+                this.messages = this.messages.filter((m, idx) => idx !== removedId);
+            }
+        },
+        // 历史记录分页落地（视口锚定与分页状态由公共层负责）
+        aiOnBatch(items, meta) {
+            const toMessage = (item) => {
+                const isUser = this.aiIsUserMessage(item);
+                const thinkingSegs = [];
+                if (!isUser && Array.isArray(item.thinking)) {
+                    for (const seg of item.thinking) {
+                        if (typeof seg === 'string') {
+                            thinkingSegs.push({ type: 'text', content: seg });
+                        } else if (seg && seg.type === 'tool_call') {
+                            thinkingSegs.push({ type: 'tool', toolName: seg.tool_name || seg.toolName || '' });
+                        } else if (seg && seg.content != null) {
+                            thinkingSegs.push({ type: 'text', content: seg.content });
+                        }
+                    }
+                }
+                return {
+                    _id: item.id,
+                    role: isUser ? 'user' : 'assistant',
+                    thinkingSegments: thinkingSegs,
+                    contentItems: this.parseContentArray(item.content).contentItems
+                };
+            };
+            if (meta.prepend) {
+                const known = new Set();
+                for (const m of this.messages) {
+                    if (m._id != null) known.add(m._id);
+                }
+                const incoming = [];
+                for (const item of items) {
+                    if (item.id != null) {
+                        if (known.has(item.id)) continue;
+                        known.add(item.id);
+                    }
+                    incoming.push(toMessage(item));
+                }
+                if (incoming.length) this.messages.unshift(...incoming);
+            } else {
+                // 连接/重连下发最新一页
+                this.messages = items.map(toMessage);
+                this.scrollToBottom(true);
+            }
+            this.resolveAllPartUrls();
+        },
+        // 分页游标：本地最旧的一条记录
+        aiOldestMessageId() {
+            let oldest = null;
+            for (const m of this.messages) {
+                if (m._id != null && (oldest === null || m._id < oldest)) oldest = m._id;
+            }
+            return oldest === null ? 0 : oldest;
+        },
+        aiHistoryContainer() {
+            return this.$refs.messageContainer;
         },
         parseContentArray(content) {
             const result = { contentItems: [] };
@@ -988,32 +865,25 @@ var main=new Vue({
         },
         // 发送文本消息（通过websocket）— 只添加到历史，不触发生成
         sendTextMessage() {
-            if (this.isWaitingResponse) return;
+            if (this.aiGenerating) return;
             const text = this.inputText.trim();
             if (!text && !this.uploadedImageId) {
                 return;
             }
-            const payload = JSON.stringify({
-                type: "message",
-                content: text || "（附带图片消息）",
-                conversation_id: this.conversationId
-            });
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(payload);
-            } else {
+            const content = text || "（附带图片消息）";
+            if (!this.aiSendMessage(content)) {
                 console.warn("WebSocket未就绪, 重新连接");
-                this.initWebSocket();
-                setTimeout(() => { if(this.ws) this.ws.send(payload); }, 200);
+                this.aiConnect();
+                setTimeout(() => this.aiSendMessage(content), 500);
             }
             this.inputText = '';
             this.scrollToBottom();
         },
         // 触发AI生成
         triggerGenerate() {
-            if (this.isWaitingResponse) return;
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ type: "generate" }));
-                this.isWaitingResponse = true;
+            if (this.aiGenerating) return;
+            if (this.aiSendGenerate()) {
+                this.aiGenerating = true;
                 this.messages.push({
                     role: 'assistant',
                     thinkingSegments: [],
@@ -1024,7 +894,7 @@ var main=new Vue({
         },
         // 触发文件选择
         triggerFileUpload() {
-            if (this.isWaitingResponse) return;
+            if (this.aiGenerating) return;
             this.$refs.fileInput.click();
         },
         async onFileSelected(e) {

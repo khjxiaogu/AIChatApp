@@ -8,6 +8,7 @@
     <script src="vue.js"></script>
     <script src="theme.js"></script>
     <script src="heartbeat.js"></script>
+    <script src="ai-protocol.js"></script>
     <link rel="stylesheet" href="chat-common.css">
     <style>
         .front-layer {
@@ -97,21 +98,21 @@
 						<template v-if="msg.title !== null">【{{ msg.title }}】「</template><span v-html="msg.title !== null?msg2:renderMarkdown(msg2)"></span><template v-if="msg.title !== null">」</template>
 					</div>
 					<!-- 撤回/重说/朗读跟随最新一条消息，避免占用手边的工具栏；生成过程中不显示 -->
-					<div class="msg-actions" v-if="idx === recentMessages.length - 1 && prepared && !typing">
-						<button class="btn msg-action-btn" @click="refreshMessages" title="重新生成这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>重说</button>
+					<div class="msg-actions" v-if="idx === recentMessages.length - 1 && prepared && !aiGenerating">
+						<button class="btn msg-action-btn" v-if="!lastMessageIsUser" @click="refreshMessages" title="重新生成这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>重说</button>
 						<button class="btn msg-action-btn" @click="undoLastOwn" title="撤回最后一轮对话"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>撤回</button>
-						<button class="btn msg-action-btn" v-if="isVoiceUsable && messages.length>0 && messages[messages.length-1].audioId==undefined" @click="triggerRead()" title="朗读这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>朗读</button>
+						<button class="btn msg-action-btn" v-if="!lastMessageIsUser && aiVoiceUsable && messages.length>0 && messages[messages.length-1].audioId==undefined" @click="triggerRead()" title="朗读这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>朗读</button>
 					</div>
 				</div>
 		    </div>
 		    <div class="dialog-sidebar">
-		        <div class="typing-area" v-if="typing">
+		        <div class="typing-area" v-if="aiGenerating">
 		            <span class="typing-text">生成中</span>
 		            <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
 		        </div>
 		        <div class="button-group">
 		            <button class="btn toolbar-btn" @click="openHistory"><i data-feather="file-text"></i>历史</button>
-					<button class="btn toolbar-btn" v-show="prepared&&!typing" @click.stop="showDialog=false"><i data-feather="eye-off"></i>隐藏</button>
+					<button class="btn toolbar-btn" v-show="prepared&&!aiGenerating" @click.stop="showDialog=false"><i data-feather="eye-off"></i>隐藏</button>
 					<button class="btn toolbar-btn" v-show="prepared" @click.stop="openSettings"><i data-feather="settings"></i>设置</button>
 				</div>
 		    </div>
@@ -119,7 +120,7 @@
         <div class="layer history-layer" v-if="showHistory"  :style="{ bottom: inputBarHeight + 'px' }">
             <div class="history-header">
                 <h2><i data-feather="file-text"></i> 历史记录</h2>
-				<span>￥-{{ price }}</span>
+				<span>￥-{{ aiPrice }}</span>
                 <span style="display:flex">
                 <button class="close-history" @click="closeHistory"><i data-feather="x"></i></button></span>
             </div>
@@ -160,9 +161,9 @@
 						<i data-feather="download"></i> 导出记忆
 					</button>
 					<!-- 语音开关：开启后新回复会自动朗读 -->
-					<div class="setting-row" v-show="isVoiceUsable">
+					<div class="setting-row" v-show="aiVoiceUsable">
 						<span class="setting-row-label">默认使用朗读</span>
-						<button class="setting-switch" :class="{ 'is-on': isVoiceEnabled }" @click.stop="setVoiceEnabled(!isVoiceEnabled)" :aria-pressed="isVoiceEnabled ? 'true' : 'false'">
+						<button class="setting-switch" :class="{ 'is-on': aiVoiceEnabled }" @click.stop="setVoiceEnabled(!aiVoiceEnabled)" :aria-pressed="aiVoiceEnabled ? 'true' : 'false'">
 							<span class="setting-switch-knob"></span>
 						</button>
 					</div>
@@ -198,15 +199,15 @@
 		feather.replace();
 		let msgs=new Vue({
 		         el: '#app',
+		         // 连接/重连/心跳/帧路由/历史分页由公共协议层提供
+		         mixins: [AIProtocolMixin],
 		         data: {
 		             messages: [
 		             ],
 		             newMessage: '',
 		             showHistory: false,
 					 showDialog: true,
-					 typing: false, 
 		             inputBarHeight: 70,  // 初始值，与 CSS min-height 一致
-					 wssocket: undefined,
 					 prepared: false,
 					 isFrontLoading:false,
 					 isBackLoading:false,
@@ -215,18 +216,11 @@
 					 flurls:[],
 					 appId:'',
 					 chatId:'',
-					 price:'0.00',
 					 handlerQueue:[],
 					 url:'/aichat',
 					 audioCtx:null,
 					 isUnlocked:false,
-					 isVoiceUsable:false,
-					 isVoiceEnabled:false,
 					 showSettings:false,        // 控制设置界面显隐
-					 hasMoreHistory:false,      // 服务端是否还有更早的历史记录
-					 isLoadingMore:false,       // 是否正在加载更早的历史记录
-					 historyTopReached:false,   // 是否已经翻到最早一条
-					 suppressAutoScroll:false,  // 插入更早记录期间抑制自动滚动到底部
 					 isDayMode: !!(window.AIWuxiaTheme && AIWuxiaTheme.isDay()),  // 白天/黑夜模式
 		         },
 				 computed: {
@@ -253,10 +247,10 @@
 					},
 					speak(sent){
 						if(sent=="")return;
-						this.wssocket.send(JSON.stringify({message:sent}));
+						this.aiSendMessage(sent);
 					},
 					setVoiceEnabled(nw){
-						this.wssocket.send(JSON.stringify({operation:"setVoiceEnabled",voiceEnabled:nw}));
+						this.aiSetVoiceEnabled(nw);
 						this.unlockWebAudio();
 					},
 					setFrontImage(newSrc) {
@@ -359,94 +353,30 @@
 						this.isFrontLoading=false;
 						this.isBackLoading=false;
 						this.isAnimateBlocking=false;
-						this.typing=false;
-						let _this=this;
-						// 心跳保活：超过10秒没收到同id的pong即判定连接已失效，摘掉监听后主动重连
-						if(!this.heartbeat){
-							this.heartbeat=createHeartbeat({
-								getSocket:function(){return _this.wssocket;},
-								onTimeout:function(){
-									console.warn("心跳超时，主动断开并重连");
-									detachAndCloseSocket(_this.wssocket);
-									_this.wssocket=null;
-									_this.prepared=false;
-									setTimeout(_this.open,500);
+						this.aiGenerating=false;
+						this._openDone=done;
+						this.aiConnect();
+					},
+					/* ============ 公共协议层（ai-protocol.js）：连接与帧钩子 ============ */
+					aiSocketUrl(){
+						return (location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId;
+					},
+					aiOnSocketOpen(){
+						this.prepared=true;
+						// 离开页面时主动断开（公共层会摘掉监听，不会触发重连）
+						window.onbeforeunload=()=>this.aiDisconnect();
+						if(this._openDone) this._openDone();
+						fetch("querychat?appid="+this.appId)
+							.then(p=>p.json())
+							.then(p=>{
+								if(p.length>0){
+									document.title="AI-"+p[0].app+"-"+p[0].name;
 								}
-							});
-						}
-						this.wssocket=new WebSocket((location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId);
-						this.wssocket.onopen=function(){
-							_this.prepared=true;
-							_this.heartbeat.start();
-							window.onbeforeunload = function() {
-							    this.wssocket.onclose = function () {}; // disable onclose handler first
-							    this.wssocket.close();
-							};
-							
-							_this.wssocket.onerror=function(ev){
-								_this.wssocket.onerror=function(){};
-								console.info(ev);
-								setTimeout(_this.open,500);
-								_this.prepared=false;
-								
-							}
-							if(done)
-								done();
-							fetch("querychat?appid="+_this.appId)
-								.then(p=>p.json())
-								.then(p=>{
-									if(p.length>0){
-										document.title="AI-"+p[0].app+"-"+p[0].name;
-									}
-								})
-						};
-						this.wssocket.onclose=function(ev){var rev=ev?ev:event;_this.heartbeat.stop();setTimeout(_this.open,500);_this.prepared=false;if(rev.reason!="")alert(rev.reason);}
-						this.wssocket.onerror=function(ev){console.info(ev);_this.heartbeat.stop();_this.wssocket.onclose=function(){};_this.prepared=false;alert("连接服务器失败！");};
-						this.wssocket.onmessage = function(ev) {
-							var rev=ev?ev:event;
-							var param=eval("("+rev.data+")");
-							// 心跳应答：只清除对应id的等待，其他消息照常处理
-							if(param.type=="pong"){_this.heartbeat.onPong(param);return;}
-
-							if(param.scene!=undefined){
-								let scene_data='';
-								if(param.scene_data){
-									scene_data=param.scene_data;
-								}
-								if(param.scene=='front')
-									_this.setFrontImage(scene_data)
-								if(param.scene=='back')
-									_this.setBackImage(scene_data)
-								
-							}
-							if(param.sendbox!=undefined){
-								_this.newMessage=param.sendbox;
-							}
-							if(param.isVoiceEnabled!=undefined)
-								_this.isVoiceEnabled=param.isVoiceEnabled;
-							if(param.notice!=undefined)
-								alert(param.notice);
-							if(param.input!=undefined){
-								var text=prompt(param.prompt);
-								if(text!=null&&text!="")
-									_this.wssocket.send(JSON.stringify({operation:"prompt",input:param.input,content:text}));
-								
-							}
-							if(param.isVoiceUsable!=undefined){
-								_this.isVoiceUsable=param.isVoiceUsable;
-							}
-							if(param.audioId!=undefined){
-								_this.playSoundWithWebAudio(param.audioId);
-							
-							}
-							if(param.price!=undefined){
-								console.info(param.price)
-								_this.price=param.price.substr(0,param.price.indexOf(".")+3);
-							}
-							_this.handlerQueue.push(param)
-							_this.notifyProcessQueue();
-								
-						};
+							})
+					},
+					aiOnConnState(state){
+						if(state!="connected") this.prepared=false;
+						if(state=="error") alert("连接服务器失败！");
 					},
 					notifyProcessQueue(){
 						if(!this.isBackLoading&&!this.isAnimateBlocking){
@@ -463,17 +393,17 @@
 						
 					},
 					handleTextMessage(message){
-						if(message.delta!=undefined){
-							this.appendMsg(message.id,message.delta);
+						if(message.type=="content"){
+							this.appendMsg(message.id,this.aiContentToText(message.content));
 						}
-						if(message.remove!=undefined){
-							this.removeMessage(message.remove);
+						if(message.type=="remove"){
+							this.removeMessage(message.id);
 						}
-						if(message.message!=undefined){
-							let messageContent=message.message;
+						if(message.type=="message"){
+							let messageContent=this.aiContentToText(message.content);
 							let _this=this;
 							var ch=0;
-							this.addMessage(message.id,message.title,"");
+							this.addMessage(message.id,message.title,"",null,message.role);
 							var func=() => {
 								if(ch>=messageContent.length||!_this.isAnimateBlocking){
 									_this.isAnimateBlocking=false;
@@ -487,81 +417,110 @@
 							this.isAnimateBlocking=true;
 							func(); // 每个字符间隔50ms
 						}
-						if(message.messages!=undefined){
-							var prepend=(message.prepend===true);
-							var hist=this.$refs.histlay;
-							var prevScrollHeight=hist?hist.scrollHeight:0;
-							var prevScrollTop=hist?hist.scrollTop:0;
-							if(prepend){
-								// 向上翻页：按标识符去重后插入到最前面
-								var known={};
-								for(var k=0;k<this.messages.length;k++){
-									if(this.messages[k].id!=null) known[this.messages[k].id]=true;
-								}
-								var incoming=[];
-								for(var i=0;i<message.messages.length;i++){
-									var old=message.messages[i];
-									if(old.id!=null){
-										if(known[old.id]) continue;
-										known[old.id]=true;
-									}
-									incoming.push({text:old.message,title:old.title,id:old.id,audioId:old.audioId});
-								}
-								this.suppressAutoScroll=true;
-								for(var j=incoming.length-1;j>=0;j--){
-									this.messages.unshift(incoming[j]);
-								}
-								this.$nextTick(()=>{
-									// 内容被撑高：恢复原来的视口位置，避免跳动
-									if(hist) hist.scrollTop=hist.scrollHeight-prevScrollHeight+prevScrollTop;
-									this.suppressAutoScroll=false;
-								});
-							}else{
-								// 连接/重连下发的是最新一页：替换最新范围，同时保留本地已翻出来的更早记录
-								var oldestIncoming=null;
-								for(var i=0;i<message.messages.length;i++){
-									var id=message.messages[i].id;
-									if(id!=null&&(oldestIncoming===null||id<oldestIncoming)) oldestIncoming=id;
-								}
-								var kept=[];
-								if(oldestIncoming!=null){
-									for(var k=0;k<this.messages.length;k++){
-										var local=this.messages[k];
-										if(local.id!=null&&local.id<oldestIncoming) kept.push(local);
-									}
-								}
-								this.messages.splice(0,this.messages.length)
-								for(var k=0;k<kept.length;k++){
-									this.messages.push(kept[k]);
-								}
-								for(var i=0;i<message.messages.length;i++){
-									
-									this.addMessage(message.messages[i].id,message.messages[i].title,message.messages[i].message,message.messages[i].audioId);
-								}
-								this.historyTopReached=false;
-							}
-							this.hasMoreHistory=(message.hasMore===true);
-							this.isLoadingMore=false;
-						}
-						if(message.audioId!=undefined){
+						if(message.type=="audio"){
 							this.setAudioId(message.id,message.audioId);
 						}
-						if(message.status!=undefined)
-							this.typing=(message.status==1);
+					},
+					/* ---- 公共协议层：帧钩子 ---- */
+					// 场景（立绘/背景）切换
+					aiOnScene(scene,data){
+						let scene_data='';
+						if(data){
+							scene_data=data;
+						}
+						if(scene=='front')
+							this.setFrontImage(scene_data)
+						if(scene=='back')
+							this.setBackImage(scene_data)
+					},
+					aiOnSendbox(text){
+						this.newMessage=text;
+					},
+					aiOnNotice(text){
+						if(text) alert(text);
+					},
+					aiOnInput(input,promptText){
+						var text=prompt(promptText);
+						if(text!=null&&text!="")
+							this.aiSendPromptReply(input,text);
+					},
+					// 需要按动画节奏处理的帧：入队后由 processQueue 驱动
+					aiOnContent(frame){
+						this.handlerQueue.push(frame);
+						this.notifyProcessQueue();
+					},
+					aiOnMessage(frame){
+						this.handlerQueue.push(frame);
+						this.notifyProcessQueue();
+					},
+					aiOnRemove(frame){
+						this.handlerQueue.push(frame);
+						this.notifyProcessQueue();
+					},
+					aiOnAudio(frame){
+						// 语音到达即播放，同时入队更新消息上的 audioId
+						if(frame.audioId) this.playSoundWithWebAudio(frame.audioId);
+						this.handlerQueue.push(frame);
+						this.notifyProcessQueue();
+					},
+					// 历史分页落地：视口锚定与分页状态由公共层负责
+					aiOnBatch(items,meta){
+						if(meta.prepend){
+							// 向上翻页：按标识符去重后插入到最前面
+							var known={};
+							for(var k=0;k<this.messages.length;k++){
+								if(this.messages[k].id!=null) known[this.messages[k].id]=true;
+							}
+							var incoming=[];
+							for(var i=0;i<items.length;i++){
+								var old=items[i];
+								if(old.id!=null){
+									if(known[old.id]) continue;
+									known[old.id]=true;
+								}
+								incoming.push({text:old.text,title:old.title,id:old.id,audioId:old.audioId,role:old.role});
+							}
+							for(var j=incoming.length-1;j>=0;j--){
+								this.messages.unshift(incoming[j]);
+							}
+						}else{
+							// 连接/重连下发的是最新一页：替换最新范围，同时保留本地已翻出来的更早记录
+							var oldestIncoming=null;
+							for(var i=0;i<items.length;i++){
+								var id=items[i].id;
+								if(id!=null&&(oldestIncoming===null||id<oldestIncoming)) oldestIncoming=id;
+							}
+							var kept=[];
+							if(oldestIncoming!=null){
+								for(var k=0;k<this.messages.length;k++){
+									var local=this.messages[k];
+									if(local.id!=null&&local.id<oldestIncoming) kept.push(local);
+								}
+							}
+							this.messages.splice(0,this.messages.length)
+							for(var k=0;k<kept.length;k++){
+								this.messages.push(kept[k]);
+							}
+							for(var i=0;i<items.length;i++){
+								this.addMessage(items[i].id,items[i].title,items[i].text,items[i].audioId,items[i].role);
+							}
+						}
+					},
+					// 分页游标：本地最旧的一条记录
+					aiOldestMessageId(){
+						var oldest=null;
+						for(var k=0;k<this.messages.length;k++){
+							var id=this.messages[k].id;
+							if(id!=null&&(oldest===null||id<oldest)) oldest=id;
+						}
+						return oldest===null?0:oldest;
 					},
 					openApp(app,id,done){
-						if(this.wssocket){
-							this.wssocket.onclose=function(){};
-							this.wssocket.close();
-							}
 						this.chatId=id;
 						this.appId=app;
 						this.messages.splice(0,this.messages.length);
-						// 切换对话时重置历史记录分页状态
-						this.hasMoreHistory=false;
-						this.isLoadingMore=false;
-						this.historyTopReached=false;
-						this.suppressAutoScroll=false;
+						// 切换对话时重置历史记录分页状态（换连接由 aiConnect 内部安全处理）
+						this.aiResetHistory();
 						this.open(done);
 					},
 					renderMarkdown(mdt){
@@ -588,19 +547,19 @@
 						 return text.trim();
 					},
 					triggerRead(){
-						this.wssocket.send(JSON.stringify({operation:"genVoice"}));
+						this.aiSendGenVoice();
 					},
 					// ...原有方法
 					refreshMessages() {
-						this.wssocket.send(JSON.stringify({operation:"regen"}));
+						this.aiSendRegen();
 					},
 					undoLastOwn() {
 					    // 查找最后一个自己发送的消息并删除
-						this.wssocket.send(JSON.stringify({operation:"revert"}));
+						this.aiSendRevert();
 					},
 					// 可以添加一个方法来切换typing状态，或由其他事件触发
 					toggleTyping() {
-					    this.typing = !this.typing;
+					    this.aiGenerating = !this.aiGenerating;
 					},
 		             // 调整 textarea 高度，并更新底部输入栏的整体高度
 		             adjustTextareaHeight() {
@@ -619,8 +578,8 @@
 		                 });
 		             },
 		             // 发送消息
-		             addMessage(id,title,text,aid) {
-		                 this.messages.push({ text: text, title: title, id: id , audioId:aid });
+		             addMessage(id,title,text,aid,role) {
+		                 this.messages.push({ text: text, title: title, id: id , audioId:aid, role: role || (title === this.aiUserTitle ? 'user' : 'assistant') });
 		                 // 重置 textarea 高度并更新底部栏高度
 		                 this.$nextTick(() => {
 		                     const textarea = this.$refs.messageInput;
@@ -716,41 +675,18 @@
 							this.requestHistory();
 					 },
 					 sendMessage(content){
-						if(!this.typing)
+						if(!this.aiGenerating)
 							this.speak(content);
 					 },
 					 sendUserMessage(content){
-						if(!this.isBackLoading&&!this.typing){
-							if(this.newMessage!=''&&this.wssocket!=undefined&&this.wssocket.readyState==1)
+						if(!this.isBackLoading&&!this.aiGenerating){
+							if(this.newMessage!=''&&this.aiIsOpen())
 	 							this.sendMessage(this.newMessage);
-							this.typing=true;
+							this.aiGenerating=true;
 						}
 	 				 },
 					 requestHistory(){
-						var data={requestBackLog:true}
-						this.wssocket.send(JSON.stringify(data));
-					 },
-					 // 历史记录分页：滚动到顶部附近时请求更早的一页
-					 onHistoryScroll(){
-						const hist=this.$refs.histlay;
-						if(!hist||this.suppressAutoScroll) return;
-						if(hist.scrollTop>60) return;
-						if(this.hasMoreHistory)
-							this.loadMoreHistory();
-						else
-							this.historyTopReached=true;
-					 },
-					 loadMoreHistory(){
-						if(this.isLoadingMore||!this.hasMoreHistory) return;
-						if(!this.wssocket||this.wssocket.readyState!==1) return;
-						// 以当前最旧的一条记录作为游标，向后端请求更早的一页
-						var beforeId=null;
-						for(var i=0;i<this.messages.length;i++){
-							var id=this.messages[i].id;
-							if(id!=null&&(beforeId===null||id<beforeId)) beforeId=id;
-						}
-						this.isLoadingMore=true;
-						this.wssocket.send(JSON.stringify({requestBackLog:true,before_id:beforeId===null?0:beforeId,limit:20}));
+						this.aiRequestHistory();
 					 },
 		             openHistory() {
 		                 this.showHistory = true;

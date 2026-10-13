@@ -39,6 +39,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
@@ -362,6 +363,7 @@ public class SDXLMcp {
 		if(charas!=null)
 		tools.register(new ToolData.Builder("search_character", "通过关键词搜索特定角色的提示词，返回相符的提示词，以,隔开")
 				.putParam("keyword", "角色英文名")
+				.presenter(ToolCallPresenter.ofArgument("搜索角色", "keyword"))
 				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
@@ -407,6 +409,7 @@ public class SDXLMcp {
 				.putParam("positive", "正面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("negative", "负面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
+				.presenter(ToolCallPresenter.ofArgument("生成图片", "positive"))
 				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();

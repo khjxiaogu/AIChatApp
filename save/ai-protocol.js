@@ -78,13 +78,52 @@
 		return label + '，正在重新连接' + times + '…';
 	}
 
+	/**
+	 * 把服务端下发的价格统一格式化为两位小数展示（协议里是字符串，如 "1.2345"）。
+	 *
+	 * @param {String|Number} price 原始价格
+	 * @return {String} 展示用价格，空值返回 null 表示"未变化"
+	 */
+	function formatPrice(price) {
+		if (price == null)
+			return null;
+		var text = String(price);
+		var dot = text.indexOf('.');
+		return dot < 0 ? text : text.substring(0, dot + 3);
+	}
+
+	/**
+	 * 判断一条消息是否来自用户。
+	 * <p>
+	 * 优先使用服务端下发的内部标识 {@code role}；老数据没有 role 时退回显示名比较。
+	 * </p>
+	 *
+	 * @param {Object} msg 消息对象
+	 * @param {String} [userTitle] 用户角色的显示名，默认「你」
+	 * @return {Boolean}
+	 */
+	function isUserMessage(msg, userTitle) {
+		if (!msg)
+			return false;
+		if (msg.role)
+			return msg.role === 'user';
+		return msg.title === (userTitle || '你');
+	}
+
 	var AIProtocolMixin = {
 		data: function () {
 			return {
 				aiConnected: false,        // 传输层是否已连接
 				aiConnState: 'closed',     // 'connecting' | 'connected' | 'closed'
-				aiGenerating: false,       // 服务端是否正在生成
 				connTip: null,             // 连接状态提示条文案，null 表示不显示
+				// ---- 服务端状态帧（status / model / voice / done）维护的会话状态，页面直接读取，不再各自复制 ----
+				aiGenerating: false,       // 服务端是否正在生成（status.generating，done 会复位）
+				aiPrice: '0.00',           // 本会话消费价格（status.price / done.price）
+				aiVoiceEnabled: false,     // 语音会话开关（status.isVoiceEnabled / voice.isVoiceEnabled）
+				aiVoiceUsable: false,      // 当前是否可用语音（status.isVoiceUsable / voice.isVoiceUsable）
+				aiModel: '',               // 当前生效模型标识（status.model / model.model，空为默认模型）
+				aiModelTree: [],           // 可用模型目录树（status.modelTree）
+				// ---- 历史记录分页 ----
 				isLoadingMore: false,      // 是否正在加载更早的历史记录
 				hasMoreHistory: false,     // 服务端是否还有更早的历史记录
 				historyTopReached: false,  // 是否已经翻到最早一条
@@ -97,6 +136,21 @@
 			if (global.addEventListener)
 				global.addEventListener('popstate', this._aiOnPopState);
 			this.aiInitHeartbeat();
+		},
+		computed: {
+			/**
+			 * 最后一条消息是否来自用户。
+			 * <p>
+			 * 消息操作按钮（撤回/重说/朗读）挂在最后一条消息下面：
+			 * 最后一条是用户消息时应只提供"撤回"，因为此时没有可重说或朗读的回复。
+			 * </p>
+			 */
+			lastMessageIsUser: function () {
+				var list = this.messages;
+				if (!list || !list.length)
+					return false;
+				return isUserMessage(list[list.length - 1], this.aiUserTitle);
+			},
 		},
 		beforeDestroy: function () {
 			if (global.removeEventListener && this._aiOnPopState)
@@ -162,6 +216,67 @@
 			aiToast: function (text) {
 				if (text)
 					console.log('[AI] ' + text);
+			},
+
+			/* ================= 上行帧（与下行一致，统一使用 type） ================= */
+
+			/**
+			 * 发送一个上行帧：{type, ...extra}。
+			 * 所有上行指令都必须带 type，不再使用 operation 字段。
+			 *
+			 * @param {String} type 帧类型
+			 * @param {Object} [extra] 附加字段
+			 * @return {Boolean} 是否发送成功（连接未就绪时为 false）
+			 */
+			aiSendFrame: function (type, extra) {
+				var frame = { type: type };
+				if (extra) {
+					for (var k in extra) {
+						if (Object.prototype.hasOwnProperty.call(extra, k))
+							frame[k] = extra[k];
+					}
+				}
+				return this.aiSend(frame);
+			},
+			/** 用户发言 */
+			aiSendMessage: function (text) {
+				return this.aiSendFrame('message', { content: text });
+			},
+			/** 触发生成 */
+			aiSendGenerate: function () {
+				return this.aiSendFrame('generate');
+			},
+			/** 停止生成 */
+			aiSendStop: function () {
+				return this.aiSendFrame('stop');
+			},
+			/** 撤回最后一轮对话 */
+			aiSendRevert: function () {
+				return this.aiSendFrame('revert');
+			},
+			/** 重新生成最后一条回复 */
+			aiSendRegen: function () {
+				return this.aiSendFrame('regen');
+			},
+			/** 为最后一条回复生成语音 */
+			aiSendGenVoice: function () {
+				return this.aiSendFrame('genVoice');
+			},
+			/** 开关语音会话 */
+			aiSetVoiceEnabled: function (enabled) {
+				return this.aiSendFrame('setVoiceEnabled', { voiceEnabled: !!enabled });
+			},
+			/** 切换模型（空字符串表示默认模型） */
+			aiSetModel: function (model) {
+				return this.aiSendFrame('model', { model: model == null ? '' : model });
+			},
+			/** 回答服务端的补充输入请求 */
+			aiSendPromptReply: function (input, content) {
+				return this.aiSendFrame('prompt', { input: input, content: content });
+			},
+			/** 回答工具调用许可请求 */
+			aiSendToolApproval: function (id, approved) {
+				return this.aiSendFrame('toolApproval', { id: id, approved: !!approved });
 			},
 
 			/* ================= 连接与心跳 ================= */
@@ -366,11 +481,13 @@
 				}
 				switch (type) {
 					case 'status':
-						this.aiGenerating = !!frame.generating;
+						this.aiApplyStatus(frame);
 						this.aiOnStatus(frame);
 						return;
 					case 'done':
 						this.aiGenerating = false;
+						if (frame.price != null)
+							this.aiPrice = formatPrice(frame.price);
 						this.aiOnDone(frame);
 						return;
 					case 'batch_messages':
@@ -383,9 +500,14 @@
 						this.aiOnSendbox(frame.content);
 						return;
 					case 'model':
+						this.aiModel = frame.model || '';
 						this.aiOnModel(frame.model);
 						return;
 					case 'voice':
+						if (frame.isVoiceEnabled != null)
+							this.aiVoiceEnabled = !!frame.isVoiceEnabled;
+						if (frame.isVoiceUsable != null)
+							this.aiVoiceUsable = !!frame.isVoiceUsable;
 						this.aiOnVoice(frame);
 						return;
 					case 'scene':
@@ -429,7 +551,32 @@
 			aiContentToText: function (content) {
 				return contentToText(content);
 			},
-			/** 把一批历史记录标准化为 {id,title,text,content,thinking,audioId} */
+			/**
+			 * 把状态帧写入公共状态变量（页面的 aiOnStatus 只需处理额外的页面专属逻辑）。
+			 *
+			 * @param {Object} frame status 帧
+			 */
+			aiApplyStatus: function (frame) {
+				if (frame.generating != null)
+					this.aiGenerating = !!frame.generating;
+				if (frame.price != null)
+					this.aiPrice = formatPrice(frame.price);
+				if (frame.isVoiceEnabled != null)
+					this.aiVoiceEnabled = !!frame.isVoiceEnabled;
+				if (frame.isVoiceUsable != null)
+					this.aiVoiceUsable = !!frame.isVoiceUsable;
+				if (frame.model !== undefined)
+					this.aiModel = frame.model || '';
+				if (frame.modelTree)
+					this.aiModelTree = frame.modelTree;
+			},
+			/** 用户角色的显示名，用于没有 role 字段的老数据 */
+			aiUserTitle: '你',
+			/** 判断某条消息是否来自用户 */
+			aiIsUserMessage: function (msg) {
+				return isUserMessage(msg, this.aiUserTitle);
+			},
+			/** 把一批历史记录标准化为 {id,title,role,text,content,thinking,audioId} */
 			aiNormalizeBatchItems: function (messages) {
 				var items = [];
 				if (!Array.isArray(messages))
@@ -439,6 +586,7 @@
 					items.push({
 						id: m.id != null ? m.id : null,
 						title: m.title || '',
+						role: m.role || (isUserMessage(m, this.aiUserTitle) ? 'user' : 'assistant'),
 						content: m.content || [],
 						text: contentToText(m.content),
 						thinking: Array.isArray(m.thinking) ? m.thinking : [],

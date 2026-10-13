@@ -49,6 +49,7 @@ import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -58,6 +59,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonArrayBuilder;
@@ -117,7 +119,6 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object()
 				.add("type", "status")
 				.add("generating", isGenerating())
-				.add("status", isGenerating()?1:0)
 				.add("conversation_id", chatId)
 				.add("price", this.getPrice())
 				.add("isVoiceEnabled",super.getExtraData().isAudioSession)
@@ -328,22 +329,31 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 			}
 		}
 	}
-	public static Map<String,BiConsumer<JsonObject,WebSocketAISession>> operations=new HashMap<>();
+	/**
+	 * 上行帧处理器表，键为帧的 {@code type}。
+	 * <p>
+	 * 上行协议与下行一致：客户端发来的每一帧都带 {@code type}，
+	 * 通用指令（语音开关、撤回、重说、模型切换等）在这里按 type 分发；
+	 * {@code message} 与 {@code requestBackLog} 因为需要先做会话级处理，
+	 * 由 {@link #onMessage(Channel, String)} 直接处理，不放进本表。
+	 * </p>
+	 */
+	public static Map<String,BiConsumer<JsonObject,WebSocketAISession>> frameHandlers=new HashMap<>();
 	static{
-		operations.put("setVoiceEnabled", (jo,state)->{
+		frameHandlers.put("setVoiceEnabled", (jo,state)->{
 			state.getExtraData().isAudioSession=jo.get("voiceEnabled").getAsBoolean();
 			state.sendFrame(JsonBuilder.object().add("type", "voice").add("isVoiceEnabled",state.getExtraData().isAudioSession).end().toString());
 			state.flush();
 		});
-		operations.put("revert", (jo,state)->state.requestRevert());
-		operations.put("regen", (jo,state)->state.requestRegen());
-		operations.put("prompt", (jo,state)->{
+		frameHandlers.put("revert", (jo,state)->state.requestRevert());
+		frameHandlers.put("regen", (jo,state)->state.requestRegen());
+		frameHandlers.put("prompt", (jo,state)->{
 			state.getCommandExec().submit(()->{
 				state.handleUserInput(jo.get("input").getAsString(), jo.get("content").getAsString());
 				state.flush();
 			});
 		});
-		operations.put("toolApproval", (jo,state)->{
+		frameHandlers.put("toolApproval", (jo,state)->{
 			// 直接在 WebSocket 线程回填答复：生成线程正阻塞等待，绝不能提交到 commandExec
 			if(!jo.has("id"))
 				return;
@@ -357,23 +367,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 					.add("accepted", accepted)
 					.end().toString());
 		});
-		operations.put("moreMessage", (jo,state)->{
-			int i = 0;
-			int id=jo.get("msgId").getAsInt();
-			List<HistoryItem> his = new ArrayList<>();
-			for (Iterator<HistoryItem> it = state.getHistory().reverseIterator(); it.hasNext();) {
-				HistoryItem hisitem=it.next();
-				if(hisitem.getIdentifier()>=id)
-					continue;
-				his.add(0, hisitem);
-				i++;
-				if (i >= 20) break;
-			}
-		});
-		operations.put("model", (jo,state)->{
+		frameHandlers.put("model", (jo,state)->{
 			state.setModel(jo.has("model")&&!jo.get("model").isJsonNull()?jo.get("model").getAsString():"");
 		});
-		operations.put("genVoice", (jo,state)->{
+		frameHandlers.put("genVoice", (jo,state)->{
 			state.getCommandExec().submit(()->{
 				HistoryItem last=state.getLast();
 				if(last.getRole()==Role.ASSISTANT) {
@@ -428,38 +425,55 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		// 心跳：ping -> pong，不参与其他消息处理
 		if(Heartbeat.replyPongIfPing(conn, jo))
 			return;
-		// 上行协议同时接受 {message:...}（对话前端）与 {type:"message",content:...}（绘画前端）两种写法
-		String frameType=jo.has("type")&&!jo.get("type").isJsonNull()?jo.get("type").getAsString():"";
-		String speech=jo.has("message")&&!jo.get("message").isJsonNull()?jo.get("message").getAsString()
-				:("message".equals(frameType)&&jo.has("content")&&!jo.get("content").isJsonNull()?jo.get("content").getAsString():null);
-		if(speech!=null) {
-			if(lock.compareAndSet(false, true)) {
-				refillChatBox(MessageContents.EMPTY);
-				getCommandExec().submit(()->{
-					try {
-						getAiapp().handleSpeech(this,new MutableMessageContents(speech));
-						boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
-						if(hasAudioService&&!super.isAudioSession()) {
-							if(isLocalAudioEnabled!=hasAudioService) {
-								isLocalAudioEnabled=hasAudioService;
-								conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("type", "voice").add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
-							}
-						}
-					}finally{
-						lock.set(false);
-					}
-				});
-				
-			}else {
-				sendNotice("操作太快啦，请稍后再试");
-			}
-		}else if(jo.has("requestBackLog")||"requestBackLog".equals(frameType)) {
+		// 上行协议与下行一致：所有帧都带 type
+		if(!jo.has("type")||jo.get("type").isJsonNull())
+			return;
+		String frameType=jo.get("type").getAsString();
+		if("message".equals(frameType)) {
+			handleUserSpeech(conn, jo);
+			return;
+		}
+		if("requestBackLog".equals(frameType)) {
 			requireMoreMessages(jo);
-		}else if(jo.has("operation")) {
-			String operation=jo.get("operation").getAsString();
-			BiConsumer<JsonObject, WebSocketAISession> op=operations.get(operation);
-			if(op!=null)
-				op.accept(jo, this);
+			return;
+		}
+		BiConsumer<JsonObject, WebSocketAISession> handler=frameHandlers.get(frameType);
+		if(handler!=null)
+			handler.accept(jo, this);
+	}
+
+	/**
+	 * 处理用户发言（{@code {type:"message",content:"..."}}）。
+	 * <p>
+	 * 同一时刻只允许一轮生成：会话锁被占用时提示用户稍后再试。
+	 * </p>
+	 *
+	 * @param conn 发起请求的连接
+	 * @param jo   上行帧
+	 */
+	protected void handleUserSpeech(Channel conn, JsonObject jo) {
+		String speech=jo.has("content")&&!jo.get("content").isJsonNull()?jo.get("content").getAsString():null;
+		if(speech==null)
+			return;
+		if(lock.compareAndSet(false, true)) {
+			refillChatBox(MessageContents.EMPTY);
+			getCommandExec().submit(()->{
+				try {
+					getAiapp().handleSpeech(this,new MutableMessageContents(speech));
+					boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
+					if(hasAudioService&&!super.isAudioSession()) {
+						if(isLocalAudioEnabled!=hasAudioService) {
+							isLocalAudioEnabled=hasAudioService;
+							conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("type", "voice").add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
+						}
+					}
+				}finally{
+					lock.set(false);
+				}
+			});
+			
+		}else {
+			sendNotice("操作太快啦，请稍后再试");
 		}
 	}
 
@@ -492,14 +506,13 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	@Override
 	public void sendNotice(String msg) {
 		super.sendNotice(msg);
-		// notice 为兼容期字段：新前端只读 content，待所有客户端升级后可删除
-		sendFrame(JsonBuilder.object().add("type", "notice").add("content", msg).add("notice", msg).end().toString());
+		sendFrame(JsonBuilder.object().add("type", "notice").add("content", msg).end().toString());
 	}
 
 
 	@Override
 	public void delMessage(int num) {
-		sendFrame(JsonBuilder.object().add("type", "remove").add("id", num).add("remove", num).end().toString());
+		sendFrame(JsonBuilder.object().add("type", "remove").add("id", num).end().toString());
 	}
 
 	@Override
@@ -509,8 +522,6 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("type", "content")
 				.add("id", id)
 				.add("content", contentsToJson(new MutableMessageContents(message)))
-				// delta 为兼容期字段：新前端从 content 数组取文本
-				.add("delta", message)
 				.end().toString());
 	}
 
@@ -521,9 +532,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("type", "message")
 				.add("id", id)
 				.add("title", getRoleName(role))
+				// role 为内部小写标识（user/assistant/...），前端据此判断消息归属，不必依赖显示名
+				.add("role", role.getRoleName())
 				.add("content", contentsToJson(message))
-				// message 为兼容期字段：新前端从 content 数组取文本
-				.add("message", message.toText())
 				.end().toString());
 	}
 	public void sendFrame(String content) {
@@ -555,22 +566,40 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 					if (current instanceof PlainText) {
 						thinking.add(((PlainText) current).toText());
 					} else if (current instanceof ToolCallContent) {
-						for (ToolCall tc : ((ToolCallContent) current).getToolCalls()) {
-							thinking.add(JsonBuilder.object()
+						ToolCallContent content=(ToolCallContent) current;
+						List<ToolCall> calls=content.getToolCalls();
+						for (int idx=0;idx<calls.size();idx++) {
+							ToolCall call=calls.get(idx);
+							// 用户友好简述替代原始工具名称，具体内容按需附带
+							ToolCallDisplay display=content.getDisplay(idx);
+							JsonObjectBuilder<JsonObject> seg=JsonBuilder.object()
 								.add("type", "tool_call")
-								.add("tool_name", tc.function.name)
+								.add("tool_name", display.getBrief())
+								.add("tool", call.function==null?"":call.function.name);
+							if(display.hasContent())
+								seg.add("content", contentsToJson(display.getContent()));
+							thinking.add(seg.end());
+						}
+					} else if (current instanceof ToolContent) {
+						// 工具结果的具体内容由工具自行提供，未提供时不展示原始结果
+						ToolCallDisplay display=((ToolContent) current).getDisplay();
+						if(display.hasContent()) {
+							thinking.add(JsonBuilder.object()
+								.add("type", "tool_result")
+								.add("tool_name", display.getBrief())
+								.add("content", contentsToJson(display.getContent()))
 								.end());
 						}
 					}
 				}
-			// 统一协议：每条历史记录同样只带结构化 content 与思考过程
+			// 统一协议：每条历史记录只带结构化 content 与思考过程
 			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object()
 				.add("id", i.getIdentifier())
 				.add("title", getRoleName(i.getRole()))
+				// role 为内部小写标识，前端据此判断消息归属
+				.add("role", i.getRole().getRoleName())
 				.add("thinking", thinking)
-				.add("content", contentsToJson(i.getDisplayContent()))
-				// message 为兼容期字段
-				.add("message", i.getDisplayContent().toString());
+				.add("content", contentsToJson(i.getDisplayContent()));
 			if(i.getAudioId()!=null)
 				ix.add("audioId", i.getAudioId());
 		}
@@ -589,8 +618,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	@Override
 	public void onGenerateStart() {
 		super.onGenerateStart();
-		// status 为兼容期字段（旧前端用它判断 typing）
-		sendFrame(JsonBuilder.object().add("type", "status").add("generating", isGenerating()).add("status", isGenerating()?1:0).end().toString());
+		sendFrame(JsonBuilder.object().add("type", "status").add("generating", isGenerating()).end().toString());
 	}
 	public void sendSceneContent(String type,String value) {
 
@@ -607,8 +635,6 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		super.onGenComplete();
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object()
 				.add("type", "done")
-				// status 为兼容期字段
-				.add("status", isGenerating()?1:0)
 				.add("price",price).end().toString()));
 		if(this.conn.isEmpty()) {
 			parent.markRelease(this);
@@ -651,8 +677,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	}
 	@Override
 	public void refillChatBox(MessageContents text) {
-		// sendbox 为兼容期字段
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("type", "sendbox").add("content",text.toText()).add("sendbox",text.toText()).end().toString()));
+		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("type", "sendbox").add("content",text.toText()).end().toString()));
 	}
 
 	/**

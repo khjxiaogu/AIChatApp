@@ -21,6 +21,8 @@ import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
+import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
@@ -29,6 +31,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelType;
 
@@ -152,10 +155,14 @@ public class PainterSession extends WebSocketAISession {
         if (!jo.has("type")) {
             return;
         }
-        PainterOperation operation = PAINTER_OPERATIONS.get(jo.get("type").getAsString());
+        String frameType = jo.get("type").getAsString();
+        PainterOperation operation = PAINTER_OPERATIONS.get(frameType);
         if (operation != null) {
             operation.accept(jo, this, conn);
+            return;
         }
+        // 绘画前端未特殊处理的通用指令（语音开关、工具许可等）交给父类的公共帧处理器
+        super.onMessage(conn, message);
     }
 
     @Override
@@ -193,11 +200,19 @@ public class PainterSession extends WebSocketAISession {
                 .add("content", ((PlainText) current).toText())
                 .end().toString());
         } else if (current instanceof ToolCallContent) {
-            for (ToolCall tc : ((ToolCallContent) current).getToolCalls()) {
-                sendFrame(JsonBuilder.object()
+            ToolCallContent content = (ToolCallContent) current;
+            List<ToolCall> calls = content.getToolCalls();
+            for (int i = 0; i < calls.size(); i++) {
+                ToolCall call = calls.get(i);
+                ToolCallDisplay display = content.getDisplay(i);
+                JsonObjectBuilder<JsonObject> frame = JsonBuilder.object()
                     .add("type", "tool_call")
-                    .add("tool_name", tc.function.name)
-                    .end().toString());
+                    .add("tool_name", display.getBrief()) // 用户友好简述替代原始工具名称
+                    .add("tool", call.function == null ? "" : call.function.name);
+                if (display.hasContent()) {
+                    frame.add("content", contentsToJson(display.getContent()));
+                }
+                sendFrame(frame.end().toString());
             }
         }
     }
