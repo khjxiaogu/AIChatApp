@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>AI智能绘画</title>
     <link rel="stylesheet" href="sidebar.css">
+    <link rel="stylesheet" href="ai-ui.css">
     <!-- Vue 2 CDN -->
     <script src="vue.js"></script>
     <script src="modeltree.js"></script>
@@ -279,29 +280,7 @@
         .scroll-to-bottom {
             cursor: pointer;
         }
-        /* 断线/重连提示条 */
-        .conn-tip {
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 6px 12px;
-            font-size: 0.78rem;
-            color: #92400e;
-            background: #fef3c7;
-            border-bottom: 1px solid #fde68a;
-        }
-        .conn-tip .conn-spinner {
-            width: 11px;
-            height: 11px;
-            flex-shrink: 0;
-            border: 2px solid #fcd34d;
-            border-top-color: #b45309;
-            border-radius: 50%;
-            animation: historySpin 0.8s linear infinite;
-        }
-        /* 向上滚动加载历史记录 */
+        /* 断线/重连提示条 */        /* 向上滚动加载历史记录 */
         .history-tip {
             align-self: center;
             flex-shrink: 0;
@@ -648,13 +627,7 @@
         html:not(.day-mode) .history-tip {
             background: #1d242d;
             color: #93a3b8;
-        }
-        html:not(.day-mode) .conn-tip {
-            background: #3a2f14;
-            color: #f3d08a;
-            border-bottom-color: #5a4a1e;
-        }
-        html:not(.day-mode) .conn-spinner {
+        }        html:not(.day-mode) .conn-spinner {
             border-color: rgba(243,208,138,0.35);
             border-top-color: #f3d08a;
         }
@@ -727,6 +700,8 @@
 </head>
 <body>
 <div id="app" :class="{ 'image-safe': imageSafeMode }">
+    <ai-conn-tip></ai-conn-tip>
+    <ai-dialog></ai-dialog>
 
     <!-- 侧边栏（结构与配色见 sidebar.css，与 custom 等页面统一） -->
     <div class="sidebar-overlay" v-if="showSidebar" @click="showSidebar = false"></div>
@@ -756,12 +731,6 @@
             
             <div class="conv-id">{{ conversationId }}</div>
         </div>
-    </div>
-
-    <!-- 断线/重连提示 -->
-    <div v-if="connTip" class="conn-tip">
-        <span class="conn-spinner"></span>
-        <span>{{ connTip }}</span>
     </div>
 
     <div class="messages-container" ref="messageContainer" @scroll="onHistoryScroll">
@@ -811,7 +780,7 @@
             </div>
             <!-- 撤回/重新生成：跟随最新一条消息，生成过程中不显示 -->
             <div class="msg-actions" v-if="idx === messages.length - 1 && !aiGenerating">
-                <button class="btn-action" @click="triggerRevert" title="撤回最后一轮对话">撤回</button>
+                <button class="btn-action" @click="aiSendRevert" title="撤回最后一轮对话">撤回</button>
                 <button class="btn-action" v-if="!lastMessageIsUser" @click="triggerRegen" title="重新生成最后一条回复">重新生成</button>
             </div>
         </div>
@@ -826,7 +795,7 @@
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
             <button @click="sendTextMessage" v-if="!aiGenerating" :disabled="(!inputText.trim() && !uploadedImageId)">发送</button>
-			<button @click="triggerStop" v-if="aiGenerating">停止</button>
+			<button @click="aiSendStop" v-if="aiGenerating">停止</button>
 
             <button @click="triggerFileUpload" :disabled="aiGenerating">图片</button>
 			<button @click="openSettings" title="设置">设置</button>
@@ -856,7 +825,7 @@
             </div>
             <p>图片安全模式开启后，对话中的图片会被深度模糊，点击图片全屏查看原图。</p>
             <h4 class="setting-subtitle">选择模型</h4>
-            <model-tree v-model="aiModel" :nodes="aiModelTree" @change="onModelChange"></model-tree>
+            <model-tree v-model="aiModel" :nodes="aiModelTree" @change="aiSetModel"></model-tree>
             <div class="btn-row">
                 <button class="btn-cancel" @click="closeSettings">关闭</button>
             </div>
@@ -1141,10 +1110,6 @@ var main=new Vue({
         closeSettings() {
             this.showSettings = false;
         },
-        // 切换模型：选中值即目录树节点的完整路径，空字符串代表默认模型
-        onModelChange(modelValue) {
-            this.aiSetModel(modelValue);
-        },
         // 白天/黑夜模式（偏好存本地，与其它页面共用）
         setDayMode(day) {
             this.isDayMode = day;
@@ -1155,10 +1120,6 @@ var main=new Vue({
             this.imageSafeMode = on;
             try { localStorage.setItem('aiwuxia_image_safe', on ? '1' : '0'); } catch (e) { }
         },
-        // 撤回最后一轮对话
-        triggerRevert() {
-            this.aiSendRevert();
-        },
         // 重新生成最后一条回复
         triggerRegen() {
             if (this.aiGenerating) return;
@@ -1168,9 +1129,6 @@ var main=new Vue({
         // 状态帧：生成状态 + 模型目录树 + 当前生效模型
         aiOnSendbox(text) {
             this.inputText = text || '';
-        },
-        aiOnNotice(text) {
-            if (text) this.showTempTip(text);
         },
         aiOnLocalRequest(frame) {
             this.handleLocalRequest(frame);
@@ -1402,10 +1360,6 @@ var main=new Vue({
                 this.scrollToBottom(true);
             }
         },
-		triggerStop() {
-            if (!this.aiGenerating) return;
-            this.aiSendStop();
-        },
         // 触发文件选择
         triggerFileUpload() {
             if (this.aiGenerating) return;
@@ -1415,7 +1369,7 @@ var main=new Vue({
             const file = e.target.files[0];
             if (!file) return;
             if (!file.type.startsWith('image/')) {
-                alert("请选择图片文件");
+                this.aiToast("请选择图片文件", { kind: 'warn' });
                 return;
             }
             // 显示本地预览
@@ -1430,7 +1384,7 @@ var main=new Vue({
                         // 但需求未强制，不过为了用户清楚，提醒图片已加入上下文，并且不影响聊天界面原有的消息，我这里不冗余插入消息，但预览保留
                         // 同时此图片会加入服务端上下文，下次AI回复会理解该图片 (模拟代码已经支持上下文概念)
                         // 展示一个临时toast风格
-                        this.showTempTip("图片已上传，已加入对话上下文，可继续发送文字提问");
+                        this.aiToast("图片已上传，已加入对话上下文，可继续发送文字提问");
                     } else {
                         this.showUploadError(res);
                     }
@@ -1447,23 +1401,7 @@ var main=new Vue({
         showUploadError(res) {
             const reason = (res && res.message) ? res.message : '未知错误';
             console.error("图片上传失败：", res);
-            alert("图片上传失败：" + reason);
-        },
-        showTempTip(msg) {
-            // 临时提示
-            const tipDiv = document.createElement('div');
-            tipDiv.innerText = msg;
-            tipDiv.style.position = 'fixed';
-            tipDiv.style.bottom = '80px';
-            tipDiv.style.left = '20px';
-            tipDiv.style.background = '#1e293b';
-            tipDiv.style.color = 'white';
-            tipDiv.style.padding = '6px 12px';
-            tipDiv.style.borderRadius = '30px';
-            tipDiv.style.fontSize = '12px';
-            tipDiv.style.zIndex = 1000;
-            document.querySelector(".messages-container").appendChild(tipDiv);
-            setTimeout(() => tipDiv.remove(), 2500);
+            this.aiToast("图片上传失败：" + reason, {kind:'error'});
         },
         scrollToBottom(force) {
             // 正在插入更早的历史记录时不要抢滚动位置

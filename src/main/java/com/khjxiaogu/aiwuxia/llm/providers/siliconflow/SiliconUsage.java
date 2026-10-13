@@ -42,6 +42,11 @@ public class SiliconUsage implements UsageIntf<SiliconUsage> {
 	}
 
 	@Override
+	public String getUsageName() {
+		return "SiliconFlow 对话";
+	}
+
+	@Override
 	public String toString() {
 		return "返回token " + completion_tokens +
 			"\n发送token " + prompt_tokens +

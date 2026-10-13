@@ -154,36 +154,6 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/** 每日签到一次可获得的补充额度（token） */
 	public static final int DAILY_CHECKIN_REWARD = 50_000;
 
-	/** 使用量类型名称映射：用量类 -> 展示名称 */
-	private static final Map<String, String> USAGE_TYPE_NAMES = new HashMap<>();
-	static {
-		USAGE_TYPE_NAMES.put("DeepseekV4Usage", "Deepseek 对话");
-		USAGE_TYPE_NAMES.put("DeepseekUsage", "Deepseek 对话");
-		USAGE_TYPE_NAMES.put("VolcanoUsage", "豆包对话");
-		USAGE_TYPE_NAMES.put("GrokUsage", "Grok 对话");
-		USAGE_TYPE_NAMES.put("MimoUsage", "Mimo 对话");
-		USAGE_TYPE_NAMES.put("SiliconUsage", "SiliconFlow 对话");
-		USAGE_TYPE_NAMES.put("LocalVoiceUsage", "语音合成");
-		USAGE_TYPE_NAMES.put("VolcanoVoiceUsage", "语音合成");
-		USAGE_TYPE_NAMES.put("LocalSDXLUsage", "图像生成");
-		USAGE_TYPE_NAMES.put("TOSUsage", "文件存储");
-	}
-
-	/**
-	 * 解析一次用量对应的展示类型名称，用于补充配额消费明细。
-	 *
-	 * @param usage 用量对象
-	 * @return 类型名称，无法识别时回退为类名
-	 */
-	public static String resolveUsageTypeName(UsageIntf<?> usage) {
-		if (usage == null) {
-			return "其他";
-		}
-		String simpleName = usage.getClass().getSimpleName();
-		String name = USAGE_TYPE_NAMES.get(simpleName);
-		return name != null ? name : simpleName;
-	}
-
 	public void initModelNames() {
 		modelTranslations.put("deepseek",new NameTranslator().add("deepseek", "Deepseek")
 				.add("pro", "专家").add("flash", "对话")
@@ -2025,7 +1995,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
 			pstmt.setString(1, userId);
 			pstmt.setString(2, chatId);
-			pstmt.setString(3, usageType == null || usageType.trim().isEmpty() ? "其他" : usageType);
+			pstmt.setString(3, usageType == null || usageType.trim().isEmpty() ? UsageIntf.DEFAULT_USAGE_NAME : usageType);
 			pstmt.setString(4, date);
 			pstmt.setInt(5, tokens);
 			pstmt.executeUpdate();
@@ -2079,7 +2049,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * 按对话聚合查询补充配额消费记录，用于前端饼图展示。
 	 * <p>
 	 * 返回数组元素形如：
-	 * {@code {"chatId":"...","name":"对话名称","tokens":1234,"count":3,"types":[{"type":"语音合成","tokens":100}]}}
+	 * {@code {"chatId":"...","name":"对话名称","tokens":1234,"count":3,"types":[{"type":"豆包 Seed2 专业","tokens":100}]}}
 	 * </p>
 	 * 
 	 * @param userId    用户ID
@@ -2149,7 +2119,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					entry.addProperty("tokens", entry.get("tokens").getAsInt() + tokens);
 					entry.addProperty("count", entry.get("count").getAsInt() + count);
 					JsonObject typeObj = new JsonObject();
-					typeObj.addProperty("type", type == null || type.isEmpty() ? "其他" : type);
+					typeObj.addProperty("type", type == null || type.isEmpty() ? UsageIntf.DEFAULT_USAGE_NAME : type);
 					typeObj.addProperty("tokens", tokens);
 					entry.getAsJsonArray("types").add(typeObj);
 				}

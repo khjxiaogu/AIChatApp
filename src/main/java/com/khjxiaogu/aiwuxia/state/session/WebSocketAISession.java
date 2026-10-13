@@ -646,8 +646,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	}
 	@Override
 	public void addUsage(UsageIntf<?> usage) {
-		// 使用量类型用于补充配额消费明细记录
-		String usageType = AIChatService.resolveUsageTypeName(usage);
+		// 使用量类型由用量对象自身提供，用于补充配额消费明细记录
+		String usageType = usage == null ? UsageIntf.DEFAULT_USAGE_NAME : usage.getUsageName();
 		if(attributes.paidOnly) {
 			int actualCost=(int) Math.ceil(usage.getEquivantTokens());
 		

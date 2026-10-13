@@ -21,4 +21,9 @@ public class TotalCredits implements UsageIntf<TotalCredits> {
 		return credit/100d;
 	}
 
+	@Override
+	public String getUsageName() {
+		return "合计";
+	}
+
 }

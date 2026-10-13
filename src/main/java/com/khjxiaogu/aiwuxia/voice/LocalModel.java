@@ -84,6 +84,40 @@ public class LocalModel {
         return lhs.requireAudio(chara, reqid, content, usageListener);
     }
 
+    /**
+     * 检查是否有支持 SVS（歌声合成）模型类型的在线服务。
+     *
+     * @return 如果至少有一个支持 SVS 的活跃连接则返回 true
+     */
+    public static boolean hasOnlineSvsService() {
+        return lhs.hasOnlineService(ModelType.SVS);
+    }
+
+    /**
+     * 异步请求 SVS（歌声合成）音频数据。
+     *
+     * @param reqid   请求唯一标识符
+     * @param url     音源地址
+     * @param options SVS 参数，见 {@link LocalModelHandshaker.SvsOptions}
+     * @return 包含音频字节数组的 CompletableFuture
+     */
+    public static CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, LocalModelHandshaker.SvsOptions options) {
+        return lhs.requireSvs(reqid, url, options);
+    }
+
+    /**
+     * 异步请求 SVS（歌声合成）音频数据。
+     *
+     * @param reqid   请求唯一标识符
+     * @param url     音源地址
+     * @param name    音源名称，可为 null
+     * @param options SVS 参数，见 {@link LocalModelHandshaker.SvsOptions}
+     * @return 包含音频字节数组的 CompletableFuture
+     */
+    public static CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, String name, LocalModelHandshaker.SvsOptions options) {
+        return lhs.requireSvs(reqid, url, name, options);
+    }
+
     public static CompletableFuture<ModelGenerationResult> registerTask(String reqid) {
         return lhs.registerTask(reqid);
     }

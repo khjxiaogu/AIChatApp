@@ -847,6 +847,7 @@
                 tokenRemaining: null,
                 dailyUsageList: [],
                 chartInstance: null,
+                chartStep: 0,
                 cdkCode: '',
                 exchangeLoading: false,
                 cdkMessage: '',
@@ -1045,6 +1046,33 @@
             },
             pad(n) {
                 return n.toString().padStart(2, '0');
+            },
+            chartLabelStep() {
+                // 横坐标标签抽稀步长：按图表容器实际宽度自适应
+                const dom = this.$refs.chartDom;
+                const width = dom && dom.clientWidth ? dom.clientWidth : 600;
+                const days = (this.chartData.dates && this.chartData.dates.length) || 1;
+                // "MM/DD" 标签含间距约需 34px，据此算出最多可容纳的标签数
+                const maxLabels = Math.max(2, Math.floor(width / 34));
+                return Math.max(1, Math.ceil(days / maxLabels));
+            },
+            buildLabelMask(days, step) {
+                // 生成横坐标标签显示掩码：等距抽稀，首尾日期必须有标签；
+                // 若末尾标签与倒数第二个过近，则舍弃倒数第二个，保证不重叠
+                const mask = new Array(days).fill(false);
+                if (days <= 0) return mask;
+                let lastShown = -1;
+                for (let i = 0; i < days; i += step) {
+                    mask[i] = true;
+                    lastShown = i;
+                }
+                if (lastShown !== days - 1) {
+                    if (lastShown > 0 && days - 1 - lastShown < step) {
+                        mask[lastShown] = false;
+                    }
+                    mask[days - 1] = true;
+                }
+                return mask;
             },
             todayStr() {
                 return this.formatDate(new Date());
@@ -1266,6 +1294,10 @@
                 }
                 const dom = this.$refs.chartDom;
                 this.chartInstance = echarts.init(dom);
+                // 按容器宽度决定横坐标标签密度，避免日期标签挤在一起
+                const labelStep = this.chartLabelStep();
+                this.chartStep = labelStep;
+                const showLabel = this.buildLabelMask(dates.length, labelStep);
                 const option = {
                     tooltip: {
                         trigger: 'axis',
@@ -1278,10 +1310,10 @@
                     },
                     legend: { show: false },
                     grid: {
-                        left: '8%',
-                        right: '5%',
-                        top: 12,
-                        bottom: 25,
+                        left: 8,
+                        right: 12,
+                        top: 16,
+                        bottom: 22,
                         containLabel: true,
                         backgroundColor: '#fefefe'
                     },
@@ -1291,11 +1323,12 @@
                         axisTick: { show: false },
                         axisLine: { lineStyle: { color: '#cbd5e1' } },
                         axisLabel: {
-                            rotate: dates.length > 20 ? 35 : 0,
-                            interval: 0,
+                            // 按步长均匀抽稀，并保证首尾日期都有标签
+                            interval: (index) => showLabel[index] === true,
+                            rotate: 0,
                             fontSize: 10,
-                            margin: 12,
-                            hideOverlap: false,
+                            margin: 10,
+                            hideOverlap: true,
                             fontWeight: 'normal',
                             color: '#4b5563'
                         }
@@ -1359,6 +1392,10 @@
             handleResize() {
                 if (this.chartInstance) {
                     this.chartInstance.resize();
+                    // 宽度变化会改变标签密度，需要时重绘
+                    if (this.chartStep !== this.chartLabelStep()) {
+                        this.renderChart();
+                    }
                 }
                 if (this.pieInstance) {
                     this.pieInstance.resize();

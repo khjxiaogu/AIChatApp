@@ -26,6 +26,11 @@ package com.khjxiaogu.aiwuxia.llm.providers.volcano;
 public class VolcanoUsagePro extends VolcanoUsage {
 
 	@Override
+	public String getUsageName() {
+		return "豆包 Seed2 专业";
+	}
+
+	@Override
 	public double getEquivantTokens() {//3.2 4.8 9.6/16 24 48
 		long uncached=prompt_tokens-prompt_tokens_details.cached_tokens;
 		long cached=prompt_tokens_details.cached_tokens;

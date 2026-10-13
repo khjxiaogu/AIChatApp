@@ -26,6 +26,11 @@ package com.khjxiaogu.aiwuxia.llm.providers.volcano;
 public class VolcanoUsageLite extends VolcanoUsage {
 
 	@Override
+	public String getUsageName() {
+		return "豆包 Seed2 轻量";
+	}
+
+	@Override
 	public double getEquivantTokens() {//0.6 0.9 1.8 /3.6 5.4 10.8
 		long uncached=prompt_tokens-prompt_tokens_details.cached_tokens;
 		long cached=prompt_tokens_details.cached_tokens;

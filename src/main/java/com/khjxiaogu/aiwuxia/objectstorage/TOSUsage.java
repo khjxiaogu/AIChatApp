@@ -19,6 +19,11 @@ public class TOSUsage implements UsageIntf<TOSUsage> {
 		return size/1024d/1024d/1024d*3d*1000000d;
 	}
 
+	@Override
+	public String getUsageName() {
+		return "对象存储";
+	}
+
 	public TOSUsage(long size) {
 		super();
 		this.size = size;

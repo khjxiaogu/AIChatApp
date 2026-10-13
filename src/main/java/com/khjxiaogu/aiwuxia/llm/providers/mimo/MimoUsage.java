@@ -39,6 +39,11 @@ public class MimoUsage implements UsageIntf<MimoUsage> {
 	}
 
 	@Override
+	public String getUsageName() {
+		return "Mimo 对话";
+	}
+
+	@Override
 	public String toString() {
 		return "返回token " + completion_tokens +
 			"\n发送token " + prompt_tokens +
