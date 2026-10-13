@@ -514,6 +514,21 @@ public class AISession implements ISaveData,AutoCloseable{
 	public ApplicationStage getStage() {
 		return getExtraData().stage;
 	}
+
+	/**
+	 * 获取当前会话应当使用的模型标识。
+	 * <p>
+	 * 基类直接返回会话中保存的模型提示（可能为空，表示未指定）；具体会话实现可重写本方法，
+	 * 在未指定时回退到应用级默认模型。AI请求统一通过本方法取模型标识。
+	 * </p>
+	 *
+	 * @return 模型标识（按 "/" 分层的完整路径），空字符串表示未指定
+	 */
+	public String getModelHint() {
+		String hint = getExtraData().modelHint;
+		return hint == null ? "" : hint;
+	}
+
 	Map<String,Consumer<String>> pendingInputs=new ConcurrentHashMap<>();
 	/**
 	 * @param prompt  

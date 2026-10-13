@@ -234,12 +234,15 @@ public class AIRequest {
     /**
      * 基于会话创建 Builder：会话提供可用工具与管理策略，共同装配成
      * {@link ToolCallManager} 交给请求。
+     * <p>
+     * 模型标识统一取自 {@link AISession#getModelHint()}：会话未指定模型时由会话实现决定默认模型。
+     * </p>
      *
      * @param session 会话
      * @return Builder 对象
      */
     public static Builder builder(AISession session) {
-        return new Builder(session.user).modelHint(session.getExtraData().modelHint)
+        return new Builder(session.user).modelHint(session.getModelHint())
         		.toolCallManager(ToolCallManager.builder()
         				.tools(session.getAvailableTools())
         				.policy(session.getToolCallPolicy())

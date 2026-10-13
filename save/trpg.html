@@ -6,6 +6,8 @@
     <title>AI智能对话</title>
 	<script src="feather.min.js"></script>
     <script src="vue.js"></script>
+    <script src="theme.js"></script>
+    <script src="heartbeat.js"></script>
     <link rel="stylesheet" href="chat-common.css">
     <style>
         .front-layer {
@@ -94,6 +96,12 @@
 					<div v-for="msg2 in msg.text.split('\n')">
 						<template v-if="msg.title !== null">【{{ msg.title }}】「</template><span v-html="msg.title !== null?msg2:renderMarkdown(msg2)"></span><template v-if="msg.title !== null">」</template>
 					</div>
+					<!-- 撤回/重说/朗读跟随最新一条消息，避免占用手边的工具栏；生成过程中不显示 -->
+					<div class="msg-actions" v-if="idx === recentMessages.length - 1 && prepared && !typing">
+						<button class="btn msg-action-btn" @click="refreshMessages" title="重新生成这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>重说</button>
+						<button class="btn msg-action-btn" @click="undoLastOwn" title="撤回最后一轮对话"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>撤回</button>
+						<button class="btn msg-action-btn" v-if="isVoiceUsable && messages.length>0 && messages[messages.length-1].audioId==undefined" @click="triggerRead()" title="朗读这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>朗读</button>
+					</div>
 				</div>
 		    </div>
 		    <div class="dialog-sidebar">
@@ -103,12 +111,8 @@
 		        </div>
 		        <div class="button-group">
 		            <button class="btn toolbar-btn" @click="openHistory"><i data-feather="file-text"></i>历史</button>
-		            <button class="btn toolbar-btn" @click="refreshMessages"  v-show="prepared&&!typing"><i data-feather="refresh-ccw"></i>重说</button>
-		            <button class="btn toolbar-btn" @click="undoLastOwn"  v-show="prepared&&!typing"><i data-feather="x"></i>撤回</button>
 					<button class="btn toolbar-btn" v-show="prepared&&!typing" @click.stop="showDialog=false"><i data-feather="eye-off"></i>隐藏</button>
-
-					<button class="btn toolbar-btn" v-show="isVoiceUsable" @click="setVoiceEnabled(!isVoiceEnabled)"><span v-if="isVoiceEnabled"><i data-feather="volume"></i></span><span v-if="!isVoiceEnabled"><i data-feather="volume-x"></i></span>语音</button>
-					<button class="btn toolbar-btn" v-show="prepared&&!typing&&isVoiceUsable&&messages[messages.length-1].audioId==undefined" @click="triggerRead()"><i data-feather="message-circle"></i>朗读</button>
+					<button class="btn toolbar-btn" v-show="prepared" @click.stop="openSettings"><i data-feather="settings"></i>设置</button>
 				</div>
 		    </div>
 		</div>
@@ -117,10 +121,11 @@
                 <h2><i data-feather="file-text"></i> 历史记录</h2>
 				<span>￥-{{ price }}</span>
                 <span style="display:flex">
-				<button class="export-history" @click="exportHistory"><i data-feather="file"></i>导出</button>
                 <button class="close-history" @click="closeHistory"><i data-feather="x"></i></button></span>
             </div>
-            <div class="history-content" ref="histlay">
+            <div class="history-content" ref="histlay" @scroll="onHistoryScroll">
+               <div v-if="isLoadingMore" class="history-tip loading">正在加载更早的记录</div>
+               <div v-else-if="historyTopReached && !hasMoreHistory" class="history-tip">没有更早的记录啦</div>
                <table>
                 <tr v-for="(msg, idx) in messages" :key="'hist-'+idx">
 					<td><a v-show="msg.audioId" style="float:right" @click="playSoundWithWebAudio(msg.audioId)"><i data-feather="play-circle"></i></a></td>
@@ -132,6 +137,38 @@
                 </table>
             </div>
         </div>
+		<!-- 设置界面浮层 -->
+		<div class="layer setting-layer" v-if="showSettings" @click.self="closeSettings">
+			<div class="setting-container">
+				<div class="setting-header">
+					<h3><i data-feather="settings"></i> 设置</h3>
+					<button class="close-setting" @click="closeSettings"><i data-feather="x"></i></button>
+				</div>
+				<div class="setting-content">
+					<!-- 白天/黑夜模式 -->
+					<div class="setting-row">
+						<span class="setting-row-label">白天模式</span>
+						<button class="setting-switch" :class="{ 'is-on': isDayMode }" @click.stop="setDayMode(!isDayMode)" :aria-pressed="isDayMode ? 'true' : 'false'">
+							<span class="setting-switch-knob"></span>
+						</button>
+					</div>
+					<!-- 导出按钮（统一放在设置里） -->
+					<button class="btn setting-export-btn" @click="exportHistory">
+						<i data-feather="download"></i> 导出对话记录
+					</button>
+					<button class="btn setting-export-btn" @click="exportMemory">
+						<i data-feather="download"></i> 导出记忆
+					</button>
+					<!-- 语音开关：开启后新回复会自动朗读 -->
+					<div class="setting-row" v-show="isVoiceUsable">
+						<span class="setting-row-label">默认使用朗读</span>
+						<button class="setting-switch" :class="{ 'is-on': isVoiceEnabled }" @click.stop="setVoiceEnabled(!isVoiceEnabled)" :aria-pressed="isVoiceEnabled ? 'true' : 'false'">
+							<span class="setting-switch-knob"></span>
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
         <div class="bottom-input-bar" ref="bottomBar" v-if="prepared">
             <textarea 
                 ref="messageInput"
@@ -185,6 +222,12 @@
 					 isUnlocked:false,
 					 isVoiceUsable:false,
 					 isVoiceEnabled:false,
+					 showSettings:false,        // 控制设置界面显隐
+					 hasMoreHistory:false,      // 服务端是否还有更早的历史记录
+					 isLoadingMore:false,       // 是否正在加载更早的历史记录
+					 historyTopReached:false,   // 是否已经翻到最早一条
+					 suppressAutoScroll:false,  // 插入更早记录期间抑制自动滚动到底部
+					 isDayMode: !!(window.AIWuxiaTheme && AIWuxiaTheme.isDay()),  // 白天/黑夜模式
 		         },
 				 computed: {
 				     recentMessages() {
@@ -265,6 +308,24 @@
 						form.submit();
 						document.body.removeChild(form); // 提交后移除表单
 					},
+					
+					exportMemory(){
+						const form = document.createElement('form');
+						form.method = 'POST';
+						form.action = "exportMemory?app="+this.appId+"&chatid="+this.chatId+"&uid="+pageQueries.userId;
+						form.target = 'downloadFrame';
+						let iframe = document.getElementById('downloadFrame');
+						if (!iframe) {
+						    iframe = document.createElement('iframe');
+						    iframe.id = 'downloadFrame';
+						    iframe.name = 'downloadFrame';
+						    iframe.style.display = 'none';
+						    document.body.appendChild(iframe);
+						}
+						document.body.appendChild(form);
+						form.submit();
+						document.body.removeChild(form);
+					},
 					setBackImage(newSrc) {
 					    // 如果新地址与当前相同且图片已加载
 					    if (newSrc === this.bgurl && !this.isBackLoading) {
@@ -300,9 +361,23 @@
 						this.isAnimateBlocking=false;
 						this.typing=false;
 						let _this=this;
+						// 心跳保活：超过10秒没收到同id的pong即判定连接已失效，摘掉监听后主动重连
+						if(!this.heartbeat){
+							this.heartbeat=createHeartbeat({
+								getSocket:function(){return _this.wssocket;},
+								onTimeout:function(){
+									console.warn("心跳超时，主动断开并重连");
+									detachAndCloseSocket(_this.wssocket);
+									_this.wssocket=null;
+									_this.prepared=false;
+									setTimeout(_this.open,500);
+								}
+							});
+						}
 						this.wssocket=new WebSocket((location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId);
 						this.wssocket.onopen=function(){
 							_this.prepared=true;
+							_this.heartbeat.start();
 							window.onbeforeunload = function() {
 							    this.wssocket.onclose = function () {}; // disable onclose handler first
 							    this.wssocket.close();
@@ -325,11 +400,13 @@
 									}
 								})
 						};
-						this.wssocket.onclose=function(ev){var rev=ev?ev:event;setTimeout(_this.open,500);_this.prepared=false;if(rev.reason!="")alert(rev.reason);}
-						this.wssocket.onerror=function(ev){console.info(ev);_this.wssocket.onclose=function(){};_this.prepared=false;alert("连接服务器失败！");};
+						this.wssocket.onclose=function(ev){var rev=ev?ev:event;_this.heartbeat.stop();setTimeout(_this.open,500);_this.prepared=false;if(rev.reason!="")alert(rev.reason);}
+						this.wssocket.onerror=function(ev){console.info(ev);_this.heartbeat.stop();_this.wssocket.onclose=function(){};_this.prepared=false;alert("连接服务器失败！");};
 						this.wssocket.onmessage = function(ev) {
 							var rev=ev?ev:event;
 							var param=eval("("+rev.data+")");
+							// 心跳应答：只清除对应id的等待，其他消息照常处理
+							if(param.type=="pong"){_this.heartbeat.onPong(param);return;}
 
 							if(param.scene!=undefined){
 								let scene_data='';
@@ -411,12 +488,60 @@
 							func(); // 每个字符间隔50ms
 						}
 						if(message.messages!=undefined){
-							this.messages.splice(0,this.messages.length)
-							for(var i=0;i<message.messages.length;i++){
-								
-								this.addMessage(message.messages[i].id,message.messages[i].title,message.messages[i].message,message.messages[i].audioId);
+							var prepend=(message.prepend===true);
+							var hist=this.$refs.histlay;
+							var prevScrollHeight=hist?hist.scrollHeight:0;
+							var prevScrollTop=hist?hist.scrollTop:0;
+							if(prepend){
+								// 向上翻页：按标识符去重后插入到最前面
+								var known={};
+								for(var k=0;k<this.messages.length;k++){
+									if(this.messages[k].id!=null) known[this.messages[k].id]=true;
+								}
+								var incoming=[];
+								for(var i=0;i<message.messages.length;i++){
+									var old=message.messages[i];
+									if(old.id!=null){
+										if(known[old.id]) continue;
+										known[old.id]=true;
+									}
+									incoming.push({text:old.message,title:old.title,id:old.id,audioId:old.audioId});
+								}
+								this.suppressAutoScroll=true;
+								for(var j=incoming.length-1;j>=0;j--){
+									this.messages.unshift(incoming[j]);
+								}
+								this.$nextTick(()=>{
+									// 内容被撑高：恢复原来的视口位置，避免跳动
+									if(hist) hist.scrollTop=hist.scrollHeight-prevScrollHeight+prevScrollTop;
+									this.suppressAutoScroll=false;
+								});
+							}else{
+								// 连接/重连下发的是最新一页：替换最新范围，同时保留本地已翻出来的更早记录
+								var oldestIncoming=null;
+								for(var i=0;i<message.messages.length;i++){
+									var id=message.messages[i].id;
+									if(id!=null&&(oldestIncoming===null||id<oldestIncoming)) oldestIncoming=id;
+								}
+								var kept=[];
+								if(oldestIncoming!=null){
+									for(var k=0;k<this.messages.length;k++){
+										var local=this.messages[k];
+										if(local.id!=null&&local.id<oldestIncoming) kept.push(local);
+									}
+								}
+								this.messages.splice(0,this.messages.length)
+								for(var k=0;k<kept.length;k++){
+									this.messages.push(kept[k]);
+								}
+								for(var i=0;i<message.messages.length;i++){
+									
+									this.addMessage(message.messages[i].id,message.messages[i].title,message.messages[i].message,message.messages[i].audioId);
+								}
+								this.historyTopReached=false;
 							}
-							console.info(message.messages.length)
+							this.hasMoreHistory=(message.hasMore===true);
+							this.isLoadingMore=false;
 						}
 						if(message.audioId!=undefined){
 							this.setAudioId(message.id,message.audioId);
@@ -432,30 +557,35 @@
 						this.chatId=id;
 						this.appId=app;
 						this.messages.splice(0,this.messages.length);
+						// 切换对话时重置历史记录分页状态
+						this.hasMoreHistory=false;
+						this.isLoadingMore=false;
+						this.historyTopReached=false;
+						this.suppressAutoScroll=false;
 						this.open(done);
 					},
 					renderMarkdown(mdt){
 						if(!mdt)return mdt;
 						 let text = mdt.replace(/```[\s\S]*?```/g, '')
                          .replace(/`([^`]+)`/g, '$1');
-  // 去掉标题（# 等）
-  text = text.replace(/^#{1,6}\s+/gm, '');
-  // 去掉粗体/斜体
-  text = text.replace(/(\*\*|__)(.*?)\1/g, '$2')
-             .replace(/(\*|_)(.*?)\1/g, '$2');
-  // 去掉链接 [text](url) → text
-  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-  // 去掉图片 ![alt](url) → alt（或空）
-  text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
-  // 去掉行内 HTML 标签（可选，简单去除）
-  text = text.replace(/<[^>]+>/g, '');
-  // 去掉引用符号 >
-  text = text.replace(/^\s*>\s+/gm, '');
-  // 去掉列表标记（-、*、+、数字.）
-  text = text.replace(/^(\s*[-*+]\s+|\s*\.\s+)/gm, '');
-  // 清理多余空行
-  text = text.replace(/\n{2,}/g, '\n\n');
-  return text.trim();
+						 // 去掉标题（# 等）
+						 text = text.replace(/^#{1,6}\s+/gm, '');
+						 // 去掉粗体/斜体
+						 text = text.replace(/(\*\*|__)(.*?)\1/g, '$2')
+						            .replace(/(\*|_)(.*?)\1/g, '$2');
+						 // 去掉链接 [text](url) → text
+						 text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+						 // 去掉图片 ![alt](url) → alt（或空）
+						 text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+						 // 去掉行内 HTML 标签（可选，简单去除）
+						 text = text.replace(/<[^>]+>/g, '');
+						 // 去掉引用符号 >
+						 text = text.replace(/^\s*>\s+/gm, '');
+						 // 去掉列表标记（-、*、+、数字.）
+						 text = text.replace(/^(\s*[-*+]\s+|\s*\.\s+)/gm, '');
+						 // 清理多余空行
+						 text = text.replace(/\n{2,}/g, '\n\n');
+						 return text.trim();
 					},
 					triggerRead(){
 						this.wssocket.send(JSON.stringify({operation:"genVoice"}));
@@ -502,9 +632,9 @@
 		                     if (bottomBar) {
 		                         this.inputBarHeight = bottomBar.offsetHeight;
 		                     }
-		                     // 滚动消息容器到底部
+		                     // 滚动消息容器到底部（插入更早记录期间跳过）
 		                     const container = this.$refs.msgContainer;
-		                     if (container) container.scrollTop = container.scrollHeight;
+		                     if (container && !this.suppressAutoScroll) container.scrollTop = container.scrollHeight;
 		                 });
 		             },
 					 setAudioId(id,audioId){
@@ -569,9 +699,9 @@
 		                     if (bottomBar) {
 		                         this.inputBarHeight = bottomBar.offsetHeight;
 		                     }
-		                     // 滚动消息容器到底部
+		                     // 滚动消息容器到底部（插入更早记录期间跳过）
 		                     const container = this.$refs.msgContainer;
-		                     if (container) container.scrollTop = container.scrollHeight;
+		                     if (container && !this.suppressAutoScroll) container.scrollTop = container.scrollHeight;
 		                 });
 					},
 					
@@ -600,6 +730,28 @@
 						var data={requestBackLog:true}
 						this.wssocket.send(JSON.stringify(data));
 					 },
+					 // 历史记录分页：滚动到顶部附近时请求更早的一页
+					 onHistoryScroll(){
+						const hist=this.$refs.histlay;
+						if(!hist||this.suppressAutoScroll) return;
+						if(hist.scrollTop>60) return;
+						if(this.hasMoreHistory)
+							this.loadMoreHistory();
+						else
+							this.historyTopReached=true;
+					 },
+					 loadMoreHistory(){
+						if(this.isLoadingMore||!this.hasMoreHistory) return;
+						if(!this.wssocket||this.wssocket.readyState!==1) return;
+						// 以当前最旧的一条记录作为游标，向后端请求更早的一页
+						var beforeId=null;
+						for(var i=0;i<this.messages.length;i++){
+							var id=this.messages[i].id;
+							if(id!=null&&(beforeId===null||id<beforeId)) beforeId=id;
+						}
+						this.isLoadingMore=true;
+						this.wssocket.send(JSON.stringify({requestBackLog:true,before_id:beforeId===null?0:beforeId,limit:20}));
+					 },
 		             openHistory() {
 		                 this.showHistory = true;
 						  this.$nextTick(() => {
@@ -608,11 +760,25 @@
 		             },
 		             closeHistory() {
 		                 this.showHistory = false;
-		             }
+		             },
+					 // 打开设置界面（语音等开关）
+					 openSettings() {
+						this.showSettings = true;
+						this.$nextTick(() => feather.replace());
+					 },
+					 closeSettings() {
+						this.showSettings = false;
+					 },
+					 // 白天/黑夜模式切换（偏好保存在本地，各页面共用）
+					 setDayMode(day){
+						this.isDayMode=day;
+						if(window.AIWuxiaTheme) AIWuxiaTheme.setDay(day);
+					 }
 		         },
 		         watch: {
 		             messages: {
 		                 handler() {
+		                     if (this.suppressAutoScroll) return;
 		                     this.$nextTick(() => {
 		                         const container = this.$refs.msgContainer;
 		                         if (container) container.scrollTop = container.scrollHeight;

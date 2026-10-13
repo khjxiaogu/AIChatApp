@@ -29,12 +29,10 @@ import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelType;
 
 import io.netty.channel.Channel;
-import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 
 /**
  * 绘画会话。
@@ -93,13 +91,17 @@ public class PainterSession extends WebSocketAISession {
 			// 分页参数解析与下发统一由 WebSocketAISession 处理，缺省(或<=0)的 before_id 即加载最新一页
 			state.requireMoreMessages(jo);
 		});
-		PAINTER_OPERATIONS.put("ping", (jo, state, conn) -> {
-			// 心跳：只回给发起请求的连接，并原样带回同一个id，客户端据此确认连接仍然可用
-			JsonObjectBuilder<JsonObject> pong = JsonBuilder.object().add("type", "pong");
-			if (jo.has("id") && !jo.get("id").isJsonNull()) {
-				pong.add("id", jo.get("id"));
-			}
-			conn.writeAndFlush(new TextWebSocketFrame(pong.end().toString()));
+		PAINTER_OPERATIONS.put("model", (jo, state, conn) -> {
+			// 模型切换与对话前端共用父类实现：校验标识并回发最终生效的模型
+			state.setModel(jo.has("model") && !jo.get("model").isJsonNull() ? jo.get("model").getAsString() : "");
+		});
+		PAINTER_OPERATIONS.put("revert", (jo, state, conn) -> {
+			// 撤回最后一轮：与对话前端共用父类实现，动作在会话命令线程中执行
+			state.requestRevert();
+		});
+		PAINTER_OPERATIONS.put("regen", (jo, state, conn) -> {
+			// 重新生成最后一条回复
+			state.requestRegen();
 		});
 	}
 
@@ -143,6 +145,10 @@ public class PainterSession extends WebSocketAISession {
     @Override
     public void onMessage(Channel conn, String message) {
         JsonObject jo = JsonParser.parseString(message).getAsJsonObject();
+        // 心跳：ping -> pong，与对话前端共用实现，不参与指令分发
+        if (Heartbeat.replyPongIfPing(conn, jo)) {
+            return;
+        }
         if (!jo.has("type")) {
             return;
         }
@@ -156,6 +162,16 @@ public class PainterSession extends WebSocketAISession {
 	public boolean isAvailable() {
 		return LocalModel.hasOnlineService(ModelType.SDXL);
 	}
+
+	/**
+	 * 绘画前端的帧全部按 {@code type} 分发，因此模型回发也带上 type，
+	 * 避免无 type 的帧被前端当成消息内容处理。
+	 */
+	@Override
+	protected void sendModelHint(String model) {
+		sendFrame(JsonBuilder.object().add("type", "model").add("model", model).end().toString());
+	}
+
 	public void addPendingUserMessage(String content) {
     	appendLine(Role.USER, content, true);
     	this.flush();
