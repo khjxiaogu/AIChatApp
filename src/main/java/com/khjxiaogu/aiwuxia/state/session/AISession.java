@@ -155,7 +155,8 @@ public class AISession implements ISaveData,AutoCloseable{
      */
     public void appendReasoner(MessageContent current) {
     	HistoryItem hi=this.getHistory().peekLast();
-    	if(hi.getRole()==Role.ASSISTANT) {
+    	// 撤回会把条目做软删除，此时容器里可能只剩已删除条目，最后一条并不存在
+    	if(hi!=null&&hi.getRole()==Role.ASSISTANT) {
     		this.getHistory().appendReasoner(current);
     	}else {
 	        if (currentReasoner == null)
@@ -181,12 +182,10 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * @param appendToContext 如果为 true，表示该内容应被视为有效的上下文内容 （即对后续对话有影响），会更新条目的上下文有效性标记
 	 */
 	public void appendLine(Role role, String content, boolean appendToContext) {
-		HistoryItem hi = null;
-		if (!getHistory().isEmpty()) {
-			hi = getLast();
-			if (role != hi.getRole() || (!hi.isValidContext() && appendToContext)) {
-				hi = null;
-			}
+		// 已删除的条目不算数：撤回后容器里可能只剩软删除条目，getLast() 此时返回 null
+		HistoryItem hi = getLast();
+		if (hi != null && (role != hi.getRole() || (!hi.isValidContext() && appendToContext))) {
+			hi = null;
 		}
 		if (hi == null) {
 			
@@ -212,12 +211,10 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * @param appendToContext 是否同时将其添加到上下文内容中
 	 */
 	public void appendCh(Role role, String ch, boolean appendToContext) {
-		HistoryItem hi = null;
-		if (!getHistory().isEmpty()) {
-			hi = getHistory().peekLast();
-			if (role != hi.getRole() || (!hi.isValidContext() && appendToContext)) {
-				hi = null;
-			}
+		// 已删除的条目不算数：撤回后容器里可能只剩软删除条目，peekLast() 此时返回 null
+		HistoryItem hi = getHistory().peekLast();
+		if (hi != null && (role != hi.getRole() || (!hi.isValidContext() && appendToContext))) {
+			hi = null;
 		}
 		if (hi == null) {
 			
@@ -245,12 +242,10 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * @param appendToContext 是否同时将其添加到上下文内容中
 	 */
 	public void appendCh(Role role, MessageContent content, boolean appendToContext) {
-		HistoryItem hi = null;
-		if (!getHistory().isEmpty()) {
-			hi = getHistory().peekLast();
-			if (role != hi.getRole() || (!hi.isValidContext() && appendToContext)) {
-				hi = null;
-			}
+		// 已删除的条目不算数：撤回后容器里可能只剩软删除条目，peekLast() 此时返回 null
+		HistoryItem hi = getHistory().peekLast();
+		if (hi != null && (role != hi.getRole() || (!hi.isValidContext() && appendToContext))) {
+			hi = null;
 		}
 		if (hi == null) {
 			if (currentReasoner != null && role == Role.ASSISTANT) {
@@ -273,12 +268,10 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * @param content 要追加到上下文的内容（会自动追加换行符）
 	 */
 	public void appendContextLine(Role role, String content) {
-		HistoryItem hi = null;
-		if (!getHistory().isEmpty()) {
-			hi = getHistory().peekLast();
-			if (role != hi.getRole() || (!hi.isValidContext())) {
-				hi = null;
-			}
+		// 已删除的条目不算数：撤回后容器里可能只剩软删除条目，peekLast() 此时返回 null
+		HistoryItem hi = getHistory().peekLast();
+		if (hi != null && (role != hi.getRole() || (!hi.isValidContext()))) {
+			hi = null;
 		}
 		if (hi == null) {
 			
@@ -687,8 +680,9 @@ public class AISession implements ISaveData,AutoCloseable{
 	public MessageContents getReasonerContent() {
 		if (currentReasoner != null)
 			return currentReasoner;
-		if (!getHistory().isEmpty() && getLast().getRole() == Role.ASSISTANT) {
-			MessageContents reasoner=getLast().getReasoningContent();
+		HistoryItem last=getLast();
+		if (last!=null&&last.getRole() == Role.ASSISTANT) {
+			MessageContents reasoner=last.getReasoningContent();
 			return reasoner==null?null:reasoner;
 		}
 		return null;

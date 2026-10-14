@@ -741,6 +741,30 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return new ResultDTO(200, new File(parent, "theme.js"));
 	}
 	@HttpMethod("GET")
+	@HttpPath("/heartbeat.js")
+	@Adapter
+	public ResultDTO heartbeatJs() throws IOException {
+		return new ResultDTO(200, new File(parent, "heartbeat.js"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/ai-protocol.js")
+	@Adapter
+	public ResultDTO aiProtocolJs() throws IOException {
+		return new ResultDTO(200, new File(parent, "ai-protocol.js"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/ai-ui.css")
+	@Adapter
+	public ResultDTO aiUiCss() throws IOException {
+		return new ResultDTO(200, new File(parent, "ai-ui.css"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/sidebar.css")
+	@Adapter
+	public ResultDTO sidebarCss() throws IOException {
+		return new ResultDTO(200, new File(parent, "sidebar.css"));
+	}
+	@HttpMethod("GET")
 	@HttpPath("/usage")
 	@Adapter
 	public ResultDTO usage() throws IOException {
@@ -886,8 +910,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				byte[] data = imageData.get();
 				String imageId = painterStorage.uploadIfNotExists(data,session::addUsage);
 				
+				// 图片作为待生成的用户输入记录到会话历史：写入动作会排到会话命令线程，
+				// 与正在进行的生成串行，避免与生成线程并发写历史（落盘也在一并在线程内完成）
 				((PainterSession) session).addPendingUserMessage(new ImageContent(imageId));
-				session.flush();
 				return new ResultDTO(200, JsonBuilder.object().add("code", 0).add("message", "success").end());
 			}
 			if (session == null) {

@@ -389,7 +389,7 @@
     </div>
 
     <div class="messages-container" ref="messageContainer">
-        <div v-for="(msg, idx) in messages" :key="idx" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
+        <div v-for="(msg, idx) in messages" :key="msg._key || (msg._id != null ? 'm' + msg._id : 'n' + idx)" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
             <div class="message-bubble">
                 <!-- 用户消息：支持文本和图片 -->
                 <div v-if="msg.role === 'user'">
@@ -441,10 +441,10 @@
     <div class="input-area">
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
-            <button @click="sendTextMessage" :disabled="aiGenerating || (!inputText.trim() && !uploadedImageId)">发送</button>
+            <button @click="sendTextMessage" :disabled="aiGenerationBusy || (!inputText.trim() && !uploadedImageId)">发送</button>
             
-            <button class="upload-btn" @click="triggerFileUpload" :disabled="aiGenerating">📎 图片</button>
-            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" @change="onFileSelected" />
+            <button class="upload-btn" @click="triggerFileUpload" :disabled="aiGenerationBusy" :title="aiGenerationBusy ? '正在生成，无法上传图片' : '上传图片'">📎 图片</button>
+            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" :disabled="aiGenerationBusy" @change="onFileSelected" />
         </div>
         <div style="font-size: 12px; color:#8196b0; padding-left: 8px;">💡 输入消息后点击"发送"添加到对话，点击"生成"触发AI回复</div>
     </div>
@@ -676,6 +676,7 @@ var main=new Vue({
             this.handleLocalRequest(frame);
         },
         // 找到（必要时新建）当前流式输出的助手消息
+        // _key 在创建时固定：之后服务端补上历史 id 只改 _id，节点不会被重建（否则 AI 框会闪一下）
         painterTargetMessage(id) {
             let target = id ? this.messages.find(m => m._id === id) : null;
             if (!target) {
@@ -683,7 +684,7 @@ var main=new Vue({
                 if (last && last.role === 'assistant') target = last;
             }
             if (!target) {
-                target = { _id: id || null, role: 'assistant', thinkingSegments: [], contentItems: [] };
+                target = { _id: id || null, _key: this.aiMessageKey(id), role: 'assistant', thinkingSegments: [], contentItems: [] };
                 this.messages.push(target);
             } else if (id && !target._id) {
                 target._id = id;
@@ -743,6 +744,7 @@ var main=new Vue({
             } else {
                 this.messages.push({
                     _id: frame.id,
+                    _key: this.aiMessageKey(frame.id),
                     role: isUser ? 'user' : 'assistant',
                     thinkingSegments: [],
                     contentItems: parsed.contentItems
@@ -778,6 +780,7 @@ var main=new Vue({
                 }
                 return {
                     _id: item.id,
+                    _key: this.aiMessageKey(item.id),
                     role: isUser ? 'user' : 'assistant',
                     thinkingSegments: thinkingSegs,
                     contentItems: this.parseContentArray(item.content).contentItems
@@ -865,7 +868,7 @@ var main=new Vue({
         },
         // 发送文本消息（通过websocket）— 只添加到历史，不触发生成
         sendTextMessage() {
-            if (this.aiGenerating) return;
+            if (this.aiGenerationBusy) return;
             const text = this.inputText.trim();
             if (!text && !this.uploadedImageId) {
                 return;
@@ -881,10 +884,12 @@ var main=new Vue({
         },
         // 触发AI生成
         triggerGenerate() {
-            if (this.aiGenerating) return;
+            if (this.aiGenerationBusy) return;
             if (this.aiSendGenerate()) {
                 this.aiGenerating = true;
                 this.messages.push({
+                    _id: null,
+                    _key: this.aiMessageKey(),
                     role: 'assistant',
                     thinkingSegments: [],
                     contentItems: []
@@ -892,13 +897,22 @@ var main=new Vue({
                 this.scrollToBottom();
             }
         },
-        // 触发文件选择
+        // 触发文件选择（本轮生成/停止中一律禁止上传）
         triggerFileUpload() {
-            if (this.aiGenerating) return;
+            if (this.aiGenerationBusy) {
+                this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
+                return;
+            }
             this.$refs.fileInput.click();
         },
         async onFileSelected(e) {
             const file = e.target.files[0];
+            // 选择文件期间可能已经开始生成，这里再挡一次
+            if (this.aiGenerationBusy) {
+                this.$refs.fileInput.value = '';
+                this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
+                return;
+            }
             if (!file) return;
             if (!file.type.startsWith('image/')) {
                 this.aiToast("请选择图片文件", { kind: 'warn' });

@@ -137,6 +137,7 @@
 				connTipAttempt: 0,         // 当前重试次数
 				// ---- 服务端状态帧（status / model / voice / done）维护的会话状态，页面直接读取，不再各自复制 ----
 				aiGenerating: false,       // 服务端是否正在生成（status.generating，done 会复位）
+				aiStopping: false,         // 是否已请求停止、正在等服务端结束本轮（aiSendStop 置位，done/status 复位）
 				aiPrice: '0.00',           // 本会话消费价格（status.price / done.price）
 				aiVoiceEnabled: false,     // 语音会话开关（status.isVoiceEnabled / voice.isVoiceEnabled）
 				aiVoiceUsable: false,      // 当前是否可用语音（status.isVoiceUsable / voice.isVoiceUsable）
@@ -167,6 +168,7 @@
 		},
 		created: function () {
 			this._aiImageSeq = {};      // 每个槽位的请求序号，用于丢弃过期的加载结果
+			this._aiMsgKeySeq = 0;      // 匿名消息（还没有历史 id）的本地 key 序号
 		},
 		mounted: function () {
 			// popstate：全屏看图等覆盖层用后退键关闭（页面实现 aiOnPopState 时生效）
@@ -191,6 +193,14 @@
 				if (!list || !list.length)
 					return false;
 				return isUserMessage(list[list.length - 1], this.aiUserTitle);
+			},
+			/**
+			 * 本轮是否仍在进行：正在生成，或已请求停止但服务端还没结束本轮。
+			 * <p>需要"本轮进行期间禁止操作"的地方（上传图片、发送消息、生成等）统一用它判断，
+			 * 只判断 {@code aiGenerating} 会在"停止中"的窗口里漏掉。</p>
+			 */
+			aiGenerationBusy: function () {
+				return !!(this.aiGenerating || this.aiStopping);
 			},
 		},
 		beforeDestroy: function () {
@@ -328,9 +338,22 @@
 			aiSendGenerate: function () {
 				return this.aiSendFrame('generate');
 			},
-			/** 停止生成 */
+			/**
+			 * 停止生成。
+			 * <p>
+			 * 服务端中断是异步的：发送成功后进入"停止中"状态，按钮保持等待态并禁止重复点击，
+			 * 直到本轮真正结束（done 帧，或 status.generating=false）才由公共层复位。
+			 * </p>
+			 *
+			 * @return {Boolean} 是否发送成功（停止中或连接未就绪时返回 false）
+			 */
 			aiSendStop: function () {
-				return this.aiSendFrame('stop');
+				if (this.aiStopping)
+					return false;
+				var sent = this.aiSendFrame('stop');
+				if (sent)
+					this.aiStopping = true;
+				return sent;
 			},
 			/** 撤回最后一轮对话 */
 			aiSendRevert: function () {
@@ -835,8 +858,7 @@
 				}
 				this.aiStopHeartbeat();
 				this._aiCloseSocket();
-				this.aiConnState = 'connecting';
-				this.aiOnConnState('connecting', this._aiConnReason, this._aiReconnectAttempts);
+				this._aiSetConnState('connecting', this._aiConnReason, this._aiReconnectAttempts);
 				var ws;
 				try {
 					ws = new WebSocket(url);
@@ -850,12 +872,11 @@
 				this.aiSocket = ws;
 				ws.onopen = () => {
 					this.aiConnected = true;
-					this.aiConnState = 'connected';
 					this._aiReconnectAttempts = 0;
 					this._aiConnReason = null;
 					var wasDown = this.aiHideConnTip();
 					this.aiStartHeartbeat();
-					this.aiOnConnState('connected', null, 0);
+					this._aiSetConnState('connected', null, 0);
 					this.aiOnSocketOpen();
 					if (wasDown)
 						this.aiToast('已重新连接');
@@ -875,18 +896,17 @@
 					this.aiStopHeartbeat();
 					this._aiConnReason = 'error';
 					this._aiShowConnTip('error');
-					this.aiOnConnState('error', 'error', this._aiReconnectAttempts);
+					this._aiSetConnState('error', 'error', this._aiReconnectAttempts);
 				};
 				ws.onclose = () => {
 					this.aiConnected = false;
-					this.aiConnState = 'closed';
 					this.aiStopHeartbeat();
 					this.aiSocket = null;
 					// 心跳超时会先自行判定断开，此时不要覆盖成"连接断开"
 					if (this._aiConnReason !== 'timeout')
 						this._aiConnReason = 'closed';
 					this._aiShowConnTip(this._aiConnReason);
-					this.aiOnConnState('closed', this._aiConnReason, this._aiReconnectAttempts);
+					this._aiSetConnState('closed', this._aiConnReason, this._aiReconnectAttempts);
 					this._aiScheduleReconnect();
 				};
 			},
@@ -917,9 +937,35 @@
 				this._aiCloseSocket();
 				this.aiConnected = false;
 				this.aiConnState = 'closed';
+				this.aiResetGenerationState();
 				this._aiConnReason = null;
 				this._aiReconnectAttempts = 0;
 				this.aiHideConnTip();
+			},
+			/**
+			 * 复位"正在生成/停止中"的本地状态。
+			 * <p>
+			 * 断开、重连时本地无法知道服务端的真实进度，一律先复位；重连后服务端会下发
+			 * status 帧，把生成状态纠正为真实值（此时"停止中"不该保留：按钮应回到"停止"，
+			 * 让用户能对仍在进行的生成重新发起停止）。
+			 * </p>
+			 */
+			aiResetGenerationState: function () {
+				this.aiGenerating = false;
+				this.aiStopping = false;
+			},
+			/**
+			 * 更新连接状态并通知页面；非 connected 状态时顺带复位生成状态。
+			 *
+			 * @param {String} state  'connecting' | 'connected' | 'closed' | 'error'
+			 * @param {String} [reason]
+			 * @param {Number} [attempt]
+			 */
+			_aiSetConnState: function (state, reason, attempt) {
+				this.aiConnState = state;
+				if (state !== 'connected')
+					this.aiResetGenerationState();
+				this.aiOnConnState(state, reason, attempt);
 			},
 			_aiScheduleReconnect: function () {
 				if (this._aiReconnectTimer || this._aiDestroyed)
@@ -1011,6 +1057,8 @@
 						return;
 					case 'done':
 						this.aiGenerating = false;
+						// 本轮结束：退出"停止中"，按钮恢复可用
+						this.aiStopping = false;
 						if (frame.price != null)
 							this.aiPrice = formatPrice(frame.price);
 						this.aiOnDone(frame);
@@ -1082,8 +1130,12 @@
 			 * @param {Object} frame status 帧
 			 */
 			aiApplyStatus: function (frame) {
-				if (frame.generating != null)
+				if (frame.generating != null) {
 					this.aiGenerating = !!frame.generating;
+					// 服务端确认本轮已结束（例如停止请求到达时已经没有输出）：退出"停止中"
+					if (!this.aiGenerating)
+						this.aiStopping = false;
+				}
 				if (frame.price != null)
 					this.aiPrice = formatPrice(frame.price);
 				if (frame.isVoiceEnabled != null)
@@ -1100,6 +1152,24 @@
 			/** 判断某条消息是否来自用户 */
 			aiIsUserMessage: function (msg) {
 				return isUserMessage(msg, this.aiUserTitle);
+			},
+			/**
+			 * 为一条消息分配本地稳定 key（消息整个生命周期内不再变化）。
+			 * <p>
+			 * 流式消息先以匿名形态出现（还没有历史 id），服务端随后才把正式条目的 id 补下来；
+			 * 如果 v-for 的 key 由 _id 推导，补 id 的那一刻 key 会变化，Vue 会销毁并重建节点，
+			 * 页面上的"AI 框"就会闪一下（出现→消失→出现，入场动画重放）。
+			 * 因此消息对象在创建时分配 _key，模板统一按 _key 渲染：补 id 只改 _id，不动节点。
+			 * </p>
+			 *
+			 * @param {Number} [id] 历史记录 id；有 id 时按 id 派生，便于分页时复用同一节点
+			 * @return {String} 稳定的 key
+			 */
+			aiMessageKey: function (id) {
+				if (id != null)
+					return 'm' + id;
+				this._aiMsgKeySeq = (this._aiMsgKeySeq || 0) + 1;
+				return 'k' + this._aiMsgKeySeq;
 			},
 			/** 把一批历史记录标准化为 {id,title,role,text,content,thinking,audioId} */
 			aiNormalizeBatchItems: function (messages) {

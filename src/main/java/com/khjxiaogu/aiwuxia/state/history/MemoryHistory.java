@@ -72,9 +72,19 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 		super();
 	}
 
+	/**
+	 * 判断容器中是否还有可用（未被标记删除）的历史条目。
+	 * <p>
+	 * 条目撤回采用软删除（{@link #setDeleted(HistoryItem, boolean)}）实现，被删除的条目仍留在
+	 * 底层列表里；因此这里以 {@link #peekLast()} 为准，保证 {@code isEmpty()} 与各迭代器、
+	 * {@code peekLast()} 的判断一致，避免出现“容器非空但取不到最后一条”的矛盾状态。
+	 * </p>
+	 *
+	 * @return 没有任何未被删除的条目时返回 {@code true}
+	 */
 	@Override
 	public boolean isEmpty() {
-		return history.isEmpty();
+		return peekLast() == null;
 	}
 
 	/**

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -24,6 +25,7 @@ import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
@@ -87,6 +89,8 @@ public class PainterSession extends WebSocketAISession {
 			if (state.getCurrentOutput()!=null) {
 				state.getCurrentOutput().interrupt();
 			} else {
+				// 本轮其实已经结束（停止请求来晚了）：回发真实生成状态，让前端退出“停止中”的等待态
+				state.sendGenerationStatus();
 				state.sendNotice("操作太快啦，请稍后再试");
 			}
 		});
@@ -167,7 +171,8 @@ public class PainterSession extends WebSocketAISession {
 
     @Override
 	public boolean isAvailable() {
-		return LocalModel.hasOnlineService(ModelType.SDXL);
+		//return true;
+    	return LocalModel.hasOnlineService(ModelType.SDXL);
 	}
 
 	/**
@@ -179,42 +184,147 @@ public class PainterSession extends WebSocketAISession {
 		sendFrame(JsonBuilder.object().add("type", "model").add("model", model).end().toString());
 	}
 
+	/**
+	 * 记录一条待生成的用户文本输入。
+	 * <p>
+	 * 与 {@link #addPendingUserMessage(MessageContent)} 相同，写入动作同样排到会话命令线程上执行。
+	 * </p>
+	 *
+	 * @param content 用户输入的文本
+	 */
 	public void addPendingUserMessage(String content) {
-    	appendLine(Role.USER, content, true);
-    	this.flush();
+		submitHistoryWrite(() -> appendLine(Role.USER, content, true), "消息保存失败，请重试");
+	}
+
+	/**
+	 * 记录一条待生成的用户输入（文本、图片等）。
+	 * <p>
+	 * 绘画前端的输入分两步：先落成“待生成”的用户条目，再由 {@code generate} 触发本轮生成。
+	 * 输入可能来自 WebSocket 线程（文本帧），也可能来自 HTTP 线程（图片上传），
+	 * 两者都可能在生成进行中到达，因此统一交给
+	 * {@link #submitHistoryWrite(Runnable, String)} 排到会话命令线程上追加：
+	 * 这样输入按到达顺序排在正在进行的这一轮之后，成为下一轮的待生成输入；
+	 * 若当前没有正在生成的轮次，则与已有输入合并成本轮输入，行为与直接追加一致。
+	 * </p>
+	 *
+	 * @param content 用户输入内容
+	 */
+	public void addPendingUserMessage(MessageContent content) {
+		submitHistoryWrite(() -> {
+			if (content.isPlainText()) {
+				appendLine(Role.USER, content.toText(), true);
+			} else {
+				appendCh(Role.USER, content, true);
+			}
+		}, "消息保存失败，请重试");
+	}
+
+    /**
+     * 追加一条历史条目。
+     * <p>
+     * 绘画前端的用户输入在 {@code message} 帧到达时就已经以“待生成”的形式写入历史，
+     * 生成时应用仍会按对话前端的惯例追加一条用户消息作为本轮输入，但此时传入的内容是
+     * {@link MessageContents#EMPTY}（真正的输入早已由前端录入）。
+     * </p>
+     * <p>
+     * 若把这条空消息也记进历史，它就会夹在用户输入与助手回复之间；撤回与重新生成按
+     * “用户消息 + 助手回复”配对时取到的是这条空条目，于是用户真正输入的内容撤不掉，
+     * 输入框还会被回填成空字符串。因此这里忽略空占位消息，直接复用待生成的用户条目。
+     * </p>
+     */
+    @Override
+    public void add(Role role, MessageContents content, boolean isValidContext) {
+        if (shouldIgnoreRoundInput(role, content, getLast()))
+            return;
+        super.add(role, content, isValidContext);
     }
-    public void addPendingUserMessage(MessageContent content) {
-    	if(content.isPlainText()) {
-    		this.appendLine(Role.USER, content.toText(), true);
-    	}else {
-    		this.appendCh(Role.USER, content, true);
-    	}
+
+    /**
+     * 判断本次追加是否为生成时补写的空用户占位消息，即应当忽略、直接复用待生成条目的输入。
+     *
+     * @param role    要追加的角色
+     * @param content 要追加的内容，可为 null
+     * @param last    追加前的最后一条历史条目，可为 null
+     * @return 应当忽略时返回 true（角色为用户、最后一条也是待生成的用户输入、且本次内容为空）
+     */
+    static boolean shouldIgnoreRoundInput(Role role, MessageContents content, HistoryItem last) {
+        return role == Role.USER
+                && last != null && last.getRole() == Role.USER
+                && (content == null || (content.isPlainText() && content.toText().isEmpty()));
     }
 
     @Override
     public void appendReasoner(MessageContent current) {
         super.appendReasoner(current);
-        if (current instanceof PlainText) {
-            sendFrame(JsonBuilder.object()
-                .add("type", "thinking")
-                .add("content", ((PlainText) current).toText())
-                .end().toString());
-        } else if (current instanceof ToolCallContent) {
-            ToolCallContent content = (ToolCallContent) current;
-            List<ToolCall> calls = content.getToolCalls();
-            for (int i = 0; i < calls.size(); i++) {
-                ToolCall call = calls.get(i);
-                ToolCallDisplay display = content.getDisplay(i);
-                JsonObjectBuilder<JsonObject> frame = JsonBuilder.object()
-                    .add("type", "tool_call")
-                    .add("tool_name", display.getBrief()) // 用户友好简述替代原始工具名称
-                    .add("tool", call.function == null ? "" : call.function.name);
-                if (display.hasContent()) {
-                    frame.add("content", contentsToJson(display.getContent()));
+        writeReasonerFrames(new MutableMessageContents(current), this::sendFrame);
+    }
+
+    /**
+     * 按绘画前端的下行协议把推理内容写成帧：纯文本发 thinking 帧，工具调用发 tool_call 帧。
+     * <p>
+     * 流式输出与重连补发共用本方法，保证两条路径产生的帧完全一致。
+     * </p>
+     *
+     * @param reasoning 推理内容（一段或多段）
+     * @param frameSink 帧的接收者，通常为 {@link #sendFrame(String)}
+     */
+    static void writeReasonerFrames(MessageContents reasoning, Consumer<String> frameSink) {
+        for (MessageContent current : reasoning) {
+            if (current instanceof PlainText) {
+                frameSink.accept(JsonBuilder.object()
+                    .add("type", "thinking")
+                    .add("content", ((PlainText) current).toText())
+                    .end().toString());
+            } else if (current instanceof ToolCallContent) {
+                ToolCallContent content = (ToolCallContent) current;
+                List<ToolCall> calls = content.getToolCalls();
+                for (int i = 0; i < calls.size(); i++) {
+                    ToolCall call = calls.get(i);
+                    ToolCallDisplay display = content.getDisplay(i);
+                    JsonObjectBuilder<JsonObject> frame = JsonBuilder.object()
+                        .add("type", "tool_call")
+                        .add("tool_name", display.getBrief()) // 用户友好简述替代原始工具名称
+                        .add("tool", call.function == null ? "" : call.function.name);
+                    if (display.hasContent()) {
+                        frame.add("content", contentsToJson(display.getContent()));
+                    }
+                    frameSink.accept(frame.end().toString());
                 }
-                sendFrame(frame.end().toString());
             }
         }
+    }
+
+    /**
+     * 补发生成中的思维链：把仍留在推理缓冲区里的内容按与流式输出一致的方式重发一次。
+     * <p>
+     * 推理内容一旦挂到助手条目上（缓冲区随之清空），历史分页里就会带上它，
+     * 因此只需补发缓冲区里的部分，不会与历史中的思考链重复。
+     * </p>
+     *
+     * @param generating 当前是否正在生成
+     * @param buffered   尚未写入历史的推理缓冲区，可为 null
+     * @param frameSink  帧的接收者，通常为 {@link #sendFrame(String)}
+     * @return 是否补发了内容
+     */
+    static boolean replayGeneratingReasoning(boolean generating, MessageContents buffered, Consumer<String> frameSink) {
+        if (!generating || buffered == null || buffered.isEmpty())
+            return false;
+        writeReasonerFrames(buffered, frameSink);
+        return true;
+    }
+
+    /**
+     * 连接建立（含断开重连）后补发正在生成的思维链。
+     * <p>
+     * 首个助手内容产生之前，推理内容只存在于会话内存缓冲区
+     * （{@link AISession#currentReasoner}）里，历史记录中并没有它；
+     * 重连时客户端只能拿到历史，若不补发，已经生成的那部分思考内容就丢了，
+     * 界面上只剩下重连之后新产生的思考。
+     * </p>
+     */
+    @Override
+    protected void sendGeneratingReasoning() {
+        replayGeneratingReasoning(isGenerating(), currentReasoner, this::sendFrame);
     }
 
     /**

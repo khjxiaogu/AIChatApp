@@ -273,6 +273,15 @@
             border-radius: 30px;
             width: fit-content;
         }
+        /* 停止中：按钮进入等待态（呼吸提示 + 等待光标），本轮结束后自动恢复 */
+        button.btn-waiting:disabled {
+            cursor: progress;
+            animation: btnWaiting 1.2s ease-in-out infinite;
+        }
+        @keyframes btnWaiting {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(5px);}
             to { opacity: 1; transform: translateY(0);}
@@ -737,7 +746,7 @@
         <!-- 向上滚动加载更早的历史记录 -->
         <div v-if="isLoadingMore" class="history-tip loading">正在加载更早的消息</div>
         <div v-else-if="historyTopReached && !hasMoreHistory" class="history-tip">没有更多历史记录了</div>
-        <div v-for="(msg, idx) in messages" :key="msg._id != null ? 'm' + msg._id : 'n' + idx" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
+        <div v-for="(msg, idx) in messages" :key="msg._key || (msg._id != null ? 'm' + msg._id : 'n' + idx)" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
             <div class="message-bubble">
                 <!-- 用户消息：支持文本和图片 -->
                 <div v-if="msg.role === 'user'">
@@ -785,9 +794,9 @@
             </div>
         </div>
 
-        <!-- 加载状态: AI正在思考/调用工具 -->
+        <!-- 加载状态: AI正在思考/调用工具；已请求停止时显示"停止中"，等服务端结束本轮 -->
         <div v-if="aiGenerating" class="loading-indicator" style="align-self: flex-start; margin-left: 12px;">
-            <span>思考中</span>
+            <span>{{ aiStopping ? '停止中，等待本轮结束…' : '思考中' }}</span>
         </div>
 
 </div>
@@ -795,11 +804,12 @@
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
             <button @click="sendTextMessage" v-if="!aiGenerating" :disabled="(!inputText.trim() && !uploadedImageId)">发送</button>
-			<button @click="aiSendStop" v-if="aiGenerating">停止</button>
+			<!-- 停止：点击后进入"停止中"，等服务端本轮结束（done/status）才恢复，期间禁止重复点击 -->
+			<button @click="aiSendStop" v-if="aiGenerating" :disabled="aiStopping" :class="{ 'btn-waiting': aiStopping }">{{ aiStopping ? '停止中…' : '停止' }}</button>
 
-            <button @click="triggerFileUpload" :disabled="aiGenerating">图片</button>
+            <button @click="triggerFileUpload" :disabled="aiGenerationBusy" :title="aiGenerationBusy ? '正在生成，无法上传图片' : '上传图片'">图片</button>
 			<button @click="openSettings" title="设置">设置</button>
-            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" @change="onFileSelected" />
+            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" :disabled="aiGenerationBusy" @change="onFileSelected" />
         </div>
     </div>
     <!-- 全屏看图 -->
@@ -1007,7 +1017,7 @@ var main=new Vue({
         },
         createNewChat() {
             this.showSidebar = false;
-            fetch("createid?appid=painterirc")
+            fetch("createid?appid=painterirc&uid=undefined")
                 .then(p => p.text())
                 .then(cid => {
                     this.messages = [];
@@ -1058,7 +1068,7 @@ var main=new Vue({
         // 绘画前端的连接地址（协议与主机跟随当前页面）
         aiSocketUrl() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            return `${protocol}//${location.host}/aichat/chatsocket?chatid=${this.conversationId}&app=painterirc`;
+            return `${protocol}//${location.host}/aichat/chatsocket?chatid=${this.conversationId}&app=painterirc&uid=undefined`;
         },
         aiOnSocketOpen() {
             console.log('WebSocket 已连接, 会话ID:', this.conversationId);
@@ -1122,7 +1132,7 @@ var main=new Vue({
         },
         // 重新生成最后一条回复
         triggerRegen() {
-            if (this.aiGenerating) return;
+            if (this.aiGenerationBusy) return;
             if (this.aiSendRegen()) this.scrollToBottom(true);
         },
         /* ================= 公共协议层：下行帧钩子 ================= */
@@ -1134,6 +1144,7 @@ var main=new Vue({
             this.handleLocalRequest(frame);
         },
         // 找到（必要时新建）当前流式输出的助手消息
+        // _key 在创建时固定：之后服务端补上历史 id 只改 _id，节点不会被重建（否则 AI 框会闪一下）
         painterTargetMessage(id) {
             let target = id ? this.messages.find(m => m._id === id) : null;
             if (!target) {
@@ -1141,7 +1152,7 @@ var main=new Vue({
                 if (last && last.role === 'assistant') target = last;
             }
             if (!target) {
-                target = { _id: id || null, role: 'assistant', thinkingSegments: [], contentItems: [] };
+                target = { _id: id || null, _key: this.aiMessageKey(id), role: 'assistant', thinkingSegments: [], contentItems: [] };
                 this.messages.push(target);
             } else if (id && !target._id) {
                 target._id = id;
@@ -1205,6 +1216,7 @@ var main=new Vue({
             } else {
                 this.messages.push({
                     _id: frame.id,
+                    _key: this.aiMessageKey(frame.id),
                     role: isUser ? 'user' : 'assistant',
                     thinkingSegments: [],
                     contentItems: parsed.contentItems
@@ -1241,6 +1253,7 @@ var main=new Vue({
                 }
                 return {
                     _id: item.id,
+                    _key: this.aiMessageKey(item.id),
                     role: isUser ? 'user' : 'assistant',
                     thinkingSegments: thinkingSegs,
                     contentItems: this.parseContentArray(item.content).contentItems
@@ -1338,7 +1351,7 @@ var main=new Vue({
         },
         // 发送文本消息（通过websocket）— 只添加到历史，不触发生成
         sendTextMessage() {
-            if (this.aiGenerating) return;
+            if (this.aiGenerationBusy) return;
             const text = this.inputText.trim();
             if (!text) {
                 return;
@@ -1354,19 +1367,28 @@ var main=new Vue({
         },
         // 触发AI生成
         triggerGenerate() {
-            if (this.aiGenerating) return;
+            if (this.aiGenerationBusy) return;
             if (this.aiSendGenerate()) {
                 this.aiGenerating = true;
                 this.scrollToBottom(true);
             }
         },
-        // 触发文件选择
+        // 触发文件选择（本轮生成/停止中一律禁止上传）
         triggerFileUpload() {
-            if (this.aiGenerating) return;
+            if (this.aiGenerationBusy) {
+                this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
+                return;
+            }
             this.$refs.fileInput.click();
         },
         async onFileSelected(e) {
             const file = e.target.files[0];
+            // 选择文件期间可能已经开始生成（例如生成按钮先被点到），这里再挡一次
+            if (this.aiGenerationBusy) {
+                this.$refs.fileInput.value = '';
+                this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
+                return;
+            }
             if (!file) return;
             if (!file.type.startsWith('image/')) {
                 this.aiToast("请选择图片文件", { kind: 'warn' });

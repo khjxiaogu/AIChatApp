@@ -113,6 +113,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		if(shouldSendBacklog()) {
 			requireMoreMessages();
 		}
+		// 生成中的思维链只存在于会话内存缓冲区，不随历史下发，连接（重连）时需要单独补发
+		sendGeneratingReasoning();
 		
 		getAiapp().prepareScene(this);
 		boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
@@ -258,6 +260,51 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	}
 	
 	/**
+	 * 把一次历史写入排到会话命令线程上执行，并在写入完成后落盘。
+	 * <p>
+	 * 历史条目只能在会话命令线程上修改：生成同样跑在这条线程上，若在 WebSocket/HTTP 线程里
+	 * 直接写历史（例如生成过程中上传图片、发送消息），新条目会插到正在流式输出的助手条目之后，
+	 * 随后的思考内容、助手消息、状态快照都会挂到错误的条目上；请求构建遍历历史时也可能与写入并发，
+	 * 落盘时的序列化更会读到写了一半的状态。
+	 * </p>
+	 * <p>
+	 * 命令线程是单线程执行器，写入按提交顺序执行，因此与正在进行的生成天然串行：
+	 * 生成期间提交的写入会排到这一轮之后执行。
+	 * </p>
+	 *
+	 * @param write         历史写入动作
+	 * @param failureNotice 写入失败时给用户的提示，可为 null（不提示）
+	 */
+	protected void submitHistoryWrite(Runnable write, String failureNotice) {
+		getCommandExec().submit(() -> {
+			try {
+				write.run();
+				flush();
+			} catch (Throwable t) {
+				// 任务在命令线程上异步执行，异常不会传回调用方，这里显式记录并提示
+				parent.getLogger().printStackTrace(t);
+				if (failureNotice != null)
+					sendNotice(failureNotice);
+			}
+		});
+	}
+
+	/**
+	 * 连接建立（含断开重连）后补发正在生成、尚未写入历史的思维链。
+	 * <p>
+	 * 推理内容在首个助手内容产生之前只保存在会话内存里（{@link AISession#currentReasoner}），
+	 * 不会随历史分页下发；需要展示思考过程的前端可重写本方法，按自己的帧格式补发一次，
+	 * 否则重连后只能看到重连之后新产生的思考内容。
+	 * </p>
+	 * <p>
+	 * 本方法由 WebSocket 线程在连接建立时调用，可能与生成线程并发，实现时按只读方式取用缓冲区。
+	 * </p>
+	 */
+	protected void sendGeneratingReasoning() {
+		// 默认前端不展示思考过程，无需补发
+	}
+
+	/**
 	 * 连接建立时是否需要下发历史记录，子类可重写。
 	 *
 	 * @return 需要下发返回 true
@@ -373,7 +420,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		frameHandlers.put("genVoice", (jo,state)->{
 			state.getCommandExec().submit(()->{
 				HistoryItem last=state.getLast();
-				if(last.getRole()==Role.ASSISTANT) {
+				// 撤回会软删除条目，全部撤回后这里可能取不到最后一条
+				if(last!=null&&last.getRole()==Role.ASSISTANT) {
 					if(last.getAudioId()==null) {
 						String audioId=UUID.randomUUID().toString();
 						CompletableFuture<Boolean> cf=state.getAiapp().generateVoice(state, last.getDisplayContent().toString(), audioId);
@@ -397,9 +445,49 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 * 实际动作在会话命令线程中执行，避免与正在进行的生成并发；
 	 * 对话前端（{@code operation:"revert"}）与绘画前端（{@code type:"revert"}）共用本方法。
 	 * </p>
+	 * <p>
+	 * 最后一条是尚未生成的用户输入时（绘画前端已发出、但还没有点“生成”的消息），
+	 * 直接把它撤回并回填到输入框：这类输入不属于任何一轮对话，
+	 * 也不受对话轮次计数限制（{@code AIApplication#doRevert} 在还没有完成任何一轮时会拒绝撤回）。
+	 * </p>
 	 */
 	public void requestRevert() {
-		getCommandExec().submit(()->getAiapp().doRevert(this));
+		getCommandExec().submit(()->{
+			if(!revertPendingUserInput()) {
+				getAiapp().doRevert(this);
+			}
+		});
+	}
+
+	/**
+	 * 判断历史中最后一条是否为“待生成”的用户输入。
+	 * <p>
+	 * 绘画前端的用户消息在 {@code message} 帧到达时即写入历史并等待生成，
+	 * 此时最后一条是用户消息而不是助手回复；已经完成的每一轮对话都以助手回复收尾。
+	 * </p>
+	 *
+	 * @return 存在待生成的用户输入时返回 true
+	 */
+	protected boolean hasPendingUserInput() {
+		HistoryItem last=getLast();
+		return last!=null&&last.getRole()==Role.USER;
+	}
+
+	/**
+	 * 撤回尚未生成的用户输入：把它从历史中移除，并回填到前端输入框。
+	 * <p>
+	 * 该类输入在录入时就已持久化，因此撤回后必须落盘，避免服务重启后又被读回来。
+	 * </p>
+	 *
+	 * @return 是否撤回了一条待生成的用户输入
+	 */
+	protected boolean revertPendingUserInput() {
+		if(!hasPendingUserInput())
+			return false;
+		HistoryItem removed=deleteLast();
+		refillChatBox(removed.getContextContent());
+		flush();
+		return true;
 	}
 
 	/**
@@ -615,10 +703,22 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		}
 		sendFrame(frame.toString());
 	}
+	/**
+	 * 下发当前生成状态帧。
+	 * <p>
+	 * 前端用它纠正本地状态（正在生成 / 停止中）。例如停止请求到达时本轮其实已经结束，
+	 * 只回一句提示会让"停止中"的按钮一直等下去，因此要把真实状态回发给前端。
+	 * 重连时 {@link #onOpen(Channel, FullHttpRequest)} 的状态帧同样用于此目的。
+	 * </p>
+	 */
+	protected void sendGenerationStatus() {
+		sendFrame(JsonBuilder.object().add("type", "status").add("generating", isGenerating()).end().toString());
+	}
+
 	@Override
 	public void onGenerateStart() {
 		super.onGenerateStart();
-		sendFrame(JsonBuilder.object().add("type", "status").add("generating", isGenerating()).end().toString());
+		sendGenerationStatus();
 	}
 	public void sendSceneContent(String type,String value) {
 
