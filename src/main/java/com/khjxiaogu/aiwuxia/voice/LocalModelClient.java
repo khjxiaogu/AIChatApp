@@ -136,27 +136,38 @@ public class LocalModelClient extends WebSocketClient {
 
     @Override
     public void onMessage(String message) {
-        try {
-            JsonObject jo = JsonParser.parseString(message).getAsJsonObject();
-            String reqid = jo.get("reqid").getAsString();
-            System.out.println("[LocalModelClient] received request: " + reqid);
-
-            Response response = handler.handle(jo);
-            if (response != null && response.data != null) {
-                JsonObject reply = JsonBuilder.object()
-                        .add("reqid", reqid)
-                        .add("data", Base64.getEncoder().encodeToString(response.data))
-                        .add("format", response.format != null ? response.format : "mp3")
-                        .end();
-                send(reply.toString());
-            } else {
-                JsonObject reply = JsonBuilder.object()
-                        .add("reqid", reqid)
-                        .add("error", "handler returned null")
-                        .end();
-                send(reply.toString());
-            }
-        } catch (Exception e) {
+    	try {
+	    	JsonObject jo = JsonParser.parseString(message).getAsJsonObject();
+	        String reqid = jo.get("reqid").getAsString();
+	        try {
+	            
+	            System.out.println("[LocalModelClient] received request: " + reqid);
+	
+	            Response response = handler.handle(jo);
+	            if (response != null && response.data != null) {
+	                JsonObject reply = JsonBuilder.object()
+	                        .add("reqid", reqid)
+	                        .add("data", Base64.getEncoder().encodeToString(response.data))
+	                        .add("format", response.format != null ? response.format : "mp3")
+	                        .end();
+	                send(reply.toString());
+	            } else {
+	                JsonObject reply = JsonBuilder.object()
+	                        .add("reqid", reqid)
+	                        .add("error", "handler returned null")
+	                        .end();
+	                send(reply.toString());
+	            }
+	        } catch (Exception e) {
+	            System.err.println("[LocalModelClient] error processing message: " + e.getMessage());
+	            e.printStackTrace();
+	            JsonObject reply = JsonBuilder.object()
+	                    .add("reqid", reqid)
+	                    .add("error", "handler error")
+	                    .end();
+	            send(reply.toString());
+	        }
+    	} catch (Exception e) {
             System.err.println("[LocalModelClient] error processing message: " + e.getMessage());
             e.printStackTrace();
         }
