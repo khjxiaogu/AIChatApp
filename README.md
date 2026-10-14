@@ -39,7 +39,8 @@
 ├─AIChatService.java           # 核心服务类，处理HTTP/WebSocket请求，管理会话
 ├─AIChatWindow.java            # 测试用Swing窗口
 ├─AIServerMain.java            # 主服务器入口，启动Netty服务
-├─NapCatAIConnector.java       # 与NapCat机器人框架的适配器
+├─NapCatAIConnector.java       # 与NapCat机器人框架的适配器（把QQ消息交给AIWuxia）
+├─DeepseekHarnessConnector.java # 把 Deepseek Harness 接到 NapCat（把QQ消息交给 DSH，方向相反）
 │
 ├─apps                         # AI应用相关
 │      AIApplication.java          # 抽象AI应用基类
@@ -166,6 +167,50 @@ public static void main(String[] args) {
 
 - 静态页面位于服务根目录下（如 `aiindex.html`, `chat.html`），通过 HTTP 访问。
 - WebSocket 连接地址：`ws://host:port/chatsocket?chatid=xxx&app=xxx&userId=xxx`
+
+### 让 Deepseek Harness 接管 QQ（DeepseekHarnessConnector）
+
+`DeepseekHarnessConnector` 与 `NapCatAIConnector` 方向相反：不再由 AIWuxia 的 AI 应用作答，
+而是把 QQ 消息转给 **Deepseek Harness** 运行时，再把它的正文与思维链转发回 QQ。
+
+工作方式：
+
+1. 以 `dsh --profile sdk` 拉起 Deepseek Harness，通过官方 SDK 协议（stdio 上按换行分帧的 JSON-RPC 2.0）
+   握手、投递消息、接收 `session.event` / `session.status` 通知；
+2. 作为 OneBot v11 正向 WebSocket 客户端连接 NapCat；
+3. **只转发两样东西**：助手正文（`content[].type == "text"`）与思维链（`content[].type == "reasoning"`），
+   工具调用、系统提示、运行上下文等一律丢弃；
+4. 私聊消息直接视为发消息，群聊消息必须 **at 机器人** 才投递；
+5. 转发时按行切分，**每超过 20 个字的一行作为一条消息发送**（可用 `dsh_msg_limit` 调整）。
+
+```bash
+java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
+     -Ddsh_provider=deepseek-account -Ddsh_model=deepseek-flash \
+     -cp "target/AIWuxia-0.0.1-SNAPSHOT.jar;target/aiwx_lib/*" \
+     com.khjxiaogu.aiwuxia.DeepseekHarnessConnector
+```
+
+| 属性名                    | 默认值                | 说明                              |
+|------------------------|--------------------|---------------------------------|
+| `napcat_url`           | `127.0.0.1:3001`   | NapCat 的 OneBot 正向 WS 地址 host:port |
+| `napcat_token`         | 空                  | OneBot 访问令牌                     |
+| `dsh_home`             | `~/.dsh`           | Deepseek Harness 的 DSH_HOME      |
+| `dsh_root`             | 自动探测               | Deepseek Harness 安装根目录          |
+| `dsh_launcher`         | 自动探测               | 启动器路径（`DeepSeek Harness.exe` 或 `dsh.cmd`） |
+| `dsh_provider`         | `deepseek-account` | 模型提供方路由                         |
+| `dsh_model`            | `deepseek-flash`   | 模型 id                           |
+| `dsh_reasoning`        | `high`             | 推理强度，留空则不指定                     |
+| `dsh_cwd`              | `save/dsh-workspace` | 会话工作目录（agent 工具的活动范围）           |
+| `dsh_msg_limit`        | `20`               | 每条消息的字数上限                       |
+| `dsh_output_reasoning` | `true`             | 是否转发思维链                         |
+| `dsh_prefix`           | `true`             | 是否给消息加【思考】/【回复】前缀               |
+| `dsh_interval_ms`      | `200`              | 连续发送消息之间的间隔（毫秒）                 |
+| `dsh_turn_timeout_ms`  | `300000`           | 单轮回复超时（毫秒）                      |
+| `dsh_max_messages`     | `200`              | 单轮最多发送多少条消息，防止刷屏                |
+| `dsh_guard_prompt`     | `true`             | 用 `qq-message` 信封隔离不可信聊天输入       |
+| `dsh_relay_context`    | `false`            | 群聊里未被 at 的消息是否作为上下文附带给模型        |
+
+会话映射保存在 `save/dsh-sessions.json`（QQ 会话 → DSH sessionId），重启后对话不丢。
 
 ---
 
