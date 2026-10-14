@@ -34,8 +34,8 @@ import java.util.function.Supplier;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
-import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
@@ -83,7 +83,6 @@ public class AIGroupSession extends AISession {
 	ArrayDeque<CallContext> messageQueue=new ArrayDeque<>();
 	public StringBuilder lastReasoner;
 	public Consumer<StringBuilder> reasonerConsumer;
-	public List<ToolData> tools=new ArrayList<>();
 	private StringBuilder lastState=new StringBuilder();
 	public File saveData;
 	public boolean outputReaonser;
@@ -113,17 +112,21 @@ public class AIGroupSession extends AISession {
 			return ret;
 		}
 	}
-    public void appendReasoner(MessageContent current) {
-        if (currentReasoner == null)
-            currentReasoner = new MutableMessageContents();
-        currentReasoner.add(current);
+    /**
+     * 思维链写入钩子。
+     * <p>
+     * 内容由 {@link HistoryWriteContext} 写进本轮记录；需要向群聊输出思维链时在这里
+     * 累积到 {@link #lastReasoner}，供 {@link #printReasoning()} 下发。
+     * </p>
+     */
+    @Override
+    protected void onReasonerAppend(MessageContent current) {
         if(outputReaonser) {
         	if(lastReasoner==null)
 	        	lastReasoner = new StringBuilder();
         	if(current instanceof PlainText)
         		lastReasoner.append(current.toText());
         }
-        this.setUpdated();
     }
 	public void addMessage(long qq,String text,List<Supplier<MessageContent>> msg,boolean important) {
 		synchronized(queueLock) {
@@ -155,12 +158,6 @@ public class AIGroupSession extends AISession {
 			}
 		}
 		return new CurrentContext(last,content);
-	}
-	public void addTool(ToolData tool) {
-		tools.add(tool);
-	}
-	public List<ToolData> getAvailableTools(){
-		return tools;
 	}
 	public void printReasoning() {
 		if(lastReasoner!=null&&outputReaonser&&reasonerConsumer!=null)

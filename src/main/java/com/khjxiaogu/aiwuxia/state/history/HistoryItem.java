@@ -131,4 +131,23 @@ public interface HistoryItem {
 	 */
 	boolean maySendReasoner();
 
+	/**
+	 * 判断该条目是否仍处于"未完成"状态。
+	 * <p>
+	 * 未完成条目由 {@link HistoryHolder#beginPending(Role, boolean)} 创建：它已经分配了标识符，
+	 * 但还没有提交进历史容器，因此不参与上下文构建、总结清理与历史分页，也不会被
+	 * {@link HistoryHolder#flush()} 落盘；应用写完后调用
+	 * {@link HistoryHolder#commitPending(HistoryItem)} 提交，或调用
+	 * {@link HistoryHolder#rollbackPending(HistoryItem)} 撤回。
+	 * </p>
+	 * <p>
+	 * 已经进入历史的条目一律返回 {@code false}。
+	 * </p>
+	 *
+	 * @return 仍处于未完成状态时返回 {@code true}
+	 */
+	default boolean isPending() {
+		return false;
+	}
+
 }

@@ -147,7 +147,7 @@ public class NapCatAIConnector extends WebSocketClient {
 		connectBlocking();
 		for(AIGroupSession sess:states) {
 
-			addTools(sess,dataFolder,sess.config);
+			registerSkills(sess,dataFolder,sess.config);
 			this.states.add(sess);
 			sess.reasonerConsumer=data->{
 				try {
@@ -247,7 +247,7 @@ public class NapCatAIConnector extends WebSocketClient {
     	});
     	
     }
-	public void addTools(AIGroupSession state,File dataFolder,JsonObject config) throws IOException {
+	public void registerSkills(AIGroupSession state,File dataFolder,JsonObject config) throws IOException {
 		Set<String> skillSet=new HashSet<>();
 		if(config.has("tools")) {
 			for(JsonElement je:config.get("tools").getAsJsonArray()) {
@@ -349,35 +349,34 @@ public class NapCatAIConnector extends WebSocketClient {
 				.exceptionally(t->{state.addStatus("<tool name=\""+tool+"\">失败</tool>");return null;});
 			}};
 		if(skillSet.contains("fetch"))
-			FetchMcp.create(state, tos).addTool(state.tools);
+			state.registerTools(FetchMcp.create(state, tos));
 
 		if(skillSet.contains("multimodal"))
-			MultiModalMcp.create(tos,state::addUsage).addTool(state.tools);
+			state.registerTools(MultiModalMcp.create(tos,state::addUsage));
 
 		if(skillSet.contains("qq")) {
-			QQMcp.create(state, ""+state.groupId, tos,callback,emojis).addTool(state.tools);
+			state.registerTools(QQMcp.create(state, ""+state.groupId, tos,callback,emojis));
 		}
 		
 		if(skillSet.contains("sdxl"))
-			SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock).addTool(state.tools);
+			state.registerTools(SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock));
 		if(skillSet.contains("sdxl-nsfw"))
-			SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock).addTool(state.tools);
+			state.registerTools(SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock));
 
 		if(skillSet.contains("sdxl-agent"))
-			SDXLAgentMcp.createImage(new File(dataFolder,"painteragent"),state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),callback,false,resourceLock).addTool(state.tools);
+			state.registerTools(SDXLAgentMcp.createImage(new File(dataFolder,"painteragent"),state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),callback,false,resourceLock));
 		if(skillSet.contains("sdxl-agent-nsfw"))
-			SDXLAgentMcp.createImage(new File(dataFolder,"painteragent"),state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),callback,true,resourceLock).addTool(state.tools);
+			state.registerTools(SDXLAgentMcp.createImage(new File(dataFolder,"painteragent"),state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),callback,true,resourceLock));
 		CrontabMcp.setPath(new File(dataFolder,"crontab.json"));
 		if(skillSet.contains("cron"))
-			CrontabMcp.create(state.botId, callback).addTool(state.tools);
+			state.registerTools(CrontabMcp.create(state.botId, callback));
 		if(skillSet.contains("music"))
-			MusicMcp.create(new File(dataFolder,"music"),config.get("voice").getAsString(),state.getRoleName(Role.ASSISTANT),callback,resourceLock).addTool(state.tools);
+			state.registerTools(MusicMcp.create(new File(dataFolder,"music"),config.get("voice").getAsString(),state.getRoleName(Role.ASSISTANT),callback,resourceLock));
 		if(skillSet.contains("seedimage"))
-			SeedreamMcp.createImage(state,imgKey, callback, refimage, tos).addTool(state.tools);
+			state.registerTools(SeedreamMcp.createImage(state,imgKey, callback, refimage, tos));
 		if(skillSet.contains("seedvideo"))
-			SeedreamMcp.createVideo(imgKey, callback, refimage, tos,state).addTool(state.tools);
-		//SeedreamMcp.create(imgKey, imageCollector, refimage, tos).addTool(state.tools);
-		AgentPingMcp.create(state.getRoleName(Role.ASSISTANT), callback).addTool(state.tools);
+			state.registerTools(SeedreamMcp.createVideo(imgKey, callback, refimage, tos,state));
+		state.registerTools(AgentPingMcp.create(state.getRoleName(Role.ASSISTANT), callback));
 
 	}
 

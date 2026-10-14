@@ -333,6 +333,54 @@ SceneSelector selector = builder.build();
 
 系统属性 `localVoiceToken` 用于验证 WebSocket 和 HTTP 回调的 Bearer Token。
 
+### 模型类型（model_type）
+
+连接时通过 URL 参数 `model_type` 声明该连接支持的模型类型，多个类型用逗号分隔（如 `?model_type=audio,svs`），
+未指定时默认为 `audio`。`LocalModelHandshaker` 按类型维护连接池，请求时由系统挑选支持该类型的连接。
+
+| 类型      | 说明   | 请求参数                                                     |
+|---------|------|----------------------------------------------------------|
+| `audio` | 语音合成 | `chara`, `content`                                       |
+| `sdxl`  | 图像生成 | `path`, `data`                                           |
+| `svs`   | 歌声合成 | `url`, `name`, `pitch`, `separate`, `timbre`, `filter`, `strength` |
+
+### SVS 歌声合成
+
+SVS 请求在音源（`url`、`name`）之外需要五个参数：
+
+| 参数         | 类型      | 说明                |
+|------------|---------|-------------------|
+| `pitch`    | int     | 音高                |
+| `separate` | bool    | 是否分离人声            |
+| `timbre`   | string  | 音色标识              |
+| `filter`   | int     | 滤波强度，取值 0-7       |
+| `strength` | double  | 合成强度，取值 0.00-1.00 |
+
+```json
+{
+  "url": "音源地址",
+  "name": "音源名称",
+  "pitch": 2,
+  "separate": true,
+  "timbre": "音色",
+  "filter": 3,
+  "strength": 0.75,
+  "reqid": "请求ID",
+  "type": "svs"
+}
+```
+
+Java 调用：
+
+```java
+LocalModel.requireSvs(reqid, url, LocalModelHandshaker.SvsOptions.builder()
+        .pitch(2).separate(true).timbre("音色").filter(3).strength(0.75))
+    .thenAccept(result -> { /* result.bodyData, result.format */ });
+```
+
+`filter`、`strength` 超出范围，或 `timbre` 传入空字符串时会立即抛出 `IllegalArgumentException`；
+未设置 `timbre` 时返回失败的 Future。可用 `LocalModel.hasOnlineSvsService()` 判断是否有可用的 SVS 连接。
+
 ---
 
 ## 许可证

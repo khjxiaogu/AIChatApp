@@ -36,6 +36,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -55,6 +56,7 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
@@ -149,15 +151,22 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private FilePageService voice;
 	// 默认每个用户每天的免费token额度
 	private static final int DEFAULT_FREE_DAILY_LIMIT = 500_000;
+	/** 每日签到一次可获得的补充额度（token） */
+	public static final int DAILY_CHECKIN_REWARD = 50_000;
+
 	public void initModelNames() {
 		modelTranslations.put("deepseek",new NameTranslator().add("deepseek", "Deepseek")
 				.add("pro", "专家").add("flash", "对话")
-				.add("reasoning", "推理型").add("non-reasoning", "对话型")
+				.add("reasoning", "推理型").add("non-reasoning", "非推理型")
 				);
 		modelTranslations.put("grok",new NameTranslator().add("grok", "Grok")
-				.add("reasoning", "推理型").add("non-reasoning", "对话型")
+				.add("reasoning", "推理型").add("non-reasoning", "非推理型")
 				);
-		modelTranslations.put("volces",new NameTranslator().add("volces", "").add("seed2.0", "豆包Seed2.0")
+		modelTranslations.put("silicon",new NameTranslator().add("silicon", "硅基流动")
+			.add("deepseek3", "Deepseek V3")
+			.add("deepseek3.2", "Deepseek V3.2").add("reasoning", "推理型").add("non-reasoning", "非推理型")
+			);
+		modelTranslations.put("volces",new NameTranslator().add("volces", "火山").add("seed2.0", "豆包Seed2.0")
 				.add("reasoning", "推理型").add("non-reasoning", "对话型")
 				.add("pro", "专业").add("lite", "普通").add("code", "代码").add("mini", "轻量")
 				.add("none-strength", "（最简推理）").add("weak-strength", "（轻度推理）").add("medium-strength", "（中度推理）").add("strong-strength", "（重度推理）")
@@ -253,6 +262,27 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		        		+ "cost INTEGER NOT NULL,"
 		        		+ "redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
 		        		+ "UNIQUE(cdk_code, user_id))";
+
+		        /** 每日签到记录表：主键保证同一用户同一天只能签到一次 */
+		        String createCheckinTable = "CREATE TABLE IF NOT EXISTS daily_checkin ("
+		        		+ "user_id TEXT NOT NULL,"
+		        		+ "date TEXT NOT NULL,"
+		        		+ "amount INTEGER NOT NULL DEFAULT 0,"
+		        		+ "checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+		        		+ "PRIMARY KEY (user_id, date))";
+
+		        /** 补充配额消费明细表：记录使用量类型、日期（到天）、聊天ID、用户ID与消耗量 */
+		        String createPaidUsageTable = "CREATE TABLE IF NOT EXISTS paid_usage_record ("
+		        		+ "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+		        		+ "user_id TEXT NOT NULL,"
+		        		+ "chat_id TEXT,"
+		        		+ "usage_type TEXT NOT NULL DEFAULT '其他',"
+		        		+ "date TEXT NOT NULL,"
+		        		+ "tokens INTEGER NOT NULL DEFAULT 0,"
+		        		+ "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)";
+		        /** 按用户+日期查询的索引 */
+		        String createPaidUsageIndex = "CREATE INDEX IF NOT EXISTS idx_paid_usage_user_date"
+		        		+ " ON paid_usage_record(user_id, date)";
 				stmt.execute(createMsg);
 				stmt.execute(createPerm);
 				stmt.execute(createPrice);
@@ -262,6 +292,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				stmt.execute(createFreeLimitOverrideTable);
 				stmt.execute(createCDKTable);
 				stmt.execute(createLogTable);
+				stmt.execute(createCheckinTable);
+				stmt.execute(createPaidUsageTable);
+				stmt.execute(createPaidUsageIndex);
 			}
 		} catch (SQLException e) {
 			logger.severe("信息数据库初始化失败！");
@@ -321,6 +354,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 								attr.paidOnly=meta.get("paidOnly").getAsBoolean();
 							if(meta.has("models"))
 								attr.models=gson.fromJson(meta.get("models"), List.class);
+							if(meta.has("defaultModel"))
+								attr.defaultModel=meta.get("defaultModel").getAsString();
 							if(meta.has("url"))
 								attr.url=meta.get("url").getAsString();
 							if(meta.has("freeNow"))
@@ -681,6 +716,54 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO echartsjs() throws IOException {
 		return new ResultDTO(200, new File(parent, "echarts.min.js"));
 	}
+	/**
+	 * HTTP GET端点：返回各前端页面共用的模型选择组件脚本（目录树形式）。
+	 *
+	 * @return 包含文件内容的ResultDTO
+	 * @throws IOException 如果文件读取失败
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/modeltree.js")
+	@Adapter
+	public ResultDTO modelTreeJs() throws IOException {
+		return new ResultDTO(200, new File(parent, "modeltree.js"));
+	}
+	/**
+	 * HTTP GET端点：返回各前端页面共用的白天/黑夜模式脚本。
+	 *
+	 * @return 包含文件内容的ResultDTO
+	 * @throws IOException 如果文件读取失败
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/theme.js")
+	@Adapter
+	public ResultDTO themeJs() throws IOException {
+		return new ResultDTO(200, new File(parent, "theme.js"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/heartbeat.js")
+	@Adapter
+	public ResultDTO heartbeatJs() throws IOException {
+		return new ResultDTO(200, new File(parent, "heartbeat.js"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/ai-protocol.js")
+	@Adapter
+	public ResultDTO aiProtocolJs() throws IOException {
+		return new ResultDTO(200, new File(parent, "ai-protocol.js"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/ai-ui.css")
+	@Adapter
+	public ResultDTO aiUiCss() throws IOException {
+		return new ResultDTO(200, new File(parent, "ai-ui.css"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/sidebar.css")
+	@Adapter
+	public ResultDTO sidebarCss() throws IOException {
+		return new ResultDTO(200, new File(parent, "sidebar.css"));
+	}
 	@HttpMethod("GET")
 	@HttpPath("/usage")
 	@Adapter
@@ -827,8 +910,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				byte[] data = imageData.get();
 				String imageId = painterStorage.uploadIfNotExists(data,session::addUsage);
 				
+				// 图片作为待生成的用户输入记录到会话历史：写入动作会排到会话命令线程，
+				// 与正在进行的生成串行，避免与生成线程并发写历史（落盘也在一并在线程内完成）
 				((PainterSession) session).addPendingUserMessage(new ImageContent(imageId));
-				session.flush();
 				return new ResultDTO(200, JsonBuilder.object().add("code", 0).add("message", "success").end());
 			}
 			if (session == null) {
@@ -1627,6 +1711,17 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		if (amount <= 0) {
 			throw new IllegalArgumentException("增加数量必须为正数");
 		}
+		addPaidBalance(userId, amount);
+	}
+
+	/**
+	 * 直接为用户增加付费（补充）额度
+	 * 
+	 * @param userId 用户ID
+	 * @param amount 增加数量
+	 * @return true表示写入成功
+	 */
+	private boolean addPaidBalance(String userId, int amount) {
 		String sql = "INSERT INTO user_paid_balance (user_id, balance) VALUES (?, ?) "
 			+ "ON CONFLICT(user_id) DO UPDATE SET balance = balance + ?";
 		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
@@ -1634,8 +1729,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			pstmt.setInt(2, amount);
 			pstmt.setInt(3, amount);
 			pstmt.executeUpdate();
+			return true;
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
+			return false;
 		}
 	}
 
@@ -1657,8 +1754,94 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		int paidUsed = getDailyPaidUsed(userId);
 		// 获取付费余额
 		int paidRemaining = getPaidBalance(userId);
+		// 今日是否已签到
+		boolean checkedIn = hasCheckedIn(userId, today);
 
-		return new ResultDTO(200,JsonBuilder.object().add("freeTotal", freeLimit).add("paidRemaining", paidRemaining).add("freeCost", freeUsed).add("paidCost", paidUsed));
+		return new ResultDTO(200,JsonBuilder.object().add("freeTotal", freeLimit).add("paidRemaining", paidRemaining)
+				.add("freeCost", freeUsed).add("paidCost", paidUsed)
+				.add("checkedIn", checkedIn).add("checkinReward", DAILY_CHECKIN_REWARD));
+	}
+
+	/**
+	 * 每日签到：每个用户每天只能签到一次，成功后获得固定数量的补充额度。
+	 *
+	 * @param userId 用户ID
+	 * @return 签到结果，成功时返回提示信息
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/checkin")
+	@Adapter
+	public ResultDTO dailyCheckIn(@Query("uid")String userId) {
+		if (userId == null || userId.trim().isEmpty()) {
+			return new ResultDTO(400, "缺少用户ID");
+		}
+		String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+		synchronized (lock) {
+			// 1. 校验今日是否已经签到
+			if (hasCheckedIn(userId, today)) {
+				return new ResultDTO(400, "今日已签到，明天再来吧");
+			}
+			// 2. 写入签到记录，主键冲突（并发下已被签到）则忽略
+			String insertCheckin = "INSERT OR IGNORE INTO daily_checkin (user_id, date, amount) VALUES (?, ?, ?)";
+			try (PreparedStatement pstmt = database.prepareStatement(insertCheckin)) {
+				pstmt.setString(1, userId);
+				pstmt.setString(2, today);
+				pstmt.setInt(3, DAILY_CHECKIN_REWARD);
+				if (pstmt.executeUpdate() != 1) {
+					return new ResultDTO(400, "今日已签到，明天再来吧");
+				}
+			} catch (SQLException e) {
+				getLogger().printStackTrace(e);
+				return new ResultDTO(500, "签到失败，系统错误，请稍后再试");
+			}
+			// 3. 发放补充额度，发放失败则撤销签到记录，保证当天还能重试
+			if (!addPaidBalance(userId, DAILY_CHECKIN_REWARD)) {
+				removeCheckinRecord(userId, today);
+				return new ResultDTO(500, "签到失败，系统错误，请稍后再试");
+			}
+			return new ResultDTO(200, "签到成功，获得 " + DAILY_CHECKIN_REWARD + " 补充额度");
+		}
+	}
+
+	/**
+	 * 删除签到记录（用于发放额度失败时回滚）
+	 *
+	 * @param userId 用户ID
+	 * @param date   日期（格式：yyyy-MM-dd）
+	 */
+	private void removeCheckinRecord(String userId, String date) {
+		String sql = "DELETE FROM daily_checkin WHERE user_id = ? AND date = ?";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, date);
+			pstmt.executeUpdate();
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+	}
+
+	/**
+	 * 检查用户指定日期是否已经签到
+	 *
+	 * @param userId 用户ID
+	 * @param date   日期（格式：yyyy-MM-dd）
+	 * @return true表示已签到
+	 */
+	private boolean hasCheckedIn(String userId, String date) {
+		if (userId == null) {
+			return false;
+		}
+		String sql = "SELECT 1 FROM daily_checkin WHERE user_id = ? AND date = ?";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, date);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				return rs.next();
+			}
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		return false;
 	}
 
 	/**
@@ -1689,6 +1872,19 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * @throws SQLException 数据库操作异常
 	 */
 	public synchronized void consumeTokens(String userId, int tokens) {
+		consumeTokens(userId, tokens, null, null);
+	}
+
+	/**
+	 * 消耗token（优先消耗免费，不足时消耗付费），并记录补充配额消费明细
+	 * 
+	 * @param userId    用户ID
+	 * @param tokens    需要消耗的token数量（必须为正数）
+	 * @param chatId    聊天ID（可为null）
+	 * @param usageType 使用量类型（可为null）
+	 * @throws SQLException 数据库操作异常
+	 */
+	public synchronized void consumeTokens(String userId, int tokens, String chatId, String usageType) {
 		if (tokens <= 0) {
 			throw new IllegalArgumentException("消耗数量必须为正数");
 		}
@@ -1752,11 +1948,27 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					pstmt.executeUpdate();
 				}
 			}
+
+			// 记录补充配额消费明细（仅记录实际消耗补充配额的部分）
+			recordPaidUsage(userId, chatId, usageType, paidConsume);
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
 		}
 	}
 	public synchronized void consumePaidTokens(String userId, int tokens) {
+		consumePaidTokens(userId, tokens, null, null);
+	}
+
+	/**
+	 * 消耗补充（付费）配额，并记录补充配额消费明细
+	 * 
+	 * @param userId    用户ID
+	 * @param tokens    需要消耗的token数量（必须为正数）
+	 * @param chatId    聊天ID（可为null）
+	 * @param usageType 使用量类型（可为null）
+	 * @throws SQLException 数据库操作异常
+	 */
+	public synchronized void consumePaidTokens(String userId, int tokens, String chatId, String usageType) {
 		if (tokens <= 0) {
 			throw new IllegalArgumentException("消耗数量必须为正数");
 		}
@@ -1783,7 +1995,35 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					pstmt.setString(2, userId);
 					pstmt.executeUpdate();
 				}
+				// 记录补充配额消费明细
+				recordPaidUsage(userId, chatId, usageType, tokens);
 			}
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+	}
+
+	/**
+	 * 写入一条补充配额消费明细记录
+	 * 
+	 * @param userId    用户ID
+	 * @param chatId    聊天ID
+	 * @param usageType 使用量类型
+	 * @param tokens    消耗的补充配额（小于等于0时不记录）
+	 */
+	private void recordPaidUsage(String userId, String chatId, String usageType, int tokens) {
+		if (tokens <= 0 || userId == null) {
+			return;
+		}
+		String date = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+		String sql = "INSERT INTO paid_usage_record (user_id, chat_id, usage_type, date, tokens) VALUES (?, ?, ?, ?, ?)";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, chatId);
+			pstmt.setString(3, usageType == null || usageType.trim().isEmpty() ? UsageIntf.DEFAULT_USAGE_NAME : usageType);
+			pstmt.setString(4, date);
+			pstmt.setInt(5, tokens);
+			pstmt.executeUpdate();
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
 		}
@@ -1828,6 +2068,139 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			return new ResultDTO(500,"内部错误");
 		}
 		return new ResultDTO(200,ja);
+	}
+
+	/**
+	 * 按对话聚合查询补充配额消费记录，用于前端饼图展示。
+	 * <p>
+	 * 返回数组元素形如：
+	 * {@code {"chatId":"...","name":"对话名称","tokens":1234,"count":3,"types":[{"type":"豆包 Seed2 专业","tokens":100}]}}
+	 * </p>
+	 * 
+	 * @param userId    用户ID
+	 * @param startDate 起始日期（格式：yyyy-MM-dd，缺省为当月1日）
+	 * @param endDate   结束日期（格式：yyyy-MM-dd，缺省为当天）
+	 * @return 按对话聚合的消费记录，按消耗量从高到低排序
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/paidUsageRecords")
+	@Adapter
+	public ResultDTO getPaidUsageRecords(@Query("uid")String userId,@Query("start")String startDate,@Query("end")String endDate){
+		if (userId == null || userId.trim().isEmpty()) {
+			return new ResultDTO(400,"缺少用户ID");
+		}
+		LocalDate today = LocalDate.now();
+		LocalDate start = parseDateOrDefault(startDate, today.withDayOfMonth(1));
+		LocalDate end = parseDateOrDefault(endDate, today);
+		if (start == null || end == null) {
+			return new ResultDTO(400,"日期格式错误，应为 yyyy-MM-dd");
+		}
+		if (start.isAfter(end)) {
+			return new ResultDTO(400,"起始日期不能晚于结束日期");
+		}
+		String s = start.format(DateTimeFormatter.ISO_LOCAL_DATE);
+		String e = end.format(DateTimeFormatter.ISO_LOCAL_DATE);
+
+		// 对话名称映射：chatid -> brief
+		Map<String,String> chatNames = new HashMap<>();
+		String nameSql = "SELECT chatid, brief FROM chats WHERE uid = ?";
+		try (PreparedStatement pstmt = database.prepareStatement(nameSql)) {
+			pstmt.setString(1, userId);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					chatNames.put(rs.getString("chatid"), rs.getString("brief"));
+				}
+			}
+		} catch (SQLException ex) {
+			getLogger().printStackTrace(ex);
+			return new ResultDTO(500,"内部错误");
+		}
+
+		// 按对话 + 使用量类型聚合
+		Map<String,JsonObject> byChat = new LinkedHashMap<>();
+		String sql = "SELECT chat_id, usage_type, SUM(tokens) AS tokens, COUNT(*) AS cnt FROM paid_usage_record"
+			+ " WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY chat_id, usage_type";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, s);
+			pstmt.setString(3, e);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					String chatId = rs.getString("chat_id");
+					String type = rs.getString("usage_type");
+					int tokens = rs.getInt("tokens");
+					int count = rs.getInt("cnt");
+					String key = chatId == null ? "" : chatId;
+					JsonObject entry = byChat.get(key);
+					if (entry == null) {
+						entry = new JsonObject();
+						entry.addProperty("chatId", chatId);
+						entry.addProperty("name", resolveChatName(chatId, chatNames));
+						entry.addProperty("tokens", 0);
+						entry.addProperty("count", 0);
+						entry.add("types", new JsonArray());
+						byChat.put(key, entry);
+					}
+					entry.addProperty("tokens", entry.get("tokens").getAsInt() + tokens);
+					entry.addProperty("count", entry.get("count").getAsInt() + count);
+					JsonObject typeObj = new JsonObject();
+					typeObj.addProperty("type", type == null || type.isEmpty() ? UsageIntf.DEFAULT_USAGE_NAME : type);
+					typeObj.addProperty("tokens", tokens);
+					entry.getAsJsonArray("types").add(typeObj);
+				}
+			}
+		} catch (SQLException ex) {
+			getLogger().printStackTrace(ex);
+			return new ResultDTO(500,"内部错误");
+		}
+
+		// 按消耗量从高到低排序
+		List<JsonObject> list = new ArrayList<>(byChat.values());
+		list.sort((a,b) -> Integer.compare(b.get("tokens").getAsInt(), a.get("tokens").getAsInt()));
+		JsonArray ja = new JsonArray();
+		for (JsonObject o : list) {
+			ja.add(o);
+		}
+		return new ResultDTO(200,ja);
+	}
+
+	/**
+	 * 解析日期字符串，为空时返回默认日期
+	 * 
+	 * @param text    日期字符串（yyyy-MM-dd）
+	 * @param defaultDate 默认日期
+	 * @return 解析结果，格式错误返回null
+	 */
+	private static LocalDate parseDateOrDefault(String text, LocalDate defaultDate) {
+		if (text == null || text.trim().isEmpty()) {
+			return defaultDate;
+		}
+		try {
+			return LocalDate.parse(text.trim());
+		} catch (Exception ex) {
+			return null;
+		}
+	}
+
+	/**
+	 * 解析对话展示名称：优先使用对话简述，其次按记录是否存在给出兜底名称
+	 * 
+	 * @param chatId    对话ID
+	 * @param chatNames 对话名称映射
+	 * @return 展示名称
+	 */
+	private static String resolveChatName(String chatId, Map<String,String> chatNames) {
+		if (chatId == null || chatId.isEmpty()) {
+			return "其他消费";
+		}
+		if (chatNames.containsKey(chatId)) {
+			String brief = chatNames.get(chatId);
+			if (brief != null && !brief.trim().isEmpty()) {
+				return brief;
+			}
+			return "未命名对话";
+		}
+		return "已删除对话";
 	}
 
 	// ---------- 辅助方法 ----------

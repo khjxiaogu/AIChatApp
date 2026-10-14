@@ -6,8 +6,13 @@
     <title>AI智能对话</title>
 	<script src="feather.min.js"></script>
     <script src="vue.js"></script>
+    <script src="modeltree.js"></script>
+    <script src="theme.js"></script>
+    <script src="heartbeat.js"></script>
+    <script src="ai-protocol.js"></script>
 	
     <link rel="stylesheet" href="chat-common.css">
+    <link rel="stylesheet" href="ai-ui.css">
     <style>
 		strong {
 			font-weight: normal;
@@ -49,40 +54,44 @@
 </head>
 <body>
     <div id="app" @click="showDialog=true;unlockWebAudio();"  @contextmenu.prevent="showDialog=false">
+    <ai-conn-tip></ai-conn-tip>
+    <ai-dialog></ai-dialog>
         <div class="layer bg-layer">
-            <img :src="bgurl" alt="背景" class="bg-image" v-if="bgurl">
+            <img :src="aiImages.back" alt="背景" class="bg-image" v-if="aiImages.back">
         </div>
         <div class="layer fg-layer">
             <div class="fg-container">
                 <div class="front-layer">
-                    <img :src="flurl" alt="人物" v-if="flurl">
+                    <img :src="aiImages.front" alt="人物" v-if="aiImages.front">
                 </div>
                 <div class="side-layer">
-                    <img :src="fsurl" alt="人物" v-if="fsurl">
+                    <img :src="aiImages.side" alt="人物" v-if="aiImages.side">
                 </div>
             </div>
         </div>
 		<div class="layer dialog-layer" :style="{ bottom: inputBarHeight + 'px' }" v-if="!showHistory&&showDialog">
 		    <div class="messages-container" ref="msgContainer">
 		        <div v-for="(msg, idx) in recentMessages"  :key="idx" >
-					<div v-for="msg2 in msg.text.split('\n')">
+					<div v-for="msg2 in aiRevealedLines(msg)">
 						<template v-if="msg2.length>0"><template v-if="msg.title !== '系统'&&msg.title!=''">【{{ msg.title }}】「</template><span v-html="msg.title !== ''?msg2:renderMarkdown(msg2)"></span><template v-if="msg.title !== '系统'&&msg.title!=''">」</template></template>
+					</div>
+					<!-- 撤回/重说/朗读跟随最新一条消息，避免占用手边的工具栏；生成过程中不显示 -->
+					<div class="msg-actions" v-if="idx === recentMessages.length - 1 && prepared && !aiGenerating">
+						<button class="btn msg-action-btn" v-if="!lastMessageIsUser" @click="aiSendRegen" title="重新生成这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>重说</button>
+						<button class="btn msg-action-btn" @click="aiSendRevert" title="撤回最后一轮对话"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>撤回</button>
+						<button class="btn msg-action-btn" v-if="!lastMessageIsUser && aiVoiceUsable && messages.length>0 && messages[messages.length-1].audioId==undefined" @click="aiSendGenVoice" title="朗读这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>朗读</button>
 					</div>
 				</div>
 		    </div>
 		    <div class="dialog-sidebar">
-		        <div class="typing-area" v-if="typing">
+		        <div class="typing-area" v-if="aiGenerating">
 		            <span class="typing-text">生成中</span>
 		            <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
 		        </div>
 		        <div class="button-group">
 		            <button class="btn toolbar-btn" @click="openHistory"><i data-feather="file-text"></i>历史</button>
-		            <button class="btn toolbar-btn" @click="refreshMessages"  v-show="prepared&&!typing"><i data-feather="refresh-ccw"></i>重说</button>
-		            <button class="btn toolbar-btn" @click="undoLastOwn"  v-show="prepared&&!typing"><i data-feather="x"></i>撤回</button>
 		            <button class="btn toolbar-btn" @click="openSettings" v-show="prepared"><i data-feather="settings"></i>设置</button>
-					<button class="btn toolbar-btn" v-show="prepared&&!typing" @click.stop="showDialog=false"><i data-feather="eye-off"></i>隐藏</button>
-					
-					<button class="btn toolbar-btn" v-show="prepared&&!typing&&isVoiceUsable&&messages[messages.length-1].audioId==undefined" @click="triggerRead()"><i data-feather="message-circle"></i>朗读</button>
+					<button class="btn toolbar-btn" v-show="prepared&&!aiGenerating" @click.stop="showDialog=false"><i data-feather="eye-off"></i>隐藏</button>
 				</div>
 		    </div>
 		</div>
@@ -93,13 +102,15 @@
 				<span style="display:flex">
                 <button class="close-history" @click="closeHistory"><i data-feather="x"></i></button></span>
             </div>
-            <div class="history-content" ref="histlay">
+            <div class="history-content" ref="histlay" @scroll="onHistoryScroll">
+               <div v-if="isLoadingMore" class="history-tip loading">正在加载更早的记录</div>
+               <div v-else-if="historyTopReached && !hasMoreHistory" class="history-tip">没有更早的记录啦</div>
                <table>
                 <tr v-for="(msg, idx) in messages" :key="'hist-'+idx">
 					<td><a v-show="msg.audioId" style="float:right" @click="playSoundWithWebAudio(msg.audioId)"><i data-feather="play-circle"></i></a></td>
 					<td>
 						
-						<div v-for="(msg2,index2) in msg.text.split('\n')">
+						<div v-for="(msg2,index2) in aiRevealedLines(msg)">
 							<template v-if="msg.title !== '系统'&&msg.title!=''&&index2==0">【{{ msg.title }}】</template><span v-html="msg.title !== ''?msg2:renderMarkdown(msg2)"></span>
 						</div>
 					</td>
@@ -116,13 +127,24 @@
 					<button class="close-setting" @click="closeSettings"><i data-feather="x"></i></button>
 				</div>
 				<div class="setting-content">
-					<!-- 模型选择区域 -->
+					<!-- 白天/黑夜模式 -->
+					<div class="setting-row">
+						<span class="setting-row-label">白天模式</span>
+						<button class="setting-switch" :class="{ 'is-on': isDayMode }" @click.stop="setDayMode(!isDayMode)" :aria-pressed="isDayMode ? 'true' : 'false'">
+							<span class="setting-switch-knob"></span>
+						</button>
+					</div>
+					<!-- 语音开关：开启后新回复会自动朗读 -->
+					<div class="setting-row" v-show="aiVoiceUsable">
+						<span class="setting-row-label">默认使用朗读</span>
+						<button class="setting-switch" :class="{ 'is-on': aiVoiceEnabled }" @click.stop="setVoiceEnabled(!aiVoiceEnabled)" :aria-pressed="aiVoiceEnabled ? 'true' : 'false'">
+							<span class="setting-switch-knob"></span>
+						</button>
+					</div>
+					<!-- 模型选择区域：按 "/" 分层的目录树，默认全部展开 -->
 					<div class="model-selector">
 						<label>选择模型</label>
-						<select v-model="selectedModel" @change="onModelChange">
-							<option value="">默认模型</option>
-							<option v-for="m in availableModels" :key="m.key" :value="m.key">{{ m.name }}</option>
-						</select>
+						<model-tree v-model="aiModel" :nodes="aiModelTree" @change="aiSetModel"></model-tree>
 					</div>
 					<!-- 导出按钮（原功能保留） -->
 					<button class="btn setting-export-btn" @click="exportHistory">
@@ -132,7 +154,6 @@
 					<button class="btn setting-export-btn" @click="exportMemory">
 						<i data-feather="download"></i> 导出记忆
 					</button>
-					<button class="btn setting-export-btn" v-show="isVoiceUsable" @click="setVoiceEnabled(!isVoiceEnabled)"><span v-if="isVoiceEnabled"><i data-feather="volume"></i></span><span v-if="!isVoiceEnabled"><i data-feather="volume-x"></i></span>语音</button>
 					
 				</div>
 			</div>
@@ -166,36 +187,23 @@
 		feather.replace();
 		let msgs=new Vue({
 		         el: '#app',
+		         // 连接/重连/心跳/帧路由/历史分页由公共协议层提供
+		         mixins: [AIProtocolMixin],
 		         data: {
 		             messages: [
 		             ],
 		             newMessage: '',
 		             showHistory: false,
 					 showDialog: true,
-					 typing: false, 
 		             inputBarHeight: 70,  // 初始值，与 CSS min-height 一致
-					 wssocket: undefined,
 					 prepared: false,
-					 isSideLoading: false,
-					 isFrontLoading:false,
-					 isBackLoading:false,
-					 isAnimateBlocking:false,
-					 fsurl:'',
-					 bgurl:'',
-					 flurl:'',
 					 appId:'',
 					 chatId:'',
-					 price:'0.00',
-					 handlerQueue:[],
 					 url:'/aichat',
 					 audioCtx:null,
 					 isUnlocked:false,
-					 isVoiceUsable:false,
-					 isVoiceEnabled:false,
-					 model:"",
 					 showSettings: false,       // 控制设置界面显隐
-					 availableModels: [],       // 可用模型列表
-					 selectedModel: '',
+					 isDayMode: !!(window.AIWuxiaTheme && AIWuxiaTheme.isDay()),  // 白天/黑夜模式
 		         },
 				 computed: {
 				     recentMessages() {
@@ -242,95 +250,13 @@
 					  text = text.replace(/\n{2,}/g, '\n\n');
 					  return text.trim();
 					},
-					speak(sent){
-						if(sent=="")return;
-						this.wssocket.send(JSON.stringify({message:sent}));
-					},
 					setVoiceEnabled(nw){
-						this.wssocket.send(JSON.stringify({operation:"setVoiceEnabled",voiceEnabled:nw}));
+						this.aiSetVoiceEnabled(nw);
 						this.unlockWebAudio();
 					},
-					setSideImage(newSrc) {
-					    // 如果新地址与当前相同且图片已加载
-					    if (newSrc === this.fsurl && !this.isSideLoading) {
-					        return;
-					    }
-						if (newSrc == ''){
-							this.fsurl = ''
-							return;
-						}
-					    // 设置加载状态
-					    // 创建一个新Image对象预加载图片
-					    const img = new Image();
-					    img.onload = () => {
-							if(this.isSideLoading){
-								this.isSideLoading = false;
-								this.fsurl = newSrc;
-							}
-							this.notifyProcessQueue();
-					    };
-					    img.onerror = (err) => {
-					        this.isSideLoading = false;
-					        console.error('图片加载失败', err);
-					    };
-					    // 开始加载（设置src会触发请求）
-						this.isSideLoading = true;
-					    img.src = newSrc;
-					},
-					setFrontImage(newSrc) {
-					    // 如果新地址与当前相同且图片已加载
-					    if (newSrc === this.flurl && !this.isFrontLoading) {
-					        return;
-					    }
-						if (newSrc == ''){
-							this.flurl = ''
-							return;
-						}
-					    // 设置加载状态
-					    // 创建一个新Image对象预加载图片
-					    const img = new Image();
-					    img.onload = () => {
-							if(this.isFrontLoading){
-								this.isFrontLoading = false;
-								this.flurl = newSrc;
-							}
-							this.notifyProcessQueue();
-					    };
-					    img.onerror = (err) => {
-					        this.isFrontLoading = false;
-					        console.error('图片加载失败', err);
-					    };
-					    // 开始加载（设置src会触发请求）
-						this.isFrontLoading = true;
-					    img.src = newSrc;
-					},
-					setBackImage(newSrc) {
-					    // 如果新地址与当前相同且图片已加载
-					    if (newSrc === this.bgurl && !this.isBackLoading) {
-					        return;
-					    }
-						if (newSrc == ''){
-							this.bgurl = ''
-							return;
-						}
-					    // 设置加载状态
-					    
-					    // 创建一个新Image对象预加载图片
-					    const img = new Image();
-					    img.onload = () => {
-							if(this.isBackLoading){
-								this.isBackLoading = false;
-								this.bgurl = newSrc;
-							}
-							this.notifyProcessQueue();
-					    };
-					    img.onerror = (err) => {
-					        this.isBackLoading = false;
-					        console.error('图片加载失败', err);
-					    };
-					    // 开始加载（设置src会触发请求）
-						this.isBackLoading = true;
-					    img.src = newSrc;
+					/* ---- 场景图片槽位：切换逻辑在公共层，加载完成后才换图 ---- */
+					aiScenePrefix(){
+						return 'resource/';
 					},
 					exportHistory(){
 						const form = document.createElement('form');
@@ -370,169 +296,151 @@
 						document.body.removeChild(form);
 					},
 					open(done){
-						this.isSideLoading=false;
-						this.isFrontLoading=false;
-						this.isBackLoading=false;
-						this.isAnimateBlocking=false;
-						this.typing=false;
-						let _this=this;
-						this.wssocket=new WebSocket((location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId);
-						this.wssocket.onopen=function(){
-							_this.prepared=true;
-							window.onbeforeunload = function() {
-							    this.wssocket.onclose = function () {}; // disable onclose handler first
-							    this.wssocket.close();
-							};
-							
-							_this.wssocket.onerror=function(ev){
-								_this.wssocket.onerror=function(){};
-								console.info(ev);
-								setTimeout(_this.open,500);
-								_this.prepared=false;
-								
-							}
-							if(done)
-								done();
-							fetch("querychat?appid="+_this.appId)
-								.then(p=>p.json())
-								.then(p=>{
-									if(p.length>0){
-										document.title="AI-"+p[0].app+"-"+p[0].name;
-									}
-								})
-						};
-						this.wssocket.onclose=function(ev){var rev=ev?ev:event;setTimeout(_this.open,500);_this.prepared=false;if(rev.reason!="")alert(rev.reason);}
-						this.wssocket.onerror=function(ev){console.info(ev);_this.wssocket.onclose=function(){};_this.prepared=false;alert("连接服务器失败！");};
-						this.wssocket.onmessage = function(ev) {
-							var rev=ev?ev:event;
-							var param=eval("("+rev.data+")");
-
-							if(param.scene!=undefined){
-								let scene_data='';
-								if(param.scene_data){
-									scene_data="resource/"+param.scene_data;
+						this.aiResetImages();
+						this.aiGenerating=false;
+						this._openDone=done;
+						this.aiConnect();
+					},
+					/* ============ 公共协议层（ai-protocol.js）：连接与帧钩子 ============ */
+					aiSocketUrl(){
+						return (location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId;
+					},
+					aiOnSocketOpen(){
+						this.prepared=true;
+						// 离开页面时主动断开（公共层会摘掉监听，不会触发重连）
+						window.onbeforeunload=()=>this.aiDisconnect();
+						if(this._openDone) this._openDone();
+						fetch("querychat?appid="+this.appId)
+							.then(p=>p.json())
+							.then(p=>{
+								if(p.length>0){
+									document.title="AI-"+p[0].app+"-"+p[0].name;
 								}
-								if(param.scene=='front')
-									_this.setFrontImage(scene_data)
-								if(param.scene=='side')
-									_this.setSideImage(scene_data)
-								if(param.scene=='back')
-									_this.setBackImage(scene_data)
-								
-							}
-							if(param.sendbox!=undefined){
-								_this.newMessage=param.sendbox;
-							}
-							if(param.isVoiceEnabled!=undefined)
-								_this.isVoiceEnabled=param.isVoiceEnabled;
-							if(param.notice!=undefined)
-								alert(param.notice);
-							if(param.input!=undefined){
-								var text=prompt(param.prompt);
-								if(text!=null&&text!="")
-									_this.wssocket.send(JSON.stringify({operation:"prompt",input:param.input,content:text}));
-								
-							}
-							
-							if(param.models!=undefined){
-								_this.availableModels=param.models
-							}
-							if(param.model!=undefined){
-								_this.model=param.model
-							}
-							if(param.isVoiceUsable!=undefined){
-								_this.isVoiceUsable=param.isVoiceUsable;
-							}
-							if(param.audioId!=undefined){
-								_this.playSoundWithWebAudio(param.audioId);
-							
-							}
-							if(param.price!=undefined){
-								console.info(param.price)
-								_this.price=param.price.substr(0,param.price.indexOf(".")+3);
-							}
-							_this.handlerQueue.push(param)
-							_this.notifyProcessQueue();
-								
-						};
+							})
 					},
-					notifyProcessQueue(){
-						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.isAnimateBlocking){
-							this.processQueue();
+					aiOnConnState(state){
+						// 断开/重连提示由公共层统一显示（<ai-conn-tip>），这里只做页面自己的状态处理
+						if(state!="connected") this.prepared=false;
+					},
+					/* ---- 公共协议层：串行动画管道 ---- */
+					// 需要按动画节奏落地的帧：进同一条管道（顺序由 Promise 链保证，可在处理器里 await）
+					aiOnContent(frame){
+						this.aiEnqueue(frame);
+					},
+					aiOnMessage(frame){
+						this.aiEnqueue(frame);
+					},
+					aiOnRemove(frame){
+						this.aiEnqueue(frame);
+					},
+					aiOnAudio(frame){
+						// 语音到达即播放，同时入队更新消息上的 audioId
+						if(frame.audioId) this.playSoundWithWebAudio(frame.audioId);
+						this.aiEnqueue(frame);
+					},
+					// 帧如何落地：文本走揭示动画，立绘等图片先 await 加载完成
+					async aiHandleQueuedFrame(frame){
+						if(frame.type=='scene'){
+							// 立绘已经立即切换，这里只等加载完成再继续后续帧
+							if(frame.promise) await frame.promise;
+						}else if(frame.type=='content'){
+							this.appendMsg(frame.id,this.aiContentToText(frame.content));
+						}else if(frame.type=='remove'){
+							this.removeMessage(frame.id);
+						}else if(frame.type=='message'){
+							var full=this.aiContentToText(frame.content);
+							var exist=this.messages.find(m=>m.id===frame.id);
+							if(exist){
+								// 同一标识的消息已存在（例如流式过程中补齐）：更新全文并继续揭示
+								exist.text=full;
+								this.aiRevealStart(exist);
+							}else{
+								var msg=this.addMessage(frame.id,frame.title,full,frame.audioId,frame.role);
+								msg.revealed=0;
+								this.aiRevealStart(msg);
+							}
+						}else if(frame.type=='audio'){
+							this.setAudioId(frame.id,frame.audioId);
 						}
 					},
-					processQueue(){
-						
-						while(this.handlerQueue.length>0){
-							this.handleTextMessage(this.handlerQueue.shift());
-							if(this.isSideLoading||this.isFrontLoading||this.isBackLoading||this.isAnimateBlocking)
-								break;
-						}
-						
+					/* ---- 公共协议层：帧钩子 ---- */
+					aiOnSendbox(text){
+						this.newMessage=text;
 					},
-					handleTextMessage(message){
-						if(message.delta!=undefined){
-							this.appendMsg(message.id,message.delta);
-						}
-						if(message.remove!=undefined){
-							this.removeMessage(message.remove);
-						}
-						if(message.message!=undefined){
-							let messageContent=message.message;
-							let _this=this;
-							var ch=0;
-							this.addMessage(message.id,message.title,"");
-							var func=() => {
-								if(ch>=messageContent.length||!_this.isAnimateBlocking){
-									_this.isAnimateBlocking=false;
-									_this.notifyProcessQueue();
-									return;
+					aiOnInput(input,promptText){
+						// 统一对话框替代 prompt：取消返回 null（与 prompt 语义一致）
+						this.aiPrompt({
+							title:'需要你的输入',
+							message:promptText||'',
+							placeholder:'请输入内容',
+						}).then(function(text){
+							if(text!=null&&text!="")
+								this.aiSendPromptReply(input,text);
+						}.bind(this));
+					},
+					// 历史分页落地：视口锚定与分页状态由公共层负责
+					aiOnBatch(items,meta){
+						if(meta.prepend){
+							// 向上翻页：按标识符去重后插入到最前面
+							var known={};
+							for(var k=0;k<this.messages.length;k++){
+								if(this.messages[k].id!=null) known[this.messages[k].id]=true;
+							}
+							var incoming=[];
+							for(var i=0;i<items.length;i++){
+								var old=items[i];
+								if(old.id!=null){
+									if(known[old.id]) continue;
+									known[old.id]=true;
 								}
-								_this.appendMsg(message.id,messageContent[ch]);
-								ch++;
-								setTimeout(func,50);
+								incoming.push({text:old.text,title:old.title,id:old.id,audioId:old.audioId,role:old.role,revealed:null});
 							}
-							this.isAnimateBlocking=true;
-							func(); // 每个字符间隔50ms
-						}
-						if(message.messages!=undefined){
+							for(var j=incoming.length-1;j>=0;j--){
+								this.messages.unshift(incoming[j]);
+							}
+						}else{
+							// 连接/重连下发的是最新一页：替换最新范围，同时保留本地已翻出来的更早记录
+							var oldestIncoming=null;
+							for(var i=0;i<items.length;i++){
+								var id=items[i].id;
+								if(id!=null&&(oldestIncoming===null||id<oldestIncoming)) oldestIncoming=id;
+							}
+							var kept=[];
+							if(oldestIncoming!=null){
+								for(var k=0;k<this.messages.length;k++){
+									var local=this.messages[k];
+									if(local.id!=null&&local.id<oldestIncoming) kept.push(local);
+								}
+							}
+							// 整表替换前先停掉仍在揭示的旧消息
+							this.aiRevealClear();
 							this.messages.splice(0,this.messages.length)
-							for(var i=0;i<message.messages.length;i++){
-								
-								this.addMessage(message.messages[i].id,message.messages[i].title,message.messages[i].message,message.messages[i].audioId);
+							for(var k=0;k<kept.length;k++){
+								this.messages.push(kept[k]);
 							}
-							console.info(message.messages.length)
+							for(var i=0;i<items.length;i++){
+								this.addMessage(items[i].id,items[i].title,items[i].text,items[i].audioId,items[i].role);
+							}
 						}
-						if(message.audioId!=undefined){
-							this.setAudioId(message.id,message.audioId);
+					},
+					// 分页游标：本地最旧的一条记录
+					aiOldestMessageId(){
+						var oldest=null;
+						for(var k=0;k<this.messages.length;k++){
+							var id=this.messages[k].id;
+							if(id!=null&&(oldest===null||id<oldest)) oldest=id;
 						}
-						if(message.status!=undefined)
-							this.typing=(message.status==1);
+						return oldest===null?0:oldest;
 					},
 					openApp(app,id,done){
-						if(this.wssocket){
-							this.wssocket.onclose=function(){};
-							this.wssocket.close();
-							}
 						this.chatId=id;
 						this.appId=app;
 						this.messages.splice(0,this.messages.length);
+						// 取消未播完的动画与排队中的帧，避免写进新会话
+						this.aiCancelPipeline();
+						// 切换对话时重置历史记录分页状态（换连接由 aiConnect 内部安全处理）
+						this.aiResetHistory();
 						this.open(done);
-					},
-					triggerRead(){
-						this.wssocket.send(JSON.stringify({operation:"genVoice"}));
-					},
-					// ...原有方法
-					refreshMessages() {
-						this.wssocket.send(JSON.stringify({operation:"regen"}));
-					},
-					undoLastOwn() {
-					    // 查找最后一个自己发送的消息并删除
-						this.wssocket.send(JSON.stringify({operation:"revert"}));
-					},
-					// 可以添加一个方法来切换typing状态，或由其他事件触发
-					toggleTyping() {
-					    this.typing = !this.typing;
 					},
 		             // 调整 textarea 高度，并更新底部输入栏的整体高度
 		             adjustTextareaHeight() {
@@ -551,8 +459,9 @@
 		                 });
 		             },
 		             // 发送消息
-		             addMessage(id,title,text,aid) {
-		                 this.messages.push({ text: text, title: title, id: id , audioId:aid });
+		             addMessage(id,title,text,aid,role) {
+		                 const msg={ text: text, title: title, id: id , audioId:aid, role: role || (title === this.aiUserTitle ? 'user' : 'assistant'), revealed: null };
+		                 this.messages.push(msg);
 		                 // 重置 textarea 高度并更新底部栏高度
 		                 this.$nextTick(() => {
 		                     const textarea = this.$refs.messageInput;
@@ -564,10 +473,12 @@
 		                     if (bottomBar) {
 		                         this.inputBarHeight = bottomBar.offsetHeight;
 		                     }
-		                     // 滚动消息容器到底部
+		                     // 滚动消息容器到底部（插入更早记录期间跳过）
 		                     const container = this.$refs.msgContainer;
-		                     if (container) container.scrollTop = container.scrollHeight;
+		                     if (container && !this.suppressAutoScroll) container.scrollTop = container.scrollHeight;
 		                 });
+		             
+		             	return msg;
 		             },
 					 setAudioId(id,audioId){
 						for(var i=0;i<this.messages.length;i++){
@@ -618,6 +529,8 @@
 						for(var i=0;i<this.messages.length;i++){
 							if(this.messages[i].id==id){
 								this.messages[i].text+=msg;
+								// 文本增长后继续揭示（揭示循环空闲时会自动重启）
+								if(this.messages[i].revealed!=null) this.aiRevealStart(this.messages[i]);
 								break;
 							}
 						}
@@ -631,37 +544,31 @@
 		                     if (bottomBar) {
 		                         this.inputBarHeight = bottomBar.offsetHeight;
 		                     }
-		                     // 滚动消息容器到底部
+		                     // 滚动消息容器到底部（插入更早记录期间跳过）
 		                     const container = this.$refs.msgContainer;
-		                     if (container) container.scrollTop = container.scrollHeight;
+		                     if (container && !this.suppressAutoScroll) container.scrollTop = container.scrollHeight;
 		                 });
 					},
 					 removeMessage(id){
 						for(var i=0;i<this.messages.length;i++){
 							if(this.messages[i].id==id){
+								this.aiRevealDrop(this.messages[i]);
 								this.messages.splice(i,1);
 								break;
 							}
 						}
 						if(this.messages.length<4)
-							this.requestHistory();
-					 },
-					 sendMessage(content){
-						if(!this.typing)
-							this.speak(content);
+							this.aiRequestHistory();
 					 },
 					 sendUserMessage(content){
-						if(!this.isSideLoading&&!this.isFrontLoading&&!this.isBackLoading&&!this.typing){
-							if(this.newMessage!=''&&this.wssocket!=undefined&&this.wssocket.readyState==1){
-	 							this.sendMessage(this.newMessage);
-								this.typing=true;
+						if(!this.aiIsAnyImageLoading()&&!this.aiGenerating){
+							if(this.newMessage!=''&&this.aiIsOpen()){
+								this.aiSendMessage(this.newMessage);
+								this.aiGenerating=true;
+								//this.newMessage='';
 							}
 						}
 	 				 },
-					 requestHistory(){
-						var data={requestBackLog:true}
-						this.wssocket.send(JSON.stringify(data));
-					 },
 		             openHistory() {
 		                 this.showHistory = true;
 						  this.$nextTick(() => {
@@ -673,24 +580,22 @@
 		             },
 					 openSettings() {
 						this.showSettings = true;
-						// 同步当前 model 值到下拉框
-						this.selectedModel = this.model || '';
+						this.$nextTick(() => feather.replace());
 					},
 					// 关闭设置界面
 					closeSettings() {
 						this.showSettings = false;
 					},
-					// 模型切换时调用接口
-					onModelChange() {
-						const modelValue = this.selectedModel;   // 空字符串代表默认
-						// 更新 data.model
-						if (!this.wssocket) return;
-						this.wssocket.send(JSON.stringify({operation:"model",model:modelValue}));
+					// 白天/黑夜模式切换（偏好保存在本地，各页面共用）
+					setDayMode(day) {
+						this.isDayMode = day;
+						if (window.AIWuxiaTheme) AIWuxiaTheme.setDay(day);
 					},
 		         },
 		         watch: {
 		             messages: {
 		                 handler() {
+		                     if (this.suppressAutoScroll) return;
 		                     this.$nextTick(() => {
 		                         const container = this.$refs.msgContainer;
 		                         if (container) container.scrollTop = container.scrollHeight;

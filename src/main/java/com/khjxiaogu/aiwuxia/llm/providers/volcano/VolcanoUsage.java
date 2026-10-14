@@ -39,6 +39,11 @@ public class VolcanoUsage implements UsageIntf<VolcanoUsage> {
 		completion_tokens_details=new CompletionTokenDetail();
 	}
     @Override
+    public String getUsageName() {
+        return "豆包对话";
+    }
+
+    @Override
     public String toString() {
         return "总token数 " + total_tokens +
                 "\n发送token " + prompt_tokens +

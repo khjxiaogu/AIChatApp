@@ -29,7 +29,9 @@ import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
  *   <li><b>调用次数</b>：轮次上限、总次数上限、<b>各工具执行次数上限</b>，超限时统一回传提示文本；</li>
  *   <li><b>权限</b>：每个调用执行前询问权限策略；</li>
  *   <li><b>许可</b>：权限判定为“需要许可”时交由许可方决定是否执行；</li>
- *   <li><b>处理</b>：工具查找、执行、异常兜底、结果推送到流式输出、写入请求历史。</li>
+ *   <li><b>处理</b>：工具查找、执行、异常兜底、结果推送到流式输出、写入请求历史；</li>
+ *   <li><b>显示</b>：调用与结果都经工具的 {@link ToolCallPresenter} 转换为用户友好显示
+ *       （简述替代工具名 + 具体内容），随 {@code ToolCallContent}/{@code ToolContent} 下发。</li>
  * </ul>
  *
  * <p>
@@ -217,7 +219,9 @@ public class ToolCallContext {
 		}
 
 		int round = rounds.incrementAndGet();
-		ToolCallContent toolCallContent = new ToolCallContent(toolCalls);
+		// 原始调用信息 → 用户友好显示（简述替代工具名 + 具体内容），交给转换器处理
+		List<ToolCallDisplay> displays = buildCallDisplays(toolCalls);
+		ToolCallContent toolCallContent = new ToolCallContent(toolCalls, displays);
 		emit(toolCallContent);
 		history.appendAssistantToolCalls(reasonerText, toolCalls);
 
@@ -229,13 +233,13 @@ public class ToolCallContext {
 			// 轮次超限：本轮全部拒绝执行
 			limitReached = true;
 			shouldContinue = !limitNotified.getAndSet(true);
-			for (ToolCall call : toolCalls) {
-				results.add(new ToolContent(call.id, manager.getPolicy().getLimitMessage()));
+			for (int i = 0; i < toolCalls.size(); i++) {
+				results.add(notExecuted(toolCalls.get(i), manager.getPolicy().getLimitMessage(), displays.get(i)));
 			}
 		} else {
 			callLimitExhausted.set(false);
-			for (ToolCall call : toolCalls) {
-				results.add(execute(call));
+			for (int i = 0; i < toolCalls.size(); i++) {
+				results.add(execute(toolCalls.get(i), displays.get(i)));
 			}
 			limitReached = callLimitExhausted.get();
 			if (limitReached) {
@@ -261,25 +265,28 @@ public class ToolCallContext {
 
 	/**
 	 * 执行单个工具调用：查找 → 次数校验 → 权限 → 许可 → 执行，任何一步失败都以工具结果形式回传给模型。
+	 *
+	 * @param call         原始工具调用
+	 * @param callDisplay  该调用的用户友好显示（由工具自己的转换器生成）
 	 */
-	private ToolContent execute(ToolCall call) {
+	private ToolContent execute(ToolCall call, ToolCallDisplay callDisplay) {
 		ToolCallPolicy policy = manager.getPolicy();
 		if (call.function == null) {
-			return new ToolContent(call.id, policy.getMissingToolMessage());
+			return notExecuted(call, policy.getMissingToolMessage(), callDisplay);
 		}
 		ToolData data = manager.getTools().get(call.function.name);
 		if (data == null) {
-			return new ToolContent(call.id, policy.getMissingToolMessage());
+			return notExecuted(call, policy.getMissingToolMessage(), callDisplay);
 		}
 		if (policy.hasCallLimit() && calls.get() >= policy.getMaxCalls()) {
 			callLimitExhausted.set(true);
-			return new ToolContent(call.id, policy.getLimitMessage());
+			return notExecuted(call, policy.getLimitMessage(), callDisplay);
 		}
 		// 单个工具的执行次数上限
 		if (policy.hasToolCallLimit(call.function.name)
 				&& getToolCallCount(call.function.name) >= policy.getToolCallLimit(call.function.name)) {
 			callLimitExhausted.set(true);
-			return new ToolContent(call.id, policy.getToolLimitMessage());
+			return notExecuted(call, policy.getToolLimitMessage(), callDisplay);
 		}
 
 		ToolCallDecision decision = policy.getPermission() == null ? ToolCallDecision.ALLOW
@@ -295,17 +302,42 @@ public class ToolCallContext {
 			decision = approved ? ToolCallDecision.ALLOW : ToolCallDecision.deny(policy.getUnapprovedMessage());
 		}
 		if (!decision.isAllowed()) {
-			return new ToolContent(call.id, decision.getReasonOr(ToolCallPolicy.DEFAULT_DENY_MESSAGE));
+			return notExecuted(call, decision.getReasonOr(ToolCallPolicy.DEFAULT_DENY_MESSAGE), callDisplay);
 		}
 
 		calls.incrementAndGet();
 		toolCalls.computeIfAbsent(call.function.name, n -> new AtomicInteger()).incrementAndGet();
 		try {
-			return new ToolContent(call.id, data.tool.run(call.function.arguments));
+			String result = data.tool.run(call.function.arguments);
+			return new ToolContent(call.id, result, buildResultDisplay(call, callDisplay, result));
 		} catch (Throwable ex) {
 			ex.printStackTrace();
-			return new ToolContent(call.id, policy.getToolErrorMessage());
+			return notExecuted(call, policy.getToolErrorMessage(), callDisplay);
 		}
+	}
+
+	/** 未真正执行的调用（不存在/超限/无权限/无许可/出错）：沿用调用的简述，不带结果内容。 */
+	private static ToolContent notExecuted(ToolCall call, String message, ToolCallDisplay callDisplay) {
+		return new ToolContent(call.id, message, ToolCallDisplay.of(callDisplay.getBrief()));
+	}
+
+	/**
+	 * 把原始调用信息转换为用户友好显示，交给管理器的统一实现
+	 * （与历史重新加载后的重算使用同一套转换规则）。
+	 */
+	private List<ToolCallDisplay> buildCallDisplays(List<ToolCall> calls) {
+		List<ToolCallDisplay> displays = new ArrayList<>(calls.size());
+		for (ToolCall call : calls) {
+			displays.add(manager.displayFor(call));
+		}
+		return displays;
+	}
+
+	/**
+	 * 生成结果的具体内容显示，交给管理器的统一实现。
+	 */
+	private ToolCallDisplay buildResultDisplay(ToolCall call, ToolCallDisplay callDisplay, String result) {
+		return manager.resultDisplayFor(call, callDisplay, result);
 	}
 
 	/** 重置收集器与全部计数，用于复用同一个上下文。 */

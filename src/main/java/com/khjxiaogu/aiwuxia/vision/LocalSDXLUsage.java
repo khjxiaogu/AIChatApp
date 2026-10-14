@@ -28,6 +28,10 @@ public class LocalSDXLUsage implements UsageIntf<LocalSDXLUsage> {
 	public double getEquivantTokens() {
 		return count*5000+interrogate*500; //1 000 000
 	}
+	@Override
+	public String getUsageName() {
+		return "本地绘图";
+	}
     @Override
     public String toString() {
         return "图片生成" + count+"，推理"+interrogate;

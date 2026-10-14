@@ -41,6 +41,11 @@ public class GrokUsage implements UsageIntf<GrokUsage> {
 	
 	// 建议添加构造方法完成初始化
     @Override
+    public String getUsageName() {
+        return "Grok 对话";
+    }
+
+    @Override
     public String toString() {
         return "总token数 " + total_tokens +
                 "\n发送token " + prompt_tokens +

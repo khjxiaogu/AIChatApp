@@ -38,6 +38,7 @@ import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.subagent.HistoryCompacter;
@@ -59,17 +60,19 @@ public class AICustomMain extends AIApplication {
 		// check interface
 		// AI response, always valid
 		handlers.add((state, ret) -> {
-			ApplicationState airet;
 			try {
-				state.add(Role.USER, ret, true);
-				airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
+				try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+					write.append(ret, true);
+				}
+				try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+					sendAndProcessResultStreamed(state, write, constructAIrequest(state));
+				}
 			}finally{
 				if(state.getLast().getRole()==Role.USER) {
 					HistoryItem hi=state.removeLast();
 					state.refillChatBox(hi.getContextContent());
 				}
 			}
-			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;
@@ -84,10 +87,12 @@ public class AICustomMain extends AIApplication {
 		super.prepareScene(state);
 	}
 
-	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		resp.addUsageListener(state::addUsage);
-		return precessResponse(resp, state);
+		ApplicationState oldstate = precessResponse(resp, state, write);
+		write.setLastState(oldstate);
+		return oldstate;
 		
 	}
 
@@ -158,12 +163,12 @@ public class AICustomMain extends AIApplication {
 		state.setStage(ApplicationStage.STARTED);
 
 	}
-	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput resp, AISession state, HistoryWriteContext write) throws IOException {
 		boolean isWaiting = true;
 
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		boolean nstateModified = false;
-		handleReasonerContent(resp,state);
+		handleReasonerContent(resp,state,write);
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		while (true) {
@@ -181,11 +186,11 @@ public class AICustomMain extends AIApplication {
 				//System.out.println("\n=================Content===============");
 				isWaiting = false;
 			}
-			state.appendLine(Role.ASSISTANT,last, true);
+			write.appendLine(last, true);
 			int codePoint=0;
 			while((codePoint=reader.read())!=-1) {
 				char[] ch=Character.toChars(codePoint);
-				state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
+				write.append(String.valueOf(ch), true);
 				
 			}
 

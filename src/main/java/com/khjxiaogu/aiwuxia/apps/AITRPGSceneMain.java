@@ -47,6 +47,7 @@ import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
@@ -107,9 +108,12 @@ public class AITRPGSceneMain extends AIApplication {
 		// check interface
 		// AI response, always valid
 		handlers.add((state, ret) -> {
-			state.add(Role.USER, ret, true);
-			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
-			state.setLastState(airet);
+			try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+				write.append(ret, true);
+			}
+			try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+				write.setLastState(sendAndProcessResultStreamed(state, write, constructAIrequest(state)));
+			}
 			state.addDialogRow();
 
 			return null;
@@ -143,12 +147,14 @@ public class AITRPGSceneMain extends AIApplication {
 				}else {
 					state.setUserName(ret);
 					state.setStage(ApplicationStage.STARTED);
-					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
+					try (HistoryWriteContext write = state.beginWrite(Role.SYSTEM)) {
+						write.appendDisplayOnly("已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue);
+					}
 				}
 			}
 		});
 	}
-	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, AIRequest req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
 		AIOutput resp=null;
 		int i=0;
@@ -157,7 +163,9 @@ public class AITRPGSceneMain extends AIApplication {
 				
 				resp = LLMConnector.call(req);
 				resp.addUsageListener(state::addUsage);
-				return precessResponse(resp, state);
+				ApplicationState oldstate = precessResponse(resp, state, write);
+				write.setLastState(oldstate);
+				return oldstate;
 			}catch(RegenerateNeededException ex) {
 				resp.interrupt();
 				state.getState().set(ex.oldState);
@@ -165,12 +173,15 @@ public class AITRPGSceneMain extends AIApplication {
 			}
 			i++;
 		}
+		// 反复重试都没能得到可用的回复：撤回本次写入（只剩思维链，尚未提交进历史）
+		write.rollback();
 		if(state.getLast().getRole()==Role.USER) {
 			HistoryItem hi=state.removeLast();
 			state.refillChatBox(hi.getContextContent());
 		}
 		state.minDialogRow();
-		return state.getLast().getLastState();
+		// 上一次写入已经撤回，没有需要记录的状态快照
+		return null;
 		
 	}
 
@@ -256,12 +267,14 @@ public class AITRPGSceneMain extends AIApplication {
 
 	public void provideInitial(AISession state) {
 		if(state.getStage()!=ApplicationStage.STARTED) {
-			state.add(Role.SYSTEM, "请输入姓名", false);
+			try (HistoryWriteContext write = state.beginWrite(Role.SYSTEM)) {
+				write.appendDisplayOnly("请输入姓名");
+			}
 			state.setStage(ApplicationStage.NAMING);
 		}
 	}
 
-	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput resp, AISession state, HistoryWriteContext write) throws IOException {
 		boolean isWaiting = true;
 		
 		ApplicationState oldstate = new ApplicationState(state.getState());
@@ -269,20 +282,20 @@ public class AITRPGSceneMain extends AIApplication {
 		String last;
 		String oldchara=state.getCharacter();
 		String oldbg=state.getBackground();
-		handleReasonerContent(resp,state);
+		handleReasonerContent(resp,state,write);
 		AttributeSet scene=state.getState().getOrCreateInterface("场景");
 		AttributeSet characs=state.getState().getOrCreateInterface("角色");
 
 		SequentialStateExecutor status=new SequentialStateExecutor(null,()->{
 			if(!scene.isEmpty()){
-				state.appendContextLine(Role.ASSISTANT, "==场景==");
+				write.appendContext("==场景==\n");
 				for(Entry<String, String> i:scene)
-					state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+					write.appendContext(i.getKey()+"="+i.getValue()+"\n");
 			}
 		},null,()->{
-			state.appendContextLine(Role.ASSISTANT, "==角色==");
+			write.appendContext("==角色==\n");
 			for(Entry<String, String> i:characs)
-				state.appendContextLine(Role.ASSISTANT, i.getKey()+"="+i.getValue());
+				write.appendContext(i.getKey()+"="+i.getValue()+"\n");
 		});
 		if(back!=null)
 		oldbg=back.getSceneData(scene.getAsMap());
@@ -320,28 +333,28 @@ public class AITRPGSceneMain extends AIApplication {
 					else
 						state.sendSceneContent("back", "");
 					status.setValue(2);
-					state.appendContextLine(Role.ASSISTANT, last);
+					write.appendContext(last + "\n");
 					int codePoint=0,codePoint2=0;
 					while((codePoint=reader.read())!=-1) {
 						if(codePoint!='=') {
 							char[] ch=Character.toChars(codePoint);
-							state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
+							write.append(String.valueOf(ch), true);
 						}else if((codePoint2=reader.read())=='=') {
 							String read=reader.readLine();
 							if(read.startsWith("角色==")) {
-								state.appendContextLine(Role.ASSISTANT, "==角色==");
+								write.appendContext("==角色==\n");
 								status.setValue(3);
 								break;
 							}
-							state.appendCh(Role.ASSISTANT, "==", true);
-							state.appendCh(Role.ASSISTANT, read, true);
+							write.append("==", true);
+							write.append(read, true);
 							
 						}else {
 							char[] ch=Character.toChars(codePoint);
-							state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
+							write.append(String.valueOf(ch), true);
 							if(codePoint2!=-1) {
 								ch=Character.toChars(codePoint2);
-								state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
+								write.append(String.valueOf(ch), true);
 							}
 						}
 					}
@@ -367,7 +380,7 @@ public class AITRPGSceneMain extends AIApplication {
 					status.setValue(3);
 					continue;
 				}else
-					state.appendLine(Role.ASSISTANT, last, false);
+					write.appendLine(last, false);
 			} else if (status.getValue() == 3) {	
 				if(last.contains("=")) {
 					String[] lasts=last.split("=");
@@ -384,7 +397,7 @@ public class AITRPGSceneMain extends AIApplication {
 				}
 				continue;
 			}
-			state.appendContextLine(Role.ASSISTANT, last);
+			write.appendContext(last + "\n");
 
 		}
 		status.setValue(4);

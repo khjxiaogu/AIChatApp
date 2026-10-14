@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 
 /**
  * 无状态的工具调用管理器。
@@ -78,6 +79,63 @@ public class ToolCallManager {
 	/** 指定名称的工具是否可用。 */
 	public boolean hasTool(String toolName) {
 		return tools.containsKey(toolName);
+	}
+
+	/**
+	 * 按当前注册的工具，把原始工具调用转换为用户友好显示。
+	 * <p>
+	 * 显示信息不随历史持久化，因此历史从存储重新加载后可用本方法重算，
+	 * 保证加载后工具调用简述与具体内容同样可见。未注册该工具、转换器缺失或抛异常时，
+	 * 回退为默认显示（简述为工具名称、具体内容为空）。
+	 * </p>
+	 *
+	 * @param call 原始工具调用
+	 * @return 用户友好显示，永不为 null
+	 */
+	public ToolCallDisplay displayFor(ToolCall call) {
+		ToolData data = toolOf(call);
+		if (data != null && data.presenter != null) {
+			try {
+				ToolCallDisplay display = data.presenter.display(call);
+				if (display != null) {
+					return display;
+				}
+			} catch (Throwable ex) {
+				ex.printStackTrace();
+			}
+		}
+		return ToolCallPresenter.defaultDisplay(call);
+	}
+
+	/**
+	 * 按当前注册的工具，把工具结果转换为用户友好显示。
+	 *
+	 * @param call         对应的原始工具调用，可为 null
+	 * @param callDisplay  该调用的显示（用于回退简述），可为 null
+	 * @param result       工具返回的原始结果文本
+	 * @return 结果显示，永不为 null
+	 */
+	public ToolCallDisplay resultDisplayFor(ToolCall call, ToolCallDisplay callDisplay, String result) {
+		ToolData data = toolOf(call);
+		if (data != null && data.presenter != null) {
+			try {
+				ToolCallDisplay display = data.presenter.resultDisplay(call, result);
+				if (display != null && (!display.getBrief().isEmpty() || display.hasContent())) {
+					return display;
+				}
+			} catch (Throwable ex) {
+				ex.printStackTrace();
+			}
+		}
+		String brief = callDisplay == null ? ToolCallPresenter.toolName(call) : callDisplay.getBrief();
+		return ToolCallDisplay.of(brief);
+	}
+
+	private ToolData toolOf(ToolCall call) {
+		if (call == null || call.function == null || call.function.name == null) {
+			return null;
+		}
+		return tools.get(call.function.name);
 	}
 
 	@Override

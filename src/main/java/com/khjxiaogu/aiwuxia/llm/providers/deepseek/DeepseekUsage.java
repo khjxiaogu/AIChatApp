@@ -39,6 +39,11 @@ public class DeepseekUsage implements UsageIntf<DeepseekUsage> {
 	}
 
 	@Override
+	public String getUsageName() {
+		return "Deepseek 对话";
+	}
+
+	@Override
 	public String toString() {
 		return "返回token " + completion_tokens +
 			"\n发送token " + prompt_tokens +

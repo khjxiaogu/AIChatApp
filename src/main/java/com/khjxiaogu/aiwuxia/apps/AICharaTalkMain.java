@@ -48,6 +48,7 @@ import com.khjxiaogu.aiwuxia.state.RegenerateNeededException;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeValidator;
@@ -123,9 +124,12 @@ public class AICharaTalkMain extends AIApplication {
 		
 		// AI response, always valid
 		handlers.add((state, ret) -> {
-			state.add(Role.USER, ret, true);
-			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
-			state.setLastState(airet);
+			try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+				write.append(ret, true);
+			}
+			try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+				sendAndProcessResultStreamed(state, write, constructAIrequest(state));
+			}
 			state.addDialogRow();
 
 			return null;
@@ -153,7 +157,7 @@ public class AICharaTalkMain extends AIApplication {
 	}
 
 
-	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, AIRequest req) throws IOException {
 		//System.out.println(AIApplication.ppgs.toJson(req));
 		AIOutput resp=null;
 		int i=0;
@@ -161,7 +165,9 @@ public class AICharaTalkMain extends AIApplication {
 			try {
 				resp = LLMConnector.call(req);
 				resp.addUsageListener(state::addUsage);
-				return precessResponse(resp, state);
+				ApplicationState oldstate = precessResponse(resp, state, write);
+				write.setLastState(oldstate);
+				return oldstate;
 			}catch(RegenerateNeededException ex) {
 				resp.interrupt();
 				state.getState().set(ex.oldState);
@@ -177,12 +183,16 @@ public class AICharaTalkMain extends AIApplication {
 					}
 			}
 		}
+		// 反复重试都没能得到可用的回复：撤回本次写入（只剩思维链，尚未提交进历史），
+		// 再按原来的规则把用户输入退回输入框
+		write.rollback();
 		if(state.getLast().getRole()==Role.USER) {
 			HistoryItem hi=state.removeLast();
 			state.refillChatBox(hi.getContextContent());
 		}
 		state.minDialogRow();
-		return state.getLast().getLastState();
+		// 上一次写入已经撤回，没有需要记录的状态快照
+		return null;
 		
 	}
 
@@ -248,7 +258,9 @@ public class AICharaTalkMain extends AIApplication {
 				}else {
 					state.setUserName(ret);
 					state.setStage(ApplicationStage.STARTED);
-					state.add(Role.SYSTEM, "已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue, false);
+					try (HistoryWriteContext write = state.beginWrite(Role.SYSTEM)) {
+						write.appendDisplayOnly("已输入姓名为"+ret+"，可以开始对话了！\n"+prelogue);
+					}
 				}
 			}
 		});
@@ -260,7 +272,7 @@ public class AICharaTalkMain extends AIApplication {
 		}
 	}
 
-	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput resp, AISession state, HistoryWriteContext write) throws IOException {
 		boolean isWaiting = true;
 		
 		ApplicationState oldstate = new ApplicationState(state.getState());
@@ -281,7 +293,7 @@ public class AICharaTalkMain extends AIApplication {
 			}
 		});
 		CompletableFuture<Boolean> cf=null;
-		handleReasonerContent(resp,state);
+		handleReasonerContent(resp,state,write);
 		if(back!=null)
 		oldbg=back.getSceneData(state.getState().perks);
 		while (true) {
@@ -385,12 +397,14 @@ public class AICharaTalkMain extends AIApplication {
 			state.sendSceneContent("back", "");
 		state.setCharacter(chara);
 		state.setBackground(bg);
-		state.add(Role.ASSISTANT, content.toString().trim(), sendContent.toString().trim());
+		// 显示内容用剧情正文，上下文内容用包含场景等信息的完整文本
+		write.setContextContent(sendContent.toString().trim());
+		write.append(content.toString().trim(), false);
 		
 		if(cf!=null) {
 			try {
 				if(cf.get()) {
-					state.setAudioId(audioId);	
+					write.setAudioId(audioId);	
 					state.postAudioComplete(state.getLast().getIdentifier(), audioId);
 				}
 			} catch (InterruptedException | ExecutionException e) {

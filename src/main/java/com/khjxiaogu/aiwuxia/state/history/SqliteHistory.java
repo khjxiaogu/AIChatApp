@@ -280,6 +280,97 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 
 
 
+	// ── 未完成条目 ────────────────────────────────────────
+
+	/**
+	 * 创建一条未完成的历史条目。
+	 * <p>
+	 * 标识符在创建时即分配，但既不写入数据库也不进入缓存，因此查询、迭代、
+	 * 上下文统计与 {@link #flush()} 都看不到它；提交时才补写元数据行并把内容标脏。
+	 * </p>
+	 *
+	 * @param role           条目角色
+	 * @param isValidContext 是否为有效的上下文
+	 * @return 新建的未完成条目
+	 */
+	@Override
+	public MutableHistoryItem beginPending(Role role, boolean isValidContext) {
+		HistoryItem last = peekLast();
+		PendingHistoryItem pending = new PendingHistoryItem(newUniqueId(), role, isValidContext);
+		// 与 SqliteHistoryItem 的默认值保持一致：默认不把思维链随上下文发送
+		pending.setSendReasoner(false);
+		pending.setPrevIdentifier(last == null ? -1 : last.getIdentifier());
+		return pending;
+	}
+
+	/**
+	 * 提交未完成条目：补写元数据行并放入缓存，内容在下次 {@link #flush()} 时写入 JSON。
+	 *
+	 * @param item 未完成条目
+	 */
+	@Override
+	public void commitPending(HistoryItem item) {
+		if (!(item instanceof PendingHistoryItem))
+			return;
+		PendingHistoryItem pending = (PendingHistoryItem) item;
+		if (!pending.isPending())
+			return;
+		pending.setPending(false);
+		try {
+			insertStmt.setInt(1, pending.getIdentifier());
+			insertStmt.setInt(2, pending.getPrevIdentifier());
+			insertStmt.setString(3, pending.getRole().name());
+			insertStmt.setInt(4, pending.isValidContext() ? 1 : 0);
+			insertStmt.setInt(5, 0);
+			insertStmt.setInt(6, pending.maySendReasoner() ? 1 : 0);
+			insertStmt.setString(7, pending.getAudioId());
+			insertStmt.setLong(8, pending.getTokenLength());
+			insertStmt.executeUpdate();
+		} catch (SQLException e) {
+			throw new RuntimeException(e);
+		}
+
+		SqliteHistoryItem committed = new SqliteHistoryItem(this);
+		committed.identifier = pending.getIdentifier();
+		committed.prevIdentifier = pending.getPrevIdentifier();
+		committed.role = pending.getRole();
+		committed.shouldSend = pending.isValidContext();
+		committed.sendReasoner = pending.maySendReasoner();
+		committed.audioId = pending.getAudioId();
+		committed.tokenLength = pending.getTokenLength();
+		committed.displayContent = new MutableMessageContents(pending.getDisplayContent());
+		committed.contextContent = pending.hasContextContent()
+				? new MutableMessageContents(pending.getContextContent())
+				: null;
+		committed.reasonContent = pending.getReasoningContent() == null ? null
+				: new MutableMessageContents(pending.getReasoningContent());
+		committed.lastState = pending.getLastState();
+		committed.dirty = true;
+		cache.put(committed.identifier, committed);
+		// 未完成期间可能有其它条目先提交，只有标识符更大时它才是新的最后一条
+		if (lastItem == null || lastItem.identifier < committed.identifier)
+			lastItem = committed;
+	}
+
+	/**
+	 * 撤回未完成条目：硬删除（从未写入数据库与 JSON），并回滚仍是最新的标识符。
+	 *
+	 * @param item 未完成条目
+	 */
+	@Override
+	public void rollbackPending(HistoryItem item) {
+		if (!(item instanceof PendingHistoryItem))
+			return;
+		PendingHistoryItem pending = (PendingHistoryItem) item;
+		if (!pending.isPending())
+			return;
+		pending.setPending(false);
+		pending.setDeleted(true);
+		if (idCounter == pending.getIdentifier()) {
+			idCounter--;
+		}
+	}
+
 	// ── HistoryHolder 实现 ────────────────────────────────
 
 	@Override
@@ -439,6 +530,11 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 
 	@Override
 	public  void setValidContext(HistoryItem hi, boolean sendable) {
+		if (hi instanceof MutableHistoryItem) {
+			// 未完成条目：只改内存状态，它还没有数据库行
+			((MutableHistoryItem) hi).setValidContext(sendable);
+			return;
+		}
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -454,6 +550,11 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 
 	@Override
 	public  void setDeleted(HistoryItem hi, boolean sendable) {
+		if (hi instanceof MutableHistoryItem) {
+			// 未完成条目：只改内存状态，它还没有数据库行
+			((MutableHistoryItem) hi).setDeleted(sendable);
+			return;
+		}
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -471,6 +572,11 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 
 	@Override
 	public  void setAudioId(HistoryItem hi, String audioId) {
+		if (hi instanceof MutableHistoryItem) {
+			// 未完成条目：只改内存状态，它还没有数据库行
+			((MutableHistoryItem) hi).setAudioId(audioId);
+			return;
+		}
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -486,6 +592,11 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 
 	@Override
 	public  void setSendReasoner(HistoryItem hi, boolean sendReasoner) {
+		if (hi instanceof MutableHistoryItem) {
+			// 未完成条目：只改内存状态，它还没有数据库行
+			((MutableHistoryItem) hi).setSendReasoner(sendReasoner);
+			return;
+		}
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -501,6 +612,11 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 
 	@Override
 	public  void setTokenLength(HistoryItem hi, long l) {
+		if (hi instanceof MutableHistoryItem) {
+			// 未完成条目：只改内存状态，它还没有数据库行
+			((MutableHistoryItem) hi).setTokenLength(l);
+			return;
+		}
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;
@@ -516,6 +632,11 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 
 	@Override
 	public  void setLastState(HistoryItem hi, ApplicationState lastState) {
+		if (hi instanceof MutableHistoryItem) {
+			// 未完成条目：只改内存状态，它还没有数据库行
+			((MutableHistoryItem) hi).setLastState(lastState);
+			return;
+		}
 		if (!(hi instanceof SqliteHistoryItem))
 			return;
 		SqliteHistoryItem item = (SqliteHistoryItem) hi;

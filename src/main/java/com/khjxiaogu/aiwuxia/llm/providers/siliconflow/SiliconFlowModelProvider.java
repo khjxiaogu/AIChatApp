@@ -86,7 +86,12 @@ public class SiliconFlowModelProvider implements ModelProvider{
 	}
 	static Gson gs=new GsonBuilder().registerTypeHierarchyAdapter(ToolCall.class, new ToolCallSerilizer()).create();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
-		JsonObject jo=createRequest(request);
+		ModelCategory category;
+		if(request.hasModelProperty("reasoning"))
+			category=ModelCategory.REASONING;
+		else
+			category=request.category;
+		JsonObject jo=createRequest(request,category);
 		jo.addProperty("stream", true);
 		String tosend = gs.toJson(jo);
 		JsonObject retjs = HttpRequestBuilder.create("api.siliconflow.cn").url("/v1/chat/completions")
@@ -125,30 +130,31 @@ public class SiliconFlowModelProvider implements ModelProvider{
 		outer.add("function", main);
 		return outer;
 	}
-	public static SiliconUsage createUsage(AIRequest request) {
+	public static SiliconUsage createUsage(AIRequest request,ModelCategory category) {
 		if(request.modelHint.length>1) {
 			switch(request.modelHint[1]) {
 			case "deepseek3.2":return new DeepseekV32Usage();
-			case "deepseek3":return request.category==ModelCategory.REASONING?new DeepseekR1Usage():new DeepseekV3Usage();
+			case "deepseek3":return (category==ModelCategory.REASONING)?new DeepseekR1Usage():new DeepseekV3Usage();
 			}
 		}
 		return new DeepseekV32Usage();
 	}
-	public static String mapModelName(AIRequest request) {
+	public static String mapModelName(AIRequest request,ModelCategory category) {
 		if(request.modelHint.length>1) {
 			switch(request.modelHint[1]) {
 			case "deepseek3.2":return "deepseek-ai/DeepSeek-V3.2";
-			case "deepseek3":return request.category==ModelCategory.REASONING?"deepseek-ai/DeepSeek-R1":"deepseek-ai/DeepSeek-V3";
+			case "deepseek3":return (category==ModelCategory.REASONING)?"deepseek-ai/DeepSeek-R1":"deepseek-ai/DeepSeek-V3";
 			}
 		}
 		return "deepseek-ai/DeepSeek-V3.2";
 	}
-	private static JsonObject createRequest(AIRequest request) {
+	private static JsonObject createRequest(AIRequest request,ModelCategory category) {
 		JsonObject jo=new JsonObject();
 		// 历史消息（含工具调用与工具结果）统一由 HistoryRequestBuilder 构造
 		jo.add("messages", HistoryRequestBuilder.createRequest(request));
+
 		
-		jo.addProperty("model", mapModelName(request));
+		jo.addProperty("model", mapModelName(request,category));
 		
 		if(!request.getTools().isEmpty()) {
 			JsonArray ja=new JsonArray();
@@ -157,7 +163,6 @@ public class SiliconFlowModelProvider implements ModelProvider{
 			}
 			jo.add("tools", ja);
 		}
-		
 		jo.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
 		if(request.format==ResponseFormat.JSON)
 			jo.add("response_format", JsonBuilder.object("type", "json_object"));
@@ -182,11 +187,16 @@ public class SiliconFlowModelProvider implements ModelProvider{
 		return jo;
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
-		JsonObject jo=createRequest(request);
+		ModelCategory category;
+		if(request.hasModelProperty("reasoning"))
+			category=ModelCategory.REASONING;
+		else
+			category=request.category;
+		JsonObject jo=createRequest(request,category);
 		JsonArray ja=jo.get("messages").getAsJsonArray();
 		jo.addProperty("stream", true);
 		StreamedAIOutput readable=new StreamedAIOutput();
-		SiliconUsage usage=createUsage(request);
+		SiliconUsage usage=createUsage(request,category);
 		boolean usesTool=!request.getTools().isEmpty();
 		// 工具调用的收集、次数限制、权限、许可与执行统一交给 ToolCallManager
 		ToolCallContext toolContext=ToolCallContext.create(request.getToolCallManager(), readable, ToolCallHistory.of(ja));
@@ -197,7 +207,7 @@ public class SiliconFlowModelProvider implements ModelProvider{
 					shouldContinueRequest.set(false);
 
 					//System.out.println(ja);
-					SiliconUsage crnusage=createUsage(request);
+					SiliconUsage crnusage=createUsage(request,category);
 					MutableMessageContents reasoner=new MutableMessageContents();
 						HttpRequestBuilder.create("api.siliconflow.cn").url("/v1/chat/completions")
 								.header("Content-Type", "application/json")

@@ -38,6 +38,7 @@ import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -68,8 +69,12 @@ public class AISQLMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			if (state.getStage() == ApplicationStage.STARTED) {
 				if ("查看定义".equals(ret.toText())) {
-					state.add(Role.USER, ret, false);
-					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
+					try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+						write.appendDisplayOnly(ret);
+					}
+					try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+						write.appendDisplayOnly(constructSystem(state.getState()));
+					}
 					return null;
 				}
 			}
@@ -77,19 +82,24 @@ public class AISQLMain extends AIApplication {
 		});
 		// AI response, always valid
 		handlers.add((state, ret) -> {
-			state.add(Role.USER, ret, true);
-			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
-			state.setLastState(airet);
+			try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+				write.append(ret, true);
+			}
+			try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+				sendAndProcessResultStreamed(state, write, constructAIrequest(state, constructSystem(state.getState())));
+			}
 			state.addDialogRow();
 
 			return null;
 		});
 	}
 
-	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		resp.addUsageListener(state::addUsage);
-		return precessResponse(resp, state);
+		ApplicationState oldstate = precessResponse(resp, state, write);
+		write.setLastState(oldstate);
+		return oldstate;
 	}
 
 	public class MessageAndRole {
@@ -140,18 +150,20 @@ public class AISQLMain extends AIApplication {
 
 	public void provideInitial(AISession state) {
 		if(state.getStage()!=ApplicationStage.STARTED) {
-			state.add(Role.ASSISTANT,"请提供表定义，定义必须开始以“定义”二字",false);
+			try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+				write.appendDisplayOnly("请提供表定义，定义必须开始以“定义”二字");
+			}
 			state.setStage(ApplicationStage.STARTED);
 		}
 	}
 
-	public ApplicationState precessResponse(AIOutput op, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput op, AISession state, HistoryWriteContext write) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 		
 		try(BufferedReader scan=new BufferedReader(op.getContent())){
 			ApplicationState oldstate = new ApplicationState(state.getState());
-			handleReasonerContent(op,state);
+			handleReasonerContent(op,state,write);
 			boolean nstateModified = false;
 			while (true) {
 				String last = scan.readLine();
@@ -169,16 +181,16 @@ public class AISQLMain extends AIApplication {
 				if (status == 0) {
 					if (last.startsWith("==SQL==")) {
 						status = 2;
-						state.appendContextLine(Role.ASSISTANT, last);
+						write.appendContext(last + "\n");
 					} else {  
-						state.appendLine(Role.ASSISTANT, last, true);
+						write.appendLine(last, true);
 					}
 				}  else {
-					state.appendLine(Role.ASSISTANT, last, true);
+					write.appendLine(last, true);
 				}
 	
 			}
-			state.appendLine(Role.ASSISTANT, "\n输入“重新生成”重新生成，输入“撤回”删除上一次对话。", false);
+			write.appendLine("\n输入“重新生成”重新生成，输入“撤回”删除上一次对话。", false);
 	
 			return nstateModified ? oldstate : null;
 		}

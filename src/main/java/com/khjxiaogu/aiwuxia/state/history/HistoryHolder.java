@@ -375,4 +375,51 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 
 	void appendReasoner(MessageContent current);
 
+	/**
+	 * 创建一条未完成（pending）的历史条目供应用写入。
+	 * <p>
+	 * 该条目在创建时就从容器分配了标识符（后续新建的条目会拿到更大的标识符），
+	 * 但<b>不会插入历史容器</b>：迭代器、{@link #size()}、{@link #getContextLimit()}、
+	 * {@link #getById(int)} 都看不到它，因此它不参与上下文构建与总结/清理，
+	 * 也不会被 {@link #flush()} 落盘。应用在单次请求中只写入该条目。
+	 * </p>
+	 * <p>
+	 * 应用可以随时：
+	 * </p>
+	 * <ul>
+	 *   <li>{@link #commitPending(HistoryItem)}：清除未完成状态，并按标识符顺序把它插入到
+	 *       历史记录中正确的位置（期间若有其它条目先提交，它会排在这些条目之前）。</li>
+	 *   <li>{@link #rollbackPending(HistoryItem)}：硬删除（它从未进入历史），
+	 *       并在它的标识符仍是当前最新分配的标识符时回滚标识符，否则保持标识符不变。</li>
+	 * </ul>
+	 *
+	 * @param role           条目角色
+	 * @param isValidContext 是否为有效的上下文
+	 * @return 新建的未完成条目（{@link HistoryItem#isPending()} 为 {@code true}）
+	 */
+	MutableHistoryItem beginPending(Role role, boolean isValidContext);
+
+	/**
+	 * 提交一条未完成条目。
+	 * <p>
+	 * 清除其未完成状态，并按标识符顺序插入到历史记录的正确位置；条目已经提交、
+	 * 已经撤回或不是本容器创建的未完成条目时不做任何处理。
+	 * </p>
+	 *
+	 * @param item {@link #beginPending(Role, boolean)} 返回的条目
+	 */
+	void commitPending(HistoryItem item);
+
+	/**
+	 * 撤回一条未完成条目（硬删除）。
+	 * <p>
+	 * 条目从未进入历史，因此这里只需丢弃它；如果它的标识符仍是当前最新分配的标识符，
+	 * 则回滚该标识符（下一个新建条目会重新用到它），否则标识符保持不变（会留下空号）。
+	 * 条目已经提交、已经撤回或不是本容器创建的未完成条目时不做任何处理。
+	 * </p>
+	 *
+	 * @param item {@link #beginPending(Role, boolean)} 返回的条目
+	 */
+	void rollbackPending(HistoryItem item);
+
 }

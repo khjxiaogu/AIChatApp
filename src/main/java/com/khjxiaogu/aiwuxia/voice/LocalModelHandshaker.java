@@ -60,6 +60,8 @@ import io.netty.util.AttributeKey;
  * 并提供向服务端发送请求并等待响应的能力。支持多种模型类型的调用。
  * 客户端连接时通过 URL 参数 {@code model_type} 声明支持的模型类型（逗号分隔），
  * 调用者指定模型类型后，系统自动选择合适的连接发送请求。
+ * 内置类型包括 {@link ModelType#AUDIO}（语音合成）、{@link ModelType#SDXL}（图像生成）
+ * 与 {@link ModelType#SVS}（歌声合成，参数见 {@link SvsOptions}）。
  * 内部维护按模型类型分组的连接池，支持多路复用；每个请求通过唯一的请求 ID 关联，并支持超时等待。
  */
 public class LocalModelHandshaker implements WebsocketEvents {
@@ -319,5 +321,212 @@ public class LocalModelHandshaker implements WebsocketEvents {
             usageListener.accept(new LocalVoiceUsage(len));
             return result;
         });
+    }
+
+    /** SVS 滤波强度允许的最小值 */
+    public static final int SVS_MIN_FILTER = 0;
+    /** SVS 滤波强度允许的最大值 */
+    public static final int SVS_MAX_FILTER = 7;
+    /** SVS 合成强度允许的最小值 */
+    public static final double SVS_MIN_STRENGTH = 0.00;
+    /** SVS 合成强度允许的最大值 */
+    public static final double SVS_MAX_STRENGTH = 1.00;
+
+    /**
+     * SVS（歌声合成）请求参数。
+     * 除音源（{@code url}、{@code name}）外，SVS 模型还需要以下五个参数：
+     * <ul>
+     *   <li>{@code pitch} - 音高，整数</li>
+     *   <li>{@code separate} - 是否分离人声</li>
+     *   <li>{@code timbre} - 音色标识</li>
+     *   <li>{@code filter} - 滤波强度，取值 {@value #SVS_MIN_FILTER}-{@value #SVS_MAX_FILTER}</li>
+     *   <li>{@code strength} - 合成强度，取值 0.00-1.00</li>
+     * </ul>
+     * 通过 {@link #builder()} 构建：
+     * <pre>
+     * SvsOptions options = SvsOptions.builder()
+     *     .pitch(2).separate(true).timbre("chara").filter(3).strength(0.75);
+     * </pre>
+     */
+    public static class SvsOptions {
+        private int pitch = 0;
+        private boolean separate = false;
+        private String timbre;
+        private int filter = SVS_MIN_FILTER;
+        private double strength = SVS_MAX_STRENGTH;
+
+        private SvsOptions() {
+        }
+
+        /** @return 一个新的参数构建器 */
+        public static SvsOptions builder() {
+            return new SvsOptions();
+        }
+
+        /**
+         * 设置音高。
+         *
+         * @param pitch 音高，整数
+         */
+        public SvsOptions pitch(int pitch) {
+            this.pitch = pitch;
+            return this;
+        }
+
+        /**
+         * 设置是否分离人声。
+         *
+         * @param separate true 表示先分离人声后再合成
+         */
+        public SvsOptions separate(boolean separate) {
+            this.separate = separate;
+            return this;
+        }
+
+        /**
+         * 设置音色标识。
+         *
+         * @param timbre 音色标识，不可为 null 或空字符串
+         * @throws IllegalArgumentException 传入 null 或空字符串时抛出
+         */
+        public SvsOptions timbre(String timbre) {
+            if (timbre == null || timbre.isEmpty())
+                throw new IllegalArgumentException("timbre must not be empty");
+            this.timbre = timbre;
+            return this;
+        }
+
+        /**
+         * 设置滤波强度。
+         *
+         * @param filter 取值范围 {@value #SVS_MIN_FILTER}-{@value #SVS_MAX_FILTER}
+         * @throws IllegalArgumentException 取值超出范围时抛出
+         */
+        public SvsOptions filter(int filter) {
+            if (filter < SVS_MIN_FILTER || filter > SVS_MAX_FILTER)
+                throw new IllegalArgumentException(
+                        "filter out of range [" + SVS_MIN_FILTER + ", " + SVS_MAX_FILTER + "]: " + filter);
+            this.filter = filter;
+            return this;
+        }
+
+        /**
+         * 设置合成强度。
+         *
+         * @param strength 取值范围 0.00-1.00
+         * @throws IllegalArgumentException 取值超出范围时抛出
+         */
+        public SvsOptions strength(double strength) {
+            if (strength < SVS_MIN_STRENGTH || strength > SVS_MAX_STRENGTH)
+                throw new IllegalArgumentException(
+                        "strength out of range [" + SVS_MIN_STRENGTH + ", " + SVS_MAX_STRENGTH + "]: " + strength);
+            this.strength = strength;
+            return this;
+        }
+
+        /** @return 音高 */
+        public int getPitch() {
+            return pitch;
+        }
+
+        /** @return 是否分离人声 */
+        public boolean isSeparate() {
+            return separate;
+        }
+
+        /** @return 音色标识 */
+        public String getTimbre() {
+            return timbre;
+        }
+
+        /** @return 滤波强度 */
+        public int getFilter() {
+            return filter;
+        }
+
+        /** @return 合成强度 */
+        public double getStrength() {
+            return strength;
+        }
+
+        /**
+         * 将五个 SVS 参数写入指定的请求 JSON 对象。
+         *
+         * @param request 目标请求对象
+         * @return 传入的请求对象本身，便于链式调用
+         * @throws IllegalArgumentException 未设置音色时抛出
+         */
+        public JsonObject applyTo(JsonObject request) {
+            if (timbre == null || timbre.isEmpty())
+                throw new IllegalArgumentException("timbre must not be empty");
+            request.addProperty("pitch", pitch);
+            request.addProperty("separate", separate);
+            request.addProperty("timbre", timbre);
+            request.addProperty("filter", filter);
+            request.addProperty("strength", strength);
+            return request;
+        }
+
+        /** @return 仅包含五个 SVS 参数的请求 JSON 对象 */
+        public JsonObject toJson() {
+            return applyTo(new JsonObject());
+        }
+
+        @Override
+        public String toString() {
+            return toJson().toString();
+        }
+    }
+
+    /**
+     * 请求 SVS（歌声合成）音频数据，不带输出名。
+     *
+     * @param reqid   请求唯一 ID
+     * @param url     音源地址（待转换/演唱的歌曲）
+     * @param options SVS 参数，见 {@link SvsOptions}
+     * @return 包含合成音频数据的 {@link CompletableFuture}
+     */
+    public CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, SvsOptions options) {
+        return requireSvs(reqid, url, null, options);
+    }
+
+    /**
+     * 请求 SVS（歌声合成）音频数据（便捷方法，内部委托给 {@link #require}）。
+     * 请求 JSON 形如：
+     * <pre>
+     * {
+     *   "url": "音源地址",
+     *   "name": "音源名称",
+     *   "pitch": 0,
+     *   "separate": true,
+     *   "timbre": "音色",
+     *   "filter": 3,
+     *   "strength": 0.75,
+     *   "reqid": "请求ID",
+     *   "type": "svs"
+     * }
+     * </pre>
+     *
+     * @param reqid   请求唯一 ID
+     * @param url     音源地址（待转换/演唱的歌曲），不可为空
+     * @param name    音源名称，可为 null（为空时不写入请求）
+     * @param options SVS 参数，见 {@link SvsOptions}
+     * @return 包含合成音频数据的 {@link CompletableFuture}
+     */
+    public CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, String name, SvsOptions options) {
+        if (url == null || url.isEmpty())
+            return CompletableFuture.failedFuture(new IOException("Empty input url"));
+        if (options == null)
+            return CompletableFuture.failedFuture(new IOException("Empty svs options"));
+        JsonObject request = new JsonObject();
+        request.addProperty("url", url);
+        if (name != null && !name.isEmpty())
+            request.addProperty("name", name);
+        try {
+            options.applyTo(request);
+        } catch (IllegalArgumentException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        return require(ModelType.SVS, reqid, request);
     }
 }

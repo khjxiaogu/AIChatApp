@@ -18,6 +18,7 @@ import com.khjxiaogu.aiwuxia.llm.AgentMessager;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -30,8 +31,8 @@ public class SDXLAgentMcp {
 	public static MCPTools createImage(File path,AISession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,AgentMessager callback,boolean isNsfw,ResourceLock lock)  throws IOException {
 		MCPTools tools=new MCPTools();
 		MCPTools sdxl=SDXLMcp.createLocal(state, tos, lora, charas, isNsfw, lock);
-		FetchMcp.create(state, tos).addTool(sdxl);
-		MultiModalMcp.create(tos, state::addUsage).addTool(sdxl);
+		FetchMcp.create(state, tos).mergeInto(sdxl);
+		MultiModalMcp.create(tos, state::addUsage).mergeInto(sdxl);
 		
 		String system = 
 				
@@ -87,7 +88,8 @@ public class SDXLAgentMcp {
 						// b.object().add("role", "assistant").add("content", "你选择：").add("prefix",
 						// true);
 						//
-					sdxl.addTool(b);
+					// 子 agent 的工具由统一的管理器提供
+					b.toolCallManager(ToolCallManager.builder().tools(sdxl.getTools()).build());
 					AIRequest request=b.build();
 					callback.sendAsyncTool("create_sxdl_agent", CompletableFuture.supplyAsync(()->{
 						try {

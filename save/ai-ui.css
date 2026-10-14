@@ -1,0 +1,400 @@
+/*
+ * 连接提示条与轻提示（公共层统一实现）
+ *  - 提示条：<ai-conn-tip></ai-conn-tip>（组件由 ai-protocol.js 注册）
+ *  - 轻提示：aiToast()（浮层，自动消失）
+ * 主题约定与其它共享样式一致：默认深色，html.day-mode 为浅色。
+ */
+
+/* ---------- 连接提示条 ---------- */
+.ai-conn-tip {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 92vw;
+    padding: 7px 14px;
+    border-radius: 0 0 10px 10px;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: #fde68a;
+    background: rgba(51, 32, 6, 0.92);
+    border: 1px solid #a16207;
+    border-top: none;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+    pointer-events: none;
+}
+
+.ai-conn-tip .ai-conn-spinner {
+    flex-shrink: 0;
+    width: 11px;
+    height: 11px;
+    border: 2px solid rgba(252, 211, 77, 0.35);
+    border-top-color: #fcd34d;
+    border-radius: 50%;
+    animation: aiConnSpin 0.8s linear infinite;
+}
+
+.ai-conn-tip .ai-conn-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 按断开原因略微区分：错误用红色调，主动断开用中性色 */
+.ai-conn-tip.is-error {
+    color: #fecaca;
+    background: rgba(69, 15, 15, 0.92);
+    border-color: #b91c1c;
+}
+
+.ai-conn-tip.is-error .ai-conn-spinner {
+    border-color: rgba(254, 202, 202, 0.35);
+    border-top-color: #fca5a5;
+}
+
+.ai-conn-tip.is-closed {
+    color: #e5e7eb;
+    background: rgba(31, 41, 55, 0.92);
+    border-color: #4b5563;
+}
+
+.ai-conn-tip.is-closed .ai-conn-spinner {
+    border-color: rgba(229, 231, 235, 0.3);
+    border-top-color: #e5e7eb;
+}
+
+html.day-mode .ai-conn-tip {
+    color: #92400e;
+    background: rgba(254, 243, 199, 0.96);
+    border-color: #fcd34d;
+    box-shadow: 0 4px 14px rgba(120, 53, 15, 0.16);
+}
+
+html.day-mode .ai-conn-tip .ai-conn-spinner {
+    border-color: #fcd34d;
+    border-top-color: #b45309;
+}
+
+html.day-mode .ai-conn-tip.is-error {
+    color: #991b1b;
+    background: rgba(254, 226, 226, 0.96);
+    border-color: #fca5a5;
+}
+
+html.day-mode .ai-conn-tip.is-error .ai-conn-spinner {
+    border-color: #fecaca;
+    border-top-color: #b91c1c;
+}
+
+html.day-mode .ai-conn-tip.is-closed {
+    color: #374151;
+    background: rgba(243, 244, 246, 0.96);
+    border-color: #d1d5db;
+}
+
+html.day-mode .ai-conn-tip.is-closed .ai-conn-spinner {
+    border-color: #e5e7eb;
+    border-top-color: #6b7280;
+}
+
+@keyframes aiConnSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* 页面不支持旋转动画时也能看出是"进行中" */
+@media (prefers-reduced-motion: reduce) {
+    .ai-conn-tip .ai-conn-spinner {
+        animation: none;
+    }
+}
+
+/* ---------- 轻提示 ---------- */
+#ai-toast-host {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    pointer-events: none;
+}
+
+.ai-toast {
+    max-width: 76vw;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    word-break: break-word;
+    color: #e5e7eb;
+    background: rgba(31, 41, 55, 0.95);
+    border: 1px solid #4b5563;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    transform: translateY(-6px);
+    animation: aiToastIn 0.18s ease-out forwards;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.ai-toast.is-warn {
+    color: #fde68a;
+    background: rgba(51, 32, 6, 0.95);
+    border-color: #a16207;
+}
+
+.ai-toast.is-error {
+    color: #fecaca;
+    background: rgba(69, 15, 15, 0.95);
+    border-color: #b91c1c;
+}
+
+.ai-toast.is-out {
+    opacity: 0;
+    transform: translateY(-6px);
+}
+
+html.day-mode .ai-toast {
+    color: #1f2937;
+    background: rgba(255, 255, 255, 0.98);
+    border-color: #d1d5db;
+    box-shadow: 0 6px 18px rgba(17, 24, 39, 0.14);
+}
+
+html.day-mode .ai-toast.is-warn {
+    color: #92400e;
+    background: rgba(254, 243, 199, 0.98);
+    border-color: #fcd34d;
+}
+
+html.day-mode .ai-toast.is-error {
+    color: #991b1b;
+    background: rgba(254, 226, 226, 0.98);
+    border-color: #fca5a5;
+}
+
+@keyframes aiToastIn {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 768px) {
+    #ai-toast-host {
+        top: 12px;
+        right: 12px;
+        left: 12px;
+        align-items: stretch;
+    }
+
+    .ai-toast {
+        max-width: none;
+        text-align: center;
+    }
+}
+
+
+/* ---------- 统一对话框（aiPrompt / aiConfirm） ---------- */
+.ai-dialog-mask {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10002;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.5);
+    animation: aiDialogFade 0.15s ease-out;
+}
+
+.ai-dialog {
+    width: 100%;
+    max-width: 380px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px;
+    border-radius: 12px;
+    color: #e5e7eb;
+    background: #1f2937;
+    border: 1px solid #4b5563;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+    animation: aiDialogIn 0.16s ease-out;
+}
+
+.ai-dialog-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #f9fafb;
+}
+
+.ai-dialog-message {
+    font-size: 0.84rem;
+    line-height: 1.6;
+    color: #d1d5db;
+    max-height: 40vh;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.ai-dialog-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 11px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: #f9fafb;
+    background: #111827;
+    border: 1px solid #4b5563;
+    outline: none;
+}
+
+.ai-dialog-input:focus {
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.ai-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.ai-dialog-btn {
+    min-width: 76px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    color: #e5e7eb;
+    background: #374151;
+    border: 1px solid #4b5563;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ai-dialog-btn:hover {
+    background: #4b5563;
+}
+
+.ai-dialog-btn.is-ok {
+    color: #1f2937;
+    background: #fbbf24;
+    border-color: #f59e0b;
+    font-weight: 600;
+}
+
+.ai-dialog-btn.is-ok:hover {
+    background: #fcd34d;
+}
+
+.ai-dialog-btn.is-ok.is-danger {
+    color: #fff;
+    background: #dc2626;
+    border-color: #b91c1c;
+}
+
+.ai-dialog-btn.is-ok.is-danger:hover {
+    background: #ef4444;
+}
+
+html.day-mode .ai-dialog-mask {
+    background: rgba(17, 24, 39, 0.35);
+}
+
+html.day-mode .ai-dialog {
+    color: #1f2937;
+    background: #ffffff;
+    border-color: #e5e7eb;
+    box-shadow: 0 18px 42px rgba(17, 24, 39, 0.18);
+}
+
+html.day-mode .ai-dialog-title {
+    color: #111827;
+}
+
+html.day-mode .ai-dialog-message {
+    color: #374151;
+}
+
+html.day-mode .ai-dialog-input {
+    color: #111827;
+    background: #f9fafb;
+    border-color: #d1d5db;
+}
+
+html.day-mode .ai-dialog-btn {
+    color: #374151;
+    background: #f3f4f6;
+    border-color: #d1d5db;
+}
+
+html.day-mode .ai-dialog-btn:hover {
+    background: #e5e7eb;
+}
+
+html.day-mode .ai-dialog-btn.is-ok {
+    color: #78350f;
+    background: #fde68a;
+    border-color: #fcd34d;
+}
+
+html.day-mode .ai-dialog-btn.is-ok:hover {
+    background: #fcd34d;
+}
+
+html.day-mode .ai-dialog-btn.is-ok.is-danger {
+    color: #fff;
+    background: #dc2626;
+    border-color: #b91c1c;
+}
+
+@keyframes aiDialogFade {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes aiDialogIn {
+    from {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (max-width: 768px) {
+    .ai-dialog {
+        max-width: none;
+    }
+
+    .ai-dialog-actions {
+        flex-direction: column-reverse;
+    }
+
+    .ai-dialog-btn {
+        width: 100%;
+        min-width: 0;
+    }
+}

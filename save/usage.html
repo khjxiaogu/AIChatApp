@@ -178,6 +178,57 @@
             margin-top: 8px;
         }
 
+        /* 消费记录日期筛选 */
+        .date-range {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .date-field {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #5b6e8c;
+            background: #f8fafc;
+            border-radius: 40px;
+            padding: 6px 12px;
+        }
+        .date-input {
+            border: 1px solid #cbd5e1;
+            border-radius: 40px;
+            padding: 5px 10px;
+            font-size: 13px;
+            color: #1e293b;
+            background: #fff;
+            outline: none;
+            font-family: inherit;
+        }
+        .date-input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+        }
+        .refresh-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* 消费记录汇总条 */
+        .record-summary {
+            margin-top: 10px;
+            background: #f1f5f9;
+            border-radius: 20px;
+            padding: 10px 12px;
+            font-size: 12px;
+            color: #334155;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
         .loading-state {
             display: flex;
             justify-content: center;
@@ -254,6 +305,38 @@
             color: #dc2626;
         }
 
+        /* 每日签到区域 */
+        .checkin-section {
+            margin-top: 14px;
+            padding: 12px 14px;
+            border-radius: 20px;
+            background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+            border: 1px solid #fed7aa;
+        }
+        .checkin-btn {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            border: none;
+            border-radius: 40px;
+            padding: 9px 18px;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(249, 115, 22, 0.35);
+            transition: all 0.2s;
+        }
+        .checkin-btn:active {
+            transform: scale(0.97);
+        }
+        .checkin-btn:disabled,
+        .checkin-btn.done {
+            background: #e2e8f0;
+            color: #94a3b8;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+
         /* 移动端微调 */
         @media (max-width: 480px) {
             body {
@@ -279,6 +362,21 @@
             .cdk-btn {
                 padding: 6px 14px;
                 font-size: 13px;
+            }
+            .checkin-btn {
+                padding: 7px 14px;
+                font-size: 13px;
+            }
+            .checkin-section {
+                padding: 10px 12px;
+            }
+            .date-field {
+                padding: 5px 10px;
+                font-size: 12px;
+            }
+            .date-input {
+                font-size: 12px;
+                padding: 4px 8px;
             }
         }
 
@@ -497,6 +595,26 @@
                             <span class="badge">已用补充配额</span>
                         </div>
                         
+                        <div class="checkin-section">
+                            <div class="flex-between" style="gap: 12px;">
+                                <div>
+                                    <div class="stat-label" style="margin-bottom: 2px;">
+                                        每日签到
+                                    </div>
+                                    <div class="stat-sub" style="margin-top: 0;">
+                                        每天可签到一次，获得 {{ formatNumber(checkinReward) }} 补充额度
+                                    </div>
+                                </div>
+                                <button class="checkin-btn" :class="{ 'done': checkedIn }"
+                                        :disabled="checkedIn || checkinLoading" @click="doCheckin">
+                                    {{ checkedIn ? '今日已签到' : (checkinLoading ? '签到中...' : '立即签到') }}
+                                </button>
+                            </div>
+                            <div v-if="checkinMessage" class="cdk-message" :class="{ 'error': checkinMessageType === 'error' }">
+                                {{ checkinMessage }}
+                            </div>
+                        </div>
+
                         <div class="cdk-section">
                             <div class="stat-label" style="margin-bottom: 4px;">
                                 兑换码
@@ -531,6 +649,39 @@
                 <div class="stat-sub" style="text-align: center; margin-top: 8px;">
                     <span style="display: inline-block; width: 12px; height: 12px; background: #3b82f6; border-radius: 2px;"></span> 基础配额 &nbsp;&nbsp;
                     <span style="display: inline-block; width: 12px; height: 12px; background: #f97316; border-radius: 2px;"></span> 补充配额
+                </div>
+            </div>
+
+            <!-- 补充配额消费记录（按对话名称） -->
+            <div class="card">
+                <div class="card-header">
+                    <span>补充配额消费记录</span>
+                    <span style="font-size: 12px; font-weight: normal; margin-left: auto;">按对话统计 · 单位: Token</span>
+                </div>
+                <div class="date-range">
+                    <label class="date-field">
+                        <span>开始日期</span>
+                        <input type="date" class="date-input" v-model="recordStart">
+                    </label>
+                    <label class="date-field">
+                        <span>结束日期</span>
+                        <input type="date" class="date-input" v-model="recordEnd">
+                    </label>
+                    <button class="refresh-btn" @click="loadRecords" :disabled="recordLoading">
+                        {{ recordLoading ? '查询中...' : '查询' }}
+                    </button>
+                </div>
+
+                <div v-if="recordError" class="error-state">{{ recordError }}</div>
+                <div v-else-if="!recordList.length" class="loading-state">
+                    {{ recordLoading ? '加载消费记录中...' : '该时间段暂无补充配额消费记录' }}
+                </div>
+                <div v-else class="chart-container" ref="pieDom" style="height: 330px;"></div>
+
+                <div v-if="recordList.length" class="record-summary">
+                    <span>消费对话数: {{ recordList.length }}</span>
+                    <span>合计消费: {{ formatNumber(recordTotal) }} Token</span>
+                    <span>统计区间: {{ recordStart }} ~ {{ recordEnd }}</span>
                 </div>
             </div>
 
@@ -665,6 +816,28 @@
             });
     }
 
+    async function checkinApi() {
+        return fetch("checkin?uid=" + pageQueries.uid)
+            .then(p => {
+                if (p.status === 200) {
+                    return p.text();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
+    async function fetchPaidUsageRecords(start, end) {
+        return fetch("paidUsageRecords?uid=" + pageQueries.uid + "&start=" + start + "&end=" + end)
+            .then(p => {
+                if (p.status === 200) {
+                    return p.json();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
     var vue = new Vue({
         el: '#app',
         data() {
@@ -674,10 +847,20 @@
                 tokenRemaining: null,
                 dailyUsageList: [],
                 chartInstance: null,
+                chartStep: 0,
                 cdkCode: '',
                 exchangeLoading: false,
                 cdkMessage: '',
                 cdkMessageType: 'info',
+                checkinLoading: false,
+                checkinMessage: '',
+                checkinMessageType: 'success',
+                recordStart: '',
+                recordEnd: '',
+                recordList: [],
+                recordLoading: false,
+                recordError: null,
+                pieInstance: null,
                 modelList: [
                     {
                         id: 'deepseek-flash',
@@ -766,9 +949,35 @@
             paidCost() {
                 return this.tokenRemaining ? this.tokenRemaining.paidCost : 0;
             },
+            checkedIn() {
+                return this.tokenRemaining ? !!this.tokenRemaining.checkedIn : false;
+            },
+            checkinReward() {
+                return this.tokenRemaining && this.tokenRemaining.checkinReward
+                    ? this.tokenRemaining.checkinReward : 50000;
+            },
             totalPaidConsumed() {
                 if (!this.dailyUsageList.length) return 0;
                 return this.dailyUsageList.reduce((sum, day) => sum + (day.paidUsed || 0), 0);
+            },
+            recordTotal() {
+                if (!this.recordList.length) return 0;
+                return this.recordList.reduce((sum, r) => sum + (r.tokens || 0), 0);
+            },
+            pieData() {
+                // 同名对话追加聊天ID后缀，避免图例与扇区混淆
+                const counts = {};
+                this.recordList.forEach(r => {
+                    const n = r.name || '未命名对话';
+                    counts[n] = (counts[n] || 0) + 1;
+                });
+                return this.recordList.map(r => {
+                    let label = r.name || '未命名对话';
+                    if (counts[label] > 1) {
+                        label += ' #' + String(r.chatId || '').slice(-4);
+                    }
+                    return { name: label, value: r.tokens || 0, record: r };
+                });
             },
             todayData() {
                 if (!this.dailyUsageList.length) return { freeUsed: 0, paidUsed: 0, date: '' };
@@ -811,11 +1020,20 @@
             }
         },
         mounted() {
+            this.recordStart = this.monthStartStr();
+            this.recordEnd = this.todayStr();
             this.loadData();
+            this.loadRecords();
             window.addEventListener('resize', this.handleResize);
+            document.addEventListener('visibilitychange', this.handleVisibility);
         },
         beforeDestroy() {
             window.removeEventListener('resize', this.handleResize);
+            document.removeEventListener('visibilitychange', this.handleVisibility);
+            if (this.pieInstance) {
+                this.pieInstance.dispose();
+                this.pieInstance = null;
+            }
             if (this.chartInstance) {
                 this.chartInstance.dispose();
                 this.chartInstance = null;
@@ -828,6 +1046,40 @@
             },
             pad(n) {
                 return n.toString().padStart(2, '0');
+            },
+            chartLabelStep() {
+                // 横坐标标签抽稀步长：按图表容器实际宽度自适应
+                const dom = this.$refs.chartDom;
+                const width = dom && dom.clientWidth ? dom.clientWidth : 600;
+                const days = (this.chartData.dates && this.chartData.dates.length) || 1;
+                // "MM/DD" 标签含间距约需 34px，据此算出最多可容纳的标签数
+                const maxLabels = Math.max(2, Math.floor(width / 34));
+                return Math.max(1, Math.ceil(days / maxLabels));
+            },
+            buildLabelMask(days, step) {
+                // 生成横坐标标签显示掩码：等距抽稀，首尾日期必须有标签；
+                // 若末尾标签与倒数第二个过近，则舍弃倒数第二个，保证不重叠
+                const mask = new Array(days).fill(false);
+                if (days <= 0) return mask;
+                let lastShown = -1;
+                for (let i = 0; i < days; i += step) {
+                    mask[i] = true;
+                    lastShown = i;
+                }
+                if (lastShown !== days - 1) {
+                    if (lastShown > 0 && days - 1 - lastShown < step) {
+                        mask[lastShown] = false;
+                    }
+                    mask[days - 1] = true;
+                }
+                return mask;
+            },
+            todayStr() {
+                return this.formatDate(new Date());
+            },
+            monthStartStr() {
+                const now = new Date();
+                return this.formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
             },
             formatDate(date) {
                 const y = date.getFullYear();
@@ -879,6 +1131,96 @@
                     this.error = err;
                 });
             },
+            loadRecords() {
+                if (this.recordStart && this.recordEnd && this.recordStart > this.recordEnd) {
+                    this.recordError = '开始日期不能晚于结束日期';
+                    return;
+                }
+                this.recordLoading = true;
+                this.recordError = null;
+                fetchPaidUsageRecords(this.recordStart, this.recordEnd).then(data => {
+                    this.recordList = data || [];
+                    this.recordLoading = false;
+                    this.$nextTick(() => {
+                        this.renderPie();
+                    });
+                }).catch(err => {
+                    this.recordError = err;
+                    this.recordList = [];
+                    this.recordLoading = false;
+                });
+            },
+            renderPie() {
+                if (!this.$refs.pieDom || !this.recordList.length) return;
+                if (this.pieInstance) {
+                    this.pieInstance.dispose();
+                }
+                const pie = this.pieData;
+                const valueByName = {};
+                pie.forEach(p => { valueByName[p.name] = p.value; });
+                this.pieInstance = echarts.init(this.$refs.pieDom);
+                this.pieInstance.setOption({
+                    color: ['#3b82f6', '#f97316', '#10b981', '#a855f7', '#ef4444',
+                            '#eab308', '#06b6d4', '#ec4899', '#84cc16', '#6366f1'],
+                    tooltip: {
+                        trigger: 'item',
+                        backgroundColor: 'rgba(255,255,255,0.96)',
+                        borderColor: '#ccc',
+                        borderWidth: 1,
+                        textStyle: { color: '#1e293b', fontSize: 12 },
+                        formatter: (p) => {
+                            const item = pie[p.dataIndex];
+                            const rec = item && item.record;
+                            const lines = ['<strong>' + p.name + '</strong>'];
+                            lines.push('消费: ' + this.formatNumber(p.value) + ' Token (' + p.percent + '%)');
+                            if (rec && rec.count) {
+                                lines.push('次数: ' + rec.count);
+                            }
+                            if (rec && rec.types && rec.types.length) {
+                                rec.types.forEach(t => {
+                                    lines.push(t.type + ': ' + this.formatNumber(t.tokens));
+                                });
+                            }
+                            return lines.join('<br/>');
+                        }
+                    },
+                    legend: {
+                        type: 'scroll',
+                        bottom: 0,
+                        icon: 'circle',
+                        itemWidth: 10,
+                        itemHeight: 10,
+                        textStyle: { fontSize: 11, color: '#475569' },
+                        formatter: (name) => {
+                            const v = valueByName[name];
+                            return name + ' · ' + (v === undefined ? '' : this.formatNumber(v));
+                        }
+                    },
+                    series: [{
+                        name: '补充配额消费',
+                        type: 'pie',
+                        radius: ['40%', '66%'],
+                        center: ['50%', '42%'],
+                        minAngle: 3,
+                        avoidLabelOverlap: true,
+                        itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 6 },
+                        label: {
+                            show: true,
+                            formatter: '{d}%',
+                            fontSize: 11,
+                            color: '#334155'
+                        },
+                        labelLine: { length: 8, length2: 8 },
+                        emphasis: {
+                            label: { show: true, fontSize: 13, fontWeight: 'bold' }
+                        },
+                        data: pie
+                    }]
+                }, true);
+                setTimeout(() => {
+                    if (this.pieInstance) this.pieInstance.resize();
+                }, 100);
+            },
             exchangeCdk() {
                 if (!this.cdkCode || this.cdkCode.trim() === '') {
                     this.cdkMessage = '请输入CDK兑换码';
@@ -909,6 +1251,39 @@
                         this.exchangeLoading = false;
                     });
             },
+            refreshBalance() {
+                return fetchTodayUsage().then(data => {
+                    this.tokenRemaining = data;
+                }).catch(() => {});
+            },
+            handleVisibility() {
+                // 页面重新可见时刷新一次：跨天后签到状态与余额能自动更新
+                if (document.hidden || this.loading) return;
+                const wasCheckedIn = this.checkedIn;
+                this.refreshBalance().then(() => {
+                    if (this.checkedIn !== wasCheckedIn) {
+                        this.checkinMessage = '';
+                    }
+                });
+            },
+            doCheckin() {
+                if (this.checkedIn || this.checkinLoading) return;
+                this.checkinLoading = true;
+                this.checkinMessage = '';
+                checkinApi()
+                    .then(r => {
+                        this.checkinMessage = r;
+                        this.checkinMessageType = 'success';
+                        this.checkinLoading = false;
+                        return this.refreshBalance();
+                    }).catch(r => {
+                        this.checkinMessage = r;
+                        this.checkinMessageType = 'error';
+                        this.checkinLoading = false;
+                        // 已签到等状态异常时，同步一次最新状态
+                        this.refreshBalance();
+                    });
+            },
             renderChart() {
                 if (!this.$refs.chartDom) return;
                 const { dates, freeSeries, paidSeries } = this.chartData;
@@ -919,6 +1294,10 @@
                 }
                 const dom = this.$refs.chartDom;
                 this.chartInstance = echarts.init(dom);
+                // 按容器宽度决定横坐标标签密度，避免日期标签挤在一起
+                const labelStep = this.chartLabelStep();
+                this.chartStep = labelStep;
+                const showLabel = this.buildLabelMask(dates.length, labelStep);
                 const option = {
                     tooltip: {
                         trigger: 'axis',
@@ -931,10 +1310,10 @@
                     },
                     legend: { show: false },
                     grid: {
-                        left: '8%',
-                        right: '5%',
-                        top: 12,
-                        bottom: 25,
+                        left: 8,
+                        right: 12,
+                        top: 16,
+                        bottom: 22,
                         containLabel: true,
                         backgroundColor: '#fefefe'
                     },
@@ -944,11 +1323,12 @@
                         axisTick: { show: false },
                         axisLine: { lineStyle: { color: '#cbd5e1' } },
                         axisLabel: {
-                            rotate: dates.length > 20 ? 35 : 0,
-                            interval: 0,
+                            // 按步长均匀抽稀，并保证首尾日期都有标签
+                            interval: (index) => showLabel[index] === true,
+                            rotate: 0,
                             fontSize: 10,
-                            margin: 12,
-                            hideOverlap: false,
+                            margin: 10,
+                            hideOverlap: true,
                             fontWeight: 'normal',
                             color: '#4b5563'
                         }
@@ -1012,6 +1392,13 @@
             handleResize() {
                 if (this.chartInstance) {
                     this.chartInstance.resize();
+                    // 宽度变化会改变标签密度，需要时重绘
+                    if (this.chartStep !== this.chartLabelStep()) {
+                        this.renderChart();
+                    }
+                }
+                if (this.pieInstance) {
+                    this.pieInstance.resize();
                 }
             }
         }

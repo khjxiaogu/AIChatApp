@@ -21,6 +21,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
@@ -31,6 +32,7 @@ public class FetchMcp {
 	public static MCPTools create(AISession state,ObjectStorageProvider tos) {
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("web_view", "获取链接指定的内容，只支持ftp/http/https链接").putParam("url", "网页链接")
+				.presenter(ToolCallPresenter.ofArgument("查看网页", "url"))
 				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
@@ -45,7 +47,9 @@ public class FetchMcp {
 					}
 					return "参数格式错误";
 				}).build());
-		tools.register(new ToolData.Builder("moegirl_search", "搜索萌娘百科，如果有不知道的人物、角色或作品在这搜索。").putParam("keyword", "关键词").tool((data) -> {
+		tools.register(new ToolData.Builder("moegirl_search", "搜索萌娘百科，如果有不知道的人物、角色或作品在这搜索。").putParam("keyword", "关键词")
+				.presenter(ToolCallPresenter.ofArgument("搜索萌娘百科", "keyword"))
+				.tool((data) -> {
 			try {
 				JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 				if (jo.has("keyword")) {

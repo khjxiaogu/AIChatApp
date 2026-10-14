@@ -21,6 +21,10 @@ public class LocalVoiceUsage implements UsageIntf<LocalVoiceUsage> {
 	public double getEquivantTokens() {
 		return 0; //1 000 000
 	}
+	@Override
+	public String getUsageName() {
+		return "本地语音合成";
+	}
     @Override
     public String toString() {
         return "语音字数 " + len;

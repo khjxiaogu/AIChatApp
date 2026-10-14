@@ -8,8 +8,10 @@ import java.util.Map;
  * 工具调用管理策略。
  * <p>
  * 集中描述“允许调用多少次、单个工具允许调用多少次、是否被允许、是否需要许可、超限时怎么回复”，
- * 由会话（{@code AISession#getToolCallPolicy()}）提供，随 {@code AIRequest} 传递，
- * 由 {@link ToolCallManager} 统一执行。各模型提供者与历史写入逻辑不再各自维护这些规则。
+ * 由会话（{@code AISession#getToolCallPolicy()}）提供，并随工具注册表一起装配进会话持有的
+ * {@link ToolCallManager}（{@code AISession#getToolCallManager()}），
+ * {@code AIRequest} 直接取用后由 {@link ToolCallContext} 统一执行。
+ * 各模型提供者与历史写入逻辑不再各自维护这些规则。
  * </p>
  * <p>本类不可变且线程安全，通过 {@link #builder()} 或 {@link #toBuilder()} 构造。</p>
  */

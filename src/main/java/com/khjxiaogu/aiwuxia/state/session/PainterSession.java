@@ -1,7 +1,6 @@
 package com.khjxiaogu.aiwuxia.state.session;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -9,19 +8,22 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
-import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
+import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
@@ -34,7 +36,6 @@ import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelType;
 
 import io.netty.channel.Channel;
-import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 
 /**
  * 绘画会话。
@@ -86,6 +87,8 @@ public class PainterSession extends WebSocketAISession {
 			if (state.getCurrentOutput()!=null) {
 				state.getCurrentOutput().interrupt();
 			} else {
+				// 本轮其实已经结束（停止请求来晚了）：回发真实生成状态，让前端退出“停止中”的等待态
+				state.sendGenerationStatus();
 				state.sendNotice("操作太快啦，请稍后再试");
 			}
 		});
@@ -93,34 +96,33 @@ public class PainterSession extends WebSocketAISession {
 			// 分页参数解析与下发统一由 WebSocketAISession 处理，缺省(或<=0)的 before_id 即加载最新一页
 			state.requireMoreMessages(jo);
 		});
-		PAINTER_OPERATIONS.put("ping", (jo, state, conn) -> {
-			// 心跳：只回给发起请求的连接，并原样带回同一个id，客户端据此确认连接仍然可用
-			JsonObjectBuilder<JsonObject> pong = JsonBuilder.object().add("type", "pong");
-			if (jo.has("id") && !jo.get("id").isJsonNull()) {
-				pong.add("id", jo.get("id"));
-			}
-			conn.writeAndFlush(new TextWebSocketFrame(pong.end().toString()));
+		PAINTER_OPERATIONS.put("model", (jo, state, conn) -> {
+			// 模型切换与对话前端共用父类实现：校验标识并回发最终生效的模型
+			state.setModel(jo.has("model") && !jo.get("model").isJsonNull() ? jo.get("model").getAsString() : "");
+		});
+		PAINTER_OPERATIONS.put("revert", (jo, state, conn) -> {
+			// 撤回最后一轮：与对话前端共用父类实现，动作在会话命令线程中执行
+			state.requestRevert();
+		});
+		PAINTER_OPERATIONS.put("regen", (jo, state, conn) -> {
+			// 重新生成最后一条回复
+			state.requestRegen();
 		});
 	}
 
 	private static final AtomicLong LOCAL_REQUEST_ID = new AtomicLong(0);
 
-    public List<ToolData> tools=new ArrayList<>();
     private final ConcurrentHashMap<String, BotCallbackPromise> pendingLocalRequests = new ConcurrentHashMap<>();
 
     public PainterSession(AIChatService par, String uid, String chatid, AIApplication aiapp,
                           ApplicationAttributes attr, File fn, ISaveData data) {
         super(par, uid, chatid, aiapp, attr, fn, data);
-		MultiModalMcp.create(par.getPainterStorage(), this::addUsage).addTool(this.tools);
-        MultiModalMcp.createOutput(this,par.getPainterStorage(), Collections.emptyMap(),this::addUsage).addTool(this.tools);
-        SDXLMcp.createRemoteLocalModel(this,par.getPainterStorage(), par.lora,par.chara,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true).addTool(this.tools);
-        FetchMcp.create(this, par.getPainterStorage());
+        // 工具直接注册进会话的工具调用管理器，由管理器统一处理调用次数、权限、许可与执行
+        registerTools(MultiModalMcp.create(par.getPainterStorage(), this::addUsage));
+        registerTools(MultiModalMcp.createOutput(this,par.getPainterStorage(), Collections.emptyMap(),this::addUsage));
+        registerTools(SDXLMcp.createRemoteLocalModel(this,par.getPainterStorage(), par.lora,par.chara,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true));
+        registerTools(FetchMcp.create(this, par.getPainterStorage()));
     }
-
-    @Override
-	public List<ToolData> getAvailableTools() {
-		return tools;
-	}
 
     /**
      * 绘画会话不在连接建立时等待初始化提示，保持原有的异步行为，避免生成中重连被阻塞。
@@ -143,47 +145,188 @@ public class PainterSession extends WebSocketAISession {
     @Override
     public void onMessage(Channel conn, String message) {
         JsonObject jo = JsonParser.parseString(message).getAsJsonObject();
+        // 心跳：ping -> pong，与对话前端共用实现，不参与指令分发
+        if (Heartbeat.replyPongIfPing(conn, jo)) {
+            return;
+        }
         if (!jo.has("type")) {
             return;
         }
-        PainterOperation operation = PAINTER_OPERATIONS.get(jo.get("type").getAsString());
+        String frameType = jo.get("type").getAsString();
+        PainterOperation operation = PAINTER_OPERATIONS.get(frameType);
         if (operation != null) {
             operation.accept(jo, this, conn);
+            return;
         }
+        // 绘画前端未特殊处理的通用指令（语音开关、工具许可等）交给父类的公共帧处理器
+        super.onMessage(conn, message);
     }
 
     @Override
 	public boolean isAvailable() {
-		return LocalModel.hasOnlineService(ModelType.SDXL);
+		return true;
+    	//return LocalModel.hasOnlineService(ModelType.SDXL);
 	}
+
+	/**
+	 * 绘画前端的帧全部按 {@code type} 分发，因此模型回发也带上 type，
+	 * 避免无 type 的帧被前端当成消息内容处理。
+	 */
+	@Override
+	protected void sendModelHint(String model) {
+		sendFrame(JsonBuilder.object().add("type", "model").add("model", model).end().toString());
+	}
+
+	/**
+	 * 记录一条待生成的用户文本输入。
+	 * <p>
+	 * 与 {@link #addPendingUserMessage(MessageContent)} 相同，写入动作同样排到会话命令线程上执行。
+	 * </p>
+	 *
+	 * @param content 用户输入的文本
+	 */
 	public void addPendingUserMessage(String content) {
-    	appendLine(Role.USER, content, true);
-    	this.flush();
-    }
-    public void addPendingUserMessage(MessageContent content) {
-    	if(content.isPlainText()) {
-    		this.appendLine(Role.USER, content.toText(), true);
-    	}else {
-    		this.appendCh(Role.USER, content, true);
-    	}
+		addPendingUserMessage(new MutableMessageContents(content));
+	}
+
+	/**
+	 * 记录一条待生成的用户输入（文本、图片等）。
+	 * <p>
+	 * 绘画前端的输入分两步：先落成“待生成”的用户条目，再由 {@code generate} 触发本轮生成。
+	 * 输入可能来自 WebSocket 线程（文本帧），也可能来自 HTTP 线程（图片上传），
+	 * 两者都可能在生成进行中到达，因此统一交给
+	 * {@link #submitHistoryWrite(Runnable, String)} 排到会话命令线程上写入：
+	 * 这样输入按到达顺序排在正在进行的这一轮之后，成为下一轮的待生成输入；
+	 * 若当前没有正在生成的轮次，则与已有输入合并成本轮输入。
+	 * </p>
+	 * <p>
+	 * 写入使用 {@link #continueWrite(Role)}：同一轮的多次输入（先文本、再图片）拼进同一条
+	 * 用户记录，而不是各起一条。
+	 * </p>
+	 *
+	 * @param content 用户输入内容
+	 */
+	public void addPendingUserMessage(MessageContent content) {
+		addPendingUserMessage(new MutableMessageContents(content));
+	}
+
+	/**
+	 * 记录一条待生成的用户输入（可包含多段内容）。
+	 *
+	 * @param content 用户输入内容，多段内容会写进同一条用户记录
+	 */
+	public void addPendingUserMessage(MessageContents content) {
+		submitHistoryWrite(() -> {
+			try (HistoryWriteContext write = continueWrite(Role.USER)) {
+				for (MessageContent part : content) {
+					// 纯文本按行写入（与对话前端一致，带换行），图片等其它内容按块写入
+					if (part.isPlainText())
+						write.appendLine(part.toText(), true);
+					else
+						write.append(part, true);
+				}
+			}
+		}, "消息保存失败，请重试");
+	}
+
+    /**
+     * 思维链写入钩子：按绘画前端的下行协议把推理内容写成帧。
+     * <p>
+     * 流式输出与重连补发共用 {@link #writeReasonerFrames(MessageContents, Consumer)}，
+     * 保证两条路径产生的帧完全一致。
+     * </p>
+     */
+    @Override
+    protected void onReasonerAppend(MessageContent current) {
+        writeReasonerFrames(new MutableMessageContents(current), this::sendFrame, this);
     }
 
-    @Override
-    public void appendReasoner(MessageContent current) {
-        super.appendReasoner(current);
-        if (current instanceof PlainText) {
-            sendFrame(JsonBuilder.object()
-                .add("type", "thinking")
-                .add("content", ((PlainText) current).toText())
-                .end().toString());
-        } else if (current instanceof ToolCallContent) {
-            for (ToolCall tc : ((ToolCallContent) current).getToolCalls()) {
-                sendFrame(JsonBuilder.object()
-                    .add("type", "tool_call")
-                    .add("tool_name", tc.function.name)
+    /**
+     * 按绘画前端的下行协议把推理内容写成帧：纯文本发 thinking 帧，工具调用发 tool_call 帧。
+     * <p>
+     * 流式输出与重连补发共用本方法，保证两条路径产生的帧完全一致。
+     * </p>
+     *
+     * @param reasoning 推理内容（一段或多段）
+     * @param frameSink 帧的接收者，通常为 {@link #sendFrame(String)}
+     */
+    static void writeReasonerFrames(MessageContents reasoning, Consumer<String> frameSink) {
+        writeReasonerFrames(reasoning, frameSink, null);
+    }
+
+    /**
+     * 按绘画前端的下行协议把推理内容写成帧。
+     * <p>
+     * 提供会话时，工具调用的显示由会话统一解析：生成过程中使用已算好的显示，
+     * 历史重新加载后按当前注册的工具重算，保证加载后工具简述与详情同样可见。
+     * </p>
+     *
+     * @param reasoning 推理内容（一段或多段）
+     * @param frameSink 帧的接收者，通常为 {@link #sendFrame(String)}
+     * @param session   会话，可为 null（此时只使用内容自带的显示）
+     */
+    static void writeReasonerFrames(MessageContents reasoning, Consumer<String> frameSink, AISession session) {
+        for (MessageContent current : reasoning) {
+            if (current instanceof PlainText) {
+                frameSink.accept(JsonBuilder.object()
+                    .add("type", "thinking")
+                    .add("content", ((PlainText) current).toText())
                     .end().toString());
+            } else if (current instanceof ToolCallContent) {
+                ToolCallContent content = (ToolCallContent) current;
+                List<ToolCall> calls = content.getToolCalls();
+                for (int i = 0; i < calls.size(); i++) {
+                    ToolCall call = calls.get(i);
+                    ToolCallDisplay display = session == null ? content.getDisplay(i)
+                        : session.getToolCallDisplay(content, i);
+                    JsonObjectBuilder<JsonObject> frame = JsonBuilder.object()
+                        .add("type", "tool_call")
+                        .add("tool_name", display.getBrief()) // 用户友好简述替代原始工具名称
+                        .add("tool", call == null || call.function == null ? "" : call.function.name);
+                    if (display.hasContent()) {
+                        frame.add("content", contentsToJson(display.getContent()));
+                    }
+                    frameSink.accept(frame.end().toString());
+                }
             }
         }
+    }
+
+    /**
+     * 补发生成中的思维链：把仍留在本轮可写入上下文里的内容按与流式输出一致的方式重发一次。
+     * <p>
+     * 推理内容一旦提交进历史（上下文对应的记录随之进入历史条目），历史分页里就会带上它，
+     * 因此只需补发还没提交的那部分，不会与历史中的思考链重复。
+     * </p>
+     *
+     * @param generating 当前是否正在生成
+     * @param buffered   尚未提交进历史条目的思维链，可为 null
+     * @param frameSink  帧的接收者，通常为 {@link #sendFrame(String)}
+     * @param session    会话，用于统一解析工具显示，可为 null
+     * @return 是否补发了内容
+     */
+    static boolean replayGeneratingReasoning(boolean generating, MessageContents buffered, Consumer<String> frameSink,
+                                             AISession session) {
+        if (!generating || buffered == null || buffered.isEmpty())
+            return false;
+        writeReasonerFrames(buffered, frameSink, session);
+        return true;
+    }
+
+    /**
+     * 连接建立（含断开重连）后补发正在生成的思维链。
+     * <p>
+     * 本轮回复在提交进历史之前只存在于 {@link AISession#getCurrentWrite()} 返回的可写入上下文里
+     * （思维链、显示内容都写在它对应的记录上），历史记录中并没有它；
+     * 重连时客户端只能拿到历史，若不补发，已经生成的那部分思考内容就丢了，
+     * 界面上只剩下重连之后新产生的思考。
+     * </p>
+     */
+    @Override
+    protected void sendGeneratingReasoning() {
+        HistoryWriteContext write = getCurrentWrite();
+        replayGeneratingReasoning(isGenerating(), write == null ? null : write.getReasoningContent(), this::sendFrame,
+            this);
     }
 
     /**

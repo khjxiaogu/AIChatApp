@@ -48,7 +48,7 @@ public class MimoVoiceApi implements VoiceModel {
 				RespScheme scheme=gson.fromJson(retjs, MimoRespScheme.class);
 				PcmToWavConverter converter=new PcmToWavConverter(24000);
 				converter.addAudioChunk(scheme.choices.get(0).message.audio.data);
-				usageListener.accept(new LocalVoiceUsage(text.length()));
+				usageListener.accept(new MimoVoiceUsage(text.length()));
 				return new ModelGenerationResult(converter.saveAsWav(),"wav");
 			} catch (IOException e) {
 				throw new RuntimeException(e);

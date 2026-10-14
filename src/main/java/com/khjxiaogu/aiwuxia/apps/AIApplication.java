@@ -41,9 +41,11 @@ import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.SavedData;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
@@ -266,17 +268,21 @@ public abstract class AIApplication {
 		int mid=(int) UUID.randomUUID().getMostSignificantBits();
 		String sid=Integer.toString(mid,16);
 		logger.info("message received "+sid);
-		for (MessageHandler i : handlers) {
-			try {
-				if ((ret=i.apply(state,ret))==null)
-					break;
-			} catch (Throwable t) {
-				t.printStackTrace();
+		try {
+			for (MessageHandler i : handlers) {
+				try {
+					if ((ret=i.apply(state,ret))==null)
+						break;
+				} catch (Throwable t) {
+					t.printStackTrace();
+				}
 			}
+		} finally {
+			// 本轮的可写入上下文由应用自己用 try-with-resources 结束（写过内容则提交进历史，
+			// 只写了思维链的空记录直接撤回），这里只负责收尾生成状态
+			logger.info("message handled "+sid);
+			state.onGenComplete();
 		}
-		logger.info("message handled "+sid);
-		state.onGenComplete();
-		
 	}
     /**
      * 提供初始提示或启动信息给会话。
@@ -286,21 +292,27 @@ public abstract class AIApplication {
      */
 	public abstract void provideInitial(AISession state);
 	  /**
-     * 处理AI输出的推理内容，并将其追加到会话的当前推理缓冲区中。
-     * 该方法从{@link AIOutput#getReasoner()}中读取字符数据，并逐块追加到会话。
+     * 处理AI输出的推理内容，把它写进应用当前持有的可写入上下文。
+     * <p>
+     * 上下文由应用通过 {@link AISession#beginWrite(Role)} 取得（{@link HistoryWriteContext}），
+     * 在 try-with-resources 块内传入本方法：思维链写在同一条记录上，
+     * 该记录在写入期间不进入历史、不参与上下文与总结清理，也不会落盘。
+     * </p>
      *
      * @param output AI输出对象（包含推理内容和最终内容）
-     * @param state  AI会话状态
+     * @param state  AI会话状态（用于工具调用通知）
+     * @param write  本条记录的可写入上下文
      * @throws IOException 如果读取推理内容时发生I/O错误
      */
-	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
+	public void handleReasonerContent(AIOutput output,AISession state,HistoryWriteContext write) throws IOException {
 		MessageReader br=output.getReasoner();
-		state.resetReasoner();
 		while(!br.isEnded()) {
 			MessageContent current=br.read();
 			if(current==null)
 				break;
-			state.appendReasoner(current);
+			if(current instanceof ToolCallContent)
+				state.onToolcall((ToolCallContent) current);
+			write.appendReasoner(current);
 			
 		}
 	}

@@ -39,9 +39,13 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.PainterSession;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
@@ -362,6 +366,7 @@ public class SDXLMcp {
 		if(charas!=null)
 		tools.register(new ToolData.Builder("search_character", "通过关键词搜索特定角色的提示词，返回相符的提示词，以,隔开")
 				.putParam("keyword", "角色英文名")
+				.presenter(ToolCallPresenter.ofArgument("搜索角色", "keyword"))
 				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
@@ -380,6 +385,7 @@ public class SDXLMcp {
 				}).build());
 		tools.register(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
+				.presenter(ToolCallPresenter.ofName("反推提示词"))
 				.tool((data) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
 					Matcher mtch = patt.matcher(data);
@@ -407,6 +413,14 @@ public class SDXLMcp {
 				.putParam("positive", "正面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("negative", "负面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
+				.presenter(call->{
+					JsonObject jo=JsonParser.parseString(call.function.arguments).getAsJsonObject();
+					MutableMessageContents content=new MutableMessageContents();
+					content.append("正面:"+jo.get("positive").getAsString());
+					content.append("\n负面:"+jo.get("negative").getAsString());
+					content.append("\n画面比例:"+jo.get("resolution").getAsString());
+					return ToolCallDisplay.of("文生图", content);
+				})
 				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
@@ -480,6 +494,18 @@ public class SDXLMcp {
 				.putParam("placement", "区域排布，必须是row/col之一，col表示两个区域呈现左右结构，row表示两个区域呈现上下结构")
 				.putParam("area_ratio", "区域比例，必须是以x:y的格式，其中x是第一区域面积占比，y是第二区域面积占比，x和y必须为整数。例如1:1")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
+				.presenter(call->{
+					JsonObject jo=JsonParser.parseString(call.function.arguments).getAsJsonObject();
+					MutableMessageContents content=new MutableMessageContents();
+					content.append("1区正面:"+jo.get("first_positive").getAsString());
+					content.append("\n2区正面:"+jo.get("second_positive").getAsString());
+					content.append("\n共同正面:"+jo.get("common_negative").getAsString());
+					content.append("\n排版:"+("row".equals(jo.get("placement").getAsString())?"左右":"上下"));
+					content.append("\n负面:"+jo.get("common_negative").getAsString());
+					content.append("\n区域比例:"+jo.get("area_ratio").getAsString());
+					content.append("\n画面比例:"+jo.get("resolution").getAsString());
+					return ToolCallDisplay.of("分区图片", content);
+				})
 				.tool((data) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					System.out.println(data);
@@ -578,6 +604,17 @@ public class SDXLMcp {
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
 				.putParam("strength", "重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
+
+				.presenter(call->{
+					JsonObject jo=JsonParser.parseString(call.function.arguments).getAsJsonObject();
+					MutableMessageContents content=new MutableMessageContents();
+					content.addRaw(new ImageContent(jo.get("picture_id").getAsString()));
+					content.append("正面:"+jo.get("positive").getAsString());
+					content.append("\n负面:"+jo.get("negative").getAsString());
+					content.append("\n画面比例:"+jo.get("resolution").getAsString());
+					content.append("\n强度:"+jo.get("strength").getAsString());
+					return ToolCallDisplay.of("图生图", content);
+				})
 				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();

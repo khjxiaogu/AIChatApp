@@ -18,19 +18,42 @@ import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
 public class MultiModalMcp {
+
+	/**
+	 * 把工具产生的内容追加到本轮正在写入的记录上。
+	 * <p>
+	 * 工具在生成过程中执行，此时应用已经打开了可写入上下文（{@link AISession#getCurrentWrite()}），
+	 * 直接写入即可与思维链、回复正文同属一条记录；没有正在进行的写入时忽略本次追加。
+	 * </p>
+	 *
+	 * @param state   当前会话
+	 * @param content 要追加的内容
+	 */
+	private static void appendAssistantContent(AISession state, MessageContent content) {
+		HistoryWriteContext write = state.getCurrentWrite();
+		if (write != null) {
+			write.append(content, false);
+		}
+	}
+
 	public static MCPTools create(ObjectStorageProvider tos,Consumer<UsageIntf<?>> addUsage) {
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("image_recognition", "使用多模态模型查看图片并返回图片描述。该功能仅负责描述图片内容，注意需要甄别描述中的内容是否合理，是否符合人物设定，人物是否应该知道对应内容。描述中的分析仅供参考，你需要独立判断是否正确。")
-				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容").tool((data) -> {
+				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
+				.presenter(ToolCallPresenter.ofBrief(call -> "查看图片"))
+				.tool((data) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
 					Matcher mtch = patt.matcher(data);
 					if (mtch.find()) {
@@ -47,12 +70,14 @@ public class MultiModalMcp {
 		MCPTools tools=new MCPTools();
 
 		tools.register(new ToolData.Builder("send_image", "发送聊天图片")
-				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身").tool((data) -> {
+				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身")
+				.presenter(ToolCallPresenter.ofBrief(call -> "发送图片"))
+				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						String fn=jo.get("picture_id").getAsString();
 						if(tos.exists(fn,addUsage)) {
-							state.appendCh(Role.ASSISTANT, new ImageContent(fn), false);
+							appendAssistantContent(state, new ImageContent(fn));
 							return "发送成功";
 						}
 						return "图片id不存在"+(fn.length()==72?"":"，该错误是因为图片ID长度不是72导致，请检查输入")+"。";
@@ -64,14 +89,16 @@ public class MultiModalMcp {
 		
 		if(!images.isEmpty())
 			tools.register(new ToolData.Builder("send_emoji_image", "发送表情包图片")
-				.putParam("emoji_id", "表情id").tool((data) -> {
+				.putParam("emoji_id", "表情id")
+				.presenter(ToolCallPresenter.ofArgument("发送表情包", "emoji_id"))
+				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						String fn=images.get(jo.get("emoji_id").getAsString());
 						if(fn==null)
 							return "表情id不存在";
 						if(tos.exists(fn,addUsage)) {
-							state.appendCh(Role.ASSISTANT, new ImageContent(fn), false);
+							appendAssistantContent(state, new ImageContent(fn));
 							return "发送成功";
 						}
 						return "图片id不存在";

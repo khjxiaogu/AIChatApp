@@ -4,8 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>AI智能绘画</title>
+    <link rel="stylesheet" href="sidebar.css">
+    <link rel="stylesheet" href="ai-ui.css">
     <!-- Vue 2 CDN -->
     <script src="vue.js"></script>
+    <script src="modeltree.js"></script>
+    <!-- 绘画页原本是浅色：未设置过主题时默认白天，设置过后与其它页面共用同一偏好 -->
+    <script>window.AIWUXIA_THEME_DEFAULT = 'day';</script>
+    <script src="theme.js"></script>
+    <script src="heartbeat.js"></script>
+    <script src="ai-protocol.js"></script>
     <style>
 		* {
 			margin: 0;
@@ -144,6 +152,44 @@
             align-items: center;
             gap: 6px;
         }
+        /* 工具详情：无文本的展开/收缩按钮（图标随展开状态旋转） */
+        .tool-detail-toggle {
+            background: transparent;
+            border: none;
+            padding: 0;
+            margin: 0;
+            width: 16px;
+            height: 16px;
+            min-width: 16px;
+            border-radius: 50%;
+            color: #64748b;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+        }
+        .tool-detail-toggle:hover {
+            background: #e2e8f0;
+            color: #1e40af;
+        }
+        .tool-detail-toggle.is-open {
+            transform: rotate(90deg);
+        }
+        .tool-detail {
+            margin: 0 0 8px 2px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            font-size: 0.78rem;
+            color: #334155;
+        }
+        .tool-detail-text {
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.45;
+        }
         .final-content {
             font-size: 0.95rem;
             line-height: 1.5;
@@ -201,10 +247,8 @@
 			flex-shrink: 0;         /* 关键：不被压缩 */
 			padding: 10px 16px;
 			padding-bottom: 2px; /* 底部安全区 */
-			background: #fff;
 			border-top: 1px solid #e9ecef;
 		}
-
 		.input-row textarea {
 			flex: 1 1 100%;       /* 关键 2：移动端独占一行 */
 			min-width: 0;         /* 关键 3：防止 textarea 撑破容器 */
@@ -267,6 +311,15 @@
             border-radius: 30px;
             width: fit-content;
         }
+        /* 停止中：按钮进入等待态（呼吸提示 + 等待光标），本轮结束后自动恢复 */
+        button.btn-waiting:disabled {
+            cursor: progress;
+            animation: btnWaiting 1.2s ease-in-out infinite;
+        }
+        @keyframes btnWaiting {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(5px);}
             to { opacity: 1; transform: translateY(0);}
@@ -274,29 +327,7 @@
         .scroll-to-bottom {
             cursor: pointer;
         }
-        /* 断线/重连提示条 */
-        .conn-tip {
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 6px 12px;
-            font-size: 0.78rem;
-            color: #92400e;
-            background: #fef3c7;
-            border-bottom: 1px solid #fde68a;
-        }
-        .conn-tip .conn-spinner {
-            width: 11px;
-            height: 11px;
-            flex-shrink: 0;
-            border: 2px solid #fcd34d;
-            border-top-color: #b45309;
-            border-radius: 50%;
-            animation: historySpin 0.8s linear infinite;
-        }
-        /* 向上滚动加载历史记录 */
+        /* 断线/重连提示条 */        /* 向上滚动加载历史记录 */
         .history-tip {
             align-self: center;
             flex-shrink: 0;
@@ -343,100 +374,7 @@
             border-radius: 8px;
             box-shadow: 0 4px 30px rgba(0,0,0,0.5);
         }
-        /* 侧边栏 */
-        .sidebar-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.3);
-            z-index: 9000;
-        }
-        .sidebar {
-            position: fixed;
-            top: 0; left: 0; bottom: 0;
-            width: 280px;
-            background: #fff;
-            box-shadow: 2px 0 20px rgba(0,0,0,0.1);
-            z-index: 9001;
-            display: flex;
-            flex-direction: column;
-            animation: slideIn 0.2s ease;
-        }
-        @keyframes slideIn {
-            from { transform: translateX(-100%); }
-            to { transform: translateX(0); }
-        }
-        .sidebar-header {
-            padding: 16px;
-            border-bottom: 1px solid #e9ecef;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        .sidebar-header h3 {
-            margin: 0;
-            font-size: 1rem;
-            color: #1e2a3e;
-        }
-        .sidebar-close {
-            background: none;
-            border: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            color: #5b6e8c;
-            padding: 4px 8px;
-        }
-        .sidebar-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px 0;
-        }
-        .sidebar-item {
-            padding: 12px 16px;
-            cursor: pointer;
-            border-bottom: 1px solid #f1f3f5;
-            transition: background 0.15s;
-        }
-        .sidebar-item:hover {
-            background: #f8f9fc;
-        }
-        .sidebar-item.active {
-            background: #eef2ff;
-            border-left: 3px solid #1e6fdf;
-        }
-        .sidebar-item-name {
-            font-size: 0.9rem;
-            color: #1e2a3e;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .sidebar-item-time {
-            font-size: 0.7rem;
-            color: #8196b0;
-            margin-top: 4px;
-        }
-        .sidebar-new {
-            margin: 8px 16px;
-            padding: 10px;
-            text-align: center;
-            background: #1e6fdf;
-            color: white;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-        .sidebar-new:hover {
-            background: #1558b0;
-        }
-        .menu-btn {
-            background: none;
-            border: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            color: #5b6e8c;
-            padding: 4px 8px;
-        }
+        /* 侧边栏样式见 sidebar.css（custom / painter / painter-local 共用） */
         /* URL输入弹窗 */
         .url-modal-overlay {
             position: fixed;
@@ -505,47 +443,360 @@
         .url-status .dot.ok { background: #22c55e; }
         .url-status .dot.err { background: #ef4444; }
         .url-status .dot.pending { background: #eab308; }
+
+        /* 模型目录树：模型标识按 "/" 分层展示，默认全部展开 */
+        .model-tree {
+            max-height: 320px;
+            overflow-y: auto;
+            padding: 8px;
+            background: #f8f9fc;
+            border: 1px solid #dbe2ee;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            color: #1e2a3e;
+        }
+        .model-tree-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 7px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            line-height: 1.4;
+        }
+        .model-tree-item:hover {
+            background: #eef2ff;
+        }
+        .model-tree-item.is-selected {
+            background: #1e6fdf;
+            color: #fff;
+            font-weight: 600;
+        }
+        .model-tree-caret {
+            flex: 0 0 14px;
+            width: 14px;
+            height: 14px;
+            position: relative;
+            color: #8196b0;
+        }
+        .model-tree-caret::before {
+            content: '';
+            position: absolute;
+            left: 4px;
+            top: 3px;
+            width: 0;
+            height: 0;
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+            border-left: 5px solid currentColor;
+            transform: rotate(90deg); /* 展开：箭头朝下 */
+            transition: transform 0.15s ease;
+        }
+        .model-tree-caret.is-collapsed::before {
+            transform: rotate(0deg); /* 折叠：箭头朝右 */
+        }
+        .model-tree-caret.is-leaf::before {
+            display: none;
+        }
+        .model-tree-item.is-selected .model-tree-caret {
+            color: #fff;
+        }
+        .model-tree-children {
+            margin-left: 14px;
+            padding-left: 4px;
+            border-left: 1px dashed #dbe2ee;
+        }
+        .model-tree-label {
+            flex: 1;
+            word-break: break-word;
+        }
+        .model-tree-empty {
+            padding: 8px;
+            color: #8196b0;
+            text-align: center;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* ---- 设置弹窗内的开关行 ---- */
+        .url-modal {
+            max-height: 86vh;
+            overflow-y: auto;
+        }
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 14px;
+            margin-bottom: 10px;
+            border-radius: 12px;
+            background: #f8f9fc;
+            border: 1px solid #dbe2ee;
+        }
+        .setting-row-label {
+            font-size: 0.9rem;
+            color: #1e2a3e;
+        }
+        .setting-switch {
+            position: relative;
+            flex: none;
+            width: 46px;
+            height: 24px;
+            padding: 0;
+            border: 1px solid #cbd5e6;
+            border-radius: 999px;
+            background: #e9ecef;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .setting-switch-knob {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+            transition: transform 0.2s;
+        }
+        .setting-switch.is-on {
+            background: #1e6fdf;
+            border-color: #1e6fdf;
+        }
+        .setting-switch.is-on .setting-switch-knob {
+            transform: translateX(22px);
+        }
+        .setting-subtitle {
+            margin: 18px 0 6px;
+            font-size: 0.95rem;
+            color: #1e2a3e;
+        }
+
+        /* ---- 消息内的撤回/重新生成 ---- */
+        .msg-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+            animation: fadeIn 0.18s ease;
+        }
+        .btn-action {
+            background: #fff;
+            color: #2c3e50;
+            border: 1px solid #cbd5e6;
+            padding: 3px 12px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .btn-action:hover:not(:disabled) {
+            background: #eef2ff;
+            border-color: #1e6fdf;
+            color: #1e6fdf;
+        }
+        /* 用户消息靠右，操作按钮跟着靠右 */
+        .user-message .msg-actions {
+            justify-content: flex-end;
+        }
+
+        /* ---- 图片安全模式：对话里的图片深度模糊，全屏查看时保持清晰 ---- */
+        .image-safe .message-image {
+            overflow: hidden;
+        }
+        .image-safe .message-image img {
+            filter: blur(16px);
+            transform: scale(1.06);
+            transition: filter 0.2s;
+        }
+        .image-safe .fullscreen-overlay img {
+            filter: none;
+            transform: none;
+        }
+
+        /* ================= 黑夜模式 =================
+           绘画页默认是白天（浅色）样式，未选择过主题时由 theme.js 带上 day-mode；
+           用户选择黑夜后 html 上没有 day-mode，这里给出深色覆盖。 */
+        html:not(.day-mode) body {
+            background: #10141a;
+        }
+        html:not(.day-mode) #app {
+            background: #171c23;
+            box-shadow: 0 0 20px rgba(0,0,0,0.4);
+        }
+        html:not(.day-mode) .chat-header {
+            background: #1b212a;
+            border-bottom-color: #2a323d;
+        }
+        html:not(.day-mode) .chat-header h2,
+        html:not(.day-mode) .setting-row-label,
+        html:not(.day-mode) .setting-subtitle,
+        html:not(.day-mode) .url-modal h3 {
+            color: #e6edf6;
+        }
+        html:not(.day-mode) .conv-id {
+            background: #232b35;
+            color: #9fb0c4;
+        }
+        html:not(.day-mode) .messages-container {
+            background: #141a21;
+        }
+        html:not(.day-mode) .message-bubble {
+            background: #1e252e;
+            border-color: #2b333e;
+        }
+        html:not(.day-mode) .thinking-chain {
+            background: #1a212a;
+            border-left-color: #4b5a6e;
+        }
+        html:not(.day-mode) .thinking-text {
+            color: #c2ccd9;
+        }
+        html:not(.day-mode) .tool-call-label {
+            background: #1d2837;
+            color: #9dc0ff;
+        }
+        html:not(.day-mode) .tool-call-item,
+        html:not(.day-mode) .image-placeholder {
+            color: #93a3b8;
+        }
+        html:not(.day-mode) .tool-detail-toggle {
+            color: #9fb0c4;
+        }
+        html:not(.day-mode) .tool-detail-toggle:hover {
+            background: #2b333e;
+            color: #9dc0ff;
+        }
+        html:not(.day-mode) .tool-detail {
+            background: #151b23;
+            border-color: #2b333e;
+            color: #c2ccd9;
+        }
+        html:not(.day-mode) .final-content {
+            color: #dfe6ef;
+        }
+        html:not(.day-mode) .message-image {
+            border-color: #2b333e;
+            background: #1a212a;
+        }
+        html:not(.day-mode) .loading-indicator,
+        html:not(.day-mode) .history-tip {
+            background: #1d242d;
+            color: #93a3b8;
+        }        html:not(.day-mode) .conn-spinner {
+            border-color: rgba(243,208,138,0.35);
+            border-top-color: #f3d08a;
+        }
+        html:not(.day-mode) .input-area,
+        html:not(.day-mode) .url-modal {
+            background: #1b212a;
+            border-color: #2a323d;
+        }
+        html:not(.day-mode) .input-area {
+            border-top-color: #2a323d;
+        }
+        html:not(.day-mode) .input-row textarea,
+        html:not(.day-mode) .url-modal input {
+            background: #232b35;
+            border-color: #33404e;
+            color: #e6edf6;
+        }
+        html:not(.day-mode) .url-modal input:focus {
+            border-color: #3b82f6;
+        }
+        html:not(.day-mode) .upload-btn,
+        html:not(.day-mode) .url-modal .btn-cancel,
+        html:not(.day-mode) .btn-action {
+            background: #232b35;
+            color: #cdd8e6;
+            border-color: #33404e;
+        }
+        html:not(.day-mode) .upload-btn:hover:not(:disabled),
+        html:not(.day-mode) .url-modal .btn-cancel:hover,
+        html:not(.day-mode) .btn-action:hover:not(:disabled) {
+            background: #2b3441;
+            border-color: #3b82f6;
+            color: #9dc0ff;
+        }
+        html:not(.day-mode) .setting-row {
+            background: #1d242d;
+            border-color: #2b333e;
+        }
+        html:not(.day-mode) .setting-switch {
+            background: #2b333e;
+            border-color: #3a4553;
+        }
+        html:not(.day-mode) .setting-switch.is-on {
+            background: #1e6fdf;
+            border-color: #1e6fdf;
+        }
+        html:not(.day-mode) .url-modal p {
+            color: #8b9bb0;
+        }
+        html:not(.day-mode) .model-tree {
+            background: #1d242d;
+            border-color: #2b333e;
+            color: #dfe6ef;
+        }
+        html:not(.day-mode) .model-tree-item:hover {
+            background: #232c37;
+        }
+        html:not(.day-mode) .model-tree-item.is-selected {
+            background: #1e6fdf;
+            color: #fff;
+        }
+        html:not(.day-mode) .model-tree-caret,
+        html:not(.day-mode) .model-tree-empty {
+            color: #8b9bb0;
+        }
+        html:not(.day-mode) .model-tree-children {
+            border-left-color: #2b333e;
+        }
     </style>
 </head>
 <body>
-<div id="app">
+<div id="app" :class="{ 'image-safe': imageSafeMode }">
+    <ai-conn-tip></ai-conn-tip>
+    <ai-dialog></ai-dialog>
 
-    <!-- 侧边栏 -->
+    <!-- 侧边栏（结构与配色见 sidebar.css，与 custom 等页面统一） -->
     <div class="sidebar-overlay" v-if="showSidebar" @click="showSidebar = false"></div>
-    <div class="sidebar" v-if="showSidebar">
+    <div class="chat-sidebar" :class="{ open: showSidebar }">
         <div class="sidebar-header">
             <h3>对话列表</h3>
-            <button class="sidebar-close" @click="showSidebar = false">&times;</button>
+            <button class="sidebar-close" @click.stop="showSidebar = false">&times;</button>
         </div>
-        <div class="sidebar-new" @click="createNewChat">+ 新建对话</div>
-        <div class="sidebar-list">
+        <div class="sidebar-action-btn" @click="createNewChat">+ 新建对话</div>
+        <div class="chat-list" v-if="chatList.length">
             <div v-for="chat in chatList" :key="chat.chatid"
-                 :class="['sidebar-item', chat.chatid === conversationId ? 'active' : '']"
+                 class="chat-item" :class="{ active: chat.chatid === conversationId }"
                  @click="switchChat(chat.chatid)">
-                <div class="sidebar-item-name">{{ chat.name }}</div>
-                <div class="sidebar-item-time">{{ formatTime(chat.time) }}</div>
+                <div class="chat-info">
+                    <div class="chat-name">{{ chat.name }}</div>
+                    <div class="chat-time">{{ formatTime(chat.time) }}</div>
+                </div>
             </div>
-            <div v-if="!chatList.length" style="padding:20px;text-align:center;color:#8196b0;font-size:0.85rem;">暂无对话</div>
         </div>
+        <div v-else class="chat-empty">暂无对话</div>
     </div>
 
     <div class="chat-header">
-        <button class="menu-btn" @click="loadChatList(); showSidebar = true">&#9776;</button>
+        <button class="sidebar-toggle" @click="loadChatList(); showSidebar = true">&#9776;</button>
         <h2>绘画</h2>
-        <div class="conv-id">{{ conversationId }}</div>
+        <div class="header-right">
+            
+            <div class="conv-id">{{ conversationId }}</div>
+        </div>
     </div>
 
-    <!-- 断线/重连提示 -->
-    <div v-if="connTip" class="conn-tip">
-        <span class="conn-spinner"></span>
-        <span>{{ connTip }}</span>
-    </div>
-
-    <div class="messages-container" ref="messageContainer" @scroll="onMessagesScroll">
+    <div class="messages-container" ref="messageContainer" @scroll="onHistoryScroll">
         <!-- 向上滚动加载更早的历史记录 -->
         <div v-if="isLoadingMore" class="history-tip loading">正在加载更早的消息</div>
         <div v-else-if="historyTopReached && !hasMoreHistory" class="history-tip">没有更多历史记录了</div>
-        <div v-for="(msg, idx) in messages" :key="msg._id != null ? 'm' + msg._id : 'n' + idx" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
+        <div v-for="(msg, idx) in messages" :key="msg._key || (msg._id != null ? 'm' + msg._id : 'n' + idx)" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
             <div class="message-bubble">
                 <!-- 用户消息：支持文本和图片 -->
                 <div v-if="msg.role === 'user'">
@@ -559,7 +810,7 @@
                             <video :src="part.video_url" controls style="width:100%;"></video>
                         </div>
                     </div>
-                    <button v-if="!isWaitingResponse&&idx==messages.length-1" @click="triggerGenerate" :disabled="isWaitingResponse" style="background:#27ae60;margin-top:10px">生成</button>
+                    <button v-if="!aiGenerating&&idx==messages.length-1" @click="triggerGenerate" :disabled="aiGenerating" style="background:#27ae60;margin-top:10px">生成</button>
                 </div>
 
                 <!-- AI 消息：支持思维链 + 按顺序排列的内容 -->
@@ -567,9 +818,35 @@
                     <!-- 思维链区块 (包含思考文本和工具调用) -->
                     <div v-if="msg.thinkingSegments && msg.thinkingSegments.length" class="thinking-chain">
                         <div v-for="(seg, sIdx) in msg.thinkingSegments" :key="sIdx">
-                            <div v-if="seg.type === 'text'" class="thinking-text">&#x1F4AD; {{ seg.content }}</div>
-                            <div v-if="seg.type === 'tool'" class="tool-call-label">
-                                &#x1F527; 调用工具：<span class="tool-call-item">{{ seg.toolName }}</span>
+                            <div v-if="seg.type === 'text'" class="thinking-text">{{ seg.content }}</div>
+                            <!-- 工具调用：概要 + 详情；仅当工具有详情时才出现无文本的展开/收缩按钮 -->
+                            <div v-if="seg.type === 'tool'" class="tool-call">
+                                <div class="tool-call-label">
+                                    &#x1F527; 调用工具：<span class="tool-call-item">{{ seg.toolName }}</span>
+                                    <button v-if="hasToolDetail(seg)" type="button" class="tool-detail-toggle"
+                                            :class="{ 'is-open': seg.expanded }"
+                                            :title="seg.expanded ? '收起工具详情' : '展开工具详情'"
+                                            :aria-label="seg.expanded ? '收起工具详情' : '展开工具详情'"
+                                            :aria-expanded="seg.expanded ? 'true' : 'false'"
+                                            @click.stop="toggleToolDetail(seg)">
+                                        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor"
+                                             stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <polyline points="9 6 15 12 9 18"></polyline>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div v-if="seg.expanded && hasToolDetail(seg)" class="tool-detail">
+                                    <div v-for="(part, dIdx) in seg.detail" :key="'d' + dIdx">
+                                        <div v-if="part.type === 'text'" class="tool-detail-text">{{ part.content }}</div>
+                                        <div v-else-if="part.type === 'image'" class="message-image">
+                                            <img v-if="part.image_url" :src="part.image_url" alt="工具详情图片" @click.stop="openFullscreen(part.image_url)" style="cursor:pointer" />
+                                            <div v-else class="image-placeholder">加载中...</div>
+                                        </div>
+                                        <div v-else-if="part.type === 'video'" class="message-image">
+                                            <video :src="part.video_url" controls style="width:100%;"></video>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -586,27 +863,59 @@
                     </div>
                 </div>
             </div>
+            <!-- 撤回/重新生成：跟随最新一条消息，生成过程中不显示 -->
+            <div class="msg-actions" v-if="idx === messages.length - 1 && !aiGenerating">
+                <button class="btn-action" @click="aiSendRevert" title="撤回最后一轮对话">撤回</button>
+                <button class="btn-action" v-if="!lastMessageIsUser" @click="triggerRegen" title="重新生成最后一条回复">重新生成</button>
+            </div>
         </div>
 
-        <!-- 加载状态: AI正在思考/调用工具 -->
-        <div v-if="isWaitingResponse" class="loading-indicator" style="align-self: flex-start; margin-left: 12px;">
-            <span>思考中</span>
+        <!-- 加载状态: AI正在思考/调用工具；已请求停止时显示"停止中"，等服务端结束本轮 -->
+        <div v-if="aiGenerating" class="loading-indicator" style="align-self: flex-start; margin-left: 12px;">
+            <span>{{ aiStopping ? '停止中，等待本轮结束…' : '思考中' }}</span>
         </div>
 
 </div>
     <div class="input-area">
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
-            <button @click="sendTextMessage" :disabled="isWaitingResponse || (!inputText.trim() && !uploadedImageId)">发送</button>
-			<button @click="triggerStop" :disabled="!isWaitingResponse">停止</button>
+            <button @click="sendTextMessage" v-if="!aiGenerating" :disabled="(!inputText.trim() && !uploadedImageId)">发送</button>
+			<!-- 停止：点击后进入"停止中"，等服务端本轮结束（done/status）才恢复，期间禁止重复点击 -->
+			<button @click="aiSendStop" v-if="aiGenerating" :disabled="aiStopping" :class="{ 'btn-waiting': aiStopping }">{{ aiStopping ? '停止中…' : '停止' }}</button>
 
-            <button class="upload-btn" @click="triggerFileUpload" :disabled="isWaitingResponse">图片</button>
-            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" @change="onFileSelected" />
+            <button @click="triggerFileUpload" :disabled="aiGenerationBusy" :title="aiGenerationBusy ? '正在生成，无法上传图片' : '上传图片'">图片</button>
+			<button @click="openSettings" title="设置">设置</button>
+            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" :disabled="aiGenerationBusy" @change="onFileSelected" />
         </div>
     </div>
     <!-- 全屏看图 -->
     <div class="fullscreen-overlay" v-if="fullscreenImage" @click="closeFullscreen">
         <img :src="fullscreenImage" />
+    </div>
+
+    <!-- 设置弹窗：主题 / 图片安全 / 模型 -->
+    <div class="url-modal-overlay" v-if="showSettings" @click.self="closeSettings">
+        <div class="url-modal">
+            <h3>设置</h3>
+            <div class="setting-row">
+                <span class="setting-row-label">白天模式</span>
+                <button class="setting-switch" :class="{ 'is-on': isDayMode }" @click.stop="setDayMode(!isDayMode)" :aria-pressed="isDayMode ? 'true' : 'false'">
+                    <span class="setting-switch-knob"></span>
+                </button>
+            </div>
+            <div class="setting-row">
+                <span class="setting-row-label">图片安全模式</span>
+                <button class="setting-switch" :class="{ 'is-on': imageSafeMode }" @click.stop="setImageSafe(!imageSafeMode)" :aria-pressed="imageSafeMode ? 'true' : 'false'">
+                    <span class="setting-switch-knob"></span>
+                </button>
+            </div>
+            <p>图片安全模式开启后，对话中的图片会被深度模糊，点击图片全屏查看原图。</p>
+            <h4 class="setting-subtitle">选择模型</h4>
+            <model-tree v-model="aiModel" :nodes="aiModelTree" @change="aiSetModel"></model-tree>
+            <div class="btn-row">
+                <button class="btn-cancel" @click="closeSettings">关闭</button>
+            </div>
+        </div>
     </div>
 </div>
 <script>
@@ -645,16 +954,8 @@ function getOrCreateConversationId(on_loaded) {
 
 // ----------------------------- 后端接口
 
-// 心跳：定期发送带唯一id的ping，超时未收到同id的pong即判定连接已断开并主动重连
-const HEARTBEAT_INTERVAL = 10000;  // 发送间隔
-const HEARTBEAT_TIMEOUT = 10000;   // 等待pong的超时时间
-
-// WebSocket连接 - 连接真实后端
-function createWebSocketConnection(conversationId) {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//khjxiaogu.com/aichat/chatsocket?chatid=${conversationId}&app=painterirc`;
-    return new WebSocket(wsUrl);
-}
+// WebSocket 连接的建立、重连与心跳由公共协议层（ai-protocol.js + heartbeat.js）负责，
+// 本页只需要提供 aiSocketUrl() 并实现各帧钩子。
 
 // 图片上传 - 调用真实后端接口
 // 失败时返回 { code:-1, httpStatus, message }，其中 message 为可展示的真实失败原因
@@ -709,12 +1010,12 @@ async function fetchImageById(imageId, conversationId) {
 // Vue 主应用
 var main=new Vue({
     el: '#app',
+    // 连接/重连/心跳/帧路由/历史分页由公共协议层提供，本页只实现渲染与提示
+    mixins: [AIProtocolMixin],
     data: {
         conversationId: '',
         messages: [],
         inputText: '',
-        isWaitingResponse: false,
-        ws: null,
         selectedFile: null,
         uploadedImageId: null,
         fullscreenImage: null,
@@ -727,26 +1028,25 @@ var main=new Vue({
         localUrlInput: '',
         urlValid: null,
         urlCheckTimer: null,
-        // 历史记录分页：向上滚动加载更多
-        isLoadingMore: false,      // 是否正在加载更早的历史
-        hasMoreHistory: false,     // 服务端是否还有更早的历史可加载
-        historyTopReached: false,  // 用户是否已经滚动到最早的历史记录
-        suppressAutoScroll: false, // 插入历史记录期间抑制"自动滚动到底部"
         pinnedToBottom: true,      // 用户当前是否停留在底部（不在底部时不自动滚动，避免翻阅历史时被拽回）
-        connTip: null,             // 断线/重连提示文案，null 表示连接正常不显示
+        // 设置弹窗：模型 / 主题 / 图片安全
+        showSettings: false,       // 设置弹窗显隐
+        isDayMode: !!(window.AIWuxiaTheme && AIWuxiaTheme.isDay()),   // 白天/黑夜模式
+        imageSafeMode: (function () {                                  // 图片安全模式：图片在对话中深度模糊
+            try { return localStorage.getItem('aiwuxia_image_safe') === '1'; } catch (e) { return false; }
+        })(),
     },
     async mounted() {
-        this._onKeydown = (e) => { if (e.key === 'Escape' && this.fullscreenImage) this.closeFullscreen(); };
+        this._onKeydown = (e) => {
+            if (e.key !== 'Escape') return;
+            if (this.fullscreenImage) this.closeFullscreen();
+            else if (this.showSettings) this.closeSettings();
+        };
         document.addEventListener('keydown', this._onKeydown);
-        // 浏览器"后退"：全屏看图时只关闭图片，不离开页面
-        this._onPopState = () => this.onPopState();
-        window.addEventListener('popstate', this._onPopState);
 		this.initAfterUrl();
     },
     beforeDestroy() {
         document.removeEventListener('keydown', this._onKeydown);
-        window.removeEventListener('popstate', this._onPopState);
-        this.disconnect();
         if (this.urlCheckTimer) clearInterval(this.urlCheckTimer);
     },
     watch: {
@@ -769,11 +1069,10 @@ var main=new Vue({
             }
         },
         initAfterUrl() {
-			if(!this.ws)
+			if(!this.aiConnected)
             	getOrCreateConversationId(cid => {
                 this.conversationId = cid;
-                this.initWebSocket();
-                this.scrollToBottom(true);
+                this.aiConnect();
             });
         },
         loadChatList() {
@@ -785,29 +1084,24 @@ var main=new Vue({
             if (chatid === this.conversationId) { this.showSidebar = false; return; }
             this.showSidebar = false;
             this.messages = [];
-            this.resetHistoryPaging();
+            this.aiResetHistory();
             this.conversationId = chatid;
             const newUrl = `${window.location.pathname}?conversation_id=${chatid}`;
             window.history.replaceState({}, '', newUrl);
-            this._reconnectAttempts = 0;
-            // 主动断开旧连接且不让它自动重连，再连到新的会话
-            this.disconnect();
-            this.initWebSocket();
+            // aiConnect 会先主动断开旧连接（且不触发自动重连），再连到新的会话
+            this.aiConnect();
         },
         createNewChat() {
             this.showSidebar = false;
-            fetch("createid?appid=painterirc")
+            fetch("createid?appid=painterirc&uid=undefined")
                 .then(p => p.text())
                 .then(cid => {
                     this.messages = [];
-                    this.resetHistoryPaging();
+                    this.aiResetHistory();
                     this.conversationId = cid;
                     const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
                     window.history.replaceState({}, '', newUrl);
-                    this._reconnectAttempts = 0;
-                    // 主动断开旧连接且不让它自动重连（disconnect 会摘掉监听、清掉重连定时器），再建立新连接
-                    this.disconnect();
-                    this.initWebSocket();
+                    this.aiConnect();
                     this.loadChatList();
                 });
         },
@@ -846,71 +1140,24 @@ var main=new Vue({
                 body: JSON.stringify(result),
             }).catch(err => console.error("发送local_response失败", err));
         },
-        // 主动断开连接并且不再自动重连：停心跳、清重连定时器、摘掉所有监听后再关闭
-        disconnect() {
-            this.stopHeartbeat();
-            if (this._reconnectTimer) {
-                clearTimeout(this._reconnectTimer);
-                this._reconnectTimer = null;
-            }
-            this._closeSocket();
-            this._connReason = null;
-            this._connAttempt = 0;
-            this.hideConnTip();
+        /* ================= 公共协议层：连接相关 ================= */
+        // 绘画前端的连接地址（协议与主机跟随当前页面）
+        aiSocketUrl() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return `${protocol}//${location.host}/aichat/chatsocket?chatid=${this.conversationId}&app=painterirc&uid=undefined`;
         },
-        // 仅关闭当前socket：先摘掉回调再close，避免触发onclose里的自动重连
-        _closeSocket() {
-            const ws = this.ws;
-            this.ws = null;
-            if (!ws) return;
-            try {
-                ws.onopen = ws.onmessage = ws.onerror = ws.onclose = () => {};
-                ws.close();
-            } catch (err) {
-                console.log(err);
-            }
+        aiOnSocketOpen() {
+            console.log('WebSocket 已连接, 会话ID:', this.conversationId);
+            this.scrollToBottom(true);
         },
-        initWebSocket() {
-            if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
-            // 换连接时保留断线提示，避免重连过程中提示条闪烁
-            this.stopHeartbeat();
-            this._closeSocket();
-            this.ws = createWebSocketConnection(this.conversationId);
-            this.ws.onopen = () => {
-                console.log('WebSocket 已连接, 会话ID:', this.conversationId);
-                this._reconnectAttempts = 0;
-                this.startHeartbeat();
-                // 之前处于断线状态的话，恢复后提示用户
-                if (this.hideConnTip()) {
-                    this._connReason = null;
-                    this._connAttempt = 0;
-                    this.showTempTip('已重新连接');
-                }
-            };
-            this.ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    this.handleWebSocketMessage(data);
-                } catch(e) {
-                    console.warn("解析消息失败", e);
-                }
-            };
-            this.ws.onerror = (err) => {
-                console.error("WebSocket 错误", err);
-                this.isWaitingResponse = false;
-                this.isLoadingMore = false;
-                this.stopHeartbeat();
-                this.showConnTip('error');
-            };
-            this.ws.onclose = () => {
-                console.log("WebSocket 连接关闭");
-                this.stopHeartbeat();
-                if (this.isWaitingResponse) this.isWaitingResponse = false;
-                this.isLoadingMore = false;
-                this.ws = null;
-                this.showConnTip('closed');
-                this._scheduleReconnect();
-            };
+        aiOnConnState(state) {
+            // 断线期间不要再显示"思考中"
+            if (state !== 'connected') this.aiGenerating = false;
+        },
+        aiOnPopState() {
+            // 浏览器后退：全屏图片开着时只关闭它
+            this._fullscreenPushed = false;
+            this.fullscreenImage = null;
         },
         // ------------------------- 全屏看图
         // 打开时压入一条历史记录，使浏览器"后退"只关闭图片而不会离开页面
@@ -942,337 +1189,225 @@ var main=new Vue({
             this._fullscreenPushed = false;
             this.fullscreenImage = null;
         },
-        // ------------------------- 心跳保活
-        // 定期发送带唯一id的ping；若超时没有收到同一个id的pong，说明连接已经半开/失效，主动断开重连
-        startHeartbeat() {
-            this.stopHeartbeat();
-            this._pendingPings = new Map();
-            this._pingSeq = 0;
-            this._pingTimer = setInterval(() => this.sendPing(), HEARTBEAT_INTERVAL);
-            this.sendPing();   // 建连后立即发一次，尽早发现无效连接
+        // ------------------------- 设置：模型 / 主题 / 图片安全
+        openSettings() {
+            this.showSettings = true;
         },
-        stopHeartbeat() {
-            if (this._pingTimer) {
-                clearInterval(this._pingTimer);
-                this._pingTimer = null;
-            }
-            if (this._pendingPings) {
-                for (const timer of this._pendingPings.values()) clearTimeout(timer);
-                this._pendingPings.clear();
-            }
+        closeSettings() {
+            this.showSettings = false;
         },
-        sendPing() {
-            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-            const id = Date.now().toString(36) + '-' + (++this._pingSeq);
-            const timer = setTimeout(() => this.onHeartbeatTimeout(id), HEARTBEAT_TIMEOUT);
-            this._pendingPings.set(id, timer);
-            try {
-                this.ws.send(JSON.stringify({ type: 'ping', id: id }));
-            } catch (err) {
-                console.warn('发送ping失败', err);
-                clearTimeout(timer);
-                this._pendingPings.delete(id);
-            }
+        // 白天/黑夜模式（偏好存本地，与其它页面共用）
+        setDayMode(day) {
+            this.isDayMode = day;
+            if (window.AIWuxiaTheme) AIWuxiaTheme.setDay(day);
         },
-        onPong(msg) {
-            if (!this._pendingPings || msg.id == null) return;
-            const key = String(msg.id);
-            const timer = this._pendingPings.get(key);
-            if (timer != null) {
-                clearTimeout(timer);
-                this._pendingPings.delete(key);
-            }
+        // 图片安全模式：开启后对话里的图片一律深度模糊，点开全屏才能看清
+        setImageSafe(on) {
+            this.imageSafeMode = on;
+            try { localStorage.setItem('aiwuxia_image_safe', on ? '1' : '0'); } catch (e) { }
         },
-        onHeartbeatTimeout(id) {
-            // 已经被pong清掉的超时不再处理
-            if (!this._pendingPings || !this._pendingPings.has(id)) return;
-            this._pendingPings.delete(id);
-            console.warn('心跳超时：' + HEARTBEAT_TIMEOUT + 'ms 内未收到 pong(' + id + ')，判定连接已断开，主动重连');
-            this.stopHeartbeat();
-            this.showConnTip('timeout');
-            // initWebSocket 内部会关闭旧连接并建立新连接；不重置重连计数，失败时仍按退避策略重试
-            this.initWebSocket();
+        // 重新生成最后一条回复
+        triggerRegen() {
+            if (this.aiGenerationBusy) return;
+            if (this.aiSendRegen()) this.scrollToBottom(true);
         },
-        // 断线/重连提示：reason 区分原因（timeout/error/closed），显示在页面顶部的提示条上
-        showConnTip(reason, attempt) {
-            if (reason) this._connReason = reason;
-            if (attempt != null) this._connAttempt = attempt;
-            if (!this._connReason) this._connReason = 'closed';
-            let label;
-            if (this._connReason === 'timeout') {
-                label = '连接超时';
-            } else if (this._connReason === 'error') {
-                label = '连接错误';
-            } else {
-                label = '连接断开';
-            }
-            const times = this._connAttempt > 1 ? '（第 ' + this._connAttempt + ' 次重试）' : '';
-            this.connTip = label + '，正在重新连接' + times + '…';
+        /* ================= 公共协议层：下行帧钩子 ================= */
+        // 状态帧：生成状态 + 模型目录树 + 当前生效模型
+        aiOnSendbox(text) {
+            this.inputText = text || '';
         },
-        hideConnTip() {
-            if (!this.connTip) return false;
-            this.connTip = null;
-            return true;   // 返回之前是否处于断线提示状态
+        aiOnLocalRequest(frame) {
+            this.handleLocalRequest(frame);
         },
-        _scheduleReconnect() {
-            if (this._reconnectTimer) return;
-			
-            const delay = this._reconnectAttempts < 3 ? 0 : 5000;
-            this._reconnectTimer = setTimeout(() => {
-                this._reconnectTimer = null;
-				if(this.ws) return;
-                this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
-                console.log(`WebSocket 重连 (第${this._reconnectAttempts}次)`);
-                // 保留断线原因，只更新重试次数，便于用户判断当前处于第几次尝试
-                this.showConnTip(null, this._reconnectAttempts);
-                this.initWebSocket();
-            }, delay);
-        },
-        // 处理服务端返回的流式/单次消息（支持thinking/tool_call/content/image/status/batch_messages/message/notice/done）
-        handleWebSocketMessage(msg) {
-            if (msg.type === 'pong') {
-                this.onPong(msg);
-                return;
-            }
-            if (msg.type === 'done') {
-                this.isWaitingResponse = false;
-                return;
-            }
-            if (msg.type === 'local_request') {
-                this.handleLocalRequest(msg);
-                return;
-            }
-            if (msg.type === 'status') {
-                this.isWaitingResponse = !!msg.status;
-                return;
-            }
-            if (msg.type === 'notice') {
-                this.showTempTip(msg.content || msg.message || msg.notice || '');
-                return;
-            }
-            if (msg.type === 'sendbox') {
-                this.inputText = msg.sendbox || msg.content || '';
-                return;
-            }
-            if (msg.type === 'batch_messages' && msg.messages) {
-                this.handleBatchMessages(msg);
-                return;
-            }
-            if (msg.type === 'message') {
-                const parsed = this.parseContentArray(msg.content);
-                const isUser = msg.title === '你';
-                let existing = this.messages.find(m => m._id === msg.id);
-                if (!existing && !isUser) {
-                    const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
-                    if (last && last.role === 'assistant' && !last._id) {
-                        existing = last;
-                    }
-                }
-                if (existing) {
-                    if (!isUser) {
-                        existing._id = msg.id;
-                        existing.contentItems = parsed.contentItems;
-                    }
-                } else {
-                    this.messages.push({
-                        _id: msg.id,
-                        role: isUser ? 'user' : 'assistant',
-                        thinkingSegments: [],
-                        contentItems: parsed.contentItems
-                    });
-                }
-                this.resolveAllPartUrls();
-                this.scrollToBottom();
-                return;
-            }
-            if (msg.type === 'remove' && (msg.id != null || msg.remove != null)) {
-                // 后端下发的id是历史记录标识符（旧协议字段为 remove），优先按id匹配，兼容旧的按序号删除
-                const removedId = msg.id != null ? msg.id : msg.remove;
-                const ridx = this.messages.findIndex(m => m._id === removedId);
-                if (ridx >= 0) {
-                    this.messages.splice(ridx, 1);
-                } else {
-                    this.messages = this.messages.filter((m, idx) => idx !== removedId);
-                }
-                return;
-            }
-            // 查找目标assistant消息：优先按id匹配，其次找最后一条无id的assistant，否则新建
-            let targetMsg = null;
-            if (msg.id) {
-                targetMsg = this.messages.find(m => m._id === msg.id);
-            }
-            if (!targetMsg) {
+        // 找到（必要时新建）当前流式输出的助手消息
+        // _key 在创建时固定：之后服务端补上历史 id 只改 _id，节点不会被重建（否则 AI 框会闪一下）
+        painterTargetMessage(id) {
+            let target = id ? this.messages.find(m => m._id === id) : null;
+            if (!target) {
                 const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
-                if (last && last.role === 'assistant') {
-                    targetMsg = last;
-                }
+                if (last && last.role === 'assistant') target = last;
             }
-            if (!targetMsg) {
-                targetMsg = {
-                    _id: msg.id || null,
-                    role: 'assistant',
-                    thinkingSegments: [],
-                    contentItems: []
-                };
-                this.messages.push(targetMsg);
-            } else if (msg.id && !targetMsg._id) {
-                targetMsg._id = msg.id;
+            if (!target) {
+                target = { _id: id || null, _key: this.aiMessageKey(id), role: 'assistant', thinkingSegments: [], contentItems: [] };
+                this.messages.push(target);
+            } else if (id && !target._id) {
+                target._id = id;
             }
-            if (msg.type === 'thinking') {
-                targetMsg.thinkingSegments = targetMsg.thinkingSegments || [];
-                const lastSeg = targetMsg.thinkingSegments.length ? targetMsg.thinkingSegments[targetMsg.thinkingSegments.length - 1] : null;
-                if (lastSeg && lastSeg.type === 'text') {
-                    lastSeg.content += msg.content;
-                } else {
-                    targetMsg.thinkingSegments.push({ type: 'text', content: msg.content });
-                }
-            } else if (msg.type === 'tool_call') {
-                targetMsg.thinkingSegments = targetMsg.thinkingSegments || [];
-                targetMsg.thinkingSegments.push({ type: 'tool', toolName: msg.tool_name });
-            } else if (msg.type === 'content') {
-				const raw = msg.content !== undefined ? msg.content : msg.delta;
-				const parsed = this.parseContentArray(raw);
-                let text = '';
-				targetMsg.contentItems = targetMsg.contentItems || [];
-                const lastItem = targetMsg.contentItems.length ? targetMsg.contentItems[targetMsg.contentItems.length - 1] : null;
-                    
-                if (Array.isArray(raw)) {
-                    for (const item of parsed.contentItems) {
-                       targetMsg.contentItems.push(item);
-                    }
-                } else {
-					if (lastItem && lastItem.type === 'text') {
-                        lastItem.content += raw || '';
-                    } else {
-                        targetMsg.contentItems.push({ type: 'text', content: raw || '' });
-                    }
-                }
-				this.resolveAllPartUrls();
-            } else if (msg.type === 'image') {
-                const imageId = msg.image_id;
-                targetMsg.imageId = imageId;
-                targetMsg.contentItems = targetMsg.contentItems || [];
-                const imgItem = { type: 'image', image_id: imageId, image_url: null };
-                targetMsg.contentItems.push(imgItem);
-                this.loadImageById(imageId).then(imgUrl => {
-                    imgItem.image_url = imgUrl;
-                    this.$forceUpdate();
-                    this.scrollToBottom();
-                }).catch(err => {
-                    console.error("加载图片失败", err);
-                    imgItem.image_url = '';
-                });
+            return target;
+        },
+        // 思考过程增量
+        aiOnThinking(frame) {
+            const target = this.painterTargetMessage(frame.id);
+            target.thinkingSegments = target.thinkingSegments || [];
+            const lastSeg = target.thinkingSegments.length ? target.thinkingSegments[target.thinkingSegments.length - 1] : null;
+            if (lastSeg && lastSeg.type === 'text') {
+                lastSeg.content += frame.content;
+            } else {
+                target.thinkingSegments.push({ type: 'text', content: frame.content });
             }
             this.scrollToBottom();
         },
-        // 把服务端 batch_messages 里的一条记录转换成界面消息
-        buildBatchMessage(m) {
-            const parsed = this.parseContentArray(m.content);
-            const isUser = m.title === '你';
-            const thinkingSegs = [];
-            if (!isUser && Array.isArray(m.thinking)) {
-                for (const seg of m.thinking) {
-                    if (typeof seg === 'string') {
-                        thinkingSegs.push({ type: 'text', content: seg });
-                    } else if (seg && seg.type === 'tool_call') {
-                        thinkingSegs.push({ type: 'tool', toolName: seg.tool_name || seg.toolName || '' });
-                    } else if (seg && seg.content != null) {
-                        thinkingSegs.push({ type: 'text', content: seg.content });
-                    }
+        // 工具调用提示：概要与详情（详情仅在有内容时下发，没有详情就不给展开按钮）
+        aiOnToolCall(frame) {
+            const target = this.painterTargetMessage(frame.id);
+            target.thinkingSegments = target.thinkingSegments || [];
+            target.thinkingSegments.push({
+                type: 'tool',
+                toolName: frame.tool_name,
+                tool: frame.tool || '',
+                detail: this.parseContentArray(frame.content).contentItems,
+                expanded: false
+            });
+            this.resolveAllPartUrls();
+            this.scrollToBottom();
+        },
+        // 工具是否有可展开的详情（无详情时不显示按钮）
+        hasToolDetail(seg) {
+            return !!(seg && seg.detail && seg.detail.length);
+        },
+        // 展开/收缩工具详情（按钮只有图标，无文本）
+        toggleToolDetail(seg) {
+            if (!this.hasToolDetail(seg)) return;
+            seg.expanded = !seg.expanded;
+        },
+        // 流式内容（结构化内容数组，可能包含文本/图片等）
+        aiOnContent(frame) {
+            const target = this.painterTargetMessage(frame.id);
+            const raw = frame.content;
+            const parsed = this.parseContentArray(raw);
+            target.contentItems = target.contentItems || [];
+            if (Array.isArray(raw)) {
+                for (const item of parsed.contentItems) {
+                    target.contentItems.push(item);
+                }
+            } else {
+                const lastItem = target.contentItems.length ? target.contentItems[target.contentItems.length - 1] : null;
+                if (lastItem && lastItem.type === 'text') {
+                    lastItem.content += raw || '';
+                } else {
+                    target.contentItems.push({ type: 'text', content: raw || '' });
                 }
             }
-            return {
-                _id: m.id != null ? m.id : null,
-                role: isUser ? 'user' : 'assistant',
-                thinkingSegments: thinkingSegs,
-                contentItems: parsed.contentItems
-            };
+            this.resolveAllPartUrls();
+            this.scrollToBottom();
         },
-        // 处理一批历史记录：初始加载/重连替换最新一页，向上滚动加载时插入到最前面并保持滚动位置
-        handleBatchMessages(msg) {
-            const prepend = !!msg.prepend;
-            const container = this.$refs.messageContainer;
-            const prevScrollHeight = container ? container.scrollHeight : 0;
-            const prevScrollTop = container ? container.scrollTop : 0;
-            const incoming = [];
-            if (prepend) {
-                // 按标识符去重，避免重复插入
+        // 整条消息（用户发言或助手已完成的消息）
+        aiOnMessage(frame) {
+            const parsed = this.parseContentArray(frame.content);
+            const isUser = this.aiIsUserMessage(frame);
+            let existing = this.messages.find(m => m._id === frame.id);
+            if (!existing && !isUser) {
+                const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
+                if (last && last.role === 'assistant' && !last._id) existing = last;
+            }
+            if (existing) {
+                if (!isUser) {
+                    existing._id = frame.id;
+                    existing.contentItems = parsed.contentItems;
+                }
+            } else {
+                this.messages.push({
+                    _id: frame.id,
+                    _key: this.aiMessageKey(frame.id),
+                    role: isUser ? 'user' : 'assistant',
+                    thinkingSegments: [],
+                    contentItems: parsed.contentItems
+                });
+            }
+            this.resolveAllPartUrls();
+            this.scrollToBottom();
+        },
+        // 删除一条消息（id 为历史记录标识符）
+        aiOnRemove(frame) {
+            const removedId = frame.id;
+            const ridx = this.messages.findIndex(m => m._id === removedId);
+            if (ridx >= 0) {
+                this.messages.splice(ridx, 1);
+            } else {
+                this.messages = this.messages.filter((m, idx) => idx !== removedId);
+            }
+        },
+        // 历史记录分页落地（视口锚定与分页状态由公共层负责）
+        aiOnBatch(items, meta) {
+            const toMessage = (item) => {
+                const isUser = this.aiIsUserMessage(item);
+                const thinkingSegs = [];
+                if (!isUser && Array.isArray(item.thinking)) {
+                    for (const seg of item.thinking) {
+                        if (typeof seg === 'string') {
+                            thinkingSegs.push({ type: 'text', content: seg });
+                        } else if (seg && seg.type === 'tool_call') {
+                            // 详情（工具参数等）随历史一起下发，没有内容时不给展开按钮
+                            thinkingSegs.push({
+                                type: 'tool',
+                                toolName: seg.tool_name || seg.toolName || '',
+                                tool: seg.tool || '',
+                                detail: this.parseContentArray(seg.content).contentItems,
+                                expanded: false
+                            });
+                        } else if (seg && seg.type === 'tool_result') {
+                            // 工具结果同样按“工具 + 可展开详情”展示，默认收起
+                            thinkingSegs.push({
+                                type: 'tool',
+                                toolName: seg.tool_name || seg.toolName || '',
+                                tool: seg.tool || '',
+                                detail: this.parseContentArray(seg.content).contentItems,
+                                expanded: false
+                            });
+                        } else if (seg && seg.content != null) {
+                            thinkingSegs.push({ type: 'text', content: this.aiContentToText(seg.content) });
+                        }
+                    }
+                }
+                return {
+                    _id: item.id,
+                    _key: this.aiMessageKey(item.id),
+                    role: isUser ? 'user' : 'assistant',
+                    thinkingSegments: thinkingSegs,
+                    contentItems: this.parseContentArray(item.content).contentItems
+                };
+            };
+            if (meta.prepend) {
+                // 向上翻页：按标识符去重后插入到最前面
                 const known = new Set();
                 for (const m of this.messages) {
                     if (m._id != null) known.add(m._id);
                 }
-                for (const m of msg.messages) {
-                    if (m.id != null) {
-                        if (known.has(m.id)) continue;
-                        known.add(m.id);
+                const incoming = [];
+                for (const item of items) {
+                    if (item.id != null) {
+                        if (known.has(item.id)) continue;
+                        known.add(item.id);
                     }
-                    incoming.push(this.buildBatchMessage(m));
+                    incoming.push(toMessage(item));
                 }
-            } else {
-                for (const m of msg.messages) {
-                    incoming.push(this.buildBatchMessage(m));
-                }
-            }
-            this.hasMoreHistory = !!msg.hasMore;
-            this.isLoadingMore = false;
-            if (prepend) {
-                // 插入历史记录会把内容撑高：先抑制自动滚动到底部，再恢复原来的视口位置
-                this.suppressAutoScroll = true;
                 if (incoming.length) this.messages.unshift(...incoming);
-                this.resolveAllPartUrls();
-                this.$nextTick(() => {
-                    const c = this.$refs.messageContainer;
-                    if (c) c.scrollTop = c.scrollHeight - prevScrollHeight + prevScrollTop;
-                    this.suppressAutoScroll = false;
-                });
             } else {
-                // 服务端每次连接都会下发最新一页，这里替换最新范围，同时保留本地已加载的更早记录
+                // 连接/重连下发最新一页：替换最新范围，保留本地已经翻出来的更早记录
+                const incoming = items.map(toMessage);
                 const oldestIncoming = incoming.length ? incoming[0]._id : null;
                 const kept = (oldestIncoming != null)
                     ? this.messages.filter(m => m._id != null && m._id < oldestIncoming)
                     : this.messages;
                 this.messages = kept.concat(incoming);
-                this.historyTopReached = false;
-                this.resolveAllPartUrls();
                 this.scrollToBottom(true);
             }
+            this.resolveAllPartUrls();
         },
-        // 切换/新建对话时重置分页状态
-        resetHistoryPaging() {
-            this.isLoadingMore = false;
-            this.hasMoreHistory = false;
-            this.historyTopReached = false;
-            this.suppressAutoScroll = false;
-            this.pinnedToBottom = true;
-        },
-        // 向上滚动到顶部附近时请求更早的历史记录
-        onMessagesScroll() {
-            const c = this.$refs.messageContainer;
-            if (!c) return;
-            // 无论是否正在插入历史，都要先记录"是否还在底部"：
-            // 内容增长本身不会触发scroll事件，所以这个标志只在真实滚动时更新，正好用于"粘底"判断
-            this.pinnedToBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) <= 60;
-            if (this.suppressAutoScroll) return;
-            if (c.scrollTop > 60) return;
-            if (this.hasMoreHistory) {
-                this.loadMoreHistory();
-            } else {
-                this.historyTopReached = true;
-            }
-        },
-        loadMoreHistory() {
-            if (this.isLoadingMore || !this.hasMoreHistory) return;
-            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-            // 以当前最旧的一条记录作为游标，向后端请求更早的一页
-            let beforeId = null;
+        // 分页游标：本地最旧的一条记录
+        aiOldestMessageId() {
+            let oldest = null;
             for (const m of this.messages) {
-                if (m._id != null && (beforeId === null || m._id < beforeId)) beforeId = m._id;
+                if (m._id != null && (oldest === null || m._id < oldest)) oldest = m._id;
             }
-            this.isLoadingMore = true;
-            this.ws.send(JSON.stringify({
-                type: 'requestBackLog',
-                before_id: beforeId === null ? 0 : beforeId
-            }));
+            return oldest === null ? 0 : oldest;
+        },
+        aiHistoryContainer() {
+            return this.$refs.messageContainer;
+        },
+        // 滚动时维护"是否贴底"：内容增长本身不触发 scroll 事件，因此只在真实滚动时更新
+        aiOnScroll(container) {
+            this.pinnedToBottom = (container.scrollHeight - container.scrollTop - container.clientHeight) <= 60;
         },
         parseContentArray(content) {
             const result = { contentItems: [] };
@@ -1316,6 +1451,14 @@ var main=new Vue({
                 if (msg.contentItems && msg.contentItems.length) {
                     this.resolvePartUrls(msg.contentItems);
                 }
+                // 工具详情里也可能有图片，同样要换成可访问的地址
+                if (msg.thinkingSegments && msg.thinkingSegments.length) {
+                    for (const seg of msg.thinkingSegments) {
+                        if (seg.detail && seg.detail.length) {
+                            this.resolvePartUrls(seg.detail);
+                        }
+                    }
+                }
             }
         },
         // 根据图片ID获取真实URL
@@ -1324,51 +1467,47 @@ var main=new Vue({
         },
         // 发送文本消息（通过websocket）— 只添加到历史，不触发生成
         sendTextMessage() {
-            if (this.isWaitingResponse) return;
+            if (this.aiGenerationBusy) return;
             const text = this.inputText.trim();
             if (!text) {
                 return;
             }
-            const payload = JSON.stringify({
-                type: "message",
-                content: text,
-                conversation_id: this.conversationId
-            });
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(payload);
-            } else {
+            if (!this.aiSendMessage(text)) {
+                // 连接未就绪：重连后补发一次
                 console.warn("WebSocket未就绪, 重新连接");
-                this.initWebSocket();
-                setTimeout(() => { if(this.ws) this.ws.send(payload); }, 200);
+                this.aiConnect();
+                setTimeout(() => this.aiSendMessage(text), 500);
             }
             this.inputText = '';
             this.scrollToBottom(true);
         },
         // 触发AI生成
         triggerGenerate() {
-            if (this.isWaitingResponse) return;
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ type: "generate" }));
-                this.isWaitingResponse = true;
+            if (this.aiGenerationBusy) return;
+            if (this.aiSendGenerate()) {
+                this.aiGenerating = true;
                 this.scrollToBottom(true);
             }
         },
-		triggerStop() {
-            if (!this.isWaitingResponse) return;
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ type: "stop" }));
-            }
-        },
-        // 触发文件选择
+        // 触发文件选择（本轮生成/停止中一律禁止上传）
         triggerFileUpload() {
-            if (this.isWaitingResponse) return;
+            if (this.aiGenerationBusy) {
+                this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
+                return;
+            }
             this.$refs.fileInput.click();
         },
         async onFileSelected(e) {
             const file = e.target.files[0];
+            // 选择文件期间可能已经开始生成（例如生成按钮先被点到），这里再挡一次
+            if (this.aiGenerationBusy) {
+                this.$refs.fileInput.value = '';
+                this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
+                return;
+            }
             if (!file) return;
             if (!file.type.startsWith('image/')) {
-                alert("请选择图片文件");
+                this.aiToast("请选择图片文件", { kind: 'warn' });
                 return;
             }
             // 显示本地预览
@@ -1383,7 +1522,7 @@ var main=new Vue({
                         // 但需求未强制，不过为了用户清楚，提醒图片已加入上下文，并且不影响聊天界面原有的消息，我这里不冗余插入消息，但预览保留
                         // 同时此图片会加入服务端上下文，下次AI回复会理解该图片 (模拟代码已经支持上下文概念)
                         // 展示一个临时toast风格
-                        this.showTempTip("图片已上传，已加入对话上下文，可继续发送文字提问");
+                        this.aiToast("图片已上传，已加入对话上下文，可继续发送文字提问");
                     } else {
                         this.showUploadError(res);
                     }
@@ -1400,23 +1539,7 @@ var main=new Vue({
         showUploadError(res) {
             const reason = (res && res.message) ? res.message : '未知错误';
             console.error("图片上传失败：", res);
-            alert("图片上传失败：" + reason);
-        },
-        showTempTip(msg) {
-            // 临时提示
-            const tipDiv = document.createElement('div');
-            tipDiv.innerText = msg;
-            tipDiv.style.position = 'fixed';
-            tipDiv.style.bottom = '80px';
-            tipDiv.style.left = '20px';
-            tipDiv.style.background = '#1e293b';
-            tipDiv.style.color = 'white';
-            tipDiv.style.padding = '6px 12px';
-            tipDiv.style.borderRadius = '30px';
-            tipDiv.style.fontSize = '12px';
-            tipDiv.style.zIndex = 1000;
-            document.querySelector(".messages-container").appendChild(tipDiv);
-            setTimeout(() => tipDiv.remove(), 2500);
+            this.aiToast("图片上传失败：" + reason, {kind:'error'});
         },
         scrollToBottom(force) {
             // 正在插入更早的历史记录时不要抢滚动位置
