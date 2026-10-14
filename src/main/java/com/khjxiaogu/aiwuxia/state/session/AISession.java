@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -37,22 +38,27 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
+import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPermission;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPolicy;
+import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
-import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
+import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
 /**
@@ -88,8 +94,15 @@ public class AISession implements ISaveData,AutoCloseable{
 	protected ISaveData data;
 	/** 关联的 AI 应用程序实例，用于处理具体的 AI 逻辑（如生成回复） */
 	protected AIApplication aiapp;
-	/** 当前正在构建的推理内容（AI 生成过程中的中间思考文本）的缓冲区 */
-	protected MutableMessageContents currentReasoner = null;
+	/**
+	 * 当前打开的历史写入上下文。
+	 * <p>
+	 * 应用通过 {@link #beginWrite(Role)} / {@link #continueWrite(Role)} 取得可写入上下文，
+	 * 并用 try-with-resources 完成写入，会话本身不再提供任何"追加到历史记录"的方法。
+	 * 生成过程中其它组件（例如工具）可以先用 {@link #getCurrentWrite()} 取得该上下文再写入。
+	 * </p>
+	 */
+	protected SessionWriteContext currentWrite;
 	/** 当前会话关联的用户标识 */
 	public final String user;
 	/**
@@ -109,6 +122,141 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * </p>
 	 */
 	protected final ToolApprovalManager toolApprovalManager = new ToolApprovalManager(this::requestToolCallApproval);
+
+	/**
+	 * 本会话的工具注册点：所有工具都注册到这里，由工具调用管理器统一处理。
+	 */
+	private final ToolCallManager.Builder toolBuilder = ToolCallManager.builder();
+	/**
+	 * 本会话持有的工具调用管理器（工具注册表 + 调用次数/权限/许可规则），惰性构建并缓存。
+	 * <p>
+	 * 由 {@link #toolBuilder} 中注册的工具与 {@link #getToolCallPolicy()} 装配而成；
+	 * 注册工具或调用规则变化后由 {@link #invalidateToolCallManager()} 失效重建。
+	 * {@code AIRequest} 直接取用本管理器，不再自行维护工具列表。
+	 * </p>
+	 */
+	private volatile ToolCallManager toolCallManager;
+
+	/**
+	 * 注册一个工具，由本会话的工具调用管理器统一处理。
+	 *
+	 * @param tool 工具定义
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTool(ToolData tool) {
+		toolBuilder.tool(tool);
+		invalidateToolCallManager();
+		return this;
+	}
+
+	/**
+	 * 批量注册工具，由本会话的工具调用管理器统一处理。
+	 *
+	 * @param tools 工具定义集合
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTools(Collection<ToolData> tools) {
+		toolBuilder.tools(tools);
+		invalidateToolCallManager();
+		return this;
+	}
+
+	/**
+	 * 注册一个 MCP 模块提供的全部工具。
+	 *
+	 * @param tools MCP 模块的工具集合
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTools(MCPTools tools) {
+		if (tools != null) {
+			registerTools(tools.getTools());
+		}
+		return this;
+	}
+
+	/**
+	 * 获取本会话的工具调用管理器，{@code AIRequest} 直接取用。
+	 * <p>
+	 * 管理器由已注册的工具（{@link #registerTool}/{@link #registerTools}）与
+	 * {@link #getToolCallPolicy()}（调用次数、权限、许可规则）装配而成。
+	 * </p>
+	 *
+	 * @return 工具调用管理器，无工具时其工具表为空
+	 */
+	public ToolCallManager getToolCallManager() {
+		ToolCallManager manager = toolCallManager;
+		if (manager == null) {
+			synchronized (this) {
+				if (toolCallManager == null) {
+					toolCallManager = toolBuilder.policy(getToolCallPolicy()).build();
+				}
+				manager = toolCallManager;
+			}
+		}
+		return manager;
+	}
+
+	/**
+	 * 使缓存的工具调用管理器失效（注册工具或调用规则变化后调用），下次获取时按当前工具与规则重新装配。
+	 * <p>注册工具时已自动失效，无需手动调用。</p>
+	 */
+	public void invalidateToolCallManager() {
+		synchronized (this) {
+			toolCallManager = null;
+		}
+	}
+
+	/**
+	 * 获取一次工具调用的用户友好显示。
+	 * <p>
+	 * 生成过程中已将显示算好并缓存在 {@link ToolCallContent} 上，直接返回；
+	 * 历史从存储重新加载后显示信息不存在（不持久化），此时按当前注册的工具重算，
+	 * 保证加载后工具调用简述与具体内容同样可见。
+	 * </p>
+	 *
+	 * @param content 工具调用内容
+	 * @param index   工具调用下标
+	 * @return 用户友好显示，永不为 null
+	 */
+	public ToolCallDisplay getToolCallDisplay(ToolCallContent content, int index) {
+		if (content == null) {
+			return ToolCallDisplay.EMPTY;
+		}
+		if (content.hasDisplays()) {
+			return content.getDisplay(index);
+		}
+		List<ToolCall> calls = content.getToolCalls();
+		if (index < 0 || index >= calls.size()) {
+			return ToolCallDisplay.EMPTY;
+		}
+		return getToolCallManager().displayFor(calls.get(index));
+	}
+
+	/**
+	 * 获取一次工具结果的用户友好显示。
+	 * <p>
+	 * 生成过程中已算好的显示直接返回；历史重新加载后按当前注册的工具重算，
+	 * 需要提供对应的原始调用（可按 {@link ToolContent#getToolId()} 与
+	 * {@link ToolCallContent#getToolCalls()} 配对）。
+	 * </p>
+	 *
+	 * @param call   对应的原始工具调用，可为 null
+	 * @param result 工具结果内容
+	 * @return 用户友好显示，永不为 null
+	 */
+	public ToolCallDisplay getToolResultDisplay(ToolCall call, ToolContent result) {
+		if (result == null) {
+			return ToolCallDisplay.EMPTY;
+		}
+		if (result.hasDisplay()) {
+			return result.getDisplay();
+		}
+		if (call == null) {
+			return result.getDisplay();
+		}
+		ToolCallManager manager = getToolCallManager();
+		return manager.resultDisplayFor(call, manager.displayFor(call), result.getResult());
+	}
 
 	public AIOutput getCurrentOutput() {
 		return currentOutput;
@@ -146,228 +294,159 @@ public class AISession implements ISaveData,AutoCloseable{
 		return data.getHistory();
 	}
 
-	 /**
-     * 追加内容到当前的推理内容缓冲区。
-     * 如果缓冲区为空，会先创建一个新的 {@link StringBuilder}。
-     * 同时会标记会话为已更新（{@link #setUpdated()}）。
-     *
-     * @param current 要追加的推理内容字符串
-     */
-    public void appendReasoner(MessageContent current) {
-    	HistoryItem hi=this.getHistory().peekLast();
-    	// 撤回会把条目做软删除，此时容器里可能只剩已删除条目，最后一条并不存在
-    	if(hi!=null&&hi.getRole()==Role.ASSISTANT) {
-    		this.getHistory().appendReasoner(current);
-    	}else {
-	        if (currentReasoner == null)
-	            currentReasoner = new MutableMessageContents();
-	        currentReasoner.add(current);
-    	}
-        this.setUpdated();
-    }
-
 	/**
-	 * 重置当前推理内容缓冲区，将其置为 null。 通常在一个完整的推理过程结束后调用。
+	 * 开始一次历史写入，返回可写入上下文。
+	 * <p>
+	 * 每次调用都会新起一条记录：History 在创建时即分配好标识符，但记录尚未进入历史容器，
+	 * 因此不参与上下文构建、总结清理与历史分页，也不会落盘。应用用 try-with-resources
+	 * 持有该上下文写入本轮内容，块结束时由 {@link HistoryWriteContext#close()} 结算：
+	 * 写过内容就提交进历史，只写了思维链的空记录直接撤回。
+	 * </p>
+	 * <p>
+	 * 会话同一时间只保留一个打开的写入上下文：调用本方法时若上一个还没结束，会先按内容结算它。
+	 * </p>
+	 *
+	 * @param role 本条记录的角色
+	 * @return 可写入上下文
 	 */
-	public void resetReasoner() {
-		currentReasoner = null;
+	public HistoryWriteContext beginWrite(Role role) {
+		closeCurrentWrite();
+		currentWrite = new SessionWriteContext(this, getHistory().beginPending(role, true), true);
+		setUpdated();
+		return currentWrite;
 	}
 
 	/**
-	 * 向当前会话追加一行内容，并根据参数决定是否将其视为有效的上下文内容。 如果最后一条历史条目与给定角色相同且其上下文有效性状态与参数一致，
-	 * 则在该条目中追加内容；否则创建新的历史条目。 若当前有未完成的推理内容且角色为助手，则会将推理内容关联到新条目。
+	 * 续写最后一条同角色记录，返回可写入上下文。
+	 * <p>
+	 * 用于同一条记录由多次到达的输入拼成的场景（例如绘画前端先发文本、再发图片）：
+	 * 最后一条历史条目与角色相同且仍是有效上下文时就地续写它，否则等价于
+	 * {@link #beginWrite(Role)} 新起一条记录。续写的记录本来就在历史里，
+	 * 因此 {@link HistoryWriteContext#close()} 不会提交或撤回任何内容。
+	 * </p>
 	 *
-	 * @param role            条目的角色（用户、助手等）
-	 * @param content         要追加的内容字符串（会自动追加换行符）
-	 * @param appendToContext 如果为 true，表示该内容应被视为有效的上下文内容 （即对后续对话有影响），会更新条目的上下文有效性标记
+	 * @param role 要写入的角色
+	 * @return 可写入上下文
 	 */
-	public void appendLine(Role role, String content, boolean appendToContext) {
-		// 已删除的条目不算数：撤回后容器里可能只剩软删除条目，getLast() 此时返回 null
-		HistoryItem hi = getLast();
-		if (hi != null && (role != hi.getRole() || (!hi.isValidContext() && appendToContext))) {
-			hi = null;
-		}
-		if (hi == null) {
-			
-			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi = getHistory().add(role, content + "\n", currentReasoner, true);
-				currentReasoner = null;
-			}else {
-				hi = getHistory().add(role, content + "\n", true);
-			}
-			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
-		} else {
-			getHistory().appendLine(content, appendToContext);
-			appendMessage(hi.getIdentifier(), content + "\n");
-		}
-	}
-
-	/**
-	 * 向当前会话追加一个字符块（不自动添加换行），并决定是否同时将其添加到上下文内容中。 逻辑与 {@link #appendLine}
-	 * 类似，区别在于内容直接追加而不加换行。
-	 *
-	 * @param role            条目的角色
-	 * @param ch              要追加的字符块字符串
-	 * @param appendToContext 是否同时将其添加到上下文内容中
-	 */
-	public void appendCh(Role role, String ch, boolean appendToContext) {
+	public HistoryWriteContext continueWrite(Role role) {
+		HistoryItem last = getHistory().peekLast();
 		// 已删除的条目不算数：撤回后容器里可能只剩软删除条目，peekLast() 此时返回 null
-		HistoryItem hi = getHistory().peekLast();
-		if (hi != null && (role != hi.getRole() || (!hi.isValidContext() && appendToContext))) {
-			hi = null;
+		if (last != null && last.getRole() == role && last.isValidContext()) {
+			closeCurrentWrite();
+			currentWrite = new SessionWriteContext(this, last, false);
+			return currentWrite;
 		}
-		if (hi == null) {
-			
-			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi = getHistory().add(role, ch, currentReasoner, appendToContext);
-				currentReasoner = null;
-			}else {
-				hi = getHistory().add(role, ch, appendToContext);
-			}
-			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
-		} else {
-			getHistory().append(ch, appendToContext);
-			appendMessage(hi.getIdentifier(), ch);
-		}
+		return beginWrite(role);
 	}
 
-
 	/**
-	 * 向当前会话追加一个多模态内容块（不自动添加换行），并决定是否同时将其添加到上下文内容中。
-	 * 与 {@link #appendCh(Role, String, boolean)} 类似，但接受 {@link MessageContent}，
-	 * 可以追加图片、视频等非文本内容。
+	 * 获取当前打开的写入上下文。
+	 * <p>
+	 * 生成过程中需要往本轮记录里追加内容的组件（例如执行工具时发送图片）通过本方法取得上下文，
+	 * 再调用其写入方法；没有正在进行的写入时返回 null。
+	 * </p>
 	 *
-	 * @param role            条目的角色
-	 * @param content         要追加的多模态内容
-	 * @param appendToContext 是否同时将其添加到上下文内容中
+	 * @return 当前写入上下文，没有时返回 null
 	 */
-	public void appendCh(Role role, MessageContent content, boolean appendToContext) {
-		// 已删除的条目不算数：撤回后容器里可能只剩软删除条目，peekLast() 此时返回 null
-		HistoryItem hi = getHistory().peekLast();
-		if (hi != null && (role != hi.getRole() || (!hi.isValidContext() && appendToContext))) {
-			hi = null;
-		}
-		if (hi == null) {
-			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi = getHistory().add(role, new MutableMessageContents(content), currentReasoner,appendToContext);
-				currentReasoner = null;
-			} else {
-				hi = getHistory().add(role, new MutableMessageContents(content), null, appendToContext);
-			}
-			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
-		} else {
-			getHistory().append(content, appendToContext);
-			appendMessage(hi.getIdentifier(), content);
+	public HistoryWriteContext getCurrentWrite() {
+		return currentWrite;
+	}
+
+	/**
+	 * 结束当前打开的写入上下文（按其内容提交或撤回），没有打开时不做任何处理。
+	 */
+	private void closeCurrentWrite() {
+		SessionWriteContext write = currentWrite;
+		if (write != null && !write.isResolved()) {
+			write.close();
 		}
 	}
 
 	/**
-	 * 向当前会话追加一行内容到上下文中，不影响显示内容。 如果最后一条历史条目与给定角色相同且是有效的上下文内容，则在其上下文中追加； 否则创建新的历史条目。
+	 * 写入上下文结束（提交、撤回或关闭）时的回调。
 	 *
-	 * @param role    条目的角色
-	 * @param content 要追加到上下文的内容（会自动追加换行符）
+	 * @param write 结束的上下文
 	 */
-	public void appendContextLine(Role role, String content) {
-		// 已删除的条目不算数：撤回后容器里可能只剩软删除条目，peekLast() 此时返回 null
-		HistoryItem hi = getHistory().peekLast();
-		if (hi != null && (role != hi.getRole() || (!hi.isValidContext()))) {
-			hi = null;
+	void onWriteResolved(SessionWriteContext write) {
+		if (currentWrite == write) {
+			currentWrite = null;
 		}
-		if (hi == null) {
-			
-			if (currentReasoner != null && role == Role.ASSISTANT) {
-				hi = getHistory().add(role, content + "\n", currentReasoner, true);
-				currentReasoner = null;
-			}else {
-				hi = getHistory().add(role, "", content + "\n");
-			}
-			postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
-		} else {
-			getHistory().appendContext(content + "\n");
-		}
+		setUpdated();
 	}
 
 	/**
-	 * 添加一个新的历史条目，指定角色、显示内容和是否可发送。 如果当前有未完成的推理内容且角色为助手，则将其关联到新条目。
+	 * 思维链写入钩子。
+	 * <p>
+	 * 可写入上下文每次追加思维链时调用。需要把思考过程实时呈现给前端的会话可以重写本方法
+	 * （例如按自己的帧格式下发 thinking 帧），默认不做任何处理。
+	 * </p>
 	 *
-	 * @param role           角色
-	 * @param content        内容
-	 * @param isValidContext 指示该条目是否可作为有效的上下文内容
+	 * @param reasoner 本次追加的思维链内容
 	 */
-	public void add(Role role, String content, boolean isValidContext) {
-		HistoryItem hi;
-		if (currentReasoner != null && role == Role.ASSISTANT) {
-			hi = getHistory().add(role, content, currentReasoner, isValidContext);
-			currentReasoner = null;
-		}else {
-			hi = getHistory().add(role, content, isValidContext);
-		}
-		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
-	}
-	public void add(Role role, MessageContents content, boolean isValidContext) {
-		HistoryItem hi;
-		if (currentReasoner != null && role == Role.ASSISTANT) {
-			hi = getHistory().add(role, content, currentReasoner, isValidContext);
-			currentReasoner = null;
-		}else {
-			hi = getHistory().add(role, content, null, isValidContext);
-		}
-		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
-	}
-	/**
-	 * 添加一个新的历史条目，指定角色、显示内容和完整的上下文内容。 如果当前有未完成的推理内容且角色为助手，则将其关联到新条目。
-	 *
-	 * @param role           角色
-	 * @param displayContent 显示内容
-	 * @param contextContent 完整的上下文内容（用于 AI 输入）
-	 */
-	public void add(Role role, String displayContent, String contextContent) {
-		HistoryItem hi;
-		if (currentReasoner != null && role == Role.ASSISTANT) {
-			hi = getHistory().add(role, displayContent, contextContent, currentReasoner);
-			currentReasoner = null;
-		}else {
-			hi = getHistory().add(role, displayContent, contextContent);
-		}
-		postMessage(hi.getIdentifier(), hi.getRole(), hi.getDisplayContent());
+	protected void onReasonerAppend(MessageContent reasoner) {
+
 	}
 
 	/**
-	 * 根据标识符移除指定的历史条目。
+	 * 根据标识符移除指定的历史条目；标识符指向本轮正在写入的记录时改为撤回该次写入。
 	 *
 	 * @param num 要移除的条目的标识符（参见 {@link HistoryItem#getIdentifier()}）
 	 */
 	public void removeOf(int num) {
+		SessionWriteContext write = currentWrite;
+		if (write != null && write.getIdentifier() == num) {
+			write.rollback();
+			return;
+		}
 		getHistory().removeOf(num);
 		delMessage(num);
 	}
 
 	/**
-	 * 移除并返回最后一个历史条目。
+	 * 移除并返回最后一个历史条目；本轮正在写入的记录尚未提交时改为撤回该次写入。
 	 *
 	 * @return 被移除的最后一个 {@link HistoryItem} 对象
 	 */
 	public HistoryItem removeLast() {
+		SessionWriteContext write = currentWrite;
+		if (write != null) {
+			HistoryItem removed = write.item();
+			write.rollback();
+			return removed;
+		}
 		HistoryItem removed = getHistory().removeLast();
 		delMessage(removed.getIdentifier());
 		return removed;
 	}
 	/**
-	 * 撤回并返回最后一个历史条目。
+	 * 撤回并返回最后一个历史条目；本轮正在写入的记录尚未提交时改为撤回该次写入。
 	 *
 	 * @return 被移除的最后一个 {@link HistoryItem} 对象
 	 */
 	public HistoryItem deleteLast() {
+		SessionWriteContext write = currentWrite;
+		if (write != null) {
+			HistoryItem removed = write.item();
+			write.rollback();
+			return removed;
+		}
 		HistoryItem removed = getHistory().deleteLast();
 		delMessage(removed.getIdentifier());
 		return removed;
 	}
 	/**
 	 * 获取最后一个历史条目（不移除）。
+	 * <p>
+	 * 本轮存在打开的写入上下文时返回它正在写入的记录：该记录可能尚未提交进历史，
+	 * 因此不会随历史分页下发，也不会落盘。
+	 * </p>
 	 *
 	 * @return 最后一个 {@link HistoryItem}，如果历史为空则返回 null
 	 */
 	public HistoryItem getLast() {
+		SessionWriteContext write = currentWrite;
+		if (write != null)
+			return write.item();
 		return getHistory().peekLast();
 	}
 
@@ -672,15 +751,19 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 
 	/**
-	 * 获取当前的推理内容。 如果 {@link #currentReasoner} 不为空则返回其内容；
-	 * 否则如果最后一个条目是助手且包含推理内容，则返回该推理内容； 否则返回空字符串。
+	 * 获取当前的推理内容。
+	 * <p>
+	 * 本轮存在打开的写入上下文时返回它已经写入的思维链；否则如果最后一个条目是助手且包含推理内容，
+	 * 则返回该推理内容；都没有时返回 null。
+	 * </p>
 	 *
-	 * @return 推理内容字符串
+	 * @return 推理内容，可能为 null
 	 */
 	public MessageContents getReasonerContent() {
-		if (currentReasoner != null)
-			return currentReasoner;
-		HistoryItem last=getLast();
+		SessionWriteContext write = currentWrite;
+		if (write != null)
+			return write.getReasoningContent();
+		HistoryItem last = getHistory().peekLast();
 		if (last!=null&&last.getRole() == Role.ASSISTANT) {
 			MessageContents reasoner=last.getReasoningContent();
 			return reasoner==null?null:reasoner;
@@ -767,27 +850,15 @@ public class AISession implements ISaveData,AutoCloseable{
 		return aiapp.getRoleName(this, role);
 	}
 	/**
-	 * 获取当前会话可用的工具列表。
-	 * <p>
-	 * 子类通过重写本方法决定“模型能看到哪些工具”，这是工具权限的第一道闸门；
-	 * 运行期的调用次数、权限与许可规则请通过 {@link #getToolCallPolicy()} 提供。
-	 * </p>
-	 *
-	 * @return 可用工具列表，默认空
-	 */
-	public List<ToolData> getAvailableTools(){
-		return Collections.emptyList();
-	};
-
-	/**
 	 * 获取本会话的工具调用管理策略（调用次数、权限、许可）。
 	 * <p>
-	 * 该策略会与 {@link #getAvailableTools()} 一起，在 {@code AIRequest.builder(session)} 中
-	 * 装配成 {@code ToolCallManager} 交给请求，并统一由 {@code ToolCallContext} 执行，
-	 * 会话本身不再参与工具调用的执行过程。子类可重写此方法或其细粒度钩子
+	 * 该策略与已注册的工具一起装配成会话持有的
+	 * {@link ToolCallManager}（见 {@link #getToolCallManager()}），由 {@code ToolCallContext}
+	 * 统一执行，会话本身不参与工具调用的执行过程。子类可重写此方法或其细粒度钩子
 	 * （{@link #getToolCallPermission()}、{@link #getToolCallApprover()}、
 	 * {@link #getMaxToolCallRounds()}、{@link #getMaxToolCalls()}、
-	 * {@link #getToolCallLimits()}）来收紧或放宽限制。
+	 * {@link #getToolCallLimits()}）来收紧或放宽限制；规则变化后可调用
+	 * {@link #invalidateToolCallManager()} 立即生效。
 	 * </p>
 	 *
 	 * @return 工具调用管理策略
@@ -914,21 +985,6 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 
 	/**
-	 * 处理读取到的推理内容：工具调用通知会话，其余内容追加到推理缓冲区。
-	 * <p>
-	 * 供各 AI 应用的推理流读取循环统一调用，避免每个应用各自判断工具调用类型。
-	 * </p>
-	 *
-	 * @param current 从 {@code AIOutput#getReasoner()} 读取到的一段内容
-	 */
-	public void acceptReasonerContent(MessageContent current) {
-		if (current instanceof ToolCallContent) {
-			onToolcall((ToolCallContent) current);
-		}
-		appendReasoner(current);
-	}
-
-	/**
 	 * 工具调用通知钩子。
 	 * <p>
 	 * 当 {@code ToolCallManager} 决定发起一批工具调用并写入推理流时被调用，
@@ -949,17 +1005,11 @@ public class AISession implements ISaveData,AutoCloseable{
 	public void setAudioId(HistoryItem hi, String audioId) {
 		getHistory().setAudioId(hi, audioId);
 	}
-	public void setAudioId(String audioId) {
-		getHistory().setAudioId(getHistory().peekLast(), audioId);
-	}
 	public void setSendReasoner(HistoryItem hi, boolean sendReasoner) {
 		getHistory().setSendReasoner(hi, sendReasoner);
 	}
 	public void setTokenLength(HistoryItem hi, long l) {
 		getHistory().setTokenLength(hi, l);
-	}
-	public void setLastState(ApplicationState airet) {
-		getHistory().setLastState(getHistory().peekLast(), airet);
 	}
 
 

@@ -290,14 +290,15 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	}
 
 	/**
-	 * 连接建立（含断开重连）后补发正在生成、尚未写入历史的思维链。
+	 * 连接建立（含断开重连）后补发正在生成、尚未提交进历史的思维链。
 	 * <p>
-	 * 推理内容在首个助手内容产生之前只保存在会话内存里（{@link AISession#currentReasoner}），
-	 * 不会随历史分页下发；需要展示思考过程的前端可重写本方法，按自己的帧格式补发一次，
+	 * 本轮回复在提交之前只保存在 {@link AISession#getCurrentWrite()} 返回的可写入上下文里
+	 * （它已经分配标识符，但不进入历史、不落盘），不会随历史分页下发；
+	 * 需要展示思考过程的前端可重写本方法，按自己的帧格式补发一次，
 	 * 否则重连后只能看到重连之后新产生的思考内容。
 	 * </p>
 	 * <p>
-	 * 本方法由 WebSocket 线程在连接建立时调用，可能与生成线程并发，实现时按只读方式取用缓冲区。
+	 * 本方法由 WebSocket 线程在连接建立时调用，可能与生成线程并发，实现时按只读方式取用条目。
 	 * </p>
 	 */
 	protected void sendGeneratingReasoning() {
@@ -427,7 +428,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 						CompletableFuture<Boolean> cf=state.getAiapp().generateVoice(state, last.getDisplayContent().toString(), audioId);
 						try {
 							if(cf.get()) {
-								state.setAudioId(audioId);
+								state.setAudioId(last,audioId);
 								state.postAudioComplete(last.getIdentifier(),audioId);
 								state.flush();
 							}
@@ -649,7 +650,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		JsonArrayBuilder<JsonObjectBuilder<JsonObject>> ja=JsonBuilder.object().array("messages");
 		for(HistoryItem i:items) {
 			JsonArray thinking=new JsonArray();
-			if(i.getReasoningContent()!=null&&i.getRole()==Role.ASSISTANT)
+			if(i.getReasoningContent()!=null&&i.getRole()==Role.ASSISTANT) {
+				// 历史重新加载后显示信息不存在（不随存储保留），按工具 id 把结果与调用配对后按当前工具重算
+				Map<String,ToolCall> callsById=new HashMap<>();
 				for(MessageContent current:i.getReasoningContent()) {
 					if (current instanceof PlainText) {
 						thinking.add(((PlainText) current).toText());
@@ -658,19 +661,22 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 						List<ToolCall> calls=content.getToolCalls();
 						for (int idx=0;idx<calls.size();idx++) {
 							ToolCall call=calls.get(idx);
+							if(call!=null&&call.id!=null)
+								callsById.put(call.id, call);
 							// 用户友好简述替代原始工具名称，具体内容按需附带
-							ToolCallDisplay display=content.getDisplay(idx);
+							ToolCallDisplay display=getToolCallDisplay(content, idx);
 							JsonObjectBuilder<JsonObject> seg=JsonBuilder.object()
 								.add("type", "tool_call")
 								.add("tool_name", display.getBrief())
-								.add("tool", call.function==null?"":call.function.name);
+								.add("tool", call==null||call.function==null?"":call.function.name);
 							if(display.hasContent())
 								seg.add("content", contentsToJson(display.getContent()));
 							thinking.add(seg.end());
 						}
 					} else if (current instanceof ToolContent) {
 						// 工具结果的具体内容由工具自行提供，未提供时不展示原始结果
-						ToolCallDisplay display=((ToolContent) current).getDisplay();
+						ToolContent resultContent=(ToolContent) current;
+						ToolCallDisplay display=getToolResultDisplay(callsById.get(resultContent.getToolId()), resultContent);
 						if(display.hasContent()) {
 							thinking.add(JsonBuilder.object()
 								.add("type", "tool_result")
@@ -680,6 +686,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 						}
 					}
 				}
+			}
 			// 统一协议：每条历史记录只带结构化 content 与思考过程
 			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object()
 				.add("id", i.getIdentifier())

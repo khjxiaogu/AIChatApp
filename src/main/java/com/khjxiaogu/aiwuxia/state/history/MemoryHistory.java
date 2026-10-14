@@ -569,6 +569,73 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 		throw new IllegalArgumentException("Not a valid memory history");
 	}
 
+	// ── 未完成条目 ────────────────────────────────────────
+
+	/**
+	 * 创建一条未完成的历史条目。
+	 * <p>
+	 * 标识符在创建时即分配（保证与提交顺序无关的稳定编号），条目只存在于内存中，
+	 * 不进入 {@link #history} 列表，因此不参与迭代、上下文与落盘。
+	 * </p>
+	 *
+	 * @param role           条目角色
+	 * @param isValidContext 是否为有效的上下文
+	 * @return 新建的未完成条目
+	 */
+	@Override
+	public synchronized MutableHistoryItem beginPending(Role role, boolean isValidContext) {
+		HistoryItem last = peekLast();
+		PendingHistoryItem pending = new PendingHistoryItem(newUniqueId(), role, isValidContext);
+		pending.setPrevIdentifier(last == null ? -1 : last.getIdentifier());
+		return pending;
+	}
+
+	/**
+	 * 提交未完成条目：清除未完成状态，并按标识符顺序插入到正确位置。
+	 *
+	 * @param item 未完成条目
+	 */
+	@Override
+	public synchronized void commitPending(HistoryItem item) {
+		if (!(item instanceof PendingHistoryItem))
+			return;
+		PendingHistoryItem pending = (PendingHistoryItem) item;
+		if (!pending.isPending())
+			return;
+		pending.setPending(false);
+		if (history.contains(pending))
+			return;
+		// 未完成期间可能有其它条目先进入历史，按标识符顺序插入才是它应在的位置
+		int index = history.size();
+		for (int i = 0; i < history.size(); i++) {
+			if (history.get(i).getIdentifier() > pending.getIdentifier()) {
+				index = i;
+				break;
+			}
+		}
+		history.add(index, pending);
+	}
+
+	/**
+	 * 撤回未完成条目：硬删除，并在其标识符仍是最新标识符时回滚标识符。
+	 *
+	 * @param item 未完成条目
+	 */
+	@Override
+	public synchronized void rollbackPending(HistoryItem item) {
+		if (!(item instanceof PendingHistoryItem))
+			return;
+		PendingHistoryItem pending = (PendingHistoryItem) item;
+		if (!pending.isPending())
+			return;
+		pending.setPending(false);
+		pending.setDeleted(true);
+		// 只有这条条目仍是最新分配时才能安全回滚，否则会让之后的标识符重复
+		if (idgenerator.get() == pending.getIdentifier()) {
+			idgenerator.decrementAndGet();
+		}
+	}
+
 	/**
 	 * 向最后一个条目追加一行内容（委托给 {@link #peekLast()}）。
 	 *

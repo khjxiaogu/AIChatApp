@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.state.history;
 
+import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 
@@ -92,12 +93,13 @@ public interface MutableHistoryItem extends HistoryItem {
 	/**
 	 * 追加推理器相关的内容。
 	 * <p>
-	 * 用于记录 AI 模型的推理过程或中间结果。
+	 * 用于记录 AI 模型的推理过程或中间结果；应用的未完成条目
+	 * （{@link HistoryHolder#beginPending(Role, boolean)}）直接用它写入思维链。
 	 * </p>
 	 *
-	 * @param currentReasoner 要追加的推理内容
+	 * @param reasonerContent 要追加的推理内容
 	 */
-	void appendReasoner(MessageContent currentReasoner);
+	void appendReasoner(MessageContent reasonerContent);
 
 	/**
 	 * 设置该条目最后一次关联的应用状态。
@@ -126,5 +128,50 @@ public interface MutableHistoryItem extends HistoryItem {
 	 * @param tokenLength 令牌数量
 	 */
 	void setTokenLength(long tokenLength);
+
+	/**
+	 * 设置该条目是否为有效的上下文。
+	 * <p>
+	 * 供应用的未完成条目（{@link HistoryHolder#beginPending(Role, boolean)}）
+	 * 在提交前调整上下文有效性使用；已经进入历史的条目请改用
+	 * {@link HistoryHolder#setValidContext(HistoryItem, boolean)}。
+	 * </p>
+	 *
+	 * @param validContext {@code true} 表示可作为有效上下文
+	 */
+	void setValidContext(boolean validContext);
+
+	/**
+	 * 设置该条目的删除状态。
+	 * <p>
+	 * 供应用的未完成条目在提交前使用；已经进入历史的条目请改用
+	 * {@link HistoryHolder#setDeleted(HistoryItem, boolean)}。
+	 * </p>
+	 *
+	 * @param deleted {@code true} 表示已删除
+	 */
+	void setDeleted(boolean deleted);
+
+	/**
+	 * 设置该条目关联的音频标识符。
+	 * <p>
+	 * 供应用的未完成条目在提交前使用；已经进入历史的条目请改用
+	 * {@link HistoryHolder#setAudioId(HistoryItem, String)}。
+	 * </p>
+	 *
+	 * @param audioId 音频标识符，可为 null
+	 */
+	void setAudioId(String audioId);
+
+	/**
+	 * 设置该条目是否允许把推理内容随上下文发送。
+	 * <p>
+	 * 供应用的未完成条目在提交前使用；已经进入历史的条目请改用
+	 * {@link HistoryHolder#setSendReasoner(HistoryItem, boolean)}。
+	 * </p>
+	 *
+	 * @param sendReasoner {@code true} 表示允许发送推理内容
+	 */
+	void setSendReasoner(boolean sendReasoner);
 
 }

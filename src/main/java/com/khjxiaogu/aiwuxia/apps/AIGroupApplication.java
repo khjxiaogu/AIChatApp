@@ -26,7 +26,6 @@ package com.khjxiaogu.aiwuxia.apps;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
@@ -38,10 +37,10 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
-import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
@@ -49,13 +48,11 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
-import com.khjxiaogu.aiwuxia.utils.MessageReader;
 
 public class AIGroupApplication extends AIApplication {
 	String name;
 	String charaName;
 	String system;
-	List<ToolData> tools=new ArrayList<>();
 	@Override
 	public void provideInitial(AISession state) {
 	}
@@ -74,31 +71,23 @@ public class AIGroupApplication extends AIApplication {
 	public String getBrief(AISession state) {
 		return name;
 	}
-	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		state.setCurrentOutput(resp);
 		resp.addUsageListener(state::addUsage);
-		return precessResponse(resp, state);
+		ApplicationState oldstate = precessResponse(resp, state, write);
+		write.setLastState(oldstate);
+		return oldstate;
 		
 	}
-	public void handleReasonerContent(AIOutput output,AISession state) throws IOException {
-		MessageReader br=output.getReasoner();
-		state.resetReasoner();
-		while(!br.isEnded()) {
-			MessageContent current=br.read();
-			if(current==null)
-				break;
-			state.acceptReasonerContent(current);
-		}
-	}
-	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput resp, AISession state, HistoryWriteContext write) throws IOException {
 		boolean isWaiting = true;
 		
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		StringBuilder sendContent=new StringBuilder();
-		handleReasonerContent(resp,state);
+		handleReasonerContent(resp,state,write);
 		while (true) {
 			last=reader.readLine();
 			if(last==null) {
@@ -128,7 +117,7 @@ public class AIGroupApplication extends AIApplication {
 				}
 			}
 		}
-		state.appendCh(Role.ASSISTANT,msg,true);
+		write.append(msg, true);
 		
 		return oldstate;
 	}
@@ -143,9 +132,9 @@ public class AIGroupApplication extends AIApplication {
 	}
 	public AIRequest constructAIrequest(AISession state) throws IOException {
 
+		// 工具由会话持有的 ToolCallManager 提供（AIRequest.builder(state) 已取用）
 		Builder builder=AIRequest.builder(state).taskType(TaskType.STORY)
-			.strength(ReasoningStrength.WEAK).multimodal(MultimodalType.TEXT_ONLY)
-			.addTools(tools);
+			.strength(ReasoningStrength.WEAK).multimodal(MultimodalType.TEXT_ONLY);
 		builder.addHistoryItem(Role.SYSTEM, system);
 
 		// if (status != null&&!status.isEmpty())
@@ -226,10 +215,14 @@ public class AIGroupApplication extends AIApplication {
 		this.charaName=meta.get("charaName").getAsString();
 		// AI response, always valid
 		handlers.add((state, ret) -> {
-			if(!ret.isEmpty())
-				state.add(Role.USER, ret, true);
-			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
-			state.setLastState(airet);
+			if(!ret.isEmpty()) {
+				try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+					write.append(ret, true);
+				}
+			}
+			try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+				sendAndProcessResultStreamed(state, write, constructAIrequest(state));
+			}
 			state.addDialogRow();
 
 			return null;

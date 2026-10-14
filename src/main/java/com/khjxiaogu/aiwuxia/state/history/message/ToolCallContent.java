@@ -95,6 +95,17 @@ public class ToolCallContent implements MessageContent {
 	}
 
 	/**
+	 * 是否携带生成时计算好的用户友好显示。
+	 * <p>
+	 * 显示信息不随历史持久化，因此从存储重新加载后本方法返回 {@code false}；
+	 * 此时应由工具调用管理器按当前注册的工具重算（{@code ToolCallManager#displayFor}）。
+	 * </p>
+	 */
+	public boolean hasDisplays() {
+		return displays != null;
+	}
+
+	/**
 	 * 获取第 {@code index} 个工具调用的用户友好显示。
 	 *
 	 * @param index 工具调用下标

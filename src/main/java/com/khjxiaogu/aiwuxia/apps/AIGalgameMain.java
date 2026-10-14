@@ -39,6 +39,7 @@ import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
@@ -76,17 +77,19 @@ public class AIGalgameMain extends AIApplication {
 		// check interface
 		// AI response, always valid
 		handlers.add((state, ret) -> {
-			ApplicationState airet;
 			try {
-				state.add(Role.USER, ret, true);
-				airet = sendAndProcessResultStreamed(state, constructAIrequest(state));
+				try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+					write.append(ret, true);
+				}
+				try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+					sendAndProcessResultStreamed(state, write, constructAIrequest(state));
+				}
 			}finally{
 				if(state.getLast().getRole()==Role.USER) {
 					HistoryItem hi=state.removeLast();
 					state.refillChatBox(hi.getContextContent());
 				}
 			}
-			state.setLastState(airet);
 			state.addDialogRow();
 
 			return null;
@@ -101,10 +104,12 @@ public class AIGalgameMain extends AIApplication {
 		state.sendSceneContent("back", defaultBg);
 	}
 
-	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		resp.addUsageListener(state::addUsage);
-		return precessResponse(resp, state);
+		ApplicationState oldstate = precessResponse(resp, state, write);
+		write.setLastState(oldstate);
+		return oldstate;
 		
 	}
 
@@ -190,17 +195,17 @@ public class AIGalgameMain extends AIApplication {
 		}
 
 	}
-	public ApplicationState precessResponse(AIOutput resp, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput resp, AISession state, HistoryWriteContext write) throws IOException {
 		boolean isWaiting = true;
 		SequentialStateExecutor status=new SequentialStateExecutor(null,()->{
 
 			
-			state.appendLine(Role.ASSISTANT, "选择你的操作（数字或行动）：", false);
+			write.appendLine("选择你的操作（数字或行动）：", false);
 		});
 
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		boolean nstateModified = false;
-		handleReasonerContent(resp,state);
+		handleReasonerContent(resp,state,write);
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		int orderIndex=1;
@@ -221,31 +226,31 @@ public class AIGalgameMain extends AIApplication {
 			}
 			if (status.isValue(0)) {//处理主要剧情
 				if (last.startsWith("==操作==")) {
-					state.appendContextLine(Role.ASSISTANT, last);
+					write.appendContext(last + "\n");
 					status.setValue(2);
 				} else {
 					if(last.startsWith("==情景剧本==")) {
-						state.appendContextLine(Role.ASSISTANT, last);
+						write.appendContext(last + "\n");
 						status.setValue(1);
 					}else
-						state.appendLine(Role.ASSISTANT, last, true);
+						write.appendLine(last, true);
 					int codePoint=0,codePoint2=0;
 					reader.mark(16);
 					while((codePoint=reader.read())!=-1) {
 						if(codePoint!='=') {
 							reader.mark(16);
 							char[] ch=Character.toChars(codePoint);
-							state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
+							write.append(String.valueOf(ch), true);
 						}else if((codePoint2=reader.read())=='=') {
 							reader.reset();
 							break;
 						}else {
 							reader.mark(16);
 							char[] ch=Character.toChars(codePoint);
-							state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
+							write.append(String.valueOf(ch), true);
 							if(codePoint2!=-1) {
 								ch=Character.toChars(codePoint2);
-								state.appendCh(Role.ASSISTANT, String.valueOf(ch), true);
+								write.append(String.valueOf(ch), true);
 							}
 						}
 					}
@@ -258,7 +263,7 @@ public class AIGalgameMain extends AIApplication {
 					orderIndex++;
 				}
 					
-				state.appendLine(Role.ASSISTANT, last, true);
+				write.appendLine(last, true);
 			}
 			
 

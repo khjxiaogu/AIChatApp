@@ -77,7 +77,11 @@ public interface ToolCallPresenter {
 					: ToolCallDisplay.of(brief, new MutableMessageContents(value));
 		};
 	}
-
+	public static ToolCallPresenter ofName(String brief) {
+		return call -> {
+			return ToolCallDisplay.of(brief);
+		};
+	}
 	/**
 	 * 从工具调用参数（JSON 字符串）中取出指定字段的文本值。
 	 *

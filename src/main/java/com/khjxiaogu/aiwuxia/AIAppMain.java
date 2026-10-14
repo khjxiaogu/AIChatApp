@@ -165,7 +165,7 @@ public class AIAppMain {
 								CompletableFuture<Boolean> cf=state.getAiapp().generateVoice(state, last.getDisplayContent().toString(), audioId);
 								try {
 									if(cf.get()) {
-										state.setAudioId(audioId);
+										state.setAudioId(last,audioId);
 										state.postAudioComplete(last.getIdentifier(),audioId);
 									}
 								} catch (InterruptedException | ExecutionException e) {

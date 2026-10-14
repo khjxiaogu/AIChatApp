@@ -135,6 +135,44 @@
             align-items: center;
             gap: 6px;
         }
+        /* 工具详情：无文本的展开/收缩按钮（图标随展开状态旋转） */
+        .tool-detail-toggle {
+            background: transparent;
+            border: none;
+            padding: 0;
+            margin: 0;
+            width: 16px;
+            height: 16px;
+            min-width: 16px;
+            border-radius: 50%;
+            color: #64748b;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+        }
+        .tool-detail-toggle:hover {
+            background: #e2e8f0;
+            color: #1e40af;
+        }
+        .tool-detail-toggle.is-open {
+            transform: rotate(90deg);
+        }
+        .tool-detail {
+            margin: 0 0 8px 2px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            font-size: 0.78rem;
+            color: #334155;
+        }
+        .tool-detail-text {
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.45;
+        }
         .final-content {
             font-size: 0.95rem;
             line-height: 1.5;
@@ -412,8 +450,34 @@
                     <div v-if="msg.thinkingSegments && msg.thinkingSegments.length" class="thinking-chain">
                         <div v-for="(seg, sIdx) in msg.thinkingSegments" :key="sIdx">
                             <div v-if="seg.type === 'text'" class="thinking-text">&#x1F4AD; {{ seg.content }}</div>
-                            <div v-if="seg.type === 'tool'" class="tool-call-label">
-                                &#x1F527; 调用工具：<span class="tool-call-item">{{ seg.toolName }}</span>
+                            <!-- 工具调用：概要 + 详情；仅当工具有详情时才出现无文本的展开/收缩按钮 -->
+                            <div v-if="seg.type === 'tool'" class="tool-call">
+                                <div class="tool-call-label">
+                                    &#x1F527; 调用工具：<span class="tool-call-item">{{ seg.toolName }}</span>
+                                    <button v-if="hasToolDetail(seg)" type="button" class="tool-detail-toggle"
+                                            :class="{ 'is-open': seg.expanded }"
+                                            :title="seg.expanded ? '收起工具详情' : '展开工具详情'"
+                                            :aria-label="seg.expanded ? '收起工具详情' : '展开工具详情'"
+                                            :aria-expanded="seg.expanded ? 'true' : 'false'"
+                                            @click.stop="toggleToolDetail(seg)">
+                                        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor"
+                                             stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <polyline points="9 6 15 12 9 18"></polyline>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div v-if="seg.expanded && hasToolDetail(seg)" class="tool-detail">
+                                    <div v-for="(part, dIdx) in seg.detail" :key="'d' + dIdx">
+                                        <div v-if="part.type === 'text'" class="tool-detail-text">{{ part.content }}</div>
+                                        <div v-else-if="part.type === 'image'" class="message-image">
+                                            <img v-if="part.image_url" :src="part.image_url" alt="工具详情图片" @click.stop="fullscreenImage = part.image_url" style="cursor:pointer" />
+                                            <div v-else class="image-placeholder">加载中...</div>
+                                        </div>
+                                        <div v-else-if="part.type === 'video'" class="message-image">
+                                            <video :src="part.video_url" controls style="width:100%;"></video>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -702,11 +766,28 @@ var main=new Vue({
             }
             this.scrollToBottom();
         },
+        // 工具调用提示：概要与详情（详情仅在有内容时下发，没有详情就不给展开按钮）
         aiOnToolCall(frame) {
             const target = this.painterTargetMessage(frame.id);
             target.thinkingSegments = target.thinkingSegments || [];
-            target.thinkingSegments.push({ type: 'tool', toolName: frame.tool_name });
+            target.thinkingSegments.push({
+                type: 'tool',
+                toolName: frame.tool_name,
+                tool: frame.tool || '',
+                detail: this.parseContentArray(frame.content).contentItems,
+                expanded: false
+            });
+            this.resolveAllPartUrls();
             this.scrollToBottom();
+        },
+        // 工具是否有可展开的详情（无详情时不显示按钮）
+        hasToolDetail(seg) {
+            return !!(seg && seg.detail && seg.detail.length);
+        },
+        // 展开/收缩工具详情（按钮只有图标，无文本）
+        toggleToolDetail(seg) {
+            if (!this.hasToolDetail(seg)) return;
+            seg.expanded = !seg.expanded;
         },
         aiOnContent(frame) {
             const target = this.painterTargetMessage(frame.id);
@@ -772,9 +853,25 @@ var main=new Vue({
                         if (typeof seg === 'string') {
                             thinkingSegs.push({ type: 'text', content: seg });
                         } else if (seg && seg.type === 'tool_call') {
-                            thinkingSegs.push({ type: 'tool', toolName: seg.tool_name || seg.toolName || '' });
+                            // 详情（工具参数等）随历史一起下发，没有内容时不给展开按钮
+                            thinkingSegs.push({
+                                type: 'tool',
+                                toolName: seg.tool_name || seg.toolName || '',
+                                tool: seg.tool || '',
+                                detail: this.parseContentArray(seg.content).contentItems,
+                                expanded: false
+                            });
+                        } else if (seg && seg.type === 'tool_result') {
+                            // 工具结果同样按“工具 + 可展开详情”展示，默认收起
+                            thinkingSegs.push({
+                                type: 'tool',
+                                toolName: seg.tool_name || seg.toolName || '',
+                                tool: seg.tool || '',
+                                detail: this.parseContentArray(seg.content).contentItems,
+                                expanded: false
+                            });
                         } else if (seg && seg.content != null) {
-                            thinkingSegs.push({ type: 'text', content: seg.content });
+                            thinkingSegs.push({ type: 'text', content: this.aiContentToText(seg.content) });
                         }
                     }
                 }
@@ -859,6 +956,14 @@ var main=new Vue({
             for (const msg of this.messages) {
                 if (msg.contentItems && msg.contentItems.length) {
                     this.resolvePartUrls(msg.contentItems);
+                }
+                // 工具详情里也可能有图片，同样要换成可访问的地址
+                if (msg.thinkingSegments && msg.thinkingSegments.length) {
+                    for (const seg of msg.thinkingSegments) {
+                        if (seg.detail && seg.detail.length) {
+                            this.resolvePartUrls(seg.detail);
+                        }
+                    }
                 }
             }
         },

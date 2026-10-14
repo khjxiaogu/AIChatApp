@@ -45,6 +45,7 @@ import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
@@ -78,8 +79,12 @@ public class AIWuxiaMain extends AIApplication {
 		handlers.add((state, ret) -> {
 			if (state.getStage() == ApplicationStage.STARTED) {
 				if ("查看面板".equals(ret.toText())) {
-					state.add(Role.USER, ret, false);
-					state.add(Role.ASSISTANT, constructSystem(state.getState()), false);
+					try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+						write.appendDisplayOnly(ret);
+					}
+					try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+						write.appendDisplayOnly(constructSystem(state.getState()));
+					}
 					return null;
 				} 
 			}
@@ -88,10 +93,13 @@ public class AIWuxiaMain extends AIApplication {
 		// AI response, always valid
 		handlers.add((state, ret) -> {
 			
-			state.add(Role.USER, ret, true);
-			state.appendContextLine(Role.USER, "\n按上述行动继续，至少写出5条大纲，情景剧本部分按大纲扩写，必须包含所有大纲的要点，内容务必详细详尽，文本优美通顺，至少1500字。");
-			ApplicationState airet = sendAndProcessResultStreamed(state, constructAIrequest(state, constructSystem(state.getState())));
-			state.setLastState(airet);
+			try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+				write.append(ret, true);
+				write.appendContext("\n按上述行动继续，至少写出5条大纲，情景剧本部分按大纲扩写，必须包含所有大纲的要点，内容务必详细详尽，文本优美通顺，至少1500字。\n");
+			}
+			try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+				sendAndProcessResultStreamed(state, write, constructAIrequest(state, constructSystem(state.getState())));
+			}
 			state.addDialogRow();
 
 			return null;
@@ -121,8 +129,11 @@ public class AIWuxiaMain extends AIApplication {
 		if (state.getStage() == ApplicationStage.NAMING) {
 			state.removeLast();
 			// state.removeLast();
-		} else
-			state.add(Role.USER, "请提供主角取名建议。", true);
+		} else {
+			try (HistoryWriteContext write = state.beginWrite(Role.USER)) {
+				write.append("请提供主角取名建议。", true);
+			}
+		}
 		StringBuilder inital = new StringBuilder("请创建您的修仙者身份。\n建议姓名：\n");
 		Random rnd = new Random();
 		Set<Integer> rndNums = new LinkedHashSet<>();
@@ -136,13 +147,18 @@ public class AIWuxiaMain extends AIApplication {
 		inital.append("3. ").append(femalenames.get(popFirst(rndNums))).append("，女\n");
 		inital.append("4. ").append(femalenames.get(popFirst(rndNums))).append("，女\n");
 
-		state.add(Role.ASSISTANT, inital.toString() + "\n请选择一个姓名，或者输入姓名与性别，或输入“换一批”取得新姓名", "你选额：需要起名建议。==故事大纲==1. 为创建角色提供几个名字。\n==情景剧本==\n==属性面板==\n==操作=="+inital.toString() + "请选择一个姓名。");
+		try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
+			write.setContextContent("你选额：需要起名建议。==故事大纲==1. 为创建角色提供几个名字。\n==情景剧本==\n==属性面板==\n==操作=="+inital.toString() + "请选择一个姓名。");
+			write.append(inital.toString() + "\n请选择一个姓名，或者输入姓名与性别，或输入“换一批”取得新姓名", false);
+		}
 	}
 
-	public ApplicationState sendAndProcessResultStreamed(AISession state, AIRequest req) throws IOException {
+	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
 		resp.addUsageListener(state::addUsage);
-		return precessResponse(resp, state);
+		ApplicationState oldstate = precessResponse(resp, state, write);
+		write.setLastState(oldstate);
+		return oldstate;
 		
 	}
 
@@ -231,7 +247,7 @@ public class AIWuxiaMain extends AIApplication {
 		}
 	}
 
-	public ApplicationState precessResponse(AIOutput op, AISession state) throws IOException {
+	public ApplicationState precessResponse(AIOutput op, AISession state, HistoryWriteContext write) throws IOException {
 		boolean isWaiting = true;
 		int status = 0;
 		
@@ -240,7 +256,7 @@ public class AIWuxiaMain extends AIApplication {
 		boolean nstateModified = false;
 		boolean isDraft=false;
 		BufferedReader reader=new BufferedReader(op.getContent());
-		handleReasonerContent(op,state);
+		handleReasonerContent(op,state,write);
 		String last;
 		while ((last=reader.readLine())!=null) {
 			if (isWaiting && last.isEmpty()) {
@@ -253,7 +269,7 @@ public class AIWuxiaMain extends AIApplication {
 				isWaiting = false;
 			}
 			if(last.startsWith("==故事大纲==")) {
-				state.appendContextLine(Role.ASSISTANT, last);
+				write.appendContext(last + "\n");
 				isDraft=true;
 				continue;
 			}
@@ -263,7 +279,7 @@ public class AIWuxiaMain extends AIApplication {
 					//no append because later
 				}else {
 					
-					state.appendContextLine(Role.ASSISTANT, last);
+					write.appendContext(last + "\n");
 					state.getState().extras.add(last);
 					continue;
 				}
@@ -272,40 +288,40 @@ public class AIWuxiaMain extends AIApplication {
 			if (status == 0) {//处理主要剧情
 				if (last.startsWith("==属性面板==")) {
 					status = 1;
-					state.appendContextLine(Role.ASSISTANT, last);
+					write.appendContext(last + "\n");
 				} else if (last.startsWith("==操作==")) {
 					status = 3;
-					state.appendContextLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
+					write.appendContext(last + "\n");
+					write.appendLine("===== 操作 =====", false);
 				} else {
-					state.appendLine(Role.ASSISTANT, last, true);
+					write.appendLine(last, true);
 					int codePoint=0,codePoint2=0;
 					reader.mark(16);
 					while((codePoint=reader.read())!=-1) {
 						if(codePoint!='=') {
 							reader.mark(16);
 							char[] ch=Character.toChars(codePoint);
-							state.appendCh(Role.ASSISTANT, String.valueOf(ch), isDraft);
+							write.append(String.valueOf(ch), isDraft);
 						}else if((codePoint2=reader.read())=='=') {
 							reader.reset();
 							break;
 						}else {
 							reader.mark(16);
 							char[] ch=Character.toChars(codePoint);
-							state.appendCh(Role.ASSISTANT, String.valueOf(ch), isDraft);
+							write.append(String.valueOf(ch), isDraft);
 							if(codePoint2!=-1) {
 								ch=Character.toChars(codePoint2);
-								state.appendCh(Role.ASSISTANT, String.valueOf(ch), isDraft);
+								write.append(String.valueOf(ch), isDraft);
 							}
 						}
 					}
 				}
 			} else if (status == 1) {//处理属性面板
 				if (last.startsWith("==操作==")) {
-					state.appendContextLine(Role.ASSISTANT, buildAttrStr(state));
+					write.appendContext(buildAttrStr(state) + "\n");
 					status = 3;
-					state.appendContextLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
+					write.appendContext(last + "\n");
+					write.appendLine("===== 操作 =====", false);
 					
 				}else {
 					//state.appendInvisibleLine(Role.ASSISTANT, last);
@@ -360,8 +376,8 @@ public class AIWuxiaMain extends AIApplication {
 			} else if (status == 2) {
 				if (last.startsWith("==操作==")) {
 					status = 3;
-					state.appendContextLine(Role.ASSISTANT, last);
-					state.appendLine(Role.ASSISTANT, "===== 操作 =====", false);
+					write.appendContext(last + "\n");
+					write.appendLine("===== 操作 =====", false);
 				} else {
 					int pos = last.indexOf('.');
 					if (pos > 0) {
@@ -375,11 +391,11 @@ public class AIWuxiaMain extends AIApplication {
 					}
 				}
 			} else {
-				state.appendLine(Role.ASSISTANT, last, true);
+				write.appendLine(last, true);
 			}
 
 		}
-		state.appendLine(Role.ASSISTANT, "\n输入“查看面板”查看你的面板，输入“重新生成”重新生成剧情，输入“撤回”删除上一次对话。", false);
+		write.appendLine("\n输入“查看面板”查看你的面板，输入“重新生成”重新生成剧情，输入“撤回”删除上一次对话。", false);
 
 		return nstateModified ? oldstate : null;
 	}

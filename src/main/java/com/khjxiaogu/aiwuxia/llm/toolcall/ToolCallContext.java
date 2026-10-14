@@ -322,50 +322,22 @@ public class ToolCallContext {
 	}
 
 	/**
-	 * 把原始调用信息转换为用户友好显示：优先使用工具自己的转换器，
-	 * 转换器缺失或抛异常时回退为默认显示（简述为工具名、内容为空）。
+	 * 把原始调用信息转换为用户友好显示，交给管理器的统一实现
+	 * （与历史重新加载后的重算使用同一套转换规则）。
 	 */
 	private List<ToolCallDisplay> buildCallDisplays(List<ToolCall> calls) {
 		List<ToolCallDisplay> displays = new ArrayList<>(calls.size());
 		for (ToolCall call : calls) {
-			ToolCallDisplay display = null;
-			ToolData data = toolOf(call);
-			if (data != null && data.presenter != null) {
-				try {
-					display = data.presenter.display(call);
-				} catch (Throwable ex) {
-					ex.printStackTrace();
-				}
-			}
-			displays.add(display == null ? ToolCallPresenter.defaultDisplay(call) : display);
+			displays.add(manager.displayFor(call));
 		}
 		return displays;
 	}
 
 	/**
-	 * 生成结果的具体内容显示：工具可重写 {@link ToolCallPresenter#resultDisplay}；
-	 * 未提供时沿用调用的简述。
+	 * 生成结果的具体内容显示，交给管理器的统一实现。
 	 */
 	private ToolCallDisplay buildResultDisplay(ToolCall call, ToolCallDisplay callDisplay, String result) {
-		ToolData data = toolOf(call);
-		if (data != null && data.presenter != null) {
-			try {
-				ToolCallDisplay display = data.presenter.resultDisplay(call, result);
-				if (display != null && (!display.getBrief().isEmpty() || display.hasContent())) {
-					return display;
-				}
-			} catch (Throwable ex) {
-				ex.printStackTrace();
-			}
-		}
-		return ToolCallDisplay.of(callDisplay.getBrief());
-	}
-
-	private ToolData toolOf(ToolCall call) {
-		if (call == null || call.function == null || call.function.name == null) {
-			return null;
-		}
-		return manager.getTools().get(call.function.name);
+		return manager.resultDisplayFor(call, callDisplay, result);
 	}
 
 	/** 重置收集器与全部计数，用于复用同一个上下文。 */

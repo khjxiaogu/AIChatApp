@@ -392,6 +392,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	 *
 	 * @param sendable {@code true} 表示有效上下文
 	 */
+	@Override
 	public void setValidContext(boolean sendable) {
 		this.shouldSend = sendable;
 	}
@@ -406,6 +407,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	 *
 	 * @param audioId 音频 ID 字符串，可为 null
 	 */
+	@Override
 	public void setAudioId(String audioId) {
 		this.audioId = audioId;
 	}
@@ -448,6 +450,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	 *
 	 * @param sendable {@code true} 表示已删除
 	 */
+	@Override
 	public void setDeleted(boolean sendable) {
 		deleted = sendable;
 	}
@@ -482,6 +485,7 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	 *
 	 * @param sendReasoner {@code true} 允许发送
 	 */
+	@Override
 	public void setSendReasoner(boolean sendReasoner) {
 		this.sendReasoner = sendReasoner;
 	}
