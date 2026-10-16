@@ -9,8 +9,8 @@ package com.khjxiaogu.aiwuxia.state.history.message;
  */
 public class ImageContent implements MessageContent {
 
-	String image_url;
-	String description;
+	final String image_url;
+	final String description;
 
 	/**
 	 * 使用图片 URL 和描述文本构造图片消息内容。
@@ -30,8 +30,7 @@ public class ImageContent implements MessageContent {
 	 * @param image_url 图片的 URL 地址，不可为 null
 	 */
 	public ImageContent(String image_url) {
-		super();
-		this.image_url = image_url;
+		this(image_url,null);
 	}
 
 	@Override
@@ -46,7 +45,7 @@ public class ImageContent implements MessageContent {
 
 	@Override
 	public String toText() {
-		return description == null ? "<image id="+image_url+">" : description;
+		return description == null ? "<image id="+image_url+">" : "<image id="+image_url+"alt=\""+description+"\">";
 	}
 
 	/**
@@ -57,16 +56,6 @@ public class ImageContent implements MessageContent {
 	public String getDescription() {
 		return description;
 	}
-
-	/**
-	 * 设置图片的文字描述。
-	 *
-	 * @param description 新的描述文本，可为 null
-	 */
-	public void setDescription(String description) {
-		this.description = description;
-	}
-
 	/**
 	 * 获取图片的 URL 地址。
 	 *
@@ -83,7 +72,7 @@ public class ImageContent implements MessageContent {
 
 	@Override
 	public MessageContent copy() {
-		return new ImageContent(image_url, description);
+		return this;
 	}
 
 }

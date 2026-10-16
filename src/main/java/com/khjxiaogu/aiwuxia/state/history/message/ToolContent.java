@@ -14,8 +14,8 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
  * </p>
  */
 public class ToolContent implements MessageContent {
-	String toolId;
-	String result;
+	final String toolId;
+	final String result;
 	/** 结果的用户友好显示；仅用于展示，不持久化 */
 	transient ToolCallDisplay display;
 
@@ -103,6 +103,6 @@ public class ToolContent implements MessageContent {
 
 	@Override
 	public MessageContent copy() {
-		return new ToolContent(toolId, result, display);
+		return this;
 	}
 }

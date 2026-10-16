@@ -9,8 +9,8 @@ package com.khjxiaogu.aiwuxia.state.history.message;
  */
 public class VideoContent implements MessageContent {
 
-	String video_url;
-	String description;
+	final String video_url;
+	final String description;
 
 	/**
 	 * 使用视频 URL 和描述文本构造视频消息内容。
@@ -30,8 +30,7 @@ public class VideoContent implements MessageContent {
 	 * @param video_url 视频的 URL 地址，不可为 null
 	 */
 	public VideoContent(String video_url) {
-		super();
-		this.video_url = video_url;
+		this(video_url,null);
 	}
 
 	/**
@@ -42,16 +41,6 @@ public class VideoContent implements MessageContent {
 	public String getDescription() {
 		return description;
 	}
-
-	/**
-	 * 设置视频的文字描述。
-	 *
-	 * @param description 新的描述文本，可为 null
-	 */
-	public void setDescription(String description) {
-		this.description = description;
-	}
-
 	/**
 	 * 获取视频的 URL 地址。
 	 *
@@ -73,7 +62,7 @@ public class VideoContent implements MessageContent {
 
 	@Override
 	public String toText() {
-		return description == null ? "" : description;
+		return description == null ? "<video id="+video_url+">" : "<video id="+video_url+"alt=\""+description+"\">";
 	}
 
 	@Override
@@ -83,7 +72,7 @@ public class VideoContent implements MessageContent {
 
 	@Override
 	public MessageContent copy() {
-		return new VideoContent(video_url, description);
+		return this;
 	}
 
 }

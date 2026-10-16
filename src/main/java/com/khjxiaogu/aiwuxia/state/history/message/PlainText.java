@@ -11,13 +11,13 @@ package com.khjxiaogu.aiwuxia.state.history.message;
  * </p>
  */
 public class PlainText implements MessageContent {
-	StringBuilder text;
-
+	final String text;
+	public static PlainText EMPTY=new PlainText();
 	/**
 	 * 构造一个空的纯文本消息。
 	 */
-	public PlainText() {
-		text = new StringBuilder();
+	private PlainText() {
+		text="";
 	}
 
 	/**
@@ -26,25 +26,15 @@ public class PlainText implements MessageContent {
 	 * @param str 初始文本内容，不可为 null
 	 */
 	public PlainText(String str) {
-		text = new StringBuilder(str);
+		text = str;
 	}
 
 	@Override
 	public boolean isTextRepresentable() {
 		return true;
 	}
-
-	/**
-	 * 向当前文本末尾追加字符串。
-	 *
-	 * @param str 要追加的字符序列
-	 */
-	public synchronized void append(CharSequence str) {
-		text.append(str);
-	}
-
 	@Override
-	public synchronized String toText() {
+	public String toText() {
 		return text.toString();
 	}
 
@@ -60,6 +50,6 @@ public class PlainText implements MessageContent {
 
 	@Override
 	public MessageContent copy() {
-		return new PlainText(text.toString());
+		return this;
 	}
 }

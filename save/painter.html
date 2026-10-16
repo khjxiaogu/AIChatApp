@@ -755,6 +755,42 @@
         html:not(.day-mode) .model-tree-children {
             border-left-color: #2b333e;
         }
+
+        /* ---- 生成按钮（原来是内联背景色，改为类以便统一禁用样式） ---- */
+        .btn-generate {
+            background: #27ae60;
+            margin-top: 10px;
+        }
+        .btn-generate:hover:not(:disabled) {
+            background: #219a52;
+        }
+
+        /* ---- 不可用状态：连接断开时禁用发送/停止/图片/生成等按钮 ---- */
+        button:disabled {
+            background: #a0c0e8;
+            color: rgba(255,255,255,0.9);
+            cursor: not-allowed;
+            opacity: 0.85;
+        }
+        .btn-generate:disabled {
+            background: #a0c0e8;
+        }
+        html:not(.day-mode) button:disabled,
+        html:not(.day-mode) .btn-generate:disabled {
+            background: #2b333e;
+            color: #5b6b7d;
+        }
+        /* 模型选择整块置灰 + 说明 */
+        .setting-model.is-disabled {
+            opacity: 0.55;
+            pointer-events: none;
+        }
+        .setting-hint {
+            color: #b4791f;
+        }
+        html:not(.day-mode) .setting-hint {
+            color: #e0b25f;
+        }
     </style>
 </head>
 <body>
@@ -814,7 +850,7 @@
                             <video :src="part.video_url" controls style="width:100%;"></video>
                         </div>
                     </div>
-                    <button v-if="!aiGenerating&&idx==messages.length-1" @click="triggerGenerate" :disabled="aiGenerating" style="background:#27ae60;margin-top:10px">生成</button>
+                    <button v-if="!aiGenerating&&idx==messages.length-1" class="btn-generate" @click="triggerGenerate" :disabled="!aiConnected" :title="aiConnected ? '按当前对话生成' : '连接断开，暂时无法生成'">生成</button>
                 </div>
 
                 <!-- AI 消息：支持思维链 + 按顺序排列的内容 -->
@@ -867,8 +903,8 @@
                     </div>
                 </div>
             </div>
-            <!-- 撤回/重新生成：跟随最新一条消息，生成过程中不显示 -->
-            <div class="msg-actions" v-if="idx === messages.length - 1 && !aiGenerating">
+            <!-- 撤回/重新生成：跟随最新一条消息；生成中或连接断开时不显示 -->
+            <div class="msg-actions" v-if="idx === messages.length - 1 && aiConnected && !aiGenerating">
                 <button class="btn-action" @click="aiSendRevert" title="撤回最后一轮对话">撤回</button>
                 <button class="btn-action" v-if="!lastMessageIsUser" @click="triggerRegen" title="重新生成最后一条回复">重新生成</button>
             </div>
@@ -883,13 +919,14 @@
     <div class="input-area">
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
-            <button @click="sendTextMessage" v-if="!aiGenerating" :disabled="(!inputText.trim() && !uploadedImageId)">发送</button>
+            <!-- 连接断开时发送/停止/图片一律禁用；设置属于本地功能，始终可用 -->
+            <button @click="sendTextMessage" v-if="!aiGenerating" :disabled="!aiConnected || (!inputText.trim() && !uploadedImageId)">发送</button>
 			<!-- 停止：点击后进入"停止中"，等服务端本轮结束（done/status）才恢复，期间禁止重复点击 -->
-			<button @click="aiSendStop" v-if="aiGenerating" :disabled="aiStopping" :class="{ 'btn-waiting': aiStopping }">{{ aiStopping ? '停止中…' : '停止' }}</button>
+			<button @click="aiSendStop" v-if="aiGenerating" :disabled="!aiConnected || aiStopping" :class="{ 'btn-waiting': aiStopping }">{{ aiStopping ? '停止中…' : '停止' }}</button>
 
-            <button @click="triggerFileUpload" :disabled="aiGenerationBusy" :title="aiGenerationBusy ? '正在生成，无法上传图片' : '上传图片'">图片</button>
+            <button @click="triggerFileUpload" :disabled="!aiConnected || aiGenerationBusy" :title="!aiConnected ? '连接断开，暂时无法上传图片' : (aiGenerationBusy ? '正在生成，无法上传图片' : '上传图片')">图片</button>
 			<button @click="openSettings" title="设置">设置</button>
-            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" :disabled="aiGenerationBusy" @change="onFileSelected" />
+            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" :disabled="!aiConnected || aiGenerationBusy" @change="onFileSelected" />
         </div>
     </div>
     <!-- 全屏看图 -->
@@ -914,8 +951,12 @@
                 </button>
             </div>
             <p>图片安全模式开启后，对话中的图片会被深度模糊，点击图片全屏查看原图。</p>
-            <h4 class="setting-subtitle">选择模型</h4>
-            <model-tree v-model="aiModel" :nodes="aiModelTree" @change="aiSetModel"></model-tree>
+            <!-- 模型切换要经服务端生效，连接断开时整块置灰 -->
+            <div class="setting-model" :class="{ 'is-disabled': !aiConnected }">
+                <h4 class="setting-subtitle">选择模型</h4>
+                <p v-if="!aiConnected" class="setting-hint">连接断开，暂时无法切换模型</p>
+                <model-tree v-model="aiModel" :nodes="aiModelTree" @change="aiSetModel"></model-tree>
+            </div>
             <div class="btn-row">
                 <button class="btn-cancel" @click="closeSettings">关闭</button>
             </div>

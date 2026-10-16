@@ -131,8 +131,9 @@ public interface MessageContents extends Iterable<MessageContent> {
 		/**
 		 * 将 {@link MessageContents} 序列化为 JSON 数组。
 		 * <p>
-		 * {@link PlainText} 元素直接输出为 JSON 字符串，
-		 * 其他类型输出为 JSON 对象并附加 {@code "type"} 字段。
+		 * 纯文本元素直接输出为 JSON 字符串，其他类型输出为 JSON 对象并附加 {@code "type"} 字段。
+		 * 遍历会先让 {@link MutableMessageContents} 把内部尚未固化的文本缓冲固化成 {@link PlainText}，
+		 * 因此缓冲区里的内容同样会被序列化。
 		 * </p>
 		 *
 		 * @param src       源 {@link MessageContents}
@@ -144,8 +145,8 @@ public interface MessageContents extends Iterable<MessageContent> {
 		public JsonElement serialize(T src, Type typeOfSrc, JsonSerializationContext context) {
 			JsonArray data = new JsonArray();
 			for (MessageContent message : src) {
-				if (message instanceof PlainText) {
-					data.add(((PlainText) message).text.toString());
+				if (message.isPlainText()) {
+					data.add(message.toText());
 				} else {
 					JsonObject origData = context.serialize(message).getAsJsonObject();
 					origData.addProperty("type", message.getType());
@@ -192,10 +193,15 @@ public interface MessageContents extends Iterable<MessageContent> {
 			builder.append(msg.toText());
 		return builder.toString();
 	}
+	/**
+	 * 只收集集合中纯文本部分的文本表示，忽略图片、工具调用等其它内容。
+	 *
+	 * @return 纯文本部分拼接后的文本，不可为 null
+	 */
 	default String getPlainText() {
 		StringBuilder builder = new StringBuilder();
 		for(MessageContent content:this) {
-			if(content instanceof PlainText) {
+			if(content.isPlainText()) {
 				builder.append(content.toText());
 			}
 		}

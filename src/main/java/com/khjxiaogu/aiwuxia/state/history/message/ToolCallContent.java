@@ -1,6 +1,7 @@
 package com.khjxiaogu.aiwuxia.state.history.message;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
@@ -16,6 +17,7 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
  * <ul>
  *   <li>{@link #toText()} 始终返回空字符串 —— 工具调用不直接对应文本。</li>
  *   <li>{@link #copy()} 返回自身引用（{@code this}），因为该对象被视为不可变。</li>
+ *   <li>{@link #getToolCalls()} 返回只读列表，构造时对传入列表做防御性拷贝。</li>
  * </ul>
  * <p>
  * 此外还携带由 {@link ToolCallPresenter} 转换出的用户友好显示
@@ -25,10 +27,11 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
  */
 public class ToolCallContent implements MessageContent {
 
-	List<ToolCall> toolCalls;
+	/** 工具调用列表；私有，构造后本类不再修改，对外只通过 {@link #getToolCalls()} 的只读视图访问 */
+	private final List<ToolCall> toolCalls;
 
 	/** 与 {@link #toolCalls} 一一对应的用户友好显示；仅用于展示，不持久化 */
-	transient List<ToolCallDisplay> displays;
+	private final transient List<ToolCallDisplay> displays;
 
 	/**
 	 * 使用指定的工具调用列表构造工具调用内容（显示使用默认值：简述为工具名称、内容为空）。
@@ -41,14 +44,17 @@ public class ToolCallContent implements MessageContent {
 
 	/**
 	 * 使用指定的工具调用列表与其用户友好显示构造工具调用内容。
+	 * <p>
+	 * 两个列表都会被拷贝一份，调用方之后再修改传入的列表不会影响本对象。
+	 * </p>
 	 *
 	 * @param toolCalls 工具调用列表，不可为 null
 	 * @param displays  与 {@code toolCalls} 顺序一致的显示列表，可为 null
 	 */
 	public ToolCallContent(List<ToolCall> toolCalls, List<ToolCallDisplay> displays) {
 		super();
-		this.toolCalls = toolCalls;
-		this.displays = displays;
+		this.toolCalls = toolCalls == null ? new ArrayList<>() : new ArrayList<>(toolCalls);
+		this.displays = displays == null ? null : new ArrayList<>(displays);
 	}
 
 	@Override
@@ -73,8 +79,14 @@ public class ToolCallContent implements MessageContent {
 
 	/**
 	 * 获取该消息中包含的所有工具调用。
+	 * <p>
+	 * 返回的是只读列表，尝试修改（{@code add}/{@code remove}/{@code clear}/{@code set} 等）
+	 * 会抛出 {@link UnsupportedOperationException}。这里对字段再包一层只读视图，既覆盖构造路径，
+	 * 也覆盖 Gson 反序列化（沿用反射直接写字段、绕过构造器）得到的实例。
+	 * 注意列表元素 {@link ToolCall} 本身仍是模型层的可变对象，本方法只保证列表结构只读。
+	 * </p>
 	 *
-	 * @return 工具调用列表，不可为 null
+	 * @return 只读的工具调用列表，不可为 null
 	 */
 	public List<ToolCall> getToolCalls() {
 		return toolCalls;
