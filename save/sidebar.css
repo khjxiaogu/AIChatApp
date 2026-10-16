@@ -144,6 +144,46 @@
     min-width: 0;
 }
 
+/* ---- 对话项上的操作按钮（重命名 / 归档）---- */
+.chat-item-actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+}
+
+.chat-item:hover .chat-item-actions,
+.chat-item.active .chat-item-actions {
+    opacity: 1;
+}
+
+.chat-action {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+}
+
+.chat-action:hover {
+    background: rgba(42, 127, 255, 0.85);
+}
+
+.chat-action.danger:hover {
+    background: rgba(239, 68, 68, 0.85);
+}
+
 .chat-name {
     color: #ffffff;
     font-weight: 500;
@@ -226,6 +266,21 @@ html.day-mode .chat-empty {
     color: rgba(31, 39, 51, 0.55);
 }
 
+html.day-mode .chat-action {
+    background: rgba(0, 0, 0, 0.08);
+    color: #1f2733;
+}
+
+html.day-mode .chat-action:hover {
+    background: rgba(42, 127, 255, 0.85);
+    color: #ffffff;
+}
+
+html.day-mode .chat-action.danger:hover {
+    background: rgba(239, 68, 68, 0.85);
+    color: #ffffff;
+}
+
 html.day-mode .sidebar-toggle:hover {
     background: rgba(0, 0, 0, 0.06);
 }
@@ -234,5 +289,9 @@ html.day-mode .sidebar-toggle:hover {
 @media (max-width: 768px) {
     .chat-sidebar {
         width: 85%;
+    }
+    /* 触屏没有 hover，操作按钮保持可见 */
+    .chat-item-actions {
+        opacity: 0.9;
     }
 }

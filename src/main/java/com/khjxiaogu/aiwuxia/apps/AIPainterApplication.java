@@ -27,6 +27,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.concurrent.CompletableFuture;
 import java.util.List;
 
 import com.google.gson.JsonObject;
@@ -90,7 +91,8 @@ public class AIPainterApplication extends AIApplication {
 		StringBuilder sendContent=new StringBuilder();
 
 		state.setCurrentOutput(resp);
-		handleReasonerContent(resp,state,write);
+		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
+		CompletableFuture<Void> reasoner=handleReasonerContent(resp,state,write);
 		while (true) {
 			last=reader.readLine();
 			if(last==null) {
@@ -105,6 +107,8 @@ public class AIPainterApplication extends AIApplication {
 			sendContent.append(last).append("\n");
 		}
 		String msg=sendContent.toString().trim();
+		// 等待后台思维链读完，下面才好在正文为空时回退到推理内容里找回复
+		reasoner.join();
 		if(msg.isEmpty()) {
 			MessageContents content=state.getReasonerContent();
 			if(content!=null) {

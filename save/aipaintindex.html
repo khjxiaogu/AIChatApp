@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI智能体主页</title>
+  <!-- 引入 Vue 2 (完整版，支持 template) -->
+    <script src="vue.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #f4f6f9;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      padding: 20px;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .menu-page {
+      max-width: 1100px;
+      width: 100%;
+      background-color: white;
+      border-radius: 28px;
+      box-shadow: 0 20px 35px -8px rgba(0, 0, 0, 0.15);
+      padding: 30px 25px;
+    }
+    h2.page-title {
+      font-weight: 500;
+      font-size: 28px;
+      letter-spacing: 0.5px;
+      color: #1e293b;
+      margin: 0 0 12px 8px;
+      border-left: 6px solid #f97316;
+      padding-left: 20px;
+    }
+    .category {
+      position: relative;
+      border: 2px dashed #d1d5db;
+      border-radius: 24px;
+      background: white;
+      margin-top: 38px;
+      padding: 32px 20px 20px 20px;
+      transition: border-color 0.2s;
+    }
+    .category:first-of-type {
+      margin-top: 0;
+    }
+    .category-title {
+      position: absolute;
+      top: -16px;
+      left: 24px;
+      background-color: white;
+      padding: 0 14px;
+      font-weight: 600;
+      font-size: 1.3rem;
+      color: #2d3c4b;
+      letter-spacing: 0.3px;
+      border-radius: 40px;
+      border: 2px dashed #d1d5db;
+      line-height: 1.4;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+    }
+    .menu-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 120px);
+      justify-content: center;
+      gap: 22px 18px;
+    }
+    .menu-item {
+      width: 120px;
+      height: 120px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      border-radius: 20px;
+      box-shadow: 0 8px 18px -8px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0,0,0,0.01) inset;
+      transition: transform 0.15s, box-shadow 0.2s;
+      cursor: default;
+      padding: 8px 0;
+    }
+    .menu-item:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 18px 25px -12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0,0,0,0.02) inset;
+    }
+    .menu-item img {
+      width: 80px;
+      height: 80px;
+      display: block;
+      object-fit: contain;
+      border-radius: 16px;
+      margin-bottom: 4px;
+      background: #f8fafc;
+      padding: 6px;
+    }
+
+    .menu-item .item-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: #1e293b;
+      max-width: 104px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+      line-height: 1.5;
+      background: white;
+      padding: 0 4px;
+      border-radius: 30px;
+    }
+	.menu-item .item-label {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      white-space: normal;
+      word-break: break-word;
+    } 
+    .category:last-child {
+      margin-bottom: 0;
+    }
+    .category + .category {
+      margin-top: 42px;
+    }
+	
+	
+    /* ---------- 新增模态框样式 ---------- */
+    .modal-mask {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(3px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      transition: opacity 0.2s;
+    }
+
+    .modal-container {
+      width: 90%;
+      background: white;
+      border-radius: 32px;
+      box-shadow: 0 30px 50px rgba(0, 0, 0, 0.3);
+      padding: 30px 28px;
+      text-align: center;
+    }
+
+    .modal-title {
+      font-size: 26px;
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #f1f5f9;
+      padding-bottom: 15px;
+    }
+
+    .modal-content {
+      background: #f8fafc;
+      border-radius: 20px;
+      padding: 18px 16px;
+      margin: 18px 0 28px;
+      max-height: 70vh;
+      overflow-y: auto;
+      text-align: left;
+      font-size: 15px;
+      color: #334155;
+      line-height: 1.6;
+      border: 1px solid #e2e8f0;
+    }
+
+    .modal-content p {
+      margin: 10px 0;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+    }
+
+    .modal-btn {
+      flex: 1;
+      padding: 14px 10px;
+      border: none;
+      border-radius: 40px;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+
+    .modal-btn.agree {
+      background: #f97316;
+      color: white;
+    }
+
+    .modal-btn.agree:hover {
+      background: #ea580c;
+      transform: scale(1.02);
+    }
+
+    .modal-btn.reject {
+      background: #e2e8f0;
+      color: #1e293b;
+    }
+
+    .modal-btn.reject:hover {
+      background: #cbd5e1;
+    }
+
+    /* 当模态框显示时，禁止背景滚动 */
+    body.modal-open {
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 模板将完全由 Vue 的 template 选项渲染，此处只作为挂载点 -->
+  </div>
+
+  <script>
+
+
+    // Vue 实例
+    new Vue({
+      el: '#app',
+      template: `
+        <div class="menu-page">
+          <h2 class="page-title">AI智能体列表</h2>
+          <div v-for="(category, catIndex) in categories" :key="catIndex" class="category">
+            <div class="category-title">{{ category.name }}</div>
+            <div class="menu-grid">
+              <div v-for="(item, itemIndex) in category.items" :key="catIndex + '-' + itemIndex" class="menu-item">
+                <a :href="item.url">
+                <img :src="item.icon" :alt="item.name + '图标'" loading="lazy">
+                <span class="item-label">{{ item.name }}</span>
+				</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+      data: {	
+        categories: [
+          {
+            name: '真恋~寄语枫秋',
+            items: [
+              { name: '姚枫茜',icon:'',url:'aigal?chara=fengxi' },
+              { name: '姚枫怡',icon:'',url:'aigal?chara=fengyi' },
+              { name: '唐海音',icon:'',url:'aigal?chara=haiyin' }
+            ]
+          },
+		  {
+            name: '通用智能',
+            items: [
+              { name: '通用智能',icon:'',url:'aichat' },
+              { name: '自定义agent',icon:'',url:'agentedit' }
+            ]
+          }
+        ]
+      }
+    })
+  </script>
+</body>
+</html>

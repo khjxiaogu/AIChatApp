@@ -48,8 +48,11 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -96,12 +99,27 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 
 	AtomicBoolean lock=new AtomicBoolean();
 	ApplicationAttributes attributes;
+
+	/**
+	 * 工具调用许可管理器：同一会话的许可请求串行询问，等待方阻塞至用户答复或超时。
+	 * <p>
+	 * 许可请求必须经前端确认，因此只存在于有下行通道的 WebSocket 会话里：
+	 * 通过 {@link #requestToolCallApproval(ToolApprovalRequest)} 下发确认帧，
+	 * 通过 {@link #completeToolApproval(String, boolean)} 回填用户答复，
+	 * 连接断开时由 {@link #cancelToolApprovals()} 一律按拒绝收敛。
+	 * </p>
+	 */
+	protected final ToolApprovalManager toolApprovalManager = new ToolApprovalManager(this::requestToolCallApproval);
+
 	public WebSocketAISession(AIChatService par,String uid,String chatid,AIApplication aiapp,ApplicationAttributes attr,File fn, ISaveData data) {
 		super(uid, data,aiapp);
 		this.fn = fn;
 		this.parent=par;
 		this.chatId=chatid;
 		this.attributes=attr;
+		// 父类构造期本类字段尚未初始化，因此在这里（字段就绪后）再把许可方写入工具调用管理器：
+		// 权限监听器判为“询问”的工具调用会下发 toolApproval 帧，等待前端答复
+		getToolCallManager().setApprover(getUserApprovalApprover());
 	}
 
 
@@ -260,16 +278,16 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	}
 	
 	/**
-	 * 把一次历史写入排到会话命令线程上执行，并在写入完成后落盘。
+	 * 把一次历史写入排到会话命令任务上执行，并在写入完成后落盘。
 	 * <p>
-	 * 历史条目只能在会话命令线程上修改：生成同样跑在这条线程上，若在 WebSocket/HTTP 线程里
+	 * 历史条目只能在会话命令任务里修改：生成同样跑在命令任务里，若在 WebSocket/HTTP 线程里
 	 * 直接写历史（例如生成过程中上传图片、发送消息），新条目会插到正在流式输出的助手条目之后，
 	 * 随后的思考内容、助手消息、状态快照都会挂到错误的条目上；请求构建遍历历史时也可能与写入并发，
 	 * 落盘时的序列化更会读到写了一半的状态。
 	 * </p>
 	 * <p>
-	 * 命令线程是单线程执行器，写入按提交顺序执行，因此与正在进行的生成天然串行：
-	 * 生成期间提交的写入会排到这一轮之后执行。
+	 * 命令任务在线程池上执行，但同一会话的任务串行、按提交顺序执行（{@link AISession} 的会话级串行闸门），
+	 * 因此与正在进行的生成天然串行：生成期间提交的写入会排到这一轮之后执行。
 	 * </p>
 	 *
 	 * @param write         历史写入动作
@@ -573,13 +591,12 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	}
 
 	/**
-	 * 把工具调用许可请求下发给前端，等待用户答复。
+	 * 把工具调用许可请求下发给前端，等待用户答复（由 {@link #toolApprovalManager} 回调）。
 	 * <p>
 	 * 与 {@link #requestUserInput} 不同，答复不经 {@code commandExec} 处理：
 	 * 发起请求的生成线程正阻塞等待答复，若答复也排队到同一个单线程执行器上就会死锁。
 	 * </p>
 	 */
-	@Override
 	protected void requestToolCallApproval(ToolApprovalRequest request) {
 		sendFrame(JsonBuilder.object()
 				.add("type", "toolApproval")
@@ -589,6 +606,52 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("reason", request.getReason())
 				.add("timeout", getToolApprovalManager().getTimeoutMillis())
 				.end().toString());
+	}
+
+	/**
+	 * 获取本会话的工具调用许可管理器（同一会话串行询问、超时按拒绝处理）。
+	 *
+	 * @return 许可管理器
+	 */
+	public ToolApprovalManager getToolApprovalManager() {
+		return toolApprovalManager;
+	}
+
+	/**
+	 * 阻塞等待用户许可的许可方，可在 {@link #applyToolCallRules(ToolCallManager)} 中写入管理器。
+	 *
+	 * @return 许可方
+	 */
+	public ToolCallApprover getUserApprovalApprover() {
+		return toolApprovalManager.approverFor(user);
+	}
+
+	/**
+	 * 回填一次工具调用许可答复（收到前端 {@code toolApproval} 帧时调用）。
+	 * <p>
+	 * 该方法必须在发起工具调用的线程之外的线程上调用，否则等待方无法被唤醒。
+	 * </p>
+	 *
+	 * @param requestId 请求 id
+	 * @param approved  是否许可
+	 * @return 答复是否被接受（请求不存在、已超时或重复答复时返回 false）
+	 */
+	public boolean completeToolApproval(String requestId, boolean approved) {
+		return toolApprovalManager.complete(requestId, approved);
+	}
+
+	/**
+	 * 放弃本会话全部待答复的许可请求（例如连接全部断开），一律按拒绝处理。
+	 */
+	public void cancelToolApprovals() {
+		toolApprovalManager.cancelAll(user);
+	}
+
+	@Override
+	public void close() {
+		// 释放可能正在等待用户许可的生成线程
+		cancelToolApprovals();
+		super.close();
 	}
 
 

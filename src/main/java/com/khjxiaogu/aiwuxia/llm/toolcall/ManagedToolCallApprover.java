@@ -3,7 +3,7 @@ package com.khjxiaogu.aiwuxia.llm.toolcall;
 /**
  * 基于 {@link ToolApprovalManager} 的阻塞式许可方实现。
  * <p>
- * 作为 {@link ToolCallApprover} 交给 {@code ToolCallPolicy} 后：每当某次工具调用需要许可，
+ * 作为 {@link ToolCallApprover} 写入 {@link ToolCallManager} 后：每当某次工具调用需要许可，
  * 本类会向用户/上层发起异步请求（由 {@link ToolApprovalRequester} 决定如何询问），
  * 并在当前线程上等待答复；同一会话（userId）的请求被串行化，超时或等待被中断时按拒绝处理。
  * </p>

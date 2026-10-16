@@ -25,6 +25,7 @@ package com.khjxiaogu.aiwuxia.apps;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -291,29 +292,64 @@ public abstract class AIApplication {
      * @param state AI会话状态
      */
 	public abstract void provideInitial(AISession state);
-	  /**
-     * 处理AI输出的推理内容，把它写进应用当前持有的可写入上下文。
+    /**
+     * 异步处理AI输出的推理内容，把它写进应用当前持有的可写入上下文。
      * <p>
      * 上下文由应用通过 {@link AISession#beginWrite(Role)} 取得（{@link HistoryWriteContext}），
      * 在 try-with-resources 块内传入本方法：思维链写在同一条记录上，
      * 该记录在写入期间不进入历史、不参与上下文与总结清理，也不会落盘。
      * </p>
+     * <p>
+     * 读流与写历史都在后台线程上进行，本方法立即返回完成信号：推理流往往要等到整轮生成
+     * （含工具调用）结束才会关闭，同步读取会把命令线程一直阻塞住，正文只能等推理流结束后
+     * 才被处理。改为异步后，思考内容边产生边写入本轮记录（前端仍逐段收到通知），
+     * 应用线程同时继续处理正文。
+     * </p>
+     * <p>
+     * 需要读取推理内容的调用方先 {@code join()} 返回的 Future；写入上下文提交、撤回或关闭时
+     * 也会自动等待它收尾，因此记录定型后不会再有后台写入。推理流已经读完（例如非流式输出）
+     * 时直接同步写入并返回已完成的 Future。
+     * </p>
      *
      * @param output AI输出对象（包含推理内容和最终内容）
      * @param state  AI会话状态（用于工具调用通知）
      * @param write  本条记录的可写入上下文
-     * @throws IOException 如果读取推理内容时发生I/O错误
+     * @return 后台写入任务的完成信号（读流失败时异常完成），可用于等待写入完成并感知读流失败
+     * @throws IOException 如果读取推理内容时发生I/O错误（同步读取路径）
      */
-	public void handleReasonerContent(AIOutput output,AISession state,HistoryWriteContext write) throws IOException {
-		MessageReader br=output.getReasoner();
-		while(!br.isEnded()) {
-			MessageContent current=br.read();
-			if(current==null)
-				break;
+	public CompletableFuture<Void> handleReasonerContent(AIOutput output,AISession state,HistoryWriteContext write) throws IOException {
+		final MessageReader br=output.getReasoner();
+		if(br==null)
+			return null;
+		// 推理流已经结束：没有可等待的内容，直接同步写入，调用方拿到的完成信号即刻可用
+		if(br.isEnded()) {
+			drainReasoner(br,state,write);
+			return CompletableFuture.completedFuture(null);
+		}
+		// 后台线程按段消费推理流：内容段原样写进本轮记录，工具调用额外通知会话
+		return state.beginAsyncReasonerWrite(() -> {
+			try {
+				return br.read();
+			} catch (IOException e) {
+				throw new UncheckedIOException(e);
+			}
+		},write);
+	}
+
+	/**
+	 * 同步读完整条推理流并写入指定上下文。
+	 *
+	 * @param br    推理流读取器
+	 * @param state AI会话状态（用于工具调用通知）
+	 * @param write 本条记录的可写入上下文
+	 * @throws IOException 读取推理内容失败
+	 */
+	private void drainReasoner(MessageReader br,AISession state,HistoryWriteContext write) throws IOException {
+		MessageContent current;
+		while((current=br.read())!=null) {
 			if(current instanceof ToolCallContent)
 				state.onToolcall((ToolCallContent) current);
 			write.appendReasoner(current);
-			
 		}
 	}
     /**

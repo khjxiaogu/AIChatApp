@@ -85,6 +85,10 @@ public interface HistoryWriteContext extends MutableHistoryItem, AutoCloseable {
 	 * 没有显式提交或撤回时按内容结算：写过显示内容或上下文内容就提交，
 	 * 只写了思维链的空记录直接撤回；续写已有记录时只清理状态。
 	 * </p>
+	 * <p>
+	 * 提交、撤回与关闭都会先等待本记录上尚未收尾的后台异步写入（例如后台读流写思维链），
+	 * 因此方法返回后本记录不会再有新的写入。
+	 * </p>
 	 */
 	@Override
 	void close();
@@ -95,6 +99,21 @@ public interface HistoryWriteContext extends MutableHistoryItem, AutoCloseable {
 	 * @return 已结束时返回 {@code true}
 	 */
 	boolean isResolved();
+
+	/**
+	 * 追加一段思维链内容，并返回本次是否真的写入。
+	 * <p>
+	 * 后台异步读流使用本方法：本记录已经提交或撤回时返回 {@code false}，
+	 * 读流据此收工，不会把内容写到已经定型的记录上。
+	 * </p>
+	 *
+	 * @param reasoner 本次追加的思维链内容
+	 * @return 已写入返回 {@code true}；记录已经结束、本次内容被丢弃时返回 {@code false}
+	 */
+	default boolean appendReasonerIfOpen(MessageContent reasoner) {
+		appendReasoner(reasoner);
+		return true;
+	}
 
 	/**
 	 * 追加一整组内容到本记录。

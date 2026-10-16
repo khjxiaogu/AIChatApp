@@ -293,7 +293,8 @@ public class AICharaTalkMain extends AIApplication {
 			}
 		});
 		CompletableFuture<Boolean> cf=null;
-		handleReasonerContent(resp,state,write);
+		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
+		CompletableFuture<Void> reasoner=handleReasonerContent(resp,state,write);
 		if(back!=null)
 		oldbg=back.getSceneData(state.getState().perks);
 		while (true) {
@@ -397,6 +398,8 @@ public class AICharaTalkMain extends AIApplication {
 			state.sendSceneContent("back", "");
 		state.setCharacter(chara);
 		state.setBackground(bg);
+		// 等待后台思维链读完，读流失败在这里按原来的方式抛出
+		reasoner.join();
 		// 显示内容用剧情正文，上下文内容用包含场景等信息的完整文本
 		write.setContextContent(sendContent.toString().trim());
 		write.append(content.toString().trim(), false);

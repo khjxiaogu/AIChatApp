@@ -27,6 +27,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.concurrent.CompletableFuture;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -168,7 +169,8 @@ public class AICustomMain extends AIApplication {
 
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		boolean nstateModified = false;
-		handleReasonerContent(resp,state,write);
+		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
+		CompletableFuture<Void> reasoner=handleReasonerContent(resp,state,write);
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		while (true) {
@@ -195,6 +197,8 @@ public class AICustomMain extends AIApplication {
 			}
 
 		}
+		// 等待后台思维链读完，读流失败在这里按原来的方式抛出
+		reasoner.join();
 
 		return nstateModified ? oldstate : null;
 	}

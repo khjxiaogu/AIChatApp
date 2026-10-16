@@ -29,7 +29,6 @@ import java.util.List;
 import java.util.Map;
 
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
-import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPolicy;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
@@ -148,8 +147,9 @@ public class AIRequest {
     /**
      * 工具调用管理器：同时承载本次请求的工具注册表与调用规则（次数、权限、许可）。
      * <p>
-     * 由会话/应用提供（{@code ToolCallManager.builder()...build()}），提供者不再自行维护
+     * 由会话/应用提供（{@code session.getToolCallManager()}），提供者不再自行维护
      * 工具列表与规则；为 null 表示本次请求不提供任何工具。
+     * 管理器可变，注册工具与调整规则应在本轮生成开始前完成。
      * 单次生成的调用状态由 {@code ToolCallContext.create(toolCallManager, ...)} 承载。
      * </p>
      */
@@ -212,13 +212,13 @@ public class AIRequest {
     	return toolCallManager==null?Collections.emptyMap():toolCallManager.getTools();
     }
     /**
-     * 工具调用轮次上限，等同 {@link ToolCallPolicy#getMaxRounds()}。
+     * 工具调用轮次上限，等同 {@link ToolCallManager#getMaxRounds()}。
      *
      * @deprecated 请通过 {@link #getToolCallManager()} 与 {@code ToolCallContext} 统一管理调用次数。
      */
     @Deprecated
     public int getMaxToolCall() {
-    	return toolCallManager==null?ToolCallPolicy.DEFAULT_MAX_ROUNDS:toolCallManager.getPolicy().getMaxRounds();
+    	return toolCallManager==null?ToolCallManager.DEFAULT_MAX_ROUNDS:toolCallManager.getMaxRounds();
     }
     public String getModelName() {
     	return modelHint.length>0?modelHint[0]:"";

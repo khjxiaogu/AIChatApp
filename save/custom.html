@@ -73,7 +73,10 @@
                         <div class="chat-name">{{ chat.name || '未命名对话' }}</div>
                         <div class="chat-time">{{ formatTime(chat.time) }}</div>
                     </div>
-                    <i data-feather="chevron-right" size="16" style="color:rgba(255,255,255,0.5)"></i>
+                    <div class="chat-item-actions">
+                        <button class="chat-action" title="重命名" @click.stop="renameChat(chat)">✎</button>
+                        <button class="chat-action danger" title="归档（归档后不再显示，可在存档管理中恢复）" @click.stop="archiveChat(chat)">⊘</button>
+                    </div>
                 </div>
             </div>
             <div v-else class="chat-empty">
@@ -187,6 +190,10 @@
 			var rq = searchs[i].split("=");
 			pageQueries[rq[0]]=rq[1];
 		}
+		/** 当前用户ID：兼容 uid / userId 两种页面参数写法 */
+		function aiUid(){
+			return pageQueries.uid || pageQueries.userId || '';
+		}
 		feather.replace();
 		let msgs=new Vue({
 		         el: '#app',
@@ -225,12 +232,12 @@
                         const date = new Date(parseInt(timestampMs));
                         return `${date.getMonth()+1}/${date.getDate()} ${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
                     },
-                    // 获取聊天列表
+                    // 获取聊天列表（只拉取本页面所属应用 custom 的对话，避免串到其它智能体）
                     async fetchChatList() {
-                        const uid = pageQueries.userId;
+                        const uid = aiUid();
                         this.loadingChatList = true;
                         try {
-                            const res = await fetch(`chatlist?uid=${uid}`);
+                            const res = await fetch(`querychat?appid=${this.appId || 'custom'}&uid=${encodeURIComponent(uid)}`);
                             const data = await res.json();
                             if (Array.isArray(data)) {
                                 this.chatList = data;
@@ -243,6 +250,62 @@
                         } finally {
                             this.loadingChatList = false;
                         }
+                    },
+                    // 重命名对话：名称保存在 chats.brief，重命名后不再被AI自动改写
+                    renameChat(chat) {
+                        if (!chat || !chat.chatid) return;
+                        const done = (name) => {
+                            if (name == null) return;
+                            const body = new URLSearchParams();
+                            body.append('chatid', chat.chatid);
+                            body.append('name', name);
+                            fetch('renameChat?uid='+encodeURIComponent(aiUid()), { method: 'POST', body: body })
+                                .then(r => r.status === 200 ? r.text() : r.text().then(t => Promise.reject(t)))
+                                .then(saved => {
+                                    chat.name = saved;
+                                    if (this.currentChatId === chat.chatid) document.title = 'AI-' + saved;
+                                    this.aiToast('已重命名');
+                                })
+                                .catch(err => this.aiToast('重命名失败：' + err, { kind: 'warn' }));
+                        };
+                        const ask = this.aiPrompt({
+                            title: '重命名对话',
+                            message: '请输入新的对话名称',
+                            value: chat.name || '',
+                            placeholder: '对话名称',
+                        });
+                        if (ask && typeof ask.then === 'function') ask.then(done);
+                        else done(window.prompt('请输入新的对话名称', chat.name || ''));
+                    },
+                    // 归档对话：归档后不再出现在本页列表，可在存档管理页的"已归档"中恢复
+                    archiveChat(chat) {
+                        if (!chat || !chat.chatid) return;
+                        const tip = '归档后该对话不再出现在聊天列表中，可在存档管理中恢复。确定归档吗？';
+                        const doArchive = () => {
+                            const body = new URLSearchParams();
+                            body.append('chatid', chat.chatid);
+                            fetch('archiveChat?uid='+encodeURIComponent(aiUid()), { method: 'POST', body: body })
+                                .then(r => r.status === 200 ? r.text() : r.text().then(t => Promise.reject(t)))
+                                .then(() => {
+                                    this.aiToast('已归档');
+                                    const wasCurrent = this.currentChatId === chat.chatid;
+                                    this.fetchChatList().then(() => {
+                                        // 归档的是当前对话时，切到列表中剩下的第一个对话
+                                        if (wasCurrent) {
+                                            if (this.chatList.length > 0) {
+                                                const next = this.chatList[0];
+                                                this.switchToChat(next.appid, next.chatid);
+                                            } else {
+                                                window.open('agentedit', '_blank');
+                                            }
+                                        }
+                                    });
+                                })
+                                .catch(err => this.aiToast('归档失败：' + err, { kind: 'warn' }));
+                        };
+                        const ask = this.aiConfirm({ title: '归档对话', message: tip, kind: 'danger' });
+                        if (ask && typeof ask.then === 'function') ask.then(ok => { if (ok) doArchive(); });
+                        else if (window.confirm(tip)) doArchive();
                     },
                     // 侧边栏切换
                     toggleSidebar() {
@@ -326,7 +389,7 @@
 					exportHistory(){
 						const form = document.createElement('form');
 						form.method = 'POST';
-						form.action = "exportChat?app="+this.appId+"&chatid="+this.chatId+"&uid="+pageQueries.userId;
+						form.action = "exportChat?app="+this.appId+"&chatid="+this.chatId+"&uid="+encodeURIComponent(aiUid());
 						form.target = 'downloadFrame';
 						let iframe = document.getElementById('downloadFrame');
 						if (!iframe) {
@@ -343,7 +406,7 @@
 					exportMemory(){
 						const form = document.createElement('form');
 						form.method = 'POST';
-						form.action = "exportMemory?app="+this.appId+"&chatid="+this.chatId+"&uid="+pageQueries.userId;
+						form.action = "exportMemory?app="+this.appId+"&chatid="+this.chatId+"&uid="+encodeURIComponent(aiUid());
 						form.target = 'downloadFrame';
 						let iframe = document.getElementById('downloadFrame');
 						if (!iframe) {
@@ -365,7 +428,7 @@
 					},
 					/* ============ 公共协议层（ai-protocol.js）：连接与帧钩子 ============ */
 					aiSocketUrl(){
-						return (location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId;
+						return (location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+encodeURIComponent(aiUid());
 					},
 					aiOnSocketOpen(){
 						this.prepared=true;
@@ -373,14 +436,12 @@
 						window.onbeforeunload=()=>this.aiDisconnect();
 						if(this._openDone) this._openDone();
 						// 刷新侧边栏列表 (确保最新)
-						this.fetchChatList();
-						fetch("querychat?appid="+this.appId)
-							.then(p=>p.json())
-							.then(p=>{
-								if(p.length>0){
-									document.title="AI-"+p[0].app+"-"+p[0].name;
-								}
-							})
+						this.fetchChatList().then(()=>this.refreshChatTitle());
+					},
+					// 用当前对话的信息刷新页面标题（只认本应用、本对话）
+					refreshChatTitle(){
+						const cur = (this.chatList || []).find(c => c.chatid === this.chatId);
+						if (cur && cur.name) document.title = "AI-" + cur.name;
 					},
 					aiOnConnState(state){
 						// 断开/重连提示由公共层统一显示（<ai-conn-tip>），这里只做页面自己的状态处理

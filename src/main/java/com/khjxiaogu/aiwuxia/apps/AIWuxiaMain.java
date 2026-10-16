@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.concurrent.CompletableFuture;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Random;
@@ -256,7 +257,8 @@ public class AIWuxiaMain extends AIApplication {
 		boolean nstateModified = false;
 		boolean isDraft=false;
 		BufferedReader reader=new BufferedReader(op.getContent());
-		handleReasonerContent(op,state,write);
+		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
+		CompletableFuture<Void> reasoner=handleReasonerContent(op,state,write);
 		String last;
 		while ((last=reader.readLine())!=null) {
 			if (isWaiting && last.isEmpty()) {
@@ -396,6 +398,8 @@ public class AIWuxiaMain extends AIApplication {
 
 		}
 		write.appendLine("\n输入“查看面板”查看你的面板，输入“重新生成”重新生成剧情，输入“撤回”删除上一次对话。", false);
+		// 等待后台思维链读完，读流失败在这里按原来的方式抛出
+		reasoner.join();
 
 		return nstateModified ? oldstate : null;
 	}

@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.concurrent.CompletableFuture;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -282,7 +283,8 @@ public class AITRPGSceneMain extends AIApplication {
 		String last;
 		String oldchara=state.getCharacter();
 		String oldbg=state.getBackground();
-		handleReasonerContent(resp,state,write);
+		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
+		CompletableFuture<Void> reasoner=handleReasonerContent(resp,state,write);
 		AttributeSet scene=state.getState().getOrCreateInterface("场景");
 		AttributeSet characs=state.getState().getOrCreateInterface("角色");
 
@@ -447,6 +449,8 @@ public class AITRPGSceneMain extends AIApplication {
 			state.setCharacter(chara);
 		if(bg!=null)
 			state.setBackground(bg);
+		// 等待后台思维链读完，读流失败在这里按原来的方式抛出
+		reasoner.join();
 		
 		return oldstate;
 	}

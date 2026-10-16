@@ -200,6 +200,10 @@
 			var rq = searchs[i].split("=");
 			pageQueries[rq[0]]=rq[1];
 		}
+		/** 当前用户ID：兼容 uid / userId 两种页面参数写法 */
+		function aiUid(){
+			return pageQueries.uid || pageQueries.userId || '';
+		}
 		feather.replace();
 		let msgs=new Vue({
 		         el: '#app',
@@ -229,12 +233,13 @@
 		         methods: {
 					initChat(){
 						let aid=pageQueries.chara+"trpg"
-						fetch("querychat?appid="+aid)
+						// 只查询本应用下的对话，并优先使用存档管理页选中的"当前存档"
+						fetch("currentChat?appid="+aid+"&uid="+encodeURIComponent(aiUid()))
 						.then(p=>p.json())
-						.then(p=>{
-							if(p.length>0){
-								document.title="AI"+p[0].app+"-"+p[0].name;
-								this.openApp(aid,p[0].chatid)
+						.then(c=>{
+							if(c&&c.chatid){
+								document.title="AI-"+c.app+"-"+c.name;
+								this.openApp(aid,c.chatid)
 							}else
 								fetch("createid?appid="+aid)
 								.then(p=>p.text())
@@ -254,7 +259,7 @@
 					exportHistory(){
 						const form = document.createElement('form');
 						form.method = 'POST';
-						form.action = "exportChat?app="+this.appId+"&chatid="+this.chatId+"&uid="+pageQueries.userId;
+						form.action = "exportChat?app="+this.appId+"&chatid="+this.chatId+"&uid="+encodeURIComponent(aiUid());
 						form.target = 'downloadFrame'; // 指定 iframe
 
 						// 添加隐藏的 iframe（若不存在）
@@ -275,7 +280,7 @@
 					exportMemory(){
 						const form = document.createElement('form');
 						form.method = 'POST';
-						form.action = "exportMemory?app="+this.appId+"&chatid="+this.chatId+"&uid="+pageQueries.userId;
+						form.action = "exportMemory?app="+this.appId+"&chatid="+this.chatId+"&uid="+encodeURIComponent(aiUid());
 						form.target = 'downloadFrame';
 						let iframe = document.getElementById('downloadFrame');
 						if (!iframe) {
@@ -297,20 +302,24 @@
 					},
 					/* ============ 公共协议层（ai-protocol.js）：连接与帧钩子 ============ */
 					aiSocketUrl(){
-						return (location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+pageQueries.userId;
+						return (location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+encodeURIComponent(aiUid());
 					},
 					aiOnSocketOpen(){
 						this.prepared=true;
 						// 离开页面时主动断开（公共层会摘掉监听，不会触发重连）
 						window.onbeforeunload=()=>this.aiDisconnect();
 						if(this._openDone) this._openDone();
-						fetch("querychat?appid="+this.appId)
+						this.refreshChatTitle();
+					},
+					// 用当前存档的信息刷新页面标题（只认本应用、本对话）
+					refreshChatTitle(){
+						fetch("currentChat?appid="+this.appId+"&uid="+encodeURIComponent(aiUid()))
 							.then(p=>p.json())
-							.then(p=>{
-								if(p.length>0){
-									document.title="AI-"+p[0].app+"-"+p[0].name;
-								}
+							.then(c=>{
+								if(c&&c.chatid===this.chatId&&c.app)
+									document.title="AI-"+c.app+"-"+c.name;
 							})
+							.catch(()=>{});
 					},
 					aiOnConnState(state){
 						// 断开/重连提示由公共层统一显示（<ai-conn-tip>），这里只做页面自己的状态处理

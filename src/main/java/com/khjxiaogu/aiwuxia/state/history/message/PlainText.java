@@ -6,6 +6,9 @@ package com.khjxiaogu.aiwuxia.state.history.message;
  * 实现 {@link MessageContent} 接口，内部使用 {@link StringBuilder} 存储文本数据，
  * 支持通过 {@link #append(CharSequence)} 方法追加文本内容。
  * </p>
+ * <p>
+ * 追加与读取在实例锁上同步：思维链由后台线程异步逐字写入时，其它线程可能同时在读取同一段文本。
+ * </p>
  */
 public class PlainText implements MessageContent {
 	StringBuilder text;
@@ -36,12 +39,12 @@ public class PlainText implements MessageContent {
 	 *
 	 * @param str 要追加的字符序列
 	 */
-	public void append(CharSequence str) {
+	public synchronized void append(CharSequence str) {
 		text.append(str);
 	}
 
 	@Override
-	public String toText() {
+	public synchronized String toText() {
 		return text.toString();
 	}
 

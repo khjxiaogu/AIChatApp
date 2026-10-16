@@ -218,11 +218,24 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 
 ### 数据库
 
-服务启动时会自动在数据目录下创建 `messages.db`，包含三张表：
+服务启动时会自动在数据目录下创建 `messages.db`。核心表：
 
-- `chats`：存储对话元数据（用户ID、应用ID、对话ID、时间、简述、属性）
-- `permission`：用户权限（用户ID、应用ID、许可状态）
-- `price`：费用记录（对话ID、价格字符串、时间）
+- `chats`：对话主表，存储用户ID、应用ID、对话ID、时间、名称、**累计消耗（price）**、
+  **存档状态（status）** 以及 `name_fixed`（名称是否被用户手动重命名）
+- `chatdata`：对话备注（`remark`）与"当前存档"标记（`selected`）
+- `permission`：用户权限（用户ID、应用ID、许可状态），可见性为 `permission` 的应用据此授权
+
+`chats.status` 的取值：
+
+| 取值         | 含义                                   | 是否出现在聊天页 | 是否出现在存档管理页 |
+|------------|--------------------------------------|----------|------------|
+| `normal`   | 进行中（默认）                              | 是        | 是（"进行中"标签） |
+| `archived` | 已归档                                  | 否        | 是（"已归档"标签，可恢复） |
+| `removed`  | 已移除（软删除，由 `/remove` 设置）               | 否        | 否          |
+
+启动时会自动升级旧库：把原 `price` 表的费用并入 `chats.price`，并把历史的
+`chats.attribute` 标记迁移为 `status`（`hide` → `archived`，`removed`/`deleted` → `removed`，
+其余 → `normal`）。迁移是幂等的；`price` 表升级后不再被读写，仅作为历史数据保留。
 
 ### AI 应用加载
 
@@ -230,12 +243,24 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 
 ```json
 {
-  "type": "talk",           // 对应注册的工厂类型
-  "name": "应用名称",          // 显示名称
-  "enabled": true,          // 是否启用
-  "trial": true             // 是否为公测应用（每个用户仅可创建一个对话）
+  "type": "talk",              // 对应注册的工厂类型
+  "name": "应用名称",             // 显示名称
+  "enabled": true,             // 是否启用
+  "access": "permission"       // 可见性：hidden / permission / public
 }
 ```
+
+`access` 控制应用的可见性与可用性：
+
+| 取值           | 含义                                                     |
+|--------------|--------------------------------------------------------|
+| `hidden`     | 不可见：不出现在任何应用/存档列表中，也不允许新建对话（已存在的对话仍可按对话ID打开）           |
+| `permission` | 仅权限可见（默认）：只有在 `permission` 表中 `state='1'` 的用户可见、可新建对话     |
+| `public`     | 公开可见：所有用户都可见、可新建对话                                     |
+
+大小写不敏感，也接受 `none`/`invisible`/`private`（→ hidden）、`open`/`all`/`trial`（→ public）、
+`limited`/`auth`（→ permission）等写法。**已弃用的 `trial` 字段仍然兼容**：未配置 `access` 时，
+`trial: true` 等价于 `access: "public"`，`trial: false` 等价于 `access: "permission"`。
 
 `type` 字段决定了使用哪个 `AIApplicationFactory` 创建实例。内置类型：
 - `wuxia`：武侠世界
@@ -252,17 +277,36 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 
 | 路径                     | 方法   | 参数                               | 说明                             |
 |------------------------|------|----------------------------------|--------------------------------|
-| `/applist`             | GET  | `uid` 用户ID                      | 获取用户有权使用的应用列表               |
-| `/chatlist`            | GET  | `uid` 用户ID                      | 获取用户的对话列表                   |
-| `/querychat`           | GET  | `uid`, `appid`                   | 查询用户在指定应用下的所有对话             |
+| `/applist`             | GET  | `uid` 用户ID                      | 获取用户可见的应用列表（公开可见 + 已授权）        |
+| `/chatlist`            | GET  | `uid` 用户ID                      | 获取用户全部进行中的对话（跨应用，兼容接口）         |
+| `/querychat`           | GET  | `uid`, `appid`, `status?`        | 按应用分类查询对话（各聊天页面专用，只返回该应用）      |
+| `/currentChat`         | GET  | `uid`, `appid`                   | 查询该应用下的"当前存档"（选中的优先，否则最近一条）    |
 | `/createid`            | GET  | 无                                | 生成一个可用的对话ID                  |
-| `/remove`              | GET  | `uid`, `cid`                     | 隐藏指定对话（标记为 `hide`）          |
+| `/renameChat`          | POST | `uid`, `chatid`, `name`          | 重命名对话（写入主表，之后不再被AI自动改写）        |
+| `/archiveChat`         | POST | `uid`, `chatid`                  | 归档对话（聊天页不再显示，可在存档管理页恢复）        |
+| `/unarchiveChat`       | POST | `uid`, `chatid`                  | 取消归档，恢复为进行中                    |
+| `/remove`              | GET  | `uid`, `cid`                     | 移除对话（软删除，标记为 `removed`）        |
+| `/archiveApplist`      | GET  | `uid` 用户ID                      | 存档管理页应用列表（可见应用 ∪ 已有存档的应用 + 计数） |
+| `/queryArchives`       | GET  | `uid`, `appid`, `archived?`      | 存档管理页存档明细（含消耗、备注、选中标记）         |
+| `/updateRemark`        | POST | `uid`, `chatid`, `remark`        | 更新存档备注                         |
+| `/updateSelection`     | POST | `uid`, `chatid`, `appid`         | 设置该应用的"当前存档"                   |
 | `/exportChat`          | POST | `uid`, `chatid`                  | 导出对话历史为 UTF-8 文本文件          |
+| `/exportMemory`        | POST | `uid`, `chatid`                  | 导出对话记忆为 UTF-8 文本文件          |
+| `/useToday`, `/useHistory`, `/checkin`, `/redeem` 等 | GET | `uid` 等 | 额度查询、签到与 CDK 兑换             |
 | `/kh$localModelDeploy` | WS   | 需 `Authorization: Bearer token` | 本地语音模型 WebSocket 连接端点       |
 | `/kh$localModelDeployData` | POST | `reqid`, `type`, 二进制数据        | 本地语音模型回调，接收音频数据             |
 | `/resource/*`          | GET  | -                                | 静态资源文件（图片、CSS 等）            |
 | `/voice/*`             | GET  | -                                | 语音资源文件                       |
-| `/index`, `/aichat` 等 | GET  | -                                | 返回对应的 HTML 页面                |
+| `/index`, `/aichat`, `/painter`, `/archive` 等 | GET  | -                    | 返回对应的 HTML 页面                |
+
+#### 对话列表与"当前存档"约定
+
+- **各聊天页面只能拉取自己应用的对话**：页面调用 `/querychat?appid=<自己的应用>&uid=<用户>`，
+  不接受跨应用列表；通用页面（`custom.html`）只展示 `custom` 应用的对话，绘画页面只展示 `painterirc`。
+- `/querychat` 与 `/currentChat` 都只返回 `status='normal'` 的对话，因此**归档后界面不再可见**。
+- 页面用 `/currentChat` 决定进入时打开哪一个存档（存档管理页选中的优先，否则取最近一条），
+  不再依赖列表顺序。
+- 用户ID参数兼容 `uid` 与 `userId` 两种写法；WebSocket (`/chatsocket`) 使用 `userId`。
 
 ### WebSocket 协议
 

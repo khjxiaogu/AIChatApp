@@ -100,8 +100,8 @@ public class DeepseekV4Usage implements UsageIntf<DeepseekV4Usage> {
 
 
     public double getEquivantTokens() {
-        return prompt_cache_hit_tokens * 0.025
-             + prompt_cache_miss_tokens * 0.75
-             + completion_tokens * 2.25;
+        return prompt_cache_hit_tokens * 0.01
+             + prompt_cache_miss_tokens * 0.5
+             + completion_tokens * 2;
     }
 }

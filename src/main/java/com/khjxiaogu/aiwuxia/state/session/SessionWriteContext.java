@@ -23,6 +23,12 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
+import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
@@ -48,9 +54,15 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
  * {@link AISession#appendMessage(int, MessageContent)}、
  * {@link AISession#onReasonerAppend(MessageContent)}），前端协议因此保持不变。
  * </p>
+ * <p>
+ * 正文由应用的命令线程写入，思维链则由后台的异步读流线程写入，两者可能同时改动同一条记录：
+ * 所有写入与结束动作都在本对象的写入锁内串行执行；本记录定型（提交、撤回或关闭）之前会先等
+ * 已登记的后台思维链写入收尾，保证记录结束之后不会再有后台写入。
+ * </p>
  *
  * @see AISession#beginWrite(Role)
  * @see AISession#continueWrite(Role)
+ * @see AISession#beginAsyncReasonerWrite(java.util.function.Supplier, HistoryWriteContext)
  */
 class SessionWriteContext implements HistoryWriteContext {
 
@@ -64,6 +76,16 @@ class SessionWriteContext implements HistoryWriteContext {
 	private boolean published;
 	/** 是否已经提交或撤回 */
 	private boolean resolved;
+	/**
+	 * 本条记录写入的串行锁。
+	 * <p>
+	 * 正文由应用的命令线程写入，思维链则可能由后台的异步读流线程写入，两者都会改动同一条记录，
+	 * 因此所有写入与结束动作都在本锁内完成。
+	 * </p>
+	 */
+	private final Object writeLock = new Object();
+	/** 本条记录上还没有收尾的后台思维链写入 */
+	private final Set<CompletableFuture<Void>> pendingReasonerWrites = ConcurrentHashMap.newKeySet();
 
 	SessionWriteContext(AISession session, HistoryItem item, boolean pending) {
 		this.session = session;
@@ -158,16 +180,50 @@ class SessionWriteContext implements HistoryWriteContext {
 
 	// ── 结束方式 ──────────────────────────────────────────
 
+	/**
+	 * 结束前的串行化处理：已经结束时返回 {@code false}，否则等本条记录上的后台思维链写入收尾，
+	 * 再标记为已结束并返回 {@code true}。
+	 * <p>
+	 * 记录定型之后不能再有后台写入，否则内容会写进已经提交或撤回的条目；
+	 * 同时这也让后续的提交、撤回动作独占这条记录。
+	 * </p>
+	 *
+	 * @return 调用方可以继续结束流程时返回 {@code true}
+	 */
+	private boolean beginResolve() {
+		synchronized (writeLock) {
+			if (resolved)
+				return false;
+			awaitReasonerWrites();
+			resolved = true;
+			return true;
+		}
+	}
+
+	/** 在锁内等待本条记录上的后台思维链写入收尾。 */
+	private void awaitReasonerWrites() {
+		for (CompletableFuture<Void> writeTask : pendingReasonerWrites) {
+			try {
+				writeTask.join();
+			} catch (CompletionException | CancellationException e) {
+				// 读流失败：思维链可能不完整，但记录本身照常结算，失败由持有该任务的调用方上报
+			}
+			// 后台任务收尾时会自行注销，这里只在它没来得及注销时兜底清理
+			pendingReasonerWrites.remove(writeTask);
+		}
+	}
+
 	@Override
 	public void commit() {
-		if (resolved)
+		if (!beginResolve())
 			return;
-		resolved = true;
-		if (pending) {
-			session.getHistory().commitPending(item);
-			if (!published) {
-				published = true;
-				session.postMessage(item.getIdentifier(), item.getRole(), item.getDisplayContent());
+		synchronized (writeLock) {
+			if (pending) {
+				session.getHistory().commitPending(item);
+				if (!published) {
+					published = true;
+					session.postMessage(item.getIdentifier(), item.getRole(), item.getDisplayContent());
+				}
 			}
 		}
 		session.onWriteResolved(this);
@@ -175,37 +231,46 @@ class SessionWriteContext implements HistoryWriteContext {
 
 	@Override
 	public void rollback() {
-		if (resolved)
+		if (!beginResolve())
 			return;
-		resolved = true;
-		if (pending) {
-			session.getHistory().rollbackPending(item);
-		} else {
-			session.getHistory().removeOf(item.getIdentifier());
-		}
-		if (published) {
-			session.delMessage(item.getIdentifier());
+		synchronized (writeLock) {
+			if (pending) {
+				session.getHistory().rollbackPending(item);
+			} else {
+				session.getHistory().removeOf(item.getIdentifier());
+			}
+			if (published) {
+				session.delMessage(item.getIdentifier());
+			}
 		}
 		session.onWriteResolved(this);
 	}
 
 	@Override
 	public void close() {
-		if (resolved)
+		if (!beginResolve())
 			return;
-		if (!pending) {
-			// 续写的记录本来就在历史里，没有需要提交或撤回的内容
-			resolved = true;
-			session.onWriteResolved(this);
-			return;
+		if (pending) {
+			// 新记录按内容结算：写过显示内容或上下文内容就提交，只写了思维链的空记录撤回
+			synchronized (writeLock) {
+				MessageContents display = item.getDisplayContent();
+				MessageContents context = item.getContextContent();
+				if ((display != null && !display.isEmpty()) || (context != null && !context.isEmpty())) {
+					if (!published) {
+						published = true;
+						session.postMessage(item.getIdentifier(), item.getRole(), item.getDisplayContent());
+					}
+					session.getHistory().commitPending(item);
+				} else {
+					session.getHistory().rollbackPending(item);
+					if (published) {
+						session.delMessage(item.getIdentifier());
+					}
+				}
+			}
 		}
-		MessageContents display = item.getDisplayContent();
-		MessageContents context = item.getContextContent();
-		if ((display != null && !display.isEmpty()) || (context != null && !context.isEmpty())) {
-			commit();
-		} else {
-			rollback();
-		}
+		// 续写的记录本来就在历史里，没有需要提交或撤回的内容
+		session.onWriteResolved(this);
 	}
 
 	@Override
@@ -284,150 +349,216 @@ class SessionWriteContext implements HistoryWriteContext {
 
 	@Override
 	public void appendLine(String content, boolean addToContext) {
-		checkWritable();
-		if (pending) {
-			mutable().appendLine(content, addToContext);
-		} else {
-			session.getHistory().appendLine(content, addToContext);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().appendLine(content, addToContext);
+			} else {
+				session.getHistory().appendLine(content, addToContext);
+			}
+			notifyAppend(content + "\n");
 		}
-		notifyAppend(content + "\n");
 	}
 
 	@Override
 	public void append(String content, boolean addToContext) {
-		checkWritable();
-		if (pending) {
-			mutable().append(content, addToContext);
-		} else {
-			session.getHistory().append(content, addToContext);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().append(content, addToContext);
+			} else {
+				session.getHistory().append(content, addToContext);
+			}
+			notifyAppend(content);
 		}
-		notifyAppend(content);
 	}
 
 	@Override
 	public void append(MessageContent content, boolean addToContext) {
-		checkWritable();
-		if (pending) {
-			mutable().append(content, addToContext);
-		} else {
-			session.getHistory().append(content, addToContext);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().append(content, addToContext);
+			} else {
+				session.getHistory().append(content, addToContext);
+			}
+			notifyAppend(content);
 		}
-		notifyAppend(content);
 	}
 
 	@Override
 	public void appendContext(String content) {
-		checkWritable();
-		if (pending) {
-			mutable().appendContext(content);
-		} else {
-			session.getHistory().appendContext(content);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().appendContext(content);
+			} else {
+				session.getHistory().appendContext(content);
+			}
+			notifyWritten();
 		}
-		notifyWritten();
 	}
 
 	@Override
 	public void setContextContent(String fullContent) {
-		checkWritable();
-		if (pending) {
-			mutable().setContextContent(fullContent);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().setContextContent(fullContent);
+			}
+			session.setUpdated();
 		}
-		session.setUpdated();
 	}
 
+	/**
+	 * 追加一段思维链内容。
+	 * <p>
+	 * 本轮记录已经提交或撤回时直接返回，不把内容写到已经定型的记录上；
+	 * 后台异步读流据此结束（写入上下文实现里的同名方法会返回本次是否真的写入）。
+	 * </p>
+	 *
+	 * @param reasoner 本次追加的思维链内容
+	 */
 	@Override
 	public void appendReasoner(MessageContent reasoner) {
-		checkWritable();
-		if (pending) {
-			mutable().appendReasoner(reasoner);
-		} else {
-			session.getHistory().appendReasoner(reasoner);
+		synchronized (writeLock) {
+			if (resolved)
+				return;
+			checkWritable();
+			if (pending) {
+				mutable().appendReasoner(reasoner);
+			} else {
+				session.getHistory().appendReasoner(reasoner);
+			}
+			session.onReasonerAppend(reasoner);
+			session.setUpdated();
 		}
-		session.onReasonerAppend(reasoner);
-		session.setUpdated();
+	}
+
+	/**
+	 * 追加一段思维链内容，并返回本次是否真的写入。
+	 * <p>
+	 * 后台异步读流使用本方法：本轮记录已经提交或撤回时返回 {@code false}，
+	 * 读流据此收工，不会把内容写到已经定型的记录上。
+	 * </p>
+	 *
+	 * @param reasoner 本次追加的思维链内容
+	 * @return 已写入返回 {@code true}；记录已经结束、本次内容被丢弃时返回 {@code false}
+	 */
+	@Override
+	public boolean appendReasonerIfOpen(MessageContent reasoner) {
+		synchronized (writeLock) {
+			if (resolved)
+				return false;
+			checkWritable();
+			if (pending) {
+				mutable().appendReasoner(reasoner);
+			} else {
+				session.getHistory().appendReasoner(reasoner);
+			}
+			session.onReasonerAppend(reasoner);
+			session.setUpdated();
+			return true;
+		}
 	}
 
 	@Override
 	public void setLastState(ApplicationState lastState) {
-		checkWritable();
-		if (pending) {
-			mutable().setLastState(lastState);
-		} else {
-			session.getHistory().setLastState(item, lastState);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().setLastState(lastState);
+			} else {
+				session.getHistory().setLastState(item, lastState);
+			}
+			session.setUpdated();
 		}
-		session.setUpdated();
 	}
 
 	@Override
 	public void setPrevIdentifier(int prevIdentifier) {
-		checkWritable();
-		if (!pending)
-			throw new UnsupportedOperationException("续写的记录不支持修改前驱标识符");
-		mutable().setPrevIdentifier(prevIdentifier);
-		session.setUpdated();
+		synchronized (writeLock) {
+			checkWritable();
+			if (!pending)
+				throw new UnsupportedOperationException("续写的记录不支持修改前驱标识符");
+			mutable().setPrevIdentifier(prevIdentifier);
+			session.setUpdated();
+		}
 	}
 
 	@Override
 	public void setReasonContent(String reasonContent) {
-		checkWritable();
-		if (!pending)
-			throw new UnsupportedOperationException("续写的记录不支持替换推理内容");
-		mutable().setReasonContent(reasonContent);
-		session.setUpdated();
+		synchronized (writeLock) {
+			checkWritable();
+			if (!pending)
+				throw new UnsupportedOperationException("续写的记录不支持替换推理内容");
+			mutable().setReasonContent(reasonContent);
+			session.setUpdated();
+		}
 	}
 
 	@Override
 	public void setTokenLength(long tokenLength) {
-		checkWritable();
-		if (pending) {
-			mutable().setTokenLength(tokenLength);
-		} else {
-			session.getHistory().setTokenLength(item, tokenLength);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().setTokenLength(tokenLength);
+			} else {
+				session.getHistory().setTokenLength(item, tokenLength);
+			}
+			session.setUpdated();
 		}
-		session.setUpdated();
 	}
 
 	@Override
 	public void setValidContext(boolean validContext) {
-		checkWritable();
-		if (pending) {
-			mutable().setValidContext(validContext);
-		} else {
-			session.getHistory().setValidContext(item, validContext);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().setValidContext(validContext);
+			} else {
+				session.getHistory().setValidContext(item, validContext);
+			}
+			session.setUpdated();
 		}
-		session.setUpdated();
 	}
 
 	@Override
 	public void setDeleted(boolean deleted) {
-		checkWritable();
-		if (pending) {
-			mutable().setDeleted(deleted);
-		} else {
-			session.getHistory().setDeleted(item, deleted);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().setDeleted(deleted);
+			} else {
+				session.getHistory().setDeleted(item, deleted);
+			}
+			session.setUpdated();
 		}
-		session.setUpdated();
 	}
 
 	@Override
 	public void setAudioId(String audioId) {
-		checkWritable();
-		if (pending) {
-			mutable().setAudioId(audioId);
-		} else {
-			session.getHistory().setAudioId(item, audioId);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().setAudioId(audioId);
+			} else {
+				session.getHistory().setAudioId(item, audioId);
+			}
+			session.setUpdated();
 		}
-		session.setUpdated();
 	}
 
 	@Override
 	public void setSendReasoner(boolean sendReasoner) {
-		checkWritable();
-		if (pending) {
-			mutable().setSendReasoner(sendReasoner);
-		} else {
-			session.getHistory().setSendReasoner(item, sendReasoner);
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().setSendReasoner(sendReasoner);
+			} else {
+				session.getHistory().setSendReasoner(item, sendReasoner);
+			}
+			session.setUpdated();
 		}
-		session.setUpdated();
 	}
 }

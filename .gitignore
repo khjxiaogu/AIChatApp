@@ -10,3 +10,7 @@
 /.codegraph
 /AGENTS.md
 /mimo.exe
+/.dshsrc
+/.build-check
+/.e2e
+/tools

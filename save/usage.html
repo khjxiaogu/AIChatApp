@@ -238,6 +238,42 @@
             font-size: 14px;
         }
 
+        /* 配额增加记录（按来源） */
+        .increase-summary {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 4px 0 12px;
+        }
+
+        .increase-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f0fdf4;
+            border-radius: 16px;
+            padding: 10px 14px;
+            font-size: 14px;
+        }
+
+        .increase-source {
+            font-weight: 600;
+            color: #166534;
+        }
+
+        .increase-amount {
+            margin-left: auto;
+            font-weight: 700;
+            color: #15803d;
+        }
+
+        .increase-count {
+            font-size: 12px;
+            color: #5b6e8c;
+            min-width: 48px;
+            text-align: right;
+        }
+
         .error-state {
             background: #fee2e2;
             color: #b91c1c;
@@ -305,6 +341,37 @@
             color: #dc2626;
         }
 
+        /* 新用户福利领取区域 */
+        .newuser-section {
+            margin-top: 14px;
+            padding: 12px 14px;
+            border-radius: 20px;
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+            border: 1px solid #a7f3d0;
+        }
+        .newuser-btn {
+            background: linear-gradient(135deg, #10b981, #059669);
+            border: none;
+            border-radius: 40px;
+            padding: 9px 18px;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(16, 185, 129, 0.35);
+            transition: all 0.2s;
+        }
+        .newuser-btn:active {
+            transform: scale(0.97);
+        }
+        .newuser-btn:disabled {
+            background: #e2e8f0;
+            color: #94a3b8;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+
         /* 每日签到区域 */
         .checkin-section {
             margin-top: 14px;
@@ -368,6 +435,13 @@
                 font-size: 13px;
             }
             .checkin-section {
+                padding: 10px 12px;
+            }
+            .newuser-btn {
+                padding: 7px 14px;
+                font-size: 13px;
+            }
+            .newuser-section {
                 padding: 10px 12px;
             }
             .date-field {
@@ -595,6 +669,25 @@
                             <span class="badge">已用补充配额</span>
                         </div>
                         
+                        <div v-if="!newUserClaimed" class="newuser-section">
+                            <div class="flex-between" style="gap: 12px;">
+                                <div>
+                                    <div class="stat-label" style="margin-bottom: 2px;">
+                                        新用户福利
+                                    </div>
+                                    <div class="stat-sub" style="margin-top: 0;">
+                                        领取一次，获得 {{ formatNumber(newUserGift) }} 补充额度
+                                    </div>
+                                </div>
+                                <button class="newuser-btn" :disabled="newUserLoading" @click="claimNewUserGift">
+                                    {{ newUserLoading ? '领取中...' : '立即领取' }}
+                                </button>
+                            </div>
+                            <div v-if="newUserMessage" class="cdk-message" :class="{ 'error': newUserMessageType === 'error' }">
+                                {{ newUserMessage }}
+                            </div>
+                        </div>
+
                         <div class="checkin-section">
                             <div class="flex-between" style="gap: 12px;">
                                 <div>
@@ -683,6 +776,68 @@
                     <span>合计消费: {{ formatNumber(recordTotal) }} Token</span>
                     <span>统计区间: {{ recordStart }} ~ {{ recordEnd }}</span>
                 </div>
+            </div>
+
+            <!-- 配额增加记录（充值 / 签到获取 / 兑换码获取 / 新用户赠送） -->
+            <div class="card">
+                <div class="card-header">
+                    <span>配额增加记录</span>
+                    <span style="font-size: 12px; font-weight: normal; margin-left: auto;">按来源统计 · 单位: Token</span>
+                </div>
+                <div class="date-range">
+                    <label class="date-field">
+                        <span>开始日期</span>
+                        <input type="date" class="date-input" v-model="increaseStart">
+                    </label>
+                    <label class="date-field">
+                        <span>结束日期</span>
+                        <input type="date" class="date-input" v-model="increaseEnd">
+                    </label>
+                    <button class="refresh-btn" @click="loadIncreaseRecords" :disabled="increaseLoading">
+                        {{ increaseLoading ? '查询中...' : '查询' }}
+                    </button>
+                </div>
+
+                <div v-if="increaseError" class="error-state">{{ increaseError }}</div>
+                <div v-else-if="!increaseSources.length" class="loading-state">
+                    {{ increaseLoading ? '加载配额增加记录中...' : '该时间段暂无配额增加记录' }}
+                </div>
+                <template v-else>
+                    <div class="increase-summary">
+                        <div v-for="item in increaseSources" :key="item.source" class="increase-row">
+                            <span class="increase-source">{{ item.source }}</span>
+                            <span class="increase-amount">+{{ formatNumber(item.tokens) }}</span>
+                            <span class="increase-count">{{ item.count }} 次</span>
+                        </div>
+                    </div>
+
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>日期</th>
+                                    <th>来源</th>
+                                    <th>增加配额</th>
+                                    <th>详情</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(rec, idx) in increaseRecords" :key="idx">
+                                    <td>{{ rec.date }}</td>
+                                    <td>{{ rec.source }}</td>
+                                    <td>+{{ formatNumber(rec.tokens) }}</td>
+                                    <td>{{ rec.detail || '—' }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="record-summary">
+                        <span>合计增加: {{ formatNumber(increaseTotal) }} Token</span>
+                        <span>记录条数: {{ increaseRecords.length }}</span>
+                        <span>统计区间: {{ increaseStart }} ~ {{ increaseEnd }}</span>
+                    </div>
+                </template>
             </div>
 
             <!-- ===== 合并自 html2：模型价格倍率卡片 ===== -->
@@ -827,8 +982,30 @@
             });
     }
 
+    async function claimNewUserGiftApi() {
+        return fetch("claimNewUserGift?uid=" + pageQueries.uid)
+            .then(p => {
+                if (p.status === 200) {
+                    return p.text();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
     async function fetchPaidUsageRecords(start, end) {
         return fetch("paidUsageRecords?uid=" + pageQueries.uid + "&start=" + start + "&end=" + end)
+            .then(p => {
+                if (p.status === 200) {
+                    return p.json();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
+    async function fetchQuotaIncreaseRecords(start, end) {
+        return fetch("quotaIncreaseRecords?uid=" + pageQueries.uid + "&start=" + start + "&end=" + end)
             .then(p => {
                 if (p.status === 200) {
                     return p.json();
@@ -855,11 +1032,19 @@
                 checkinLoading: false,
                 checkinMessage: '',
                 checkinMessageType: 'success',
+                newUserLoading: false,
+                newUserMessage: '',
+                newUserMessageType: 'success',
                 recordStart: '',
                 recordEnd: '',
                 recordList: [],
                 recordLoading: false,
                 recordError: null,
+                increaseStart: '',
+                increaseEnd: '',
+                increaseData: { total: 0, sources: [], records: [] },
+                increaseLoading: false,
+                increaseError: null,
                 pieInstance: null,
                 modelList: [
                     {
@@ -956,6 +1141,13 @@
                 return this.tokenRemaining && this.tokenRemaining.checkinReward
                     ? this.tokenRemaining.checkinReward : 50000;
             },
+            newUserClaimed() {
+                return this.tokenRemaining ? !!this.tokenRemaining.newUserClaimed : true;
+            },
+            newUserGift() {
+                return this.tokenRemaining && this.tokenRemaining.newUserGift
+                    ? this.tokenRemaining.newUserGift : 100000;
+            },
             totalPaidConsumed() {
                 if (!this.dailyUsageList.length) return 0;
                 return this.dailyUsageList.reduce((sum, day) => sum + (day.paidUsed || 0), 0);
@@ -963,6 +1155,15 @@
             recordTotal() {
                 if (!this.recordList.length) return 0;
                 return this.recordList.reduce((sum, r) => sum + (r.tokens || 0), 0);
+            },
+            increaseSources() {
+                return (this.increaseData && this.increaseData.sources) || [];
+            },
+            increaseRecords() {
+                return (this.increaseData && this.increaseData.records) || [];
+            },
+            increaseTotal() {
+                return (this.increaseData && this.increaseData.total) || 0;
             },
             pieData() {
                 // 同名对话追加聊天ID后缀，避免图例与扇区混淆
@@ -1022,8 +1223,11 @@
         mounted() {
             this.recordStart = this.monthStartStr();
             this.recordEnd = this.todayStr();
+            this.increaseStart = this.monthStartStr();
+            this.increaseEnd = this.todayStr();
             this.loadData();
             this.loadRecords();
+            this.loadIncreaseRecords();
             window.addEventListener('resize', this.handleResize);
             document.addEventListener('visibilitychange', this.handleVisibility);
         },
@@ -1150,6 +1354,22 @@
                     this.recordLoading = false;
                 });
             },
+            loadIncreaseRecords() {
+                if (this.increaseStart && this.increaseEnd && this.increaseStart > this.increaseEnd) {
+                    this.increaseError = '开始日期不能晚于结束日期';
+                    return;
+                }
+                this.increaseLoading = true;
+                this.increaseError = null;
+                fetchQuotaIncreaseRecords(this.increaseStart, this.increaseEnd).then(data => {
+                    this.increaseData = data || { total: 0, sources: [], records: [] };
+                    this.increaseLoading = false;
+                }).catch(err => {
+                    this.increaseError = err;
+                    this.increaseData = { total: 0, sources: [], records: [] };
+                    this.increaseLoading = false;
+                });
+            },
             renderPie() {
                 if (!this.$refs.pieDom || !this.recordList.length) return;
                 if (this.pieInstance) {
@@ -1234,6 +1454,7 @@
                         this.cdkMessage = r;
                         this.cdkMessageType = 'success';
                         setTimeout(this.loadData, 500);
+                        setTimeout(this.loadIncreaseRecords, 500);
                         setTimeout(() => {
                             if (this.cdkMessage) {
                                 this.cdkMessage = '';
@@ -1266,6 +1487,30 @@
                     }
                 });
             },
+            claimNewUserGift() {
+                if (this.newUserClaimed || this.newUserLoading) return;
+                this.newUserLoading = true;
+                this.newUserMessage = '';
+                claimNewUserGiftApi()
+                    .then(r => {
+                        this.newUserMessage = r;
+                        this.newUserMessageType = 'success';
+                        this.newUserLoading = false;
+                        // 领取成功后刷新余额与增加记录，入口随 newUserClaimed 变为 true 而不再显示
+                        setTimeout(() => {
+                            this.loadIncreaseRecords();
+                            this.refreshBalance().then(() => {
+                                this.newUserMessage = '';
+                            });
+                        }, 1500);
+                    }).catch(r => {
+                        this.newUserMessage = r;
+                        this.newUserMessageType = 'error';
+                        this.newUserLoading = false;
+                        // 已领取等状态异常时，同步一次最新状态（入口会随之隐藏）
+                        setTimeout(this.refreshBalance, 1500);
+                    });
+            },
             doCheckin() {
                 if (this.checkedIn || this.checkinLoading) return;
                 this.checkinLoading = true;
@@ -1275,6 +1520,7 @@
                         this.checkinMessage = r;
                         this.checkinMessageType = 'success';
                         this.checkinLoading = false;
+                        this.loadIncreaseRecords();
                         return this.refreshBalance();
                     }).catch(r => {
                         this.checkinMessage = r;

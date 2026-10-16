@@ -12,6 +12,13 @@ import java.util.List;
  * {@link PlainText} 对象，避免产生连续的纯文本片段。
  * 如需直接添加而不合并，可使用 {@link #addRaw(MessageContent)}。
  * </p>
+ * <p>
+ * 读写方法均在实例锁上同步：思维链由后台线程异步逐段写入时，前端补发、日志打印等
+ * 其它线程可能同时在读取同一个容器，同步保证它们不会读到写了一半的内容。
+ * </p>
+ *
+ * @see #add(MessageContent)
+ * @see #append(String)
  */
 public class MutableMessageContents implements MessageContents {
 	private List<MessageContent> messages;
@@ -75,11 +82,30 @@ public class MutableMessageContents implements MessageContents {
 	}
 
 	/**
+	 * 将所有内容的文本表示拼接成一个字符串。
+	 * <p>
+	 * 与接口默认实现相比在实例锁上同步，读取期间后台线程不会改动内容。
+	 * </p>
+	 */
+	@Override
+	public synchronized String toText() {
+		StringBuilder builder = new StringBuilder();
+		for (MessageContent msg : messages)
+			builder.append(msg.toText());
+		return builder.toString();
+	}
+
+	@Override
+	public synchronized boolean isEmpty() {
+		return messages.isEmpty();
+	}
+
+	/**
 	 * 直接添加一个消息内容，不做任何合并处理。
 	 *
 	 * @param msg 要添加的消息内容，不可为 null
 	 */
-	public void addRaw(MessageContent msg) {
+	public synchronized void addRaw(MessageContent msg) {
 		messages.add(msg);
 	}
 
@@ -89,7 +115,7 @@ public class MutableMessageContents implements MessageContents {
 	 *
 	 * @param msg 要添加的消息内容，不可为 null
 	 */
-	public void add(MessageContent msg) {
+	public synchronized void add(MessageContent msg) {
 		if (msg instanceof PlainText && !messages.isEmpty()) {
 			MessageContent last = messages.get(messages.size() - 1);
 			if (last instanceof PlainText) {
@@ -110,7 +136,7 @@ public class MutableMessageContents implements MessageContents {
 	 * @param msg 要追加的文本，不可为 null
 	 * @return 当前实例（支持链式调用）
 	 */
-	public MutableMessageContents append(String msg) {
+	public synchronized MutableMessageContents append(String msg) {
 		if (!messages.isEmpty()) {
 			MessageContent last = messages.get(messages.size() - 1);
 			if (last instanceof PlainText) {
@@ -123,19 +149,14 @@ public class MutableMessageContents implements MessageContents {
 	}
 
 	@Override
-	public Iterator<MessageContent> iterator() {
+	public synchronized Iterator<MessageContent> iterator() {
 		return messages.iterator();
-	}
-
-	@Override
-	public boolean isEmpty() {
-		return messages.isEmpty();
 	}
 
 	/**
 	 * 清空集合中的所有消息内容。
 	 */
-	public void clear() {
+	public synchronized void clear() {
 		messages.clear();
 	}
 }

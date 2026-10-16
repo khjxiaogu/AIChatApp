@@ -1,10 +1,13 @@
 package com.khjxiaogu.aiwuxia.state.session;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -22,6 +25,7 @@ import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
@@ -112,6 +116,25 @@ public class PainterSession extends WebSocketAISession {
 
 	private static final AtomicLong LOCAL_REQUEST_ID = new AtomicLong(0);
 
+    /**
+     * 绘画会话中不受调用次数与轮次上限约束的工具。
+     * <p>
+     * 名称与注册时的工具名一致：
+     * </p>
+     * <ul>
+     *   <li>{@code send_image}（{@link MultiModalMcp} 的发送图片工具）；</li>
+     *   <li>{@code search_character}（{@link SDXLMcp} 搜索角色提示词）；</li>
+     *   <li>{@code web_view}（{@link FetchMcp} 抓取网页，即“fetch”）；</li>
+     *   <li>{@code moegirl_search}（{@link FetchMcp} 萌娘百科搜索，即“search_moegirl”）。</li>
+     * </ul>
+     * <p>
+     * 这几类调用属于搜索参考、取用素材与下发结果的辅助动作，一次绘画里可能反复触发：
+     * 它们既不消耗工具调用轮次，也不会因轮次或次数上限被拒绝执行。
+     * </p>
+     */
+    private static final Set<String> UNLIMITED_TOOLS = Collections.unmodifiableSet(
+        new LinkedHashSet<>(Arrays.asList("send_image", "search_character", "web_view", "moegirl_search")));
+
     private final ConcurrentHashMap<String, BotCallbackPromise> pendingLocalRequests = new ConcurrentHashMap<>();
 
     public PainterSession(AIChatService par, String uid, String chatid, AIApplication aiapp,
@@ -130,6 +153,20 @@ public class PainterSession extends WebSocketAISession {
     @Override
     protected void prepareInitialHint() {
         provideInitialHint();
+    }
+
+    /**
+     * 写入绘画会话的工具调用规则：搜索参考、抓取素材与下发结果的工具不受调用次数限制，
+     * 既不参与工具调用轮次计数，也不会因为轮次或次数超限而被拒绝执行。
+     * <p>
+     * 其余规则（轮次上限、权限、许可）沿用 {@link ToolCallManager} 的默认值。
+     * </p>
+     *
+     * @param manager 本会话的工具调用管理器
+     */
+    @Override
+    protected void applyToolCallRules(ToolCallManager manager) {
+        manager.setUnlimitedTools(UNLIMITED_TOOLS);
     }
 
     /**
@@ -164,8 +201,8 @@ public class PainterSession extends WebSocketAISession {
 
     @Override
 	public boolean isAvailable() {
-		return true;
-    	//return LocalModel.hasOnlineService(ModelType.SDXL);
+		//return true;
+    	return LocalModel.hasOnlineService(ModelType.SDXL);
 	}
 
 	/**

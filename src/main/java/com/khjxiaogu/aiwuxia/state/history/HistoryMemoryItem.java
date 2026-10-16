@@ -245,11 +245,12 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	 * 创建或获取推理内容（懒初始化）。
 	 * <p>
 	 * 如果 {@code reasonContent} 为 null，则创建一个空的 {@link MutableMessageContents}。
+	 * 同步保证后台线程异步写入思维链时不会重复创建容器。
 	 * </p>
 	 *
 	 * @return 推理内容的可变容器
 	 */
-	public MutableMessageContents createReasonContent() {
+	public synchronized MutableMessageContents createReasonContent() {
 		if (reasonContent == null)
 			this.reasonContent = new MutableMessageContents();
 		return reasonContent;
@@ -372,11 +373,14 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 
 	/**
 	 * 获取推理内容。
+	 * <p>
+	 * 同步读取：思维链由后台线程异步写入时，读取方（例如前端补发、日志打印）可能与本方法并发。
+	 * </p>
 	 *
 	 * @return 推理内容，未设置时返回 null
 	 */
 	@Override
-	public MutableMessageContents getReasoningContent() {
+	public synchronized MutableMessageContents getReasoningContent() {
 		if (reasonContent == null)
 			return null;
 		return reasonContent;

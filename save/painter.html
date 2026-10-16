@@ -778,6 +778,10 @@
                     <div class="chat-name">{{ chat.name }}</div>
                     <div class="chat-time">{{ formatTime(chat.time) }}</div>
                 </div>
+                <div class="chat-item-actions">
+                    <button class="chat-action" title="重命名" @click.stop="renameChat(chat)">✎</button>
+                    <button class="chat-action danger" title="归档（归档后不再显示，可在存档管理中恢复）" @click.stop="archiveChat(chat)">⊘</button>
+                </div>
             </div>
         </div>
         <div v-else class="chat-empty">暂无对话</div>
@@ -920,22 +924,31 @@
 </div>
 <script>
 
-// 从URL获取或者创建对话ID
+// 绘画应用ID：本页只管理该应用下的对话
+const PAINTER_APP = 'painterirc';
+
+// 当前用户ID：兼容 uid / userId 两种页面参数写法
+function aiUid() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('uid') || params.get('userId') || '';
+}
+
+// 从URL获取或者创建对话ID（取该应用下的"当前存档"，没有则新建）
 function getOrCreateConversationId(on_loaded) {
     const urlParams = new URLSearchParams(window.location.search);
     let cid = urlParams.get('conversation_id');
     if (!cid) {
-		fetch("querychat?appid=painterirc&uid=undefined")
+		fetch("currentChat?appid="+PAINTER_APP+"&uid="+encodeURIComponent(aiUid()))
 		.then(p=>p.json())
-		.then(p=>{
-			if(p.length>0){
-				document.title="AI"+p[0].app+"-"+p[0].name;
-				cid=p[0].chatid
+		.then(c=>{
+			if(c&&c.chatid){
+				document.title="AI-"+c.app+"-"+c.name;
+				cid=c.chatid
 				const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
 		        window.history.replaceState({}, '', newUrl);
 		        on_loaded(cid)
 			}else
-				fetch("createid?appid=painterirc")
+				fetch("createid?appid="+PAINTER_APP)
 				.then(p=>p.text())
 				.then(cid=>{
 			        const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
@@ -1076,9 +1089,64 @@ var main=new Vue({
             });
         },
         loadChatList() {
-            fetch("querychat?appid=painterirc&uid=undefined")
+            fetch("querychat?appid="+PAINTER_APP+"&uid="+encodeURIComponent(aiUid()))
                 .then(p => p.json())
-                .then(list => { this.chatList = list || []; });
+                .then(list => { this.chatList = Array.isArray(list) ? list : []; });
+        },
+        // 重命名对话：名称保存在 chats.brief，重命名后不再被AI自动改写
+        renameChat(chat) {
+            if (!chat || !chat.chatid) return;
+            const apply = (name) => {
+                if (name == null) return;
+                const body = new URLSearchParams();
+                body.append('chatid', chat.chatid);
+                body.append('name', name);
+                fetch('renameChat?uid=' + encodeURIComponent(aiUid()), { method: 'POST', body: body })
+                    .then(r => r.status === 200 ? r.text() : r.text().then(t => Promise.reject(t)))
+                    .then(saved => {
+                        chat.name = saved;
+                        if (chat.chatid === this.conversationId) document.title = 'AI-' + saved;
+                        this.aiToast('已重命名');
+                    })
+                    .catch(err => this.aiToast('重命名失败：' + err, { kind: 'warn' }));
+            };
+            const ask = this.aiPrompt({
+                title: '重命名对话',
+                message: '请输入新的对话名称',
+                value: chat.name || '',
+                placeholder: '对话名称',
+            });
+            if (ask && typeof ask.then === 'function') ask.then(apply);
+            else apply(window.prompt('请输入新的对话名称', chat.name || ''));
+        },
+        // 归档对话：归档后不再出现在本页列表，可在存档管理页的"已归档"中恢复
+        archiveChat(chat) {
+            if (!chat || !chat.chatid) return;
+            const run = () => {
+                const body = new URLSearchParams();
+                body.append('chatid', chat.chatid);
+                fetch('archiveChat?uid=' + encodeURIComponent(aiUid()), { method: 'POST', body: body })
+                    .then(r => r.status === 200 ? r.text() : r.text().then(t => Promise.reject(t)))
+                    .then(() => {
+                        this.aiToast('已归档');
+                        const wasCurrent = chat.chatid === this.conversationId;
+                        this.loadChatList();
+                        if (wasCurrent) {
+                            // 归档的是当前对话：切到剩余对话，没有就开一个全新的
+                            const next = this.chatList.find(c => c.chatid !== chat.chatid);
+                            if (next) this.switchChat(next.chatid);
+                            else this.createNewChat();
+                        }
+                    })
+                    .catch(err => this.aiToast('归档失败：' + err, { kind: 'warn' }));
+            };
+            const ask = this.aiConfirm({
+                title: '归档对话',
+                message: '归档后该对话不再出现在聊天列表中，可在存档管理中恢复。确定归档吗？',
+                kind: 'danger',
+            });
+            if (ask && typeof ask.then === 'function') ask.then(ok => { if (ok) run(); });
+            else if (window.confirm('归档后该对话不再出现在聊天列表中，可在存档管理中恢复。确定归档吗？')) run();
         },
         switchChat(chatid) {
             if (chatid === this.conversationId) { this.showSidebar = false; return; }
@@ -1093,7 +1161,7 @@ var main=new Vue({
         },
         createNewChat() {
             this.showSidebar = false;
-            fetch("createid?appid=painterirc&uid=undefined")
+            fetch("createid?appid="+PAINTER_APP)
                 .then(p => p.text())
                 .then(cid => {
                     this.messages = [];
@@ -1144,7 +1212,7 @@ var main=new Vue({
         // 绘画前端的连接地址（协议与主机跟随当前页面）
         aiSocketUrl() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            return `${protocol}//${location.host}/aichat/chatsocket?chatid=${this.conversationId}&app=painterirc&uid=undefined`;
+            return `${protocol}//${location.host}/aichat/chatsocket?chatid=${encodeURIComponent(this.conversationId)}&app=${PAINTER_APP}&userId=${encodeURIComponent(aiUid())}`;
         },
         aiOnSocketOpen() {
             console.log('WebSocket 已连接, 会话ID:', this.conversationId);

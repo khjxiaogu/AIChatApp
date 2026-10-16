@@ -27,6 +27,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.concurrent.CompletableFuture;
 
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIRequest;
@@ -163,7 +164,8 @@ public class AISQLMain extends AIApplication {
 		
 		try(BufferedReader scan=new BufferedReader(op.getContent())){
 			ApplicationState oldstate = new ApplicationState(state.getState());
-			handleReasonerContent(op,state,write);
+			// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
+			CompletableFuture<Void> reasoner=handleReasonerContent(op,state,write);
 			boolean nstateModified = false;
 			while (true) {
 				String last = scan.readLine();
@@ -191,6 +193,8 @@ public class AISQLMain extends AIApplication {
 	
 			}
 			write.appendLine("\n输入“重新生成”重新生成，输入“撤回”删除上一次对话。", false);
+			// 等待后台思维链读完，读流失败在这里按原来的方式抛出
+			reasoner.join();
 	
 			return nstateModified ? oldstate : null;
 		}

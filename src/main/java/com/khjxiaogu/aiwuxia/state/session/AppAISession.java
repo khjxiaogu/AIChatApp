@@ -30,7 +30,9 @@ import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.AIChatWindow;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 
@@ -41,10 +43,20 @@ public class AppAISession extends AISession {
 
 	File saveData;
 	AIChatWindow window;
+
+	/**
+	 * 桌面端的工具调用许可管理器：与 WebSocket 会话同样是“同一会话串行询问 + 超时按拒绝”，
+	 * 只是询问方式改为直接弹窗，答复在弹窗返回前回填，等待方随即被唤醒。
+	 */
+	private final ToolApprovalManager toolApprovalManager = new ToolApprovalManager(this::requestToolCallApproval);
+
 	public AppAISession(String user, ISaveData data,AIApplication aiapp,File saveData,AIChatWindow win) {
 		super(user, data,aiapp);
 		this.saveData=saveData;
 		this.window=win;
+		// 父类构造期本类字段尚未初始化，因此在这里（字段就绪后）再把许可方写入工具调用管理器：
+		// 权限监听器判为“询问”的工具调用会弹窗征求用户许可
+		getToolCallManager().setApprover(getUserApprovalApprover());
 	}
 
 	@Override
@@ -59,13 +71,51 @@ public class AppAISession extends AISession {
 	}
 
 	/**
-	 * 桌面端直接在生成线程上弹窗询问：答复在本方法返回前回填，等待方随即被唤醒。
+	 * 弹窗询问用户是否允许执行该工具。
+	 * <p>
+	 * 由 {@link #toolApprovalManager} 在自己的询问线程上回调，弹窗阻塞该线程直到用户选择；
+	 * 生成线程此时正阻塞等待许可，因此答复必须在本方法内直接回填，
+	 * <b>不能</b>提交到 {@code commandExec} 上排队（会排在同会话的生成任务之后而死锁）。
+	 * </p>
+	 *
+	 * @param request 许可请求记录
 	 */
-	@Override
 	protected void requestToolCallApproval(ToolApprovalRequest request) {
 		request.setResult(window.confirm("模型请求执行工具（" + request.getToolName() + "），是否允许？\n"
 				+ (request.getReason() == null ? "" : "原因：" + request.getReason() + "\n")
 				+ "参数：" + request.getArguments()));
+	}
+
+	/**
+	 * 获取本会话的工具调用许可管理器（同一会话串行询问、超时按拒绝处理）。
+	 *
+	 * @return 许可管理器
+	 */
+	public ToolApprovalManager getToolApprovalManager() {
+		return toolApprovalManager;
+	}
+
+	/**
+	 * 阻塞等待用户弹窗答复的许可方，已由构造函数写入工具调用管理器。
+	 *
+	 * @return 许可方
+	 */
+	public ToolCallApprover getUserApprovalApprover() {
+		return toolApprovalManager.approverFor(user);
+	}
+
+	/**
+	 * 放弃本会话全部待答复的许可请求（例如窗口关闭），一律按拒绝处理。
+	 */
+	public void cancelToolApprovals() {
+		toolApprovalManager.cancelAll(user);
+	}
+
+	@Override
+	public void close() {
+		// 释放可能正在等待用户许可的生成线程
+		cancelToolApprovals();
+		super.close();
 	}
 
 	@Override

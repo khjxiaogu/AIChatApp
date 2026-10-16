@@ -76,7 +76,7 @@ public class ToolApprovalManager {
 
 	/**
 	 * 为指定会话创建阻塞等待许可的许可方，可直接用于
-	 * {@link ToolCallPolicy.Builder#approver(ToolCallApprover)}。
+	 * {@link ToolCallManager#setApprover(ToolCallApprover)}。
 	 *
 	 * @param userId 会话/用户标识
 	 */

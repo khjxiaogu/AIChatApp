@@ -20,15 +20,19 @@ import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
  * 单次模型调用（一次生成）的工具调用上下文。
  * <p>
  * 承载这次调用过程中的全部可变状态：工具调用增量收集器、轮次计数、总调用次数、
- * 各工具调用次数、超限提示标记。{@link ToolCallManager} 本身无状态，调用方为每次生成
- * 创建（并最终丢弃）一个本对象，从而把“管理规则”和“单次执行状态”彻底分离。
+ * 各工具调用次数、超限提示标记。调用规则（次数、权限、许可）由可变的 {@link ToolCallManager}
+ * 直接提供，调用方为每次生成创建（并最终丢弃）一个本对象，
+ * 从而把“管理规则”和“单次执行状态”分离。
  * </p>
  *
- * <p>本类负责（全部通过 {@link ToolCallManager} 提供的工具表与 {@link ToolCallPolicy} 执行）：</p>
+ * <p>本类负责（全部通过 {@link ToolCallManager} 提供的工具表与调用规则执行）：</p>
  * <ul>
- *   <li><b>调用次数</b>：轮次上限、总次数上限、<b>各工具执行次数上限</b>，超限时统一回传提示文本；</li>
- *   <li><b>权限</b>：每个调用执行前询问权限策略；</li>
- *   <li><b>许可</b>：权限判定为“需要许可”时交由许可方决定是否执行；</li>
+ *   <li><b>调用次数</b>：轮次上限、总次数上限、<b>各工具执行次数上限</b>，超限时统一回传提示文本；
+ *       声明为不限次的工具（{@link ToolCallManager#isUnlimited(String)}）不受这些上限约束，
+ *       既不消耗轮次与总次数额度，也不会因超限被拒绝；</li>
+ *   <li><b>权限</b>：每个调用执行前询问管理器上注册的全部权限监听器，结果按
+ *       “拒绝 &gt; 询问 &gt; 允许 &gt; 忽略”合并（遇拒绝短路）；</li>
+ *   <li><b>许可</b>：权限判定为“询问”时交由许可方决定是否执行；</li>
  *   <li><b>处理</b>：工具查找、执行、异常兜底、结果推送到流式输出、写入请求历史；</li>
  *   <li><b>显示</b>：调用与结果都经工具的 {@link ToolCallPresenter} 转换为用户友好显示
  *       （简述替代工具名 + 具体内容），随 {@code ToolCallContent}/{@code ToolContent} 下发。</li>
@@ -86,7 +90,10 @@ public class ToolCallContext {
 			return round;
 		}
 
-		/** 至本次为止实际执行的工具调用总次数。 */
+		/**
+		 * 至本次为止实际执行的、计入总次数上限的工具调用次数
+		 * （声明为不限次的工具不占用该额度，不计入其中）。
+		 */
 		public int getCallCount() {
 			return callCount;
 		}
@@ -142,7 +149,7 @@ public class ToolCallContext {
 	 * 创建一次模型调用的上下文。
 	 * <p>
 	 * 未提供管理器（{@code manager == null}）时，返回一个等效于“没有任何工具”的上下文：
-	 * 工具表为空、策略为默认值，任何工具调用都会被判定为工具不存在并原样回传给模型。
+	 * 工具表为空、规则为默认值，任何工具调用都会被判定为工具不存在并原样回传给模型。
 	 * </p>
 	 *
 	 * @param manager 工具调用管理器（工具注册表 + 调用规则），可为 null
@@ -151,7 +158,7 @@ public class ToolCallContext {
 	 * @return 新的调用上下文，用完即可丢弃
 	 */
 	public static ToolCallContext create(ToolCallManager manager, StreamedAIOutput output, ToolCallHistory history) {
-		return new ToolCallContext(manager == null ? ToolCallManager.EMPTY : manager, output, history);
+		return new ToolCallContext(manager == null ? new ToolCallManager() : manager, output, history);
 	}
 
 	/**
@@ -218,7 +225,7 @@ public class ToolCallContext {
 					false);
 		}
 
-		int round = rounds.incrementAndGet();
+		int round = countsRoundLimit(toolCalls) ? rounds.incrementAndGet() : rounds.get();
 		// 原始调用信息 → 用户友好显示（简述替代工具名 + 具体内容），交给转换器处理
 		List<ToolCallDisplay> displays = buildCallDisplays(toolCalls);
 		ToolCallContent toolCallContent = new ToolCallContent(toolCalls, displays);
@@ -229,25 +236,20 @@ public class ToolCallContext {
 		boolean shouldContinue;
 		List<ToolContent> results = new ArrayList<>(toolCalls.size());
 
-		if (manager.getPolicy().hasRoundLimit() && round > manager.getPolicy().getMaxRounds()) {
-			// 轮次超限：本轮全部拒绝执行
-			limitReached = true;
-			shouldContinue = !limitNotified.getAndSet(true);
-			for (int i = 0; i < toolCalls.size(); i++) {
-				results.add(notExecuted(toolCalls.get(i), manager.getPolicy().getLimitMessage(), displays.get(i)));
-			}
-		} else {
-			callLimitExhausted.set(false);
-			for (int i = 0; i < toolCalls.size(); i++) {
-				results.add(execute(toolCalls.get(i), displays.get(i)));
-			}
-			limitReached = callLimitExhausted.get();
-			if (limitReached) {
-				shouldContinue = !limitNotified.getAndSet(true);
+		// 轮次超限时只拒绝受轮次限制的调用，声明为不限次的工具仍照常执行
+		boolean roundExceeded = manager.hasRoundLimit() && round > manager.getMaxRounds();
+		callLimitExhausted.set(false);
+		for (int i = 0; i < toolCalls.size(); i++) {
+			ToolCall call = toolCalls.get(i);
+			if (roundExceeded && !manager.isUnlimited(nameOf(call))) {
+				limitReached = true;
+				results.add(notExecuted(call, manager.getLimitMessage(), displays.get(i)));
 			} else {
-				shouldContinue = true;
+				results.add(execute(call, displays.get(i)));
 			}
 		}
+		limitReached = limitReached || callLimitExhausted.get();
+		shouldContinue = limitReached ? !limitNotified.getAndSet(true) : true;
 
 		for (ToolContent result : results) {
 			emit(result);
@@ -270,50 +272,78 @@ public class ToolCallContext {
 	 * @param callDisplay  该调用的用户友好显示（由工具自己的转换器生成）
 	 */
 	private ToolContent execute(ToolCall call, ToolCallDisplay callDisplay) {
-		ToolCallPolicy policy = manager.getPolicy();
 		if (call.function == null) {
-			return notExecuted(call, policy.getMissingToolMessage(), callDisplay);
+			return notExecuted(call, manager.getMissingToolMessage(), callDisplay);
 		}
 		ToolData data = manager.getTools().get(call.function.name);
 		if (data == null) {
-			return notExecuted(call, policy.getMissingToolMessage(), callDisplay);
+			return notExecuted(call, manager.getMissingToolMessage(), callDisplay);
 		}
-		if (policy.hasCallLimit() && calls.get() >= policy.getMaxCalls()) {
+		// 声明为不限次的工具不参与任何次数校验，也不占用总次数上限的额度
+		boolean unlimited = manager.isUnlimited(call.function.name);
+		if (!unlimited && manager.hasCallLimit() && calls.get() >= manager.getMaxCalls()) {
 			callLimitExhausted.set(true);
-			return notExecuted(call, policy.getLimitMessage(), callDisplay);
+			return notExecuted(call, manager.getLimitMessage(), callDisplay);
 		}
 		// 单个工具的执行次数上限
-		if (policy.hasToolCallLimit(call.function.name)
-				&& getToolCallCount(call.function.name) >= policy.getToolCallLimit(call.function.name)) {
+		if (!unlimited && manager.hasToolCallLimit(call.function.name)
+				&& getToolCallCount(call.function.name) >= manager.getToolCallLimit(call.function.name)) {
 			callLimitExhausted.set(true);
-			return notExecuted(call, policy.getToolLimitMessage(), callDisplay);
+			return notExecuted(call, manager.getToolLimitMessage(), callDisplay);
 		}
 
-		ToolCallDecision decision = policy.getPermission() == null ? ToolCallDecision.ALLOW
-				: policy.getPermission().check(call.function.name, call.function.arguments);
+		// 权限由管理器上的全部监听器合并判定（拒绝 > 询问 > 允许 > 忽略，遇拒绝短路）
+		ToolCallDecision decision = manager.checkPermission(call.function.name, call.function.arguments);
 		if (decision == null) {
 			decision = ToolCallDecision.ALLOW;
 		}
 		if (decision.needsApproval()) {
-			ToolCallApprover approver = policy.getApprover();
+			ToolCallApprover approver = manager.getApprover();
 			boolean approved = approver != null && approver.approve(call.function.name, call.function.arguments,
 					decision.getReason());
 			// 许可原因只用于向许可方说明，回传给模型的是“未获许可”的结果
-			decision = approved ? ToolCallDecision.ALLOW : ToolCallDecision.deny(policy.getUnapprovedMessage());
+			decision = approved ? ToolCallDecision.ALLOW : ToolCallDecision.deny(manager.getUnapprovedMessage());
 		}
 		if (!decision.isAllowed()) {
-			return notExecuted(call, decision.getReasonOr(ToolCallPolicy.DEFAULT_DENY_MESSAGE), callDisplay);
+			return notExecuted(call, decision.getReasonOr(ToolCallManager.DEFAULT_DENY_MESSAGE), callDisplay);
 		}
 
-		calls.incrementAndGet();
+		if (!unlimited) {
+			// 只有受上限约束的调用才占用总次数额度
+			calls.incrementAndGet();
+		}
 		toolCalls.computeIfAbsent(call.function.name, n -> new AtomicInteger()).incrementAndGet();
 		try {
 			String result = data.tool.run(call.function.arguments);
 			return new ToolContent(call.id, result, buildResultDisplay(call, callDisplay, result));
 		} catch (Throwable ex) {
 			ex.printStackTrace();
-			return notExecuted(call, policy.getToolErrorMessage(), callDisplay);
+			return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
 		}
+	}
+
+	/**
+	 * 本批调用是否需要消耗一轮配额。
+	 * <p>
+	 * 只要本批中存在至少一个受轮次限制的调用就计一轮；全部由声明为不限次的工具组成时不计轮次，
+	 * 因此这些工具可以反复调用而不推进（也不触发）总轮次上限。
+	 * </p>
+	 *
+	 * @param toolCalls 本批工具调用
+	 * @return 是否计入轮次
+	 */
+	private boolean countsRoundLimit(List<ToolCall> toolCalls) {
+		for (ToolCall call : toolCalls) {
+			if (!manager.isUnlimited(nameOf(call))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** 调用对应的工具名称，缺失时为 null。 */
+	private static String nameOf(ToolCall call) {
+		return call == null || call.function == null ? null : call.function.name;
 	}
 
 	/** 未真正执行的调用（不存在/超限/无权限/无许可/出错）：沿用调用的简述，不带结果内容。 */
@@ -350,17 +380,17 @@ public class ToolCallContext {
 		callLimitExhausted.set(false);
 	}
 
-	/** 已处理的工具调用轮次。 */
+	/** 已处理的、计入轮次上限的工具调用轮次（全为不限次工具的那一批不计入）。 */
 	public int getRounds() {
 		return rounds.get();
 	}
 
-	/** 已实际执行的工具调用总次数。 */
+	/** 已实际执行的、计入总次数上限的工具调用次数（不限次工具不计入）。 */
 	public int getCallCount() {
 		return calls.get();
 	}
 
-	/** 指定工具已实际执行的次数。 */
+	/** 指定工具已实际执行的次数（含不限次工具，仅用于统计）。 */
 	public int getToolCallCount(String toolName) {
 		AtomicInteger count = toolCalls.get(toolName);
 		return count == null ? 0 : count.get();
@@ -368,30 +398,25 @@ public class ToolCallContext {
 
 	/** 剩余可用轮次，未限制时返回 -1。 */
 	public int getRemainingRounds() {
-		return manager.getPolicy().hasRoundLimit() ? Math.max(0, manager.getPolicy().getMaxRounds() - rounds.get()) : -1;
+		return manager.hasRoundLimit() ? Math.max(0, manager.getMaxRounds() - rounds.get()) : -1;
 	}
 
 	/** 剩余可用调用总次数，未限制时返回 -1。 */
 	public int getRemainingCalls() {
-		return manager.getPolicy().hasCallLimit() ? Math.max(0, manager.getPolicy().getMaxCalls() - calls.get()) : -1;
+		return manager.hasCallLimit() ? Math.max(0, manager.getMaxCalls() - calls.get()) : -1;
 	}
 
 	/** 指定工具剩余可用执行次数，未配置上限时返回 -1。 */
 	public int getRemainingCallsOf(String toolName) {
-		if (!manager.getPolicy().hasToolCallLimit(toolName)) {
+		if (!manager.hasToolCallLimit(toolName)) {
 			return -1;
 		}
-		return Math.max(0, manager.getPolicy().getToolCallLimit(toolName) - getToolCallCount(toolName));
+		return Math.max(0, manager.getToolCallLimit(toolName) - getToolCallCount(toolName));
 	}
 
-	/** 当前使用的无状态管理器。 */
+	/** 当前使用的工具调用管理器（提供工具表与调用规则）。 */
 	public ToolCallManager getManager() {
 		return manager;
-	}
-
-	/** 当前使用的管理策略。 */
-	public ToolCallPolicy getPolicy() {
-		return manager.getPolicy();
 	}
 
 	private boolean isInterrupted() {

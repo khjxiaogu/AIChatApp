@@ -23,16 +23,29 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.AbstractExecutorService;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -40,13 +53,8 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
-import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalManager;
-import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
-import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
-import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPermission;
-import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPolicy;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
@@ -106,7 +114,55 @@ public class AISession implements ISaveData,AutoCloseable{
 	/** 当前会话关联的用户标识 */
 	public final String user;
 	/**
-	 * 单线程执行器，用于串行执行会话中的命令操作（如处理用户输入、生成回复）。 确保在多线程环境下指令按提交顺序依次执行，避免并发状态不一致。
+	 * 全部会话共享的命令任务线程池。
+	 * <p>
+	 * 每个会话把一个排空器任务交给本池（见 {@link SerialExecutor}），池里实际运行的线程数因此
+	 * 由"正在执行命令任务的会话数"决定：命令任务绝大部分时间都在等模型 I/O，按会话各起一条常驻
+	 * 线程会随会话数线性占用线程，排队中的任务也不再各占一条线程；空闲线程 60 秒后回收。
+	 * </p>
+	 * <p>
+	 * 池本身不保证任何顺序，每个会话自己的先后由 {@link SerialExecutor} 的任务队列保证。
+	 * 线程名按当前执行的会话设置，便于排查问题。
+	 * </p>
+	 */
+	private static final ExecutorService COMMAND_EXEC = Executors.newCachedThreadPool(new ThreadFactory() {
+		private final AtomicInteger id = new AtomicInteger();
+
+		@Override
+		public Thread newThread(Runnable r) {
+			Thread t = new Thread(r, "ai-session-" + id.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		}
+	});
+	/**
+	 * 后台读流写入线程池：思维链读取会长时间阻塞在模型的推理流上（工具调用时是整轮工具循环），
+	 * 因此用独立的非固定大小线程池而不是共享的公共池，线程全部为守护线程，不影响进程退出。
+	 *
+	 * @see #beginAsyncReasonerWrite(Supplier, HistoryWriteContext)
+	 */
+	private static final ExecutorService REASONER_WRITE_EXEC = Executors.newCachedThreadPool(new ThreadFactory() {
+		private final AtomicInteger id = new AtomicInteger();
+
+		@Override
+		public Thread newThread(Runnable r) {
+			Thread t = new Thread(r, "reasoner-write-" + id.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		}
+	});
+	/**
+	 * 本会话已经启动、尚未收尾的后台思维链写入。
+	 * <p>
+	 * 写入上下文结束时只会等待自己启动的那些任务；本集合用于兜底：某次写入被丢弃
+	 * （例如应用又开启了新的写入上下文）而任务仍在跑时，新的写入开始前也会把它们等完，
+	 * 避免后台任务往已经结束的记录上写。
+	 * </p>
+	 */
+	protected final Set<CompletableFuture<Void>> pendingReasonerWrites = ConcurrentHashMap.newKeySet();
+	/**
+	 * 会话的命令任务执行器：任务本身仍串行、按提交顺序执行（语义与原来的单线程执行器一致），
+	 * 但线程取自共享缓存池 {@link #COMMAND_EXEC}，不再每个会话常驻一条线程。
 	 */
 	protected final ExecutorService commandExec;
 	/** 标记当前是否正在生成 AI 输出（用于避免重复触发或状态冲突） */
@@ -115,37 +171,27 @@ public class AISession implements ISaveData,AutoCloseable{
 	volatile transient AIOutput currentOutput;
 
 	/**
-	 * 工具调用许可管理器：同一会话的许可请求串行询问，等待方阻塞至用户答复或超时。
+	 * 本会话持有的工具调用管理器（工具注册表 + 调用次数/权限/许可规则），创建后长期复用。
 	 * <p>
-	 * 通过 {@link #requestToolCallApproval(ToolApprovalRequest)} 询问用户，
-	 * 通过 {@link #completeToolApproval(String, boolean)} 回填答复。
-	 * </p>
-	 */
-	protected final ToolApprovalManager toolApprovalManager = new ToolApprovalManager(this::requestToolCallApproval);
-
-	/**
-	 * 本会话的工具注册点：所有工具都注册到这里，由工具调用管理器统一处理。
-	 */
-	private final ToolCallManager.Builder toolBuilder = ToolCallManager.builder();
-	/**
-	 * 本会话持有的工具调用管理器（工具注册表 + 调用次数/权限/许可规则），惰性构建并缓存。
-	 * <p>
-	 * 由 {@link #toolBuilder} 中注册的工具与 {@link #getToolCallPolicy()} 装配而成；
-	 * 注册工具或调用规则变化后由 {@link #invalidateToolCallManager()} 失效重建。
+	 * 管理器本身可变：工具直接注册进去，规则在构造时由 {@link #applyToolCallRules(ToolCallManager)}
+	 * 写入（基类留空，子类覆盖），之后随时可直接修改管理器，不需要任何失效或重建。
 	 * {@code AIRequest} 直接取用本管理器，不再自行维护工具列表。
 	 * </p>
 	 */
-	private volatile ToolCallManager toolCallManager;
+	private final ToolCallManager toolCallManager = new ToolCallManager();
 
 	/**
 	 * 注册一个工具，由本会话的工具调用管理器统一处理。
+	 * <p>
+	 * 直接写入管理器，不触发 {@link #applyToolCallRules(ToolCallManager)}：规则在第一次取用
+	 * {@link #getToolCallManager()} 时才写入，因此会话构造期间注册工具不会提前调用子类重写的规则方法。
+	 * </p>
 	 *
 	 * @param tool 工具定义
 	 * @return 本会话，便于链式注册
 	 */
 	public AISession registerTool(ToolData tool) {
-		toolBuilder.tool(tool);
-		invalidateToolCallManager();
+		toolCallManager.registerTool(tool);
 		return this;
 	}
 
@@ -156,8 +202,7 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * @return 本会话，便于链式注册
 	 */
 	public AISession registerTools(Collection<ToolData> tools) {
-		toolBuilder.tools(tools);
-		invalidateToolCallManager();
+		toolCallManager.registerTools(tools);
 		return this;
 	}
 
@@ -177,33 +222,41 @@ public class AISession implements ISaveData,AutoCloseable{
 	/**
 	 * 获取本会话的工具调用管理器，{@code AIRequest} 直接取用。
 	 * <p>
-	 * 管理器由已注册的工具（{@link #registerTool}/{@link #registerTools}）与
-	 * {@link #getToolCallPolicy()}（调用次数、权限、许可规则）装配而成。
+	 * 管理器由已注册的工具（{@link #registerTool}/{@link #registerTools}）与构造时
+	 * {@link #applyToolCallRules(ToolCallManager)} 写入的规则（调用次数、权限监听器、许可）组成；
+	 * 管理器可变，需要调整时直接改它即可。
 	 * </p>
 	 *
 	 * @return 工具调用管理器，无工具时其工具表为空
 	 */
 	public ToolCallManager getToolCallManager() {
-		ToolCallManager manager = toolCallManager;
-		if (manager == null) {
-			synchronized (this) {
-				if (toolCallManager == null) {
-					toolCallManager = toolBuilder.policy(getToolCallPolicy()).build();
-				}
-				manager = toolCallManager;
-			}
-		}
-		return manager;
+		return toolCallManager;
 	}
 
 	/**
-	 * 使缓存的工具调用管理器失效（注册工具或调用规则变化后调用），下次获取时按当前工具与规则重新装配。
-	 * <p>注册工具时已自动失效，无需手动调用。</p>
+	 * 把本会话的工具调用规则写入管理器，基类留空，供子类覆盖。
+	 * <p>
+	 * 基类不写任何内容：管理器保持 {@link ToolCallManager} 自身的默认规则
+	 * （{@link ToolCallManager#DEFAULT_MAX_ROUNDS} 轮、不限总次数、全部允许、自动许可）。
+	 * 子类按需重写本方法配置规则，例如：
+	 * </p>
+	 * <pre>{@code
+	 * @Override
+	 * protected void applyToolCallRules(ToolCallManager manager) {
+	 *     manager.setMaxRounds(20)
+	 *            .setUnlimitedTools(UNLIMITED_TOOLS)
+	 *            .addPermissionListener(ToolCallPermission.requireApproval("高危工具需确认", "shell"));
+	 * }
+	 * }</pre>
+	 * <p>
+	 * 本方法在会话构造时调用一次，因此实现只能使用常量或静态数据，不要读取子类实例字段
+	 * （此时子类字段尚未初始化）；构造完成后要再调整规则，直接改
+	 * {@link #getToolCallManager()} 返回的管理器。
+	 * </p>
+	 *
+	 * @param manager 本会话的工具调用管理器
 	 */
-	public void invalidateToolCallManager() {
-		synchronized (this) {
-			toolCallManager = null;
-		}
+	protected void applyToolCallRules(ToolCallManager manager) {
 	}
 
 	/**
@@ -279,10 +332,234 @@ public class AISession implements ISaveData,AutoCloseable{
 		this.data = data;
 		this.user = user;
 		this.aiapp = aiapp;
-		commandExec = Executors.newSingleThreadExecutor(r -> {
-	        Thread t = new Thread(r, "ai-session-"+user);
-	        return t;
-	    });
+		// 工具调用规则只在构造时写入一次；管理器可变，之后需要调整直接改管理器
+		applyToolCallRules(toolCallManager);
+		commandExec = new SerialExecutor(COMMAND_EXEC, this);
+	}
+
+	/**
+	 * 把命令任务排队执行：每个会话一个 FIFO 任务队列，同一时刻最多有一个"排空器"在跑。
+	 * <p>
+	 * 与"每个会话一条单线程执行器"的语义等价：任务既不重叠，也不乱序；区别是线程来自共享池，
+	 * 且<b>排队中的任务不占线程</b>——提交时只把任务放进队列，队列已有排空器时直接返回，
+	 * 不会像单线程执行器那样每个排队任务都占住一条线程。
+	 * </p>
+	 * <p>
+	 * 会话内串行是必需的：多处代码（历史写入、重生成、初始提示）都依赖"上一个命令任务已经结束"
+	 * 或"生成任务跑完才轮到自己"，并行执行会破坏状态一致性或直接死锁。
+	 * </p>
+	 */
+	private static class SerialExecutor extends AbstractExecutorService {
+		/** 共享线程池，真正提供执行线程 */
+		private final ExecutorService pool;
+		/** 所属会话，仅用于日志里的线程名 */
+		private final AISession session;
+		/** 待执行任务队列（FIFO）：保证按提交顺序执行 */
+		private final ArrayDeque<Runnable> queue = new ArrayDeque<>();
+		/** 是否有排空器正在跑（正在执行任务或即将执行） */
+		private boolean running;
+		/** 正在执行的任务数 */
+		private int active;
+		/** 是否已经停止接受新任务 */
+		private volatile boolean closed;
+		/** 结束状态锁：保护上面几个字段，并用于唤醒等待结束的线程 */
+		private final ReentrantLock stateLock = new ReentrantLock();
+		/** 队列排空且没有任务在执行时唤醒等待者（等待结束的语义） */
+		private final Condition idle = stateLock.newCondition();
+
+		SerialExecutor(ExecutorService pool, AISession session) {
+			this.pool = pool;
+			this.session = session;
+		}
+
+		@Override
+		public void execute(Runnable command) {
+			if (closed)
+				throw new RejectedExecutionException("会话已释放，无法再提交命令任务");
+			boolean startWorker;
+			stateLock.lock();
+			try {
+				queue.addLast(command);
+				// 已有排空器在跑：它会把新任务一并执行，本次提交不必再占线程
+				startWorker = !running;
+				if (startWorker)
+					running = true;
+			} finally {
+				stateLock.unlock();
+			}
+			if (startWorker)
+				startWorker();
+		}
+
+		/**
+		 * 为本次提交启动排空器。
+		 * <p>
+		 * 共享池不可用（池已关闭，通常只发生在进程退出阶段，且它的线程都是守护线程）时不再重试：
+		 * 只把队列清掉并交回失败，既不把长命令任务退到调用线程上跑（会占住 Netty 线程），
+		 * 也不留一个永远没人排空的队列。
+		 * </p>
+		 */
+		private void startWorker() {
+			try {
+				pool.execute(this::drain);
+			} catch (RejectedExecutionException e) {
+				stateLock.lock();
+				try {
+					queue.clear();
+					finishDrain();
+				} finally {
+					stateLock.unlock();
+				}
+				throw e;
+			}
+		}
+
+		/**
+		 * 依次执行队列中的任务，直到队列为空。
+		 * <p>
+		 * 执行期间不持有结束状态锁（任务里会做历史写入、模型调用等耗时操作），因此任务不会重叠；
+		 * 每次取任务前都重新判断队列，所以任务执行期间入队的任务会自动接在后面执行，不另起排空器。
+		 * </p>
+		 * <p>
+		 * 已经提交的任务一定会执行完：{@link #shutdown()} 之后队列仍然继续排空，只有
+		 * {@link #shutdownNow()} 会清掉队列、让未开始的任务不再执行。
+		 * </p>
+		 */
+		private void drain() {
+			while (true) {
+				Runnable task;
+				stateLock.lock();
+				try {
+					task = queue.pollFirst();
+					if (task == null) {
+						finishDrain();
+						return;
+					}
+					active++;
+				} finally {
+					stateLock.unlock();
+				}
+				try {
+					runCommandTask(session, task);
+				} finally {
+					stateLock.lock();
+					try {
+						active--;
+					} finally {
+						stateLock.unlock();
+					}
+				}
+			}
+		}
+
+		/**
+		 * 排空器收工：清掉运行标记，并在已经关闭时唤醒等待结束的线程。
+		 * <p>
+		 * 只在持有 {@link #stateLock} 时调用。
+		 * </p>
+		 */
+		private void finishDrain() {
+			running = false;
+			if (closed)
+				idle.signalAll();
+		}
+
+		@Override
+		public void shutdown() {
+			// 只停止接受本会话的新任务：共享池由进程持有，不能按会话关闭
+			stateLock.lock();
+			try {
+				closed = true;
+				// 等待者等的是"队列空且没有任务在执行"，队列里还有任务时先不唤醒，等排空器收工
+				if (queue.isEmpty() && active == 0)
+					idle.signalAll();
+			} finally {
+				stateLock.unlock();
+			}
+		}
+
+		@Override
+		public List<Runnable> shutdownNow() {
+			stateLock.lock();
+			try {
+				closed = true;
+				List<Runnable> pending = new ArrayList<>(queue);
+				queue.clear();
+				// 已经不在队列里的任务仍会执行完，因此只有没有任务在执行时才算结束
+				if (active == 0)
+					idle.signalAll();
+				return pending;
+			} finally {
+				stateLock.unlock();
+			}
+		}
+
+		@Override
+		public boolean isShutdown() {
+			return closed;
+		}
+
+		@Override
+		public boolean isTerminated() {
+			stateLock.lock();
+			try {
+				return isIdle();
+			} finally {
+				stateLock.unlock();
+			}
+		}
+
+		@Override
+		public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+			long remainNanos = unit.toNanos(timeout);
+			stateLock.lock();
+			try {
+				while (!isIdle()) {
+					if (remainNanos <= 0L) {
+						// 超时返回 false；但已关闭且刚好排空时仍按结束处理
+						return isIdle();
+					}
+					remainNanos = idle.awaitNanos(remainNanos);
+				}
+				return true;
+			} finally {
+				stateLock.unlock();
+			}
+		}
+
+		/**
+		 * 是否已经结束：已关闭、没有排空器在跑，也没有任务正在执行。
+		 * <p>
+		 * 只在持有 {@link #stateLock} 时调用。
+		 * </p>
+		 */
+		private boolean isIdle() {
+			return closed && !running && active == 0;
+		}
+	}
+
+	/**
+	 * 会话命令任务的统一包装：把线程名标记成当前调用的会话，便于在日志中区分并发会话。
+	 * <p>
+	 * 共享池里的线程名在创建时生成、之后被反复复用，因此对执行期间的线程名按实际所属会话重设一次。
+	 * </p>
+	 *
+	 * @param session 当前执行命令任务的会话，可为 null（此时只执行任务，不设置线程名）
+	 * @param command 命令任务
+	 */
+	private static void runCommandTask(AISession session, Runnable command) {
+		if (session == null) {
+			command.run();
+			return;
+		}
+		Thread thread = Thread.currentThread();
+		String oldName = thread.getName();
+		thread.setName("ai-session-" + session.user);
+		try {
+			command.run();
+		} finally {
+			thread.setName(oldName);
+		}
 	}
 
 	/**
@@ -353,12 +630,90 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 
 	/**
+	 * 在后台线程上逐段消费一条推理流，并异步写入指定的历史写入上下文。
+	 * <p>
+	 * 思维链读取会阻塞在模型输出上（工具调用时整轮工具循环结束才会关闭推理流），
+	 * 因此这里把读流与写历史都丢到后台线程，调用方拿到 {@link CompletableFuture} 后可以立刻
+	 * 继续处理回复正文，思考内容则一边产生一边进入本轮记录
+	 * （{@link #onReasonerAppend(MessageContent)} 照常逐段回调）。
+	 * </p>
+	 * <p>
+	 * 内容段由 {@code source} 原样提供（纯文本、工具调用等），本方法不再拆装内容：
+	 * 每个内容段都通过 {@link HistoryWriteContext#appendReasonerIfOpen(MessageContent)} 写入，
+	 * 工具调用额外通知会话（{@link #onToolcall(ToolCallContent)}）。本轮记录已经提交或撤回时
+	 * 后台任务自行结束，不会写到别的记录上；会话同时记录该任务，写入上下文结束（提交/撤回/关闭）
+	 * 与开启下一次写入前都会等待它收尾，读流失败体现在返回的 Future 上（异常完成），
+	 * 调用方 {@code join()} 即可拿到。
+	 * </p>
+	 *
+	 * @param source 依次提供推理内容段的来源，返回 null 表示流已结束
+	 * @param write  推理内容要写入的可写入上下文
+	 * @return 后台写入任务的完成信号
+	 */
+	public CompletableFuture<Void> beginAsyncReasonerWrite(final Supplier<MessageContent> source,
+			final HistoryWriteContext write) {
+		// 用 CompletableFuture 管理任务本身（完成/失败信号），执行仍交给本会话专用的思维链线程池：
+		// runAsync 不传线程池时会落到 ForkJoinPool.commonPool，而这里每轮生成都要长时间阻塞在
+		// 模型输出上（工具调用时是整轮循环），不该占用进程内共享的公共池，线程名也便于排查问题
+		final CompletableFuture<Void> done = CompletableFuture.runAsync(() -> {
+			MessageContent current;
+			while ((current = source.get()) != null) {
+				if (!write.appendReasonerIfOpen(current))
+					return;
+				if (current instanceof ToolCallContent)
+					onToolcall((ToolCallContent) current);
+			}
+		}, REASONER_WRITE_EXEC);
+		// 记录该任务：写入上下文结束与开启下一次写入前都要等它收尾；收尾后自行注销
+		pendingReasonerWrites.add(done);
+		done.whenComplete((value, error) -> onReasonerWriteResolved(done));
+		return done;
+	}
+
+	/**
+	 * 等待本会话全部后台思维链写入收尾（读流成功或失败都算收尾）。
+	 * <p>
+	 * 提交、撤回或关闭本轮写入上下文前调用，确保记录定型之后不会再有后台写入。
+	 * 读流失败按"内容可能不完整"处理，不影响本轮记录定型，因此不在此抛出异常；
+	 * 需要感知失败的调用方自行 {@code join()} 它拿到的那个 Future。
+	 * </p>
+	 */
+	void awaitReasonerWrites() {
+		for (CompletableFuture<Void> writeTask : pendingReasonerWrites) {
+			try {
+				writeTask.join();
+			} catch (CompletionException e) {
+				// 读流失败：内容可能不完整，但不影响本轮记录定型，由持有该任务的调用方负责上报
+			} catch (CancellationException e) {
+				// 任务被取消：同上
+			}
+			// 后台任务收尾时会自行注销，这里只在它没来得及注销时兜底清理
+			pendingReasonerWrites.remove(writeTask);
+		}
+	}
+
+	/**
 	 * 结束当前打开的写入上下文（按其内容提交或撤回），没有打开时不做任何处理。
+	 * <p>
+	 * 换到下一次写入之前先把还在跑的后台思维链写入等完，避免它们挂到新的记录上。
+	 * </p>
 	 */
 	private void closeCurrentWrite() {
 		SessionWriteContext write = currentWrite;
 		if (write != null && !write.isResolved()) {
 			write.close();
+		}
+		awaitReasonerWrites();
+	}
+
+	/**
+	 * 后台思维链写入收尾时由写入上下文回调，把它从会话的待收尾集合中移除。
+	 *
+	 * @param writeTask 已经收尾的后台写入任务
+	 */
+	void onReasonerWriteResolved(CompletableFuture<Void> writeTask) {
+		if (writeTask != null) {
+			pendingReasonerWrites.remove(writeTask);
 		}
 	}
 
@@ -850,141 +1205,6 @@ public class AISession implements ISaveData,AutoCloseable{
 		return aiapp.getRoleName(this, role);
 	}
 	/**
-	 * 获取本会话的工具调用管理策略（调用次数、权限、许可）。
-	 * <p>
-	 * 该策略与已注册的工具一起装配成会话持有的
-	 * {@link ToolCallManager}（见 {@link #getToolCallManager()}），由 {@code ToolCallContext}
-	 * 统一执行，会话本身不参与工具调用的执行过程。子类可重写此方法或其细粒度钩子
-	 * （{@link #getToolCallPermission()}、{@link #getToolCallApprover()}、
-	 * {@link #getMaxToolCallRounds()}、{@link #getMaxToolCalls()}、
-	 * {@link #getToolCallLimits()}）来收紧或放宽限制；规则变化后可调用
-	 * {@link #invalidateToolCallManager()} 立即生效。
-	 * </p>
-	 *
-	 * @return 工具调用管理策略
-	 */
-	public ToolCallPolicy getToolCallPolicy() {
-		return ToolCallPolicy.builder()
-				.maxRounds(getMaxToolCallRounds())
-				.maxCalls(getMaxToolCalls())
-				.toolLimits(getToolCallLimits())
-				.permission(getToolCallPermission())
-				.approver(getToolCallApprover())
-				.build();
-	}
-
-	/**
-	 * 各工具的执行次数上限（工具名称 → 该工具在单次生成中最多执行几次）。
-	 * <p>
-	 * 未列出的工具不受单独限制；某项小于等于 0 也表示该工具不受单独限制。
-	 * </p>
-	 *
-	 * @return 工具名称到次数上限的映射，默认空（不限制单个工具）
-	 */
-	public Map<String, Integer> getToolCallLimits() {
-		return Collections.emptyMap();
-	}
-
-	/**
-	 * 工具调用轮次上限（模型每请求一批工具调用记为一轮）。
-	 *
-	 * @return 最大轮次，小于等于 0 表示不限制，默认 {@link ToolCallPolicy#DEFAULT_MAX_ROUNDS}
-	 */
-	public int getMaxToolCallRounds() {
-		return ToolCallPolicy.DEFAULT_MAX_ROUNDS;
-	}
-
-	/**
-	 * 工具调用总次数上限（单个工具的成功执行记一次）。
-	 *
-	 * @return 最大次数，小于等于 0 表示不限制，默认 0
-	 */
-	public int getMaxToolCalls() {
-		return 0;
-	}
-
-	/**
-	 * 本会话的工具调用权限策略，默认全部允许。
-	 *
-	 * @return 权限策略
-	 */
-	public ToolCallPermission getToolCallPermission() {
-		return ToolCallPermission.allowAll();
-	}
-
-	/**
-	 * 本会话的工具调用许可方，默认自动许可。
-	 * <p>
-	 * 需要用户确认的场景可重写 {@link #getToolCallPermission()} 让目标工具返回
-	 * {@code ToolCallDecision.ask(...)}，并在此返回 {@link #getUserApprovalApprover()}
-	 * （或自建的 {@link ToolCallApprover}）以阻塞等待用户答复。
-	 * </p>
-	 * <p>
-	 * 注意：本方法由模型生成线程调用；答复必须由<b>另一个线程</b>回填
-	 * （见 {@link #completeToolApproval(String, boolean)}），不得在生成线程所占用的事件循环里
-	 * 同步等待，否则会死锁。
-	 * </p>
-	 *
-	 * @return 许可方
-	 */
-	public ToolCallApprover getToolCallApprover() {
-		return ToolCallApprover.autoApprove();
-	}
-
-	/**
-	 * 获取本会话的工具调用许可管理器（同一会话串行询问、超时按拒绝处理）。
-	 *
-	 * @return 许可管理器
-	 */
-	public ToolApprovalManager getToolApprovalManager() {
-		return toolApprovalManager;
-	}
-
-	/**
-	 * 阻塞等待用户许可的许可方，可直接由 {@link #getToolCallApprover()} 返回。
-	 *
-	 * @return 许可方
-	 */
-	public ToolCallApprover getUserApprovalApprover() {
-		return toolApprovalManager.approverFor(user);
-	}
-
-	/**
-	 * 异步发起一次工具调用许可请求。
-	 * <p>
-	 * 默认实现直接拒绝（失败关闭）；子类应重写本方法把请求交给用户
-	 * （例如通过 WebSocket 下发确认框），并在收到答复后调用
-	 * {@link #completeToolApproval(String, boolean)}。实现不得阻塞等待答复。
-	 * </p>
-	 *
-	 * @param request 许可请求记录
-	 */
-	protected void requestToolCallApproval(ToolApprovalRequest request) {
-		request.deny();
-	}
-
-	/**
-	 * 回填一次工具调用许可答复（会话收到用户答复时调用）。
-	 * <p>
-	 * 该方法必须在发起工具调用的线程之外的线程上调用，否则等待方无法被唤醒。
-	 * </p>
-	 *
-	 * @param requestId 请求 id
-	 * @param approved  是否许可
-	 * @return 答复是否被接受（请求不存在、已超时或重复答复时返回 false）
-	 */
-	public boolean completeToolApproval(String requestId, boolean approved) {
-		return toolApprovalManager.complete(requestId, approved);
-	}
-
-	/**
-	 * 放弃本会话全部待答复的许可请求（例如连接断开），一律按拒绝处理。
-	 */
-	public void cancelToolApprovals() {
-		toolApprovalManager.cancelAll(user);
-	}
-
-	/**
 	 * 工具调用通知钩子。
 	 * <p>
 	 * 当 {@code ToolCallManager} 决定发起一批工具调用并写入推理流时被调用，
@@ -1028,8 +1248,8 @@ public class AISession implements ISaveData,AutoCloseable{
 
 	@Override
 	public void close(){
-		// 释放可能正在等待用户许可的生成线程
-		cancelToolApprovals();
+		// 会话结束前把后台思维链写入等完，避免任务在会话释放后继续写历史
+		awaitReasonerWrites();
 		commandExec.shutdown();
 	}
 }

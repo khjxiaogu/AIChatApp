@@ -89,7 +89,7 @@ public class SDXLAgentMcp {
 						// true);
 						//
 					// 子 agent 的工具由统一的管理器提供
-					b.toolCallManager(ToolCallManager.builder().tools(sdxl.getTools()).build());
+					b.toolCallManager(new ToolCallManager().registerTools(sdxl.getTools()));
 					AIRequest request=b.build();
 					callback.sendAsyncTool("create_sxdl_agent", CompletableFuture.supplyAsync(()->{
 						try {

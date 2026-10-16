@@ -131,9 +131,6 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/** 可用的AI应用映射，键为应用ID（如"wuxia"），值为对应的AI应用实例 */
 	private Map<String, ApplicationAttributes> apps = new HashMap<>();
 
-	/** 公测中的AI应用ID集合，对于这些应用，每个用户只能创建一个对话实例 */
-	private Set<String> trial = new HashSet<>();
-	
 	public Map<String,NameTranslator> modelTranslations=new HashMap<>();
 	
 	String defaultRule="";
@@ -153,6 +150,16 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private static final int DEFAULT_FREE_DAILY_LIMIT = 500_000;
 	/** 每日签到一次可获得的补充额度（token） */
 	public static final int DAILY_CHECKIN_REWARD = 50_000;
+	/** 新用户首次获取今日配额时赠送的补充额度（token），赠送不做任何提示 */
+	public static final int NEW_USER_GIFT = 100_000;
+	/** 配额增加来源：系统充值 */
+	public static final String INCREASE_SOURCE_RECHARGE = "充值";
+	/** 配额增加来源：每日签到获取 */
+	public static final String INCREASE_SOURCE_CHECKIN = "签到获取";
+	/** 配额增加来源：兑换码获取 */
+	public static final String INCREASE_SOURCE_CDK = "兑换码获取";
+	/** 配额增加来源：新用户赠送 */
+	public static final String INCREASE_SOURCE_NEW_USER = "新用户赠送";
 
 	public void initModelNames() {
 		modelTranslations.put("deepseek",new NameTranslator().add("deepseek", "Deepseek")
@@ -208,15 +215,17 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			database = DriverManager.getConnection("jdbc:sqlite:" + new File(path, "messages.db"));
 			try (Statement stmt = database.createStatement()) {
 
-				/** 创建对话记录表的SQL语句 */
+				/** 创建对话记录表的SQL语句（price 直接并入主表，status 为存档状态） */
 				String createMsg = "CREATE TABLE IF NOT EXISTS chats (" +
 					"uid	 TEXT(40)   NOT NULL, " + // 用户ID
-					"brief TEXT, " + // 对话简述
+					"brief TEXT, " + // 对话简述（对话名称）
 					"app TEXT NOT NULL, " + // 智能体名称
 					"chatid TEXT NOT NULL, " + // 对话ID
 					"time	BIGINT(64), " + // 时间戳（毫秒）
-					"status TEXT, " + // 状态
-					"attribute TEXT DEFAULT ''" + // 附加信息（如隐藏标记）
+					"price TEXT DEFAULT '0.00', " + // 累计消耗（原 price 表字段）
+					"status TEXT DEFAULT '" + STATUS_NORMAL + "', " + // 存档状态：normal/archived/removed
+					"name_fixed INTEGER DEFAULT 0, " + // 名称是否被用户手动重命名（1 表示不再由AI自动改写）
+					"attribute TEXT DEFAULT ''" + // 历史遗留附加信息（已由 status 取代，仅保留兼容）
 					");";
 
 				/** 创建权限表的SQL语句 */
@@ -226,12 +235,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					"state TEXT NOT NULL" + // 许可状态（如'1'表示允许）
 					");";
 
-				/** 创建费用记录表的SQL语句 */
-				String createPrice = "CREATE TABLE IF NOT EXISTS price (" +
-					"chatid TEXT NOT NULL, " + // 对话ID
-					"price TEXT, " + // 价格字符串
-					"time	BIGINT(32) " + // 时间戳（毫秒）
-					");";
+				/** 创建备注/选中表的SQL语句（存档状态中的"当前存档"与备注仍保存在此表） */
 				String createRemark = "CREATE TABLE IF NOT EXISTS chatdata (" +
 					"chatid TEXT PRIMARY KEY, " +		   // 对话ID
 					"remark TEXT, " +					   // 备注字符串
@@ -283,9 +287,21 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		        /** 按用户+日期查询的索引 */
 		        String createPaidUsageIndex = "CREATE INDEX IF NOT EXISTS idx_paid_usage_user_date"
 		        		+ " ON paid_usage_record(user_id, date)";
+
+		        /** 配额增加记录表：记录补充配额的每一次增加及其来源（充值/签到获取/兑换码获取/新用户赠送） */
+		        String createQuotaIncreaseTable = "CREATE TABLE IF NOT EXISTS quota_increase_record ("
+		        		+ "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+		        		+ "user_id TEXT NOT NULL,"
+		        		+ "source TEXT NOT NULL,"
+		        		+ "amount INTEGER NOT NULL DEFAULT 0,"
+		        		+ "detail TEXT,"
+		        		+ "date TEXT NOT NULL,"
+		        		+ "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)";
+		        /** 配额增加记录按用户+日期查询的索引 */
+		        String createQuotaIncreaseIndex = "CREATE INDEX IF NOT EXISTS idx_quota_increase_user_date"
+		        		+ " ON quota_increase_record(user_id, date)";
 				stmt.execute(createMsg);
 				stmt.execute(createPerm);
-				stmt.execute(createPrice);
 				stmt.execute(createRemark);
 				stmt.execute(createPaidBalanceTable);
 				stmt.execute(createDailyUsageTable);
@@ -295,7 +311,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				stmt.execute(createCheckinTable);
 				stmt.execute(createPaidUsageTable);
 				stmt.execute(createPaidUsageIndex);
+				stmt.execute(createQuotaIncreaseTable);
+				stmt.execute(createQuotaIncreaseIndex);
 			}
+			migrateChatsSchema();
 		} catch (SQLException e) {
 			logger.severe("信息数据库初始化失败！");
 			throw e;
@@ -324,14 +343,131 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		reload();
 	}
 
+	/** 存档状态：正常，在聊天页与存档管理页均可见 */
+	public static final String STATUS_NORMAL="normal";
+	/** 存档状态：已归档，聊天页不再显示，仅在存档管理页的"已归档"中可见并可恢复 */
+	public static final String STATUS_ARCHIVED="archived";
+	/** 存档状态：已移除，任何界面都不再显示（软删除） */
+	public static final String STATUS_REMOVED="removed";
+
+	/** 对话名称（chats.brief）的最大长度，超过部分在重命名时截断 */
+	public static final int MAX_CHAT_NAME_LENGTH=40;
+
+	/**
+	 * 判断列是否存在于指定表中。
+	 *
+	 * @param table  表名
+	 * @param column 列名
+	 * @return 存在返回true
+	 * @throws SQLException 查询失败
+	 */
+	private boolean hasColumn(String table, String column) throws SQLException {
+		try (PreparedStatement ps = database.prepareStatement("PRAGMA table_info(" + table + ")")) {
+			try (ResultSet rs = ps.executeQuery()) {
+				while (rs.next()) {
+					if (column.equalsIgnoreCase(rs.getString("name")))
+						return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * 判断表是否存在。
+	 *
+	 * @param table 表名
+	 * @return 存在返回true
+	 * @throws SQLException 查询失败
+	 */
+	private boolean hasTable(String table) throws SQLException {
+		try (PreparedStatement ps = database.prepareStatement("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")) {
+			ps.setString(1, table);
+			try (ResultSet rs = ps.executeQuery()) {
+				return rs.next();
+			}
+		}
+	}
+
+	/**
+	 * 升级历史数据库结构，使 chats 表成为唯一的对话主表。
+	 * <p>
+	 * 处理三件事：
+	 * <ol>
+	 * <li>把原 {@code price} 表的费用并入 {@code chats.price}（费用归位到主表）；</li>
+	 * <li>补齐 {@code chats.price} / {@code chats.status} 列；</li>
+	 * <li>把历史 {@code attribute} 标记迁移为明确的 {@code status}：hide → archived，
+	 * removed/deleted → removed，其余 → normal。</li>
+	 * </ol>
+	 * 迁移是幂等的，可以重复执行。
+	 * </p>
+	 *
+	 * @throws SQLException 迁移失败
+	 */
+	private void migrateChatsSchema() throws SQLException {
+		boolean addedPrice=false;
+		boolean addedStatus=false;
+		try (Statement stmt = database.createStatement()) {
+			if (!hasColumn("chats", "price")) {
+				stmt.execute("ALTER TABLE chats ADD COLUMN price TEXT DEFAULT '0.00'");
+				addedPrice=true;
+			}
+			if (!hasColumn("chats", "status")) {
+				stmt.execute("ALTER TABLE chats ADD COLUMN status TEXT DEFAULT '" + STATUS_NORMAL + "'");
+				addedStatus=true;
+			}
+			if (!hasColumn("chats", "name_fixed")) {
+				stmt.execute("ALTER TABLE chats ADD COLUMN name_fixed INTEGER DEFAULT 0");
+			}
+			if (!hasTable("chatdata")) {
+				stmt.execute("CREATE TABLE IF NOT EXISTS chatdata (chatid TEXT PRIMARY KEY, remark TEXT, selected TEXT)");
+			}
+		}
+		// 1. 费用迁移：原 price 表的数据并入 chats.price
+		if (hasTable("price")) {
+			try (Statement stmt = database.createStatement()) {
+				int moved=stmt.executeUpdate("UPDATE chats SET price = COALESCE((SELECT p.price FROM price p WHERE p.chatid=chats.chatid), price)"
+					+ " WHERE EXISTS(SELECT 1 FROM price p WHERE p.chatid=chats.chatid AND p.price IS NOT NULL)");
+				if (moved>0)
+					logger.info("存档费用迁移完成：" + moved + " 条记录并入 chats.price");
+			}
+		}
+		if (addedPrice) {
+			try (Statement stmt = database.createStatement()) {
+				stmt.executeUpdate("UPDATE chats SET price='0.00' WHERE price IS NULL");
+			}
+		}
+		// 2. 状态迁移：历史 attribute 标记 → status
+		boolean hasAttribute=hasColumn("chats", "attribute");
+		try (Statement stmt = database.createStatement()) {
+			long archived=0;
+			long removed=0;
+			if (addedStatus&&hasAttribute) {
+				// 首次补齐 status 列：按 attribute 语义整体迁移
+				removed=stmt.executeUpdate("UPDATE chats SET status='" + STATUS_REMOVED
+					+ "' WHERE attribute IN ('removed','deleted')");
+				archived=stmt.executeUpdate("UPDATE chats SET status='" + STATUS_ARCHIVED
+					+ "' WHERE attribute='hide' AND status='" + STATUS_NORMAL + "'");
+			} else if (hasAttribute) {
+				// 已存在 status 的库：仅补齐空值，避免覆盖用户已经设置的归档状态
+				archived=stmt.executeUpdate("UPDATE chats SET status='" + STATUS_ARCHIVED
+					+ "' WHERE (status IS NULL OR status='') AND attribute='hide'");
+				removed=stmt.executeUpdate("UPDATE chats SET status='" + STATUS_REMOVED
+					+ "' WHERE (status IS NULL OR status='') AND attribute IN ('removed','deleted')");
+			}
+			stmt.executeUpdate("UPDATE chats SET status='" + STATUS_NORMAL + "' WHERE status IS NULL OR status=''");
+			if (archived>0||removed>0)
+				logger.info("存档状态迁移完成：归档 " + archived + " 条，移除 " + removed + " 条");
+		}
+	}
+
 	/**
 	 * 重新加载所有AI应用配置。 扫描根目录下的所有子目录，根据meta.json元数据动态加载AI应用（如talk类型、trpg类型），
-	 * 并更新apps映射和trial集合。
+	 * 并更新apps映射与各应用的可见性（access）。
 	 */
 	@SuppressWarnings("unchecked")
 	public void reload() {
 		apps.clear();
-		trial.clear();
 		Gson gson=new Gson();
 		// apps.put("fengyitalk", new AICharaTalkMain(parent,"fengyitalk","姚枫怡"));
 		for (File fn : new File(parent, "apps").listFiles(File::isDirectory)) {
@@ -346,9 +482,16 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						try {
 							ApplicationAttributes attr;
 							apps.put(name, attr=new ApplicationAttributes(AIApplicationRegistry.createInstance(parent, fn, meta),name));
-							if (meta.has("trial") && meta.get("trial").getAsBoolean())
-								trial.add(name);
-							
+							// 可见性：优先读取新的 access 字段；为兼容旧配置回退到 trial 标记
+							if (meta.has("access")) {
+								attr.access=ApplicationAttributes.normalizeAccess(meta.get("access").getAsString());
+							} else if (meta.has("trial")) {
+								attr.access=meta.get("trial").getAsBoolean()
+									? ApplicationAttributes.ACCESS_PUBLIC
+									: ApplicationAttributes.ACCESS_PERMISSION;
+								getLogger().info("AI " + name + " 使用已弃用的 trial 标记，等价 visibility=" + attr.access
+									+ "（建议改为 access 字段）");
+							}
 							
 							if(meta.has("paidOnly"))
 								attr.paidOnly=meta.get("paidOnly").getAsBoolean();
@@ -377,48 +520,107 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				getLogger().error(e);
 			}
 		}
-		// trial.clear();
-		// trial.add("fengyitalk");
 	}
 
 	/**
-	 * 获取指定用户有权访问的AI应用列表（权限表中state='1'的应用）。
+	 * 获取指定用户在权限表中已授权的应用ID集合（state='1'）。
+	 *
+	 * @param uid 用户ID
+	 * @return 已授权的应用ID集合
+	 */
+	private Set<String> getPermittedApps(String uid) {
+		Set<String> result = new HashSet<>();
+		try (PreparedStatement ps = database.prepareStatement("SELECT app FROM permission WHERE uid = ? and state='1'")) {
+			ps.setString(1, uid);
+			try (ResultSet rs = ps.executeQuery()) {
+				while (rs.next())
+					result.add(rs.getString(1));
+			}
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		return result;
+	}
+
+	/**
+	 * 获取指定用户可见的AI应用。
+	 * <p>
+	 * 可见性由应用的 access 配置决定：公开可见的应用对所有用户可见，仅权限可见的应用
+	 * 需要权限表授权，不可见（hidden）的应用不出现在任何列表中。
+	 * </p>
+	 *
+	 * @param uid 用户ID
+	 * @return 可见的应用ID集合
+	 */
+	public Set<String> getVisibleApps(String uid) {
+		Set<String> permitted = getPermittedApps(uid);
+		Set<String> result = new HashSet<>();
+		for (Map.Entry<String, ApplicationAttributes> e : apps.entrySet()) {
+			ApplicationAttributes attr = e.getValue();
+			if (attr == null || attr.isHidden())
+				continue;
+			if (attr.isPublic() || permitted.contains(e.getKey()))
+				result.add(e.getKey());
+		}
+		return result;
+	}
+
+	/**
+	 * 获取指定用户有权访问的AI应用列表。
+	 * <p>
+	 * 包含公开可见的应用，以及权限表中 state='1' 的应用；不可见应用被排除。
+	 * </p>
 	 *
 	 * @param uid 用户ID
 	 * @return JSON数组，每个元素包含应用名称和ID
 	 */
 	public JsonArray getChatApps(String uid) {
 		JsonArray ja = new JsonArray();
-		try (PreparedStatement ps = database.prepareStatement("SELECT app FROM permission WHERE uid = ? and state='1'")) {
-			ps.setString(1, uid);
-			ResultSet rs = ps.executeQuery();
-			while (rs.next()) {
-				String appName = rs.getString(1);
-				ApplicationAttributes ent = apps.get(appName);
-				if (ent != null)
-					ja.add(JsonBuilder.object().add("name", ent.getName()).add("appid", appName).end());
-			}
-		} catch (SQLException e) {
-			getLogger().printStackTrace(e);
+		for (String appName : getVisibleApps(uid)) {
+			ApplicationAttributes ent = apps.get(appName);
+			if (ent != null)
+				ja.add(JsonBuilder.object().add("name", ent.getName()).add("appid", appName).end());
 		}
 		return ja;
 	}
 
 	/**
 	 * 检查指定用户是否有权使用指定的AI应用。
+	 * <p>
+	 * 公开可见的应用对所有用户开放；仅权限可见的应用需要权限表授权；不可见应用一律拒绝。
+	 * </p>
 	 *
 	 * @param uid   用户ID
 	 * @param appid 应用ID
-	 * @return 如果权限表中存在记录且state='1'，返回true；否则返回false
+	 * @return 允许使用返回true
 	 */
 	public boolean isChatAllow(String uid, String appid) {
+		if (appid == null)
+			return false;
+		ApplicationAttributes attr = apps.get(appid);
+		if (attr == null || attr.isHidden())
+			return false;
+		if (attr.isPublic())
+			return true;
+		return hasPermission(uid, appid);
+	}
+
+	/**
+	 * 查询权限表中是否存在授权记录。
+	 *
+	 * @param uid   用户ID
+	 * @param appid 应用ID
+	 * @return 存在 state='1' 的记录返回true
+	 */
+	private boolean hasPermission(String uid, String appid) {
+		if (uid == null)
+			return false;
 		try (PreparedStatement ps = database.prepareStatement("SELECT count(1) FROM permission WHERE uid = ? and state='1' and app = ?")) {
 			ps.setString(1, uid);
 			ps.setString(2, appid);
-			ResultSet rs = ps.executeQuery();
-			while (rs.next()) {
-				if (rs.getInt(1) > 0)
-					return true;
+			try (ResultSet rs = ps.executeQuery()) {
+				if (rs.next())
+					return rs.getInt(1) > 0;
 			}
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
@@ -427,29 +629,59 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * 获取指定用户的所有对话列表（排除attribute='hide'的记录）。
+	 * 获取指定用户的所有对话列表（仅包含未归档、未移除的对话）。
 	 *
 	 * @param uid 用户ID
 	 * @return JSON数组，每个元素包含对话ID、应用ID、时间、应用名称和简述
 	 */
 	public JsonArray getChatListUser(String uid) {
-		try (PreparedStatement ps = database.prepareStatement("SELECT chatid,brief,time,app FROM chats WHERE uid = ? and attribute!='hide'")) {
+		return queryChatList(uid, null, STATUS_NORMAL);
+	}
+
+	/**
+	 * 按应用分类查询对话列表。
+	 * <p>
+	 * 这是各聊天页面拉取列表的统一入口：必须传入应用ID，保证每个页面的列表里只会出现
+	 * 该应用自己的对话；隐藏应用与不可见应用下的对话不会被返回。
+	 * </p>
+	 *
+	 * @param uid    用户ID
+	 * @param app    应用ID，为空时返回该用户全部应用的对话
+	 * @param status 存档状态过滤（{@link #STATUS_NORMAL} / {@link #STATUS_ARCHIVED}），
+	 *               为空时默认查询未归档
+	 * @return JSON数组，包含匹配的对话信息
+	 */
+	public JsonArray queryChatList(String uid, String app, String status) {
+		if (status == null || status.isEmpty())
+			status = STATUS_NORMAL;
+		StringBuilder sql = new StringBuilder("SELECT c.chatid,c.brief,c.time,c.app FROM chats c"
+			+ " WHERE c.uid = ? AND c.status = ?");
+		if (app != null && !app.isEmpty())
+			sql.append(" AND c.app = ?");
+		sql.append(" ORDER BY c.time DESC");
+		try (PreparedStatement ps = database.prepareStatement(sql.toString())) {
 			ps.setString(1, uid);
-			ResultSet rs = ps.executeQuery();
-			JsonArray ja = new JsonArray();
-			while (rs.next()) {
-				String appid = rs.getString(4);
-				ApplicationAttributes ent = apps.get(appid);
-				if (ent != null)
+			ps.setString(2, status);
+			if (app != null && !app.isEmpty())
+				ps.setString(3, app);
+			try (ResultSet rs = ps.executeQuery()) {
+				JsonArray ja = new JsonArray();
+				while (rs.next()) {
+					String appid = rs.getString(4);
+					ApplicationAttributes ent = apps.get(appid);
+					// 只返回仍可见的应用下的对话，避免聊天页面串到其它/已下线应用
+					if (ent == null || ent.isHidden())
+						continue;
 					ja.add(JsonBuilder.object()
 						.add("chatid", rs.getString(1))
 						.add("appid", appid)
-						.add("time", rs.getString(3))
 						.add("app", ent.getName())
+						.add("time", rs.getString(3))
 						.add("name", rs.getString(2) == null ? "新对话" : rs.getString(2))
 						.end());
+				}
+				return ja;
 			}
-			return ja;
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
 		}
@@ -457,35 +689,54 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * 查找指定用户在指定应用下的所有对话（不隐藏）。
+	 * 查找指定用户在指定应用下的对话（兼容旧接口，等价于查询该应用下未归档的对话）。
 	 *
 	 * @param uid 用户ID
 	 * @param app 应用ID
 	 * @return JSON数组，包含匹配的对话信息
 	 */
 	public JsonArray findChat(String uid, String app) {
-		try (PreparedStatement ps = database.prepareStatement("SELECT c.chatid,c.brief,c.time,c.app FROM chats c LEFT JOIN chatdata cd ON c.chatid=cd.chatid WHERE c.uid = ? and c.app = ? and c.attribute!='deleted' and (cd.selected is null or cd.selected = '1')")) {
+		return queryChatList(uid, app, STATUS_NORMAL);
+	}
+
+	/**
+	 * 查询指定用户在指定应用下的"当前存档"。
+	 * <p>
+	 * 存档管理页选中的对话（chatdata.selected='1'）优先；没有选中标记时回退到最近一次的
+	 * 未归档对话。各聊天页面用它决定进入时打开哪一个存档，而不是靠列表顺序猜。
+	 * </p>
+	 *
+	 * @param uid 用户ID
+	 * @param app 应用ID
+	 * @return 当前存档信息，没有可用存档时返回null
+	 */
+	public JsonObject findCurrentChat(String uid, String app) {
+		String sql = "SELECT c.chatid,c.brief,c.time,c.app FROM chats c LEFT JOIN chatdata cd ON c.chatid=cd.chatid"
+			+ " WHERE c.uid = ? AND c.app = ? AND c.status = ?"
+			+ " ORDER BY (CASE WHEN cd.selected='1' THEN 0 ELSE 1 END), c.time DESC LIMIT 1";
+		try (PreparedStatement ps = database.prepareStatement(sql)) {
 			ps.setString(1, uid);
 			ps.setString(2, app);
-			ResultSet rs = ps.executeQuery();
-			JsonArray ja = new JsonArray();
-			while (rs.next()) {
-				String appid = rs.getString(4);
-				ApplicationAttributes ent = apps.get(appid);
-				if (ent != null)
-					ja.add(JsonBuilder.object()
+			ps.setString(3, STATUS_NORMAL);
+			try (ResultSet rs = ps.executeQuery()) {
+				if (rs.next()) {
+					String appid = rs.getString(4);
+					ApplicationAttributes ent = apps.get(appid);
+					if (ent == null || ent.isHidden())
+						return null;
+					return JsonBuilder.object()
 						.add("chatid", rs.getString(1))
 						.add("appid", appid)
 						.add("app", ent.getName())
 						.add("time", rs.getString(3))
 						.add("name", rs.getString(2) == null ? "新对话" : rs.getString(2))
-						.end());
+						.end();
+				}
 			}
-			return ja;
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
 		}
-		return new JsonArray();
+		return null;
 	}
 
 	/**
@@ -541,17 +792,63 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return new ResultDTO(200, new File(parent, "saveman.html"));
 	}
 	/**
-	 * HTTP GET端点：查询指定用户在指定应用下的对话。
+	 * HTTP GET端点：查询指定用户在指定应用下的对话（按应用分类，只返回该应用的对话）。
 	 *
-	 * @param uid 用户ID
-	 * @param app 应用ID
+	 * @param uid    用户ID
+	 * @param app    应用ID
+	 * @param status 存档状态过滤，缺省为进行中（normal）
 	 * @return JSON格式的对话列表
 	 */
 	@HttpMethod("GET")
 	@HttpPath("/querychat")
 	@Adapter
-	public ResultDTO findChats(@Query("uid") String uid, @Query("appid") String app) {
-		return new ResultDTO(200, findChat(uid, app));
+	public ResultDTO findChats(@Query("uid") String uid, @Query("appid") String app, @Query("status") String status) {
+		if (uid == null || uid.isEmpty())
+			return new ResultDTO(400, "缺少用户ID");
+		if (app == null || app.isEmpty())
+			return new ResultDTO(400, "缺少应用ID");
+		ApplicationAttributes attr = apps.get(app);
+		if (attr == null || attr.isHidden())
+			return new ResultDTO(400, "应用不存在");
+		return new ResultDTO(200, queryChatList(uid, app, normalizeStatus(status)));
+	}
+
+	/**
+	 * HTTP GET端点：查询指定用户在指定应用下的当前存档。
+	 * <p>
+	 * 存档管理页选中的存档优先，没有选中标记时回退到最近一次的存档。各聊天页面进入时
+	 * 用它决定打开哪一个存档，避免依赖列表顺序。
+	 * </p>
+	 *
+	 * @param uid 用户ID
+	 * @param app 应用ID
+	 * @return JSON格式的单个对话信息，没有存档时返回空对象
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/currentChat")
+	@Adapter
+	public ResultDTO currentChat(@Query("uid") String uid, @Query("appid") String app) {
+		if (uid == null || uid.isEmpty())
+			return new ResultDTO(400, "缺少用户ID");
+		if (app == null || app.isEmpty())
+			return new ResultDTO(400, "缺少应用ID");
+		ApplicationAttributes attr = apps.get(app);
+		if (attr == null || attr.isHidden())
+			return new ResultDTO(400, "应用不存在");
+		JsonObject current = findCurrentChat(uid, app);
+		return new ResultDTO(200, current == null ? new JsonObject() : current);
+	}
+
+	/**
+	 * 规范化请求中的存档状态过滤值。
+	 *
+	 * @param status 请求参数
+	 * @return {@link #STATUS_ARCHIVED} 或 {@link #STATUS_NORMAL}
+	 */
+	private static String normalizeStatus(String status) {
+		if (status != null && STATUS_ARCHIVED.equalsIgnoreCase(status.trim()))
+			return STATUS_ARCHIVED;
+		return STATUS_NORMAL;
 	}
 
 	/**
@@ -578,42 +875,68 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ResultDTO apps(@Query("uid") String uid) {
 		return new ResultDTO(200, getChatApps(uid));
 	}
+	/**
+	 * HTTP GET端点：获取存档管理页的应用列表。
+	 * <p>
+	 * 列表 = 该用户可见的应用（公开可见 + 已授权）∪ 该用户已经有存档的应用，
+	 * 后者保证即使用户后来失去权限，也不会看不到自己已有的存档。不可见应用始终被排除。
+	 * </p>
+	 *
+	 * @param uid 用户ID
+	 * @return 应用列表JSON，元素含 name/appid/url 以及存档数量统计
+	 */
 	@HttpMethod("GET")
 	@HttpPath("/archiveApplist")
 	@Adapter
 	public ResultDTO archiveApps(@Query("uid") String uid) {
-		Set<String> curApps=new HashSet<>();
-		JsonArray ja = new JsonArray();
-		try (PreparedStatement ps = database.prepareStatement("SELECT app FROM permission WHERE uid = ? and state='1'")) {
-			ps.setString(1, uid);
-			ResultSet rs = ps.executeQuery();
-			while (rs.next()) {
-				
-				String appName = rs.getString(1);
-				curApps.add(appName);
-				ApplicationAttributes attr = apps.get(appName);
-				if(attr!=null) {
-					String url=attr.url;
-					JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", attr.getName()).add("appid", appName);
-					if(url!=null)
-						jb.add("url", url);
-					ja.add(jb.end());
+		Set<String> curApps=getVisibleApps(uid);
+		if (uid != null && !uid.isEmpty()) {
+			// 聊天分类：把用户已有对话的应用一并纳入存档管理范围
+			try (PreparedStatement ps = database.prepareStatement("SELECT DISTINCT app FROM chats WHERE uid = ?")) {
+				ps.setString(1, uid);
+				try (ResultSet rs = ps.executeQuery()) {
+					while (rs.next())
+						curApps.add(rs.getString(1));
 				}
+			} catch (SQLException e) {
+				getLogger().printStackTrace(e);
 			}
-		} catch (SQLException e) {
-			getLogger().printStackTrace(e);
 		}
-		for(String s:trial) {
-			if(curApps.add(s)) {
-				ApplicationAttributes attr=apps.get(s);
-				if(attr!=null) {
-					String url=attr.url;
-					JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", attr.getName()).add("appid", s);
-					if(url!=null)
-						jb.add("url", url);
-					ja.add(jb.end());
+		// 统计各应用的进行中/已归档存档数量，供前端展示
+		Map<String,int[]> counts=new HashMap<>();
+		if (uid != null && !uid.isEmpty()) {
+			try (PreparedStatement ps = database.prepareStatement(
+				"SELECT app, status, count(1) FROM chats WHERE uid = ? GROUP BY app, status")) {
+				ps.setString(1, uid);
+				try (ResultSet rs = ps.executeQuery()) {
+					while (rs.next()) {
+						String appid = rs.getString(1);
+						int[] c = counts.get(appid);
+						if (c == null)
+							counts.put(appid, c = new int[2]);
+						if (STATUS_ARCHIVED.equals(rs.getString(2)))
+							c[1] += rs.getInt(3);
+						else if (STATUS_NORMAL.equals(rs.getString(2)))
+							c[0] += rs.getInt(3);
+					}
 				}
+			} catch (SQLException e) {
+				getLogger().printStackTrace(e);
 			}
+		}
+		JsonArray ja = new JsonArray();
+		for (String appName : curApps) {
+			ApplicationAttributes attr = apps.get(appName);
+			if (attr == null || attr.isHidden())
+				continue;
+			String url=attr.url;
+			JsonObjectBuilder<JsonObject> jb=JsonBuilder.object().add("name", attr.getName()).add("appid", appName);
+			if(url!=null)
+				jb.add("url", url);
+			int[] c = counts.get(appName);
+			jb.add("active", c == null ? 0 : c[0]);
+			jb.add("archived", c == null ? 0 : c[1]);
+			ja.add(jb.end());
 		}
 		return new ResultDTO(200, ja);
 	}
@@ -781,6 +1104,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@Adapter
 	public ResultDTO indexHtm() throws IOException {
 		return new ResultDTO(200, new File(parent, "aiindex.html"));
+	}
+	@HttpMethod("GET")
+	@HttpPath("/aipaintindex")
+	@Adapter
+	public ResultDTO aiPaintIndex() throws IOException {
+		return new ResultDTO(200, new File(parent, "paintindex.html"));
 	}
 
 	/**
@@ -962,7 +1291,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 	}
 	/**
-	 * HTTP GET端点：删除（隐藏）指定对话。 将对话的attribute字段设置为"hide"，使其在列表中不可见。
+	 * HTTP GET端点：移除指定对话（软删除）。
+	 * <p>
+	 * 把对话的 status 设置为 removed，任何界面都不再显示。若只是想从列表中隐藏，
+	 * 应使用 {@code /archiveChat} 归档（归档后可在存档管理页恢复）。
+	 * </p>
 	 *
 	 * @param userid 用户ID
 	 * @param chatid 对话ID
@@ -972,25 +1305,119 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@HttpPath("/remove")
 	@Adapter
 	public ResultDTO delDialog(@Query("uid") String userid, @Query("cid") String chatid) {
-		try (PreparedStatement ps2 = database.prepareStatement("UPDATE chats SET attribute=? WHERE uid=? and chatid=?")) {
-			ps2.setString(1, "hide");
-			ps2.setString(2, userid);
-			ps2.setString(3, chatid);
-			ps2.executeUpdate();
-		} catch (SQLException e) {
-			getLogger().printStackTrace(e);
-		}
-		return new ResultDTO(200, "true");
+		return updateChatStatus(userid, chatid, STATUS_REMOVED, "true");
 	}
 
 	/**
-	 * 更新指定对话的费用记录。
+	 * HTTP POST端点：归档指定对话。归档后聊天页面不再显示，仅在存档管理页的"已归档"中可见。
+	 * <p>
+	 * 被归档的对话同时取消"当前存档"标记，使该应用自动回退到其它进行中的存档。
+	 * </p>
+	 *
+	 * @param uid    用户ID
+	 * @param chatid 对话ID
+	 * @return 成功返回"true"
+	 */
+	@HttpPath("/archiveChat")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO archiveChat(@Query("uid") String uid,@PostQuery("chatid") String chatid) {
+		ResultDTO result = updateChatStatus(uid, chatid, STATUS_ARCHIVED, "true");
+		if (result.code == 200) {
+			// 归档的存档不再作为当前存档，避免聊天页面打开一个已归档的对话
+			try (PreparedStatement ps = database.prepareStatement("UPDATE chatdata SET selected='0' WHERE chatid=?")) {
+				ps.setString(1, chatid);
+				ps.executeUpdate();
+			} catch (SQLException e) {
+				getLogger().printStackTrace(e);
+			}
+		}
+		return result;
+	}
+
+	/**
+	 * HTTP POST端点：取消归档，把对话恢复为正常状态。
+	 *
+	 * @param uid    用户ID
+	 * @param chatid 对话ID
+	 * @return 成功返回"true"
+	 */
+	@HttpPath("/unarchiveChat")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO unarchiveChat(@Query("uid") String uid,@PostQuery("chatid") String chatid) {
+		return updateChatStatus(uid, chatid, STATUS_NORMAL, "true");
+	}
+
+	/**
+	 * 更新指定对话的存档状态。
+	 *
+	 * @param uid    用户ID
+	 * @param chatid 对话ID
+	 * @param status 目标状态
+	 * @param okBody 成功时返回的响应体
+	 * @return 更新结果
+	 */
+	private ResultDTO updateChatStatus(String uid, String chatid, String status, String okBody) {
+		if (uid == null || uid.isEmpty() || chatid == null || chatid.isEmpty())
+			return new ResultDTO(400, "缺少用户ID或对话ID");
+		try (PreparedStatement ps2 = database.prepareStatement("UPDATE chats SET status=? WHERE uid=? and chatid=?")) {
+			ps2.setString(1, status);
+			ps2.setString(2, uid);
+			ps2.setString(3, chatid);
+			if (ps2.executeUpdate() <= 0)
+				return new ResultDTO(404, "对话不存在");
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+			return new ResultDTO(500, "内部错误");
+		}
+		return new ResultDTO(200, okBody);
+	}
+
+	/**
+	 * HTTP POST端点：重命名对话（修改 chats.brief，即各页面列表中显示的名称）。
+	 * <p>
+	 * 绘画（图片生成）等页面用它给自己的对话起名，名称会写入主表并同步到所有列表。
+	 * 名称长度限制 40 字符，超长会被截断；传入空名称时回退为"新对话"。
+	 * </p>
+	 *
+	 * @param uid    用户ID
+	 * @param chatid 对话ID
+	 * @param name   新名称
+	 * @return 保存后的名称
+	 */
+	@HttpPath("/renameChat")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO renameChat(@Query("uid") String uid,@PostQuery("chatid") String chatid,@PostQuery("name") String name) {
+		if (uid == null || uid.isEmpty() || chatid == null || chatid.isEmpty())
+			return new ResultDTO(400, "缺少用户ID或对话ID");
+		String newName = name == null ? "" : name.trim();
+		if (newName.length() > MAX_CHAT_NAME_LENGTH)
+			newName = newName.substring(0, MAX_CHAT_NAME_LENGTH);
+		if (newName.isEmpty())
+			newName = "新对话";
+		try (PreparedStatement ps = database.prepareStatement("UPDATE chats SET brief=?, name_fixed=1 WHERE uid=? and chatid=?")) {
+			ps.setString(1, newName);
+			ps.setString(2, uid);
+			ps.setString(3, chatid);
+			if (ps.executeUpdate() <= 0)
+				return new ResultDTO(404, "对话不存在");
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+			return new ResultDTO(500, "内部错误");
+		}
+		return new ResultDTO(200, newName);
+	}
+
+	/**
+	 * 更新指定对话的消耗记录（price 已并入 chats 主表）。
 	 *
 	 * @param chatid 对话ID
 	 * @param price  费用字符串
 	 */
 	public void setPrice(String chatid, String price) {
-		try (PreparedStatement ps2 = database.prepareStatement("UPDATE price SET price=? WHERE chatid=?")) {
+		try (PreparedStatement ps2 = database.prepareStatement("UPDATE chats SET price=? WHERE chatid=?")) {
 			ps2.setString(1, price);
 			ps2.setString(2, chatid);
 			ps2.executeUpdate();
@@ -1000,14 +1427,20 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * 更新指定对话的简述（brief字段）。
+	 * 更新指定对话的简述（brief字段），由AI在生成结束时自动设置。
+	 * <p>
+	 * 已被用户手动重命名（name_fixed=1）的对话不会被自动名称覆盖，保证
+	 * {@code /renameChat} 的结果稳定；名称超长时按 {@link #MAX_CHAT_NAME_LENGTH} 截断。
+	 * </p>
 	 *
 	 * @param id   对话ID
 	 * @param name 新的简述内容
 	 */
 	public void updateBrief(String id, String name) {
 		if (name == null) return;
-		try (PreparedStatement ps2 = database.prepareStatement("UPDATE chats SET brief=? WHERE chatid=?")) {
+		if (name.length() > MAX_CHAT_NAME_LENGTH)
+			name = name.substring(0, MAX_CHAT_NAME_LENGTH);
+		try (PreparedStatement ps2 = database.prepareStatement("UPDATE chats SET brief=? WHERE chatid=? AND COALESCE(name_fixed,0)=0")) {
 			ps2.setString(1, name);
 			ps2.setString(2, id);
 			ps2.executeUpdate();
@@ -1055,9 +1488,21 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		return new ResultDTO(404);
 	}
+	/**
+	 * 按对话ID与用户ID加载会话（内存中已有则直接复用）。
+	 * <p>
+	 * 已移除（status=removed）的对话视为不存在；已归档的对话仍可加载，用于导出或按ID直连。
+	 * </p>
+	 *
+	 * @param cid 对话ID
+	 * @param uid 用户ID
+	 * @return 会话对象，找不到或不属于该用户时返回null
+	 * @throws SQLException 查询失败
+	 */
 	public AISession getOrLoadSession(String cid,String uid) throws SQLException{
-		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ?")) {
+		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ? and status != ?")) {
 			ps.setString(1, cid);
+			ps.setString(2, STATUS_REMOVED);
 			try (ResultSet rs = ps.executeQuery()) {
 				if (rs.next() && rs.getString(1).equals(uid)) {
 					AISession state = uidsockets.get(cid);
@@ -1213,22 +1658,31 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	public ApplicationAttributes getAttribute(String app) {
 		return apps.get(app);
 	}
+	/**
+	 * 新建一个对话（存档）。
+	 * <p>
+	 * 对话主表 chats 一次性写入用户、应用、时间、名称、状态与费用（price 已并入主表），
+	 * 同时初始化 chatdata 中的备注与"当前存档"标记。
+	 * </p>
+	 *
+	 * @param uid        用户ID
+	 * @param rcid       对话ID
+	 * @param attribute  应用属性
+	 * @param data       对话数据文件
+	 * @param visibility 初始存档状态，见 {@link #STATUS_NORMAL} 等
+	 * @return 加载完成的会话对象
+	 * @throws IOException 会话数据读取失败
+	 */
 	public AISession createSession(String uid, String rcid,ApplicationAttributes attribute, File data,String visibility) throws IOException{
 		long time = new Date().getTime();
-		try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,attribute) VALUES(?,?,?,?,?)")) {
+		String status = visibility == null || visibility.isEmpty() ? STATUS_NORMAL : visibility;
+		try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO chats(uid,chatid,app,time,price,status,attribute) VALUES(?,?,?,?,?,?,'')")) {
 			ps2.setString(1, uid);
 			ps2.setString(2, rcid);
 			ps2.setString(3, attribute.appid);
 			ps2.setLong(4, time);
-			ps2.setString(5, visibility);
-			ps2.executeUpdate();
-		} catch (SQLException e) {
-			getLogger().printStackTrace(e);
-		}
-		try (PreparedStatement ps2 = database.prepareStatement("INSERT INTO price(chatid,price,time) VALUES(?,?,?)")) {
-			ps2.setString(1, rcid);
-			ps2.setString(2, "0.00");
-			ps2.setLong(3, time);
+			ps2.setString(5, "0.00");
+			ps2.setString(6, status);
 			ps2.executeUpdate();
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
@@ -1237,6 +1691,16 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			ps2.setString(1, rcid);
 			ps2.setString(2, "");
 			ps2.setString(3, "1");
+			ps2.executeUpdate();
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		// 新存档即该应用的"当前存档"：清掉同一应用下其它存档的选中标记，保证唯一
+		try (PreparedStatement ps2 = database.prepareStatement("UPDATE chatdata SET selected='0' WHERE chatid != ?"
+			+ " AND chatid IN (SELECT chatid FROM chats WHERE uid = ? AND app = ?)")) {
+			ps2.setString(1, rcid);
+			ps2.setString(2, uid);
+			ps2.setString(3, attribute.appid);
 			ps2.executeUpdate();
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
@@ -1309,8 +1773,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 	/**
 	 * WebSocket端点：建立与前端对话页面的WebSocket连接。
-	 * 根据提供的chatid、app和userId进行验证，如果对话不存在且满足创建条件（权限或公测限制），则创建新对话。
+	 * <p>
+	 * 根据提供的chatid、app和userId进行验证：已存在的对话必须是本人的且未被移除；
+	 * 不存在的对话只有在应用对当前用户可见（公开可见或已授权）时才允许创建，
+	 * 新建的对话一律是正常的存档状态（不再有"隐藏"的新建对话）。
 	 * 成功后将WebSocket会话与{@link WebSocketAISession}绑定。
+	 * </p>
 	 *
 	 * @param req 请求对象
 	 * @param res 响应对象
@@ -1322,9 +1790,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		String uid = req.getQuery().get("userId");
 
 		boolean isCreate = false;
-		String attribute = "";
-		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ? and attribute!='removed'")) {
+		try (PreparedStatement ps = database.prepareStatement("SELECT uid,app FROM chats WHERE chatid = ? and status != ?")) {
 			ps.setString(1, cid);
+			ps.setString(2, STATUS_REMOVED);
 			try (ResultSet rs = ps.executeQuery()) {
 				if (rs.next()) {
 					if (!rs.getString(1).equals(uid)) {
@@ -1335,10 +1803,6 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				} else {
 					if (isChatAllow(uid, app)) {
 						isCreate = true;
-					}
-					if (!isCreate && trial.contains(app)) { // 公测应用，允许每个用户创建一个
-						isCreate = true;
-						attribute = "hide";
 					}
 					if (!isCreate) {
 						res.write(400, "App does not exist");
@@ -1369,7 +1833,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			if (state == null) {
 				try{
 					if (isCreate) {
-						state = createSession(uid, cid, attr, data,attribute);
+						state = createSession(uid, cid, attr, data,STATUS_NORMAL);
 						state.flush();
 						logger.info("AI " + cid + " Created");
 					}else {
@@ -1391,14 +1855,14 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 	/**
 	 * 根据用户 ID、对话 ID 修改备注。
-	 * 若对应的 chats 记录存在且未被删除，且 chatdata 中已有记录则更新，否则插入新记录。
+	 * 若对应的 chats 记录存在且未被移除，且 chatdata 中已有记录则更新，否则插入新记录。
 	 */
 	@HttpPath("/updateRemark")
 	@Adapter
 	@HttpMethod("POST")
 	public ResultDTO updateRemark(@Query("uid") String userId, @PostQuery("chatid") String chatId,@PostQuery("remark") String newRemark) {
 		  // 1. 校验对话是否存在且未被移除
-	    String checkChatSql = "SELECT 1 FROM chats WHERE uid = ? AND chatid = ? AND attribute != 'removed'";
+	    String checkChatSql = "SELECT 1 FROM chats WHERE uid = ? AND chatid = ? AND status != '" + STATUS_REMOVED + "'";
 	    try (PreparedStatement ps = database.prepareStatement(checkChatSql)) {
 	        ps.setString(1, userId);
 	        ps.setString(2, chatId);
@@ -1466,8 +1930,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * 根据用户 ID、对话 ID、智能体名称，将该用户该智能体下所有对话的 selected 设为 0，
-	 * 并将指定对话的 selected 设为 1。若 chatdata 中缺少记录则自动插入。
+	 * 根据用户 ID、对话 ID、智能体名称，将该用户该智能体下所有未归档、未移除对话的
+	 * selected 设为 0，并将指定对话的 selected 设为 1。若 chatdata 中缺少记录则自动插入。
 	 */
 	@HttpPath("/updateSelection")
 	@Adapter
@@ -1480,8 +1944,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			getLogger().printStackTrace(e);
 		}
 	    try {
-	        // 1. 获取该用户该智能体所有未移除的对话ID
-	        String selectChatsSql = "SELECT chatid FROM chats WHERE uid = ? AND app = ? AND attribute != 'removed'";
+	        // 1. 获取该用户该智能体所有进行中的对话ID（归档与移除的存档不参与选中）
+	        String selectChatsSql = "SELECT chatid FROM chats WHERE uid = ? AND app = ? AND status = '" + STATUS_NORMAL + "'";
 	        java.util.List<String> chatids = new java.util.ArrayList<>();
 	        try (PreparedStatement ps = database.prepareStatement(selectChatsSql)) {
 	            ps.setString(1, userId);
@@ -1524,9 +1988,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	        	 database.commit();
 	        	return new ResultDTO(200,"");
 	        }
-	        // 3. 验证目标对话是否属于上述集合（即未被移除且属于该用户、该智能体）
+	        // 3. 验证目标对话是否属于上述集合（即进行中、属于该用户与该智能体）
 	        if (!chatids.contains(chatId)) {
-	        	throw new IllegalStateException("目标对话不存在、已被移除或不属于指定智能体");
+	        	throw new IllegalStateException("目标对话不存在、已归档或不属于指定智能体");
 	        }
 
 	        // 4. 将目标对话的selected设为1
@@ -1581,27 +2045,43 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * 连表查询对话详情，包括智能体名称、简述、价格、备注、是否选中。
-	 * 若 price 或 chatdata 无记录，对应字段返回空字符串。
+	 * 查询存档管理页所需的对话详情：应用名称、对话名称、时间、消耗（chats.price 主表字段）、
+	 * 备注与"当前存档"选中标记。
+	 * <p>
+	 * 通过 {@code archived} 参数切换查看进行中或已归档的存档；两种状态都排除已移除的存档。
+	 * 结果按时间倒序，方便前端直接渲染。
+	 * </p>
+	 *
+	 * @param uid      用户ID
+	 * @param appName  应用ID
+	 * @param archived 为 "1" 时返回已归档存档，否则返回进行中的存档
+	 * @return JSON数组，每个元素为一个存档
+	 * @throws SQLException 查询失败
 	 */
 	@HttpPath("/queryArchives")
 	@Adapter
 	@HttpMethod("GET")
-	public ResultDTO queryChats(@Query("uid") String uid,@Query("appid") String appName) throws SQLException {
-	    String sql = "SELECT c.chatid, c.brief, c.time, p.price, d.remark, d.selected " +
-	                 "FROM chats c " +
-	                 "LEFT JOIN price p ON c.chatid = p.chatid " +
-	                 "LEFT JOIN chatdata d ON c.chatid = d.chatid " +
-	                 "WHERE c.uid = ? AND c.app = ? AND c.attribute != 'removed'";
-
-	    JsonArray ja = new JsonArray();
-
+	public ResultDTO queryChats(@Query("uid") String uid,@Query("appid") String appName,
+		@Query("archived") String archived) throws SQLException {
+	    if (appName == null || appName.isEmpty())
+	    	return new ResultDTO(400,"缺少应用ID");
 	    ApplicationAttributes attr = apps.get(appName);
 		if(attr==null)
 			return new ResultDTO(400,"应用不存在");
+	    String status = "1".equals(archived) || "true".equalsIgnoreCase(archived)
+	    	? STATUS_ARCHIVED : STATUS_NORMAL;
+	    // price 直接读主表，不再连 price 表
+	    String sql = "SELECT c.chatid, c.brief, c.time, c.price, c.status, d.remark, d.selected " +
+	                 "FROM chats c " +
+	                 "LEFT JOIN chatdata d ON c.chatid = d.chatid " +
+	                 "WHERE c.uid = ? AND c.app = ? AND c.status = ? " +
+	                 "ORDER BY c.time DESC";
+
+	    JsonArray ja = new JsonArray();
 	    try (PreparedStatement ps = database.prepareStatement(sql)) {
 	        ps.setString(1, uid);
 	        ps.setString(2, appName);
+	        ps.setString(3, status);
 	        try (ResultSet rs = ps.executeQuery()) {
 	            while (rs.next()) {
 	                JsonObject obj = new JsonObject();
@@ -1611,14 +2091,16 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	                obj.addProperty("time", rs.getString("time")); // 时间戳转为字符串
 	                String brief = rs.getString("brief");
 	                obj.addProperty("name", brief == null ? "新对话" : brief);
-	                obj.addProperty("price", rs.getString("price") == null ? "" : rs.getString("price"));
+	                String price = rs.getString("price");
+	                obj.addProperty("price", price == null || price.isEmpty() ? "0.00" : price);
+	                obj.addProperty("status", rs.getString("status") == null ? STATUS_NORMAL : rs.getString("status"));
 	                obj.addProperty("remark", rs.getString("remark") == null ? "" : rs.getString("remark"));
 	                obj.addProperty("selected", rs.getString("selected") == null ? "" : rs.getString("selected"));
 	                ja.add(obj);
 	            }
 	        }
 	    }
-	    return new ResultDTO(200,ja.toString());
+	    return new ResultDTO(200,ja);
 	}
 
 	/**
@@ -1701,7 +2183,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
-	 * 增加付费token（系统充值）
+	 * 增加付费token（系统充值），并写入来源为"充值"的配额增加记录
 	 * 
 	 * @param userId 用户ID
 	 * @param amount 增加数量（必须为正数）
@@ -1711,17 +2193,19 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		if (amount <= 0) {
 			throw new IllegalArgumentException("增加数量必须为正数");
 		}
-		addPaidBalance(userId, amount);
+		addPaidBalance(userId, amount, INCREASE_SOURCE_RECHARGE, null);
 	}
 
 	/**
-	 * 直接为用户增加付费（补充）额度
+	 * 直接为用户增加付费（补充）额度，并写入配额增加记录
 	 * 
 	 * @param userId 用户ID
 	 * @param amount 增加数量
+	 * @param source 增加来源（充值/签到获取/兑换码获取/新用户赠送）
+	 * @param detail 增加详情（可为null，如兑换使用的兑换码）
 	 * @return true表示写入成功
 	 */
-	private boolean addPaidBalance(String userId, int amount) {
+	private boolean addPaidBalance(String userId, int amount, String source, String detail) {
 		String sql = "INSERT INTO user_paid_balance (user_id, balance) VALUES (?, ?) "
 			+ "ON CONFLICT(user_id) DO UPDATE SET balance = balance + ?";
 		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
@@ -1729,18 +2213,71 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			pstmt.setInt(2, amount);
 			pstmt.setInt(3, amount);
 			pstmt.executeUpdate();
-			return true;
 		} catch (SQLException e) {
 			getLogger().printStackTrace(e);
 			return false;
 		}
+		// 增加成功后写入配额增加记录
+		recordQuotaIncrease(userId, source, amount, detail);
+		return true;
+	}
+
+	/**
+	 * 写入一条配额增加记录
+	 * 
+	 * @param userId 用户ID
+	 * @param source 增加来源（充值/签到获取/兑换码获取/新用户赠送）
+	 * @param amount 增加数量（小于等于0时不记录）
+	 * @param detail 增加详情（可为null）
+	 */
+	private void recordQuotaIncrease(String userId, String source, int amount, String detail) {
+		if (amount <= 0 || userId == null || userId.trim().isEmpty() || source == null) {
+			return;
+		}
+		String date = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+		String sql = "INSERT INTO quota_increase_record (user_id, source, amount, detail, date) VALUES (?, ?, ?, ?, ?)";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, source);
+			pstmt.setInt(3, amount);
+			pstmt.setString(4, detail == null ? "" : detail);
+			pstmt.setString(5, date);
+			pstmt.executeUpdate();
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+	}
+
+	/**
+	 * 判断用户是否已存在指定来源的配额增加记录
+	 * 
+	 * @param userId 用户ID
+	 * @param source 增加来源
+	 * @return true表示已存在
+	 */
+	private boolean hasQuotaIncrease(String userId, String source) {
+		if (userId == null || source == null) {
+			return false;
+		}
+		String sql = "SELECT 1 FROM quota_increase_record WHERE user_id = ? AND source = ? LIMIT 1";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, source);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				return rs.next();
+			}
+		} catch (SQLException e) {
+			getLogger().printStackTrace(e);
+		}
+		return false;
 	}
 
 	/**
 	 * 获取用户剩余token（免费+付费）
 	 * 
 	 * @param userId 用户ID
-	 * @return TokenRemaining对象，包含免费总额度、付费剩余和今日免费已使用量
+	 * @return TokenRemaining对象，包含免费总额度、付费剩余和今日免费已使用量，
+	 *         以及新用户福利是否已领取（未领取时前端显示"新用户领取"入口，领取后不再显示）
 	 * @throws SQLException 数据库操作异常
 	 */
 	@HttpMethod("GET")
@@ -1756,10 +2293,42 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		int paidRemaining = getPaidBalance(userId);
 		// 今日是否已签到
 		boolean checkedIn = hasCheckedIn(userId, today);
+		// 新用户福利是否已被领取（领取过则前端不再显示领取入口）
+		boolean newUserClaimed = hasQuotaIncrease(userId, INCREASE_SOURCE_NEW_USER);
 
 		return new ResultDTO(200,JsonBuilder.object().add("freeTotal", freeLimit).add("paidRemaining", paidRemaining)
 				.add("freeCost", freeUsed).add("paidCost", paidUsed)
-				.add("checkedIn", checkedIn).add("checkinReward", DAILY_CHECKIN_REWARD));
+				.add("checkedIn", checkedIn).add("checkinReward", DAILY_CHECKIN_REWARD)
+				.add("newUserClaimed", newUserClaimed).add("newUserGift", NEW_USER_GIFT));
+	}
+
+	/**
+	 * 领取新用户福利：每个用户只能领取一次，成功后获得固定数量的补充额度（{@link #NEW_USER_GIFT}）。
+	 * <p>
+	 * 以配额增加记录中是否已存在"新用户赠送"记录作为是否已领取的标记，领取后前端不再显示该入口。
+	 * </p>
+	 * 
+	 * @param userId 用户ID
+	 * @return 领取结果，成功时返回提示信息
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/claimNewUserGift")
+	@Adapter
+	public ResultDTO claimNewUserGift(@Query("uid")String userId) {
+		if (userId == null || userId.trim().isEmpty()) {
+			return new ResultDTO(400, "缺少用户ID");
+		}
+		synchronized (lock) {
+			// 1. 校验是否已经领取过
+			if (hasQuotaIncrease(userId, INCREASE_SOURCE_NEW_USER)) {
+				return new ResultDTO(400, "新用户福利已领取");
+			}
+			// 2. 发放补充额度并写入来源为"新用户赠送"的配额增加记录
+			if (!addPaidBalance(userId, NEW_USER_GIFT, INCREASE_SOURCE_NEW_USER, null)) {
+				return new ResultDTO(500, "领取失败，系统错误，请稍后再试");
+			}
+			return new ResultDTO(200, "领取成功，获得 " + NEW_USER_GIFT + " 补充额度");
+		}
 	}
 
 	/**
@@ -1794,8 +2363,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				getLogger().printStackTrace(e);
 				return new ResultDTO(500, "签到失败，系统错误，请稍后再试");
 			}
-			// 3. 发放补充额度，发放失败则撤销签到记录，保证当天还能重试
-			if (!addPaidBalance(userId, DAILY_CHECKIN_REWARD)) {
+			// 3. 发放补充额度（记录来源为"签到获取"），发放失败则撤销签到记录，保证当天还能重试
+			if (!addPaidBalance(userId, DAILY_CHECKIN_REWARD, INCREASE_SOURCE_CHECKIN, null)) {
 				removeCheckinRecord(userId, today);
 				return new ResultDTO(500, "签到失败，系统错误，请稍后再试");
 			}
@@ -2165,6 +2734,94 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
+	 * 按来源聚合查询指定日期范围内的配额增加记录（充值/签到获取/兑换码获取/新用户赠送），用于前端展示。
+	 * <p>
+	 * 返回对象形如：
+	 * {@code {"total":200000,"sources":[{"source":"签到获取","tokens":50000,"count":1}],
+	 * "records":[{"date":"2026-01-01","source":"签到获取","tokens":50000,"detail":""}]}}
+	 * </p>
+	 * 
+	 * @param userId    用户ID
+	 * @param startDate 起始日期（格式：yyyy-MM-dd，缺省为当月1日）
+	 * @param endDate   结束日期（格式：yyyy-MM-dd，缺省为当天）
+	 * @return 配额增加记录，来源按增加量从高到低排序，明细按日期从新到旧排序
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/quotaIncreaseRecords")
+	@Adapter
+	public ResultDTO getQuotaIncreaseRecords(@Query("uid")String userId,@Query("start")String startDate,@Query("end")String endDate){
+		if (userId == null || userId.trim().isEmpty()) {
+			return new ResultDTO(400,"缺少用户ID");
+		}
+		LocalDate today = LocalDate.now();
+		LocalDate start = parseDateOrDefault(startDate, today.withDayOfMonth(1));
+		LocalDate end = parseDateOrDefault(endDate, today);
+		if (start == null || end == null) {
+			return new ResultDTO(400,"日期格式错误，应为 yyyy-MM-dd");
+		}
+		if (start.isAfter(end)) {
+			return new ResultDTO(400,"起始日期不能晚于结束日期");
+		}
+		String s = start.format(DateTimeFormatter.ISO_LOCAL_DATE);
+		String e = end.format(DateTimeFormatter.ISO_LOCAL_DATE);
+
+		// 按来源聚合，同时收集明细记录
+		Map<String,JsonObject> bySource = new LinkedHashMap<>();
+		JsonArray records = new JsonArray();
+		int total = 0;
+		String sql = "SELECT source, amount, detail, date FROM quota_increase_record"
+			+ " WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC, id DESC";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, userId);
+			pstmt.setString(2, s);
+			pstmt.setString(3, e);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					String source = rs.getString("source");
+					int amount = rs.getInt("amount");
+					String detail = rs.getString("detail");
+					String date = rs.getString("date");
+					total += amount;
+
+					JsonObject entry = bySource.get(source);
+					if (entry == null) {
+						entry = new JsonObject();
+						entry.addProperty("source", source);
+						entry.addProperty("tokens", 0);
+						entry.addProperty("count", 0);
+						bySource.put(source, entry);
+					}
+					entry.addProperty("tokens", entry.get("tokens").getAsInt() + amount);
+					entry.addProperty("count", entry.get("count").getAsInt() + 1);
+
+					JsonObject rec = new JsonObject();
+					rec.addProperty("date", date);
+					rec.addProperty("source", source);
+					rec.addProperty("tokens", amount);
+					rec.addProperty("detail", detail == null ? "" : detail);
+					records.add(rec);
+				}
+			}
+		} catch (SQLException ex) {
+			getLogger().printStackTrace(ex);
+			return new ResultDTO(500,"内部错误");
+		}
+
+		// 来源按增加量从高到低排序
+		List<JsonObject> list = new ArrayList<>(bySource.values());
+		list.sort((a,b) -> Integer.compare(b.get("tokens").getAsInt(), a.get("tokens").getAsInt()));
+		JsonArray sources = new JsonArray();
+		for (JsonObject o : list) {
+			sources.add(o);
+		}
+		JsonObject result = new JsonObject();
+		result.addProperty("total", total);
+		result.add("sources", sources);
+		result.add("records", records);
+		return new ResultDTO(200,result);
+	}
+
+	/**
 	 * 解析日期字符串，为空时返回默认日期
 	 * 
 	 * @param text    日期字符串（yyyy-MM-dd）
@@ -2394,7 +3051,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
             	return new ResultDTO(400,"CDK已失效");
             }
             if(cost>0) {
-            	this.increasePaidTokens(userId, cost);
+            	// 记录来源为"兑换码获取"，详情写入兑换码本身
+            	this.addPaidBalance(userId, cost, INCREASE_SOURCE_CDK, code);
             }else {
             	return new ResultDTO(400,"CDK已耗尽: " + code);
             }
