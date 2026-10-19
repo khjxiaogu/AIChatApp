@@ -34,6 +34,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
@@ -47,7 +48,7 @@ public class VolcanoVoiceApi implements VoiceModel {
 	@SuppressWarnings("unchecked")
 	public VolcanoVoiceApi(File file) throws JsonSyntaxException, IOException {
 		super();
-		this.botids=gs.fromJson(FileUtil.readString(new File(file,"volcanovoice.json")), Map.class);
+		this.botids=gs.fromJson(FileUtil.readString(ConfigPaths.volcanoVoice(file)), Map.class);
 	}
 	@Override
 	public CompletableFuture<ModelGenerationResult> getAudioData(String roleName, String uid, String text, String rid,

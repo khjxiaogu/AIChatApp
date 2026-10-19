@@ -1,0 +1,252 @@
+=== 角色人物设定 ===
+
+作品《真恋~寄语枫秋~》的角色与设定：
+
+【公共模块】
+校服夏装：红色水手领制服，白红拼色的领口系着明黄色蝴蝶结领结，衣襟处饰有金色袢带与银色星扣，袖口带有白红镶边；下搭藏蓝色百褶短裙，裙摆缀有白边与锯齿状白蕾丝。
+校服冬装：藏青色镶白边的学院风西装外套，金色圆形纽扣点缀衣襟，内搭白色翻领衬衫、系玫红色领结，下搭红白格纹百褶短裙，裙摆边缘缀有锯齿状白色蕾丝。
+夏季校服：xiaxiaofu,white sailor collar,red top,blue pleated skirt,yellow bow tie
+冬季校服：dongxiaofu,blue plaid,red pleated skirt,red bowtie
+
+【姚枫茜】
+性别：女
+星座：双子
+生日：6月2日
+擅长：绘画
+讨厌：背叛
+性格：聪明伶俐，但是容易胆怯
+身份：枫华高中高二学生，姚枫怡的双胞胎妹妹
+外貌：与姐姐枫怡相貌完全相同，留着暖浅棕色的微卷长双马尾，用缀着白色绒球的红色蝴蝶结固定，额侧还别着一枚带淡粉花心的白色小花发饰。她生着澄澈的亮蓝色杏眼，脸颊带着浅红晕。搭配带红色条纹的白色过膝长袜。
+衣着：校服、常服、睡衣、演出服
+校服样式：女生校服，搭配带红色细条纹的白色过膝长袜。
+常服样式：双马尾用缀着白色绒球的黑色蝴蝶结固定，内搭黑色 V 领连衣裙，裙摆露出玫红色百褶边，外穿湖蓝色连帽开衫，衣身门襟、袖口和下摆都带有米白色针织滚边，门襟还垂着两枚白色绒球装饰，侧边设有米白边口袋，下装搭配带红色细条纹的白色过膝长袜。
+睡衣样式：没扎双马尾，长头发自然垂落，柔和的浅粉色翻领睡衣套装，领口、袖口与口袋边缘都饰有白底细粉条纹，前襟缀着同色系的圆形粉扣，搭配同色睡裤。
+演出服样式：两侧发束都用缀着金色枫叶、金属铃铛与红色流苏的红色蝴蝶结固定。身着改良款露肩和风服饰，白底细红边的立领下，红色衣身以金边镶边，内搭带蕾丝边的湖蓝色抹胸；腰间束着金边蓝腰封，同样系着缀金枫叶、铃铛与红流苏的红色结饰。外搭的红色广袖长摆印着白色花卉纹样与金色枫叶图案，袖部以白色蝴蝶结束起；下装是带红细边的白色短裙，搭配藏蓝色过膝长袜。
+角色提示词：fengxi,hair ribbon,twintails,hair flower,white_hair_flower,brown hair,blue eyes
+校服头饰：red ribbon
+常服：black ribbon,jacket,dress,frills,fengxichangfu,open clothes
+睡衣：pink pajamas,pink pants
+演出服：fenghuafu,bare shoulders,bell,black legwear,hair bell,sash,white skirt,pleated skirt,obi,red ribbon,detached collar,jingle bell
+关键特征：双马尾、头花、蝴蝶结发饰。
+
+【姚枫怡】
+性别：女
+星座：双子
+生日：6月2日
+擅长：做中餐
+讨厌：黏滑的东西
+性格：善良诚实，端庄秀丽。
+称号：上届“枫华少女”冠军
+外貌：与妹妹枫茜相貌完全相同，留着暖调浅栗色的柔顺长直发，发梢带着自然的微卷弧度，后脑别着缀红边的白色大蝴蝶结，额发旁还夹了一枚带淡粉花心的白色小花发饰。她生着澄澈的湖蓝色杏眼，脸颊带着浅淡红晕。搭配带红色条纹的白色过膝长袜。
+衣着：校服、常服
+校服样式：女生校服，搭配带红色细条纹的白色过膝长袜。
+常服样式：内搭豆沙粉色连衣裙，裙摆缀有白色荷叶边，外穿米杏色长袖开衫，领口、门襟都装饰着白荷叶边与红色蝴蝶结，袖口同是荷叶边设计且带有红镶边，衣襟下摆和口袋处也点缀着小巧的红色蝴蝶结；下装搭配带红色细条纹的白色过膝长袜。
+演出服样式：脑后别着缀着金色枫叶、金属铃铛与红色流苏的大蝴蝶结。身着改良款露肩和风服饰，白底细红边的立领下，红色衣身以金边镶边，内搭带蕾丝边的湖蓝色抹胸；腰间束着金边蓝腰封，同样系着缀金枫叶、铃铛与红流苏的红色结饰。外搭的红色广袖长摆印着白色花卉纹样与金色枫叶图案，袖部以白色蝴蝶结束起；下装是带红细边的白色短裙，搭配藏蓝色过膝长袜。
+角色提示词：fengyi,hair bow,hair flower,white_hair_flower,brown hair,blue eyes,white hair bow with red strip
+常服：dress,fengyichangfu
+关键特征：红色条纹蝴蝶结、头花
+
+【唐海音】
+性别：女
+星座：天蝎
+生日：农历10月1日
+擅长：洞穿内心
+讨厌：看不惯的事情
+性格：冷漠，但是有责任心
+外貌：留着顺滑亮泽的深墨蓝色长直发，发长垂至腰际，头部两侧各别着一枚带红流苏的蝴蝶结发饰。生着透亮的暖橘棕色杏眼。搭配亮面黑色过膝长袜。
+衣着：校服、汉服
+校服样式：女生校服，搭配黑色过膝长袜。
+汉服样式：她身着月白色、印玫粉色花卉纹样的古风广袖长袍，衣缘以红色包边，内搭湖蓝色里衣；腰间层次束着黄边红腰封与湖蓝色蝴蝶结系带，同色飘带垂落身前，衣襟处还点缀着带金纹流苏的红色结饰。
+角色提示词：haiyin,hair ribbon,red ribbon,dark blue hair,orange eyes,jk
+幼年：loli,hair ribbon,tassel,short sleeves,white shirt,red ribbon（去除jk）
+汉服：hanfu,wide sleeves,kimono,sash,yellow edged red sash, cyan blue bow belt
+
+【朱莉雅】
+性别：女
+星座：白羊
+生日：3月27日
+擅长：芭蕾，中国象棋
+讨厌：懦弱
+性格：活泼，自立，但是有时有公主病。
+外貌：留着柔亮的浅粉金色大波浪长卷发，发丝蓬松卷曲垂至腰际，头部一侧别着缀有蓝白条纹飘带的深蓝色蝴蝶结。生着澄澈的湖绿色杏眼。搭配亮面黑色过膝长袜。
+衣着：校服
+校服样式：女生校服，搭配黑色过膝长袜。
+角色提示词：liya,blue ribbon,bowtie,blonde hair,cyan eyes
+关键特征：蓝色蝴蝶结发饰
+
+作品《雾之本境》的角色与设定：
+【公共模块】
+校服样式：类似改良水手服的款式，主体为纯白色，领口是红色水手领，带有两条金色细条纹装饰，领口下方有一个小方形红色镶边装饰；袖口为翻折式红色设计，同样点缀金色条纹，与领口呼应。领口系着鹅黄色领结。红色百褶短裙，裙边带有金色细条纹，裙摆边缘有细碎的白色流苏/毛边，增添了活泼感。
+提示词：xiaofu,sleeves past wrists,pleated skirt,long sleeves,red skirt,white top,school uniform,serafuku,white shirt,miniskirt,ascot,frilled skirt,yellow necktie,red sleeve cuffs,yellow bow,red sailor collar,neck ribbon
+
+【汪星涵】
+性别：女
+年龄：17
+称号：地图少女
+身高：161cm
+性格：温婉友善、乐于助人、容易害羞、呆萌可爱、坚韧执着、渴望被看见。但是在事件的风暴中只是一个被推着走的普通人。
+外貌：留着明亮的青绿色（薄荷绿）齐刘海短发，右侧扎着一个高马尾，马尾用两颗圆润的红色浆果状发饰固定，发丝自然垂落，长度及腰。两侧鬓角各绑着一根红色丝带。生着绿色杏仁眼。身着校服，配带白边的黑色过膝长袜与棕褐色制服鞋。
+角色提示词：xinghan,green hair,green eyes,hair bobbles, hair ribbon,ribbon,side ponytail,short ponytail,hair ornament,red_ribbon
+关键特征：红色发饰，红色丝带，侧单马尾
+
+【苒雪忆】
+性别：女
+年龄：18
+身高：158cm
+称号：角落的小橡皮
+身份：高一学生，食堂勤工俭学者，苒浩的妹妹。
+设定：外表柔弱、力气巨大（因长期搬菜）。性格自卑善良，自称“被遗弃的小橡皮”。勤快贤惠，能做一首好菜，但是很自卑。
+外貌：留着柔亮的粉紫色长直发，发长几乎及腰，头部一侧系着坠有金色小铃铛的红色绳结发饰，另一侧的侧发用青绿色圆珠发圈束成小缕。生着通透的红色圆眼。身着校服，搭配白色过膝长袜与棕褐色圆头制服鞋。
+角色提示词：xueyi,pink hair,red eyes,bell,hair bell,hair ribbon,red ribbon
+关键特征：发圈
+
+【扬雨晴】
+性别：女
+年龄：17
+身高：161cm
+身份：白鹿渊高中学生会主席，张泊岩的旧日同窗。
+设定：表面开朗干练，实则内心复杂。其知道学校的部分黑幕，她渴望揭露这些黑幕。
+外貌：留着亮浅金色的超长双马尾，发尾自然翘动，用造型醒目的蓝色长飘带蝴蝶结固定，额发两侧还别着小巧的红色发夹。生着通透的青蓝色眼瞳。身着校服，配白色过膝长袜与棕褐色圆头制服鞋。
+角色提示词：yuqing,blonde hair,cyan eyes,twintails, blue ribbon,hair ribbon,hairclip
+
+【境主】
+扬雨晴的伪装身份虚构形象。
+外貌：留着粉色的超长头发，右侧用白色蝴蝶结扎着一个长高马尾，发尾自然翘动。生着红色眼瞳。身着蓝色边浅蓝色宽袖长裙，飘逸跳脱。
+角色提示词：jingzhu,pink hair,red eyes,side ponytail,tall ponytail
+
+【祁连遥】
+性别：女
+称号：白鹿渊的雪莲
+年龄：18
+身高：165cm
+身份：高三学生，全校成绩第一，被称为“白鹿渊的雪莲”。
+设定：气质优雅清高，洞察力极强，思维敏捷。多次在关键时刻提供重要分析，是团队中的“大脑”。她喜欢穿汉服，内心在原则和世俗之间寻求出路。
+外貌：留着量感丰厚、垂感十足的墨黑色极长直发，发丝几乎垂到脚踝，头部一侧别着一枚小巧的红色锯齿边发饰。她生着暖棕色的透亮杏眼。平时不上课时喜欢穿汉服。
+汉服：身着露肩款粉色古风广袖长裙，露肩领口有白色镶边，胸前拼接深绿色衣料，搭配红色交叉系带与金色小圆扣，腰间系着深玫红色蝴蝶结腰带，裙摆垂坠柔顺，边缘以浅粉色包边。
+校服：身着校服，配黑色过膝长袜与棕褐色制服鞋。
+角色提示词：lianyao,black hair,yellow eyes,very long hair,red hair_ornament（不得去除下划线）
+汉服：hanfu,long sleeves,bow,japanese clothes,wide sleeves,kimono,pink dress,sash,detached sleeves,off-shoulder dress,obi,red bow,strapless dress,pink kimono,corset
+
+【童玲】
+性别：女
+年龄：17
+身高：163cm
+身份：学生会秘书处主席，成绩全校第二。
+设定：理性、冷静、严肃，做事一丝不苟，酷爱看书。崇拜会长扬雨晴，但也会因逻辑问题进行质疑。负责情报收集和档案调查。
+外貌：留着清爽的冰蓝色短发，额发旁别着两枚金色一字夹，脑后剩余的长发束成低麻花辫，用带红边的粉色蝴蝶结固定。生着通透的深灰蓝色圆眼，架着一副细框红边眼镜。身着校服，配黑色过膝长袜与棕褐色制服鞋。
+角色提示词：tongling,glasses,red-framed eyewear,semi-rimless eyewear,under-rim eyewear,hairclip,hair ribbon,hair bobbles,red ribbon,blue hair,blue eyes
+
+【归海枫】
+性别：女
+年龄：20
+身高：159cm
+身份：给学校送货的卡车女司机，自称“老司机”。
+设定：性格爽朗、热心。真实身份是“雪之本境”杀人案的幸存者。实力比较强。
+外貌：留着顺滑的浅米金长直发，在头顶扎成高马尾，用带青蓝饰边的黑色蝴蝶结固定，两缕长鬓角自然垂在身前，柔长发尾软垂及腰。生着透亮的深海蓝杏眼，脸颊带着淡粉红晕。身着淡紫底青绿色包边的中式盘扣短上衣，内搭黑色打底衫，下搭青绿色不规则百褶短裙，配白色过膝长袜与棕褐色圆头小皮鞋，双手背在身后，站姿微微拘谨，气质柔和易碎。
+角色提示词：(guihai:1.4),guihaifu,hair ribbon,tall ponytail,cyan eyes
+
+作品《雪之本境》的角色与设定：
+【江城雪】
+性别：女
+年龄：18
+身高：168
+设定：手无缚鸡之力，独自很难存活。
+身份：校花、江庭雪之姐
+外貌：留着通透亮粉色的顺滑长直发，发丝柔垂至腰际，额发旁别着两枚金色一字夹。她生着暖红色的圆眼，满是软嫩的无辜感。
+常服：内搭黑色高领打底衫，外穿缀薄荷绿包边的浅粉色无袖马甲，衣襟处装饰两副红色中式盘扣，袖口点缀金色小圆扣；下装是层叠短裙，外层是薄荷绿不规则摆短裙，裙摆为锯齿状、侧边别着小巧黑色蝴蝶结，内层露出米白色锯齿边衬裙，搭配白色过膝长袜与黑色圆头玛丽珍鞋。
+角色提示词：chengxue,red eyes,pink hair,hair ornament,hairclip
+服装：chengxuefu,pleated skirt,shoes,white legwear,zettai ryouiki,white thighhighs,mary janes,dress,long sleeves,black footwear,miniskirt,blue skirt,vest,frills
+
+【江庭雪】
+性别：女
+年龄：19
+身高：165
+外貌：留着通透浅冰蓝色的极长直发，发丝柔顺垂落接近脚踝，头部两侧各别着一枚小巧的黑色细蝴蝶结发饰。生着同色系的浅冰蓝色杏眼，恬静又带着点怯生生的软感，气质清冷柔和。
+常服：融合中式元素的改良露肩长裙：领口是绣有蓝色青花纹样的白色立领，配黑色盘扣与红绳串金珠的装饰；肩颈处覆着半透明灰紫色短罩纱，边缘饰白色锯齿蕾丝与浅灰色蝴蝶结，露肩处也以黑色细蝴蝶结点缀。裙身是清透的水蓝色，印着写意水墨风的蓝色蝴蝶纹样，腰间系淡紫色蝴蝶结，垂落浅粉色长飘带，搭配同色系水蓝广袖，裙摆边缘缀着层叠的白色百褶荷叶边。脚穿白色长袜与黑色小粗跟鞋。
+角色提示词：(tingxue:1.2),blue eyes,(blue_hair:1.2),hair ribbon
+服装：black footwear,black ribbon,blue dress,bow,detached sleeves,dress,floral print,long sleeves,white legwear,wide sleeves,bare shoulders,shoes,high heels,frills,long dress,butterfly print,white pantyhose,frilled dress,lolita fashion, layered dress
+
+【归海枫】
+性别：女
+年龄：20
+身高：159
+外貌：留着浅米金色的超长双马尾，发梢柔垂接近小腿，用带青蓝色饰边的黑色蝴蝶结固定，发丝轻盈飘逸。她生着澄澈的亮蓝色杏眼，神色略带腼腆疏离，软感十足。
+常服：白蓝拼色的制服，大翻领缀着蓝边，领口系黑色细蝴蝶结，衣襟以蓝色包边，搭配三对红底金扣的中式盘扣，袖口也点缀金色小圆扣；下装是水蓝色百褶短裙，裙摆饰有白色蕾丝花边，搭配侧边系黑色细蝴蝶结的黑色过膝长袜与棕色圆头制服鞋。
+归海枫不能到课室里面，只能在校园里面或者外界找到。
+角色提示词：(cstguihai:1.2),hair ribbon,blue eyes,light blonde hair,twintails
+服装：guihaifu,hair ribbon, pleated skirt,shoes,black thighhighs,blue skirt,zettai ryouiki,brown footwear,black ribbon,miniskirt,loafers,long sleeves,frilled skirt,buttons,white jacket
+需要注意雾之本境和雪之本境的归海枫的形象是不同的，真恋的归海枫沿用雪之本境的形象。
+
+【白悠悠】（真名秦开）
+性别：女
+年龄：17
+身高：154
+设定：平时不爱说话，说到感兴趣的东西滔滔不绝，对知识理解深刻，分析能力超强，出生于月梨城。
+外貌：软萌娇小少女，留着柔顺亮眼的冰蓝色长直发，发丝垂落至裙摆处。头戴带有猫耳造型的藏蓝色软帽，帽檐饰有白边，侧边还系着一枚小巧的白色蝴蝶结。她生着通透的红色圆眼，神色懵懂羞怯，软乎乎的幼态感十足。
+常服：白蓝配色的奇幻风洋装：外搭短款白色斗篷，边缘缀着柔软的白色毛绒与绒球，脖颈间的黑色长项链坠着一枚三阶魔方装饰，设计很有特点；内搭藏蓝色长款连衣裙，领口是锯齿状白色花边，腰间系着白色腰带，侧边垂着不规则白色飘带，袖口与裙摆边缘都饰有层层白色荷叶边。脚上穿着棕色系带长靴，搭配米白色圆鞋头，她双手隐在宽大衣袖后。
+角色提示词：baiyouyou,red eyes,blue hair,cat hat,very long hair
+服装：cross-laced footwear,jewelry,lace-up boots,long sleeves,necklace,pendant,frills,brown footwear,sleeves past wrists,white capelet,white ribbon,cape,frilled dress
+
+【鸾渊】
+性别：女
+年龄：25
+身高：166
+设定：叔桐山现任妻子，对陌生人有戒备心，并不是归海枫生母
+外在表现：时髦刻薄，自我意识强，对丈夫颐指气使
+外貌：优雅成熟女性，留着亮泽的浅紫色长直发，发梢带着自然的微卷弧度，耳边佩戴着小巧的金色细圈耳饰。生着同色系的通透浅紫色杏眼，神色从容柔和，气质干练又温婉。
+常服：内搭黑色高领打底衫，领口别着一枚浅紫色玫瑰胸针，颈间佩戴缀有蓝宝石的细项链；外穿裸粉色收腰中长款大衣，领口覆着蓬松的白色毛绒翻领，腰间系黑色蝴蝶结腰带收束腰身，衣襟处装饰四枚黑色圆形扣，衣摆长度及大腿中部，露出内搭的黑色短裙边缘。下装搭配黑色吊带款过膝长袜，脚穿棕色细高跟皮鞋。
+角色提示词：luanyuan,purple eyes,purple hair
+服装：black legwear,dress,garter straps,high heels,long sleeves,shoes,black thighhighs,zettai ryouiki,coat,garter belt,fur trim,jewelry,sash,fur coat,long coat,loafers,fur collar,fur-trimmed coat,brown coat
+
+【季愁然】
+性别：女
+年龄：17
+身高：161
+设定：隐藏自己的目的，存在感低。实际上是鸾渊雇佣的杀手。
+外貌：留着柔顺亮眼的浅金色长直发，头顶佩戴着造型挺括的浅青白色大蝴蝶结发饰，耳侧还别着一枚小巧的金色星星耳饰。她是少见的异色瞳，左眼是通透的翠绿色，右眼是澄澈的湖蓝色，神色懵懂又带着点怯生生的软感。
+常服：内搭浅灰色高领打底衫，外穿奶黄色中长款外套，领口和袖口都缀着蓬松的白色毛绒边，门襟饰有一排三角形的深灰色纽扣，下摆两侧设有口袋；下装搭配带细黑边的水蓝色百褶短裙，脚穿黑色翻边高筒长靴。
+角色提示词：(jichouran:1.2),hair ribbon,blonde hair,white hair_bow,heterochromia,white ribbon
+服装：black footwear,coat,fur collar, fur trim,knee boots,pleated skirt,long sleeves,necklace,blue skirt,fur-trimmed sleeves,yellow coat,buttons,fur-trimmed coat,fur-trimmed jacket,plaid skirt,sleeves past wrists
+
+【雪之境主】
+角色提示词：xuejingzhu,aqua ribbon, aqua hair_ornament,grey blue hair,grey blue eyes
+服装：blue dress,capelet,jewelry,long dress,long sleeves,necklace,pendant,hair ornament,wide sleeves,cross necklace,bare shoulders,robe,sleeves past wrists
+
+另一作品《高考恋爱一百天》的角色与设定：
+校服样式：
+校服毛衣：内搭翻领白衬衫，领口系着饱满的红色蝴蝶结领结；外穿浅灰绿色 V 领针织背心，左胸处有圆形校徽，袖口处点缀着几枚小巧的金色圆扣。下装搭配藏青底带白格纹的百褶短裙，腿上穿着黑色过膝长袜。
+提示词：dongxiaofu,bowtie,long sleeves,plaid skirt,pleated skirt,red bow,school uniform,skirt,sweater vest,zettai ryouiki,hair ribbon,black thighhighs
+
+校服衬衫：夏季款的学生校服，上身是短袖翻领白衬衫，袖口镶着细蓝边，领口系着清爽的水蓝色蝴蝶结领结，左胸处有圆形校徽，门襟处排列着几枚小巧的金色圆扣。下装搭配藏青色底带白格纹的百褶短裙，腿上穿着黑色过膝长袜。
+提示词：xiaxiaofu,black legwear,blue bowtie,blue skirt,bow,pleated skirt,school uniform,short sleeves,skirt,zettai ryouiki,white shirt,black thighhighs,plaid skirt
+
+木馨
+性别：女
+职业：高三学生
+设定：典型的仓鼠系女孩，不知道是因为什么原因，在离高考只有一百天的时候接受了男主角的告白，虽然她平时显得很开朗。但却非常害怕寂寞，需要人陪伴，一旦被伤害的话，很长时间都提不起精神。成绩中上等，但抗压能力较弱。热爱美食和烘焙，养了一只叫皇阿玛的猫。
+外貌：软萌少女，生着暖棕色的圆杏眼，留着柔和的豆沙棕短发，扎着两个俏气的小双马尾，发束用红色角状发绳和带小铃铛的蓝色细缎带固定，头顶还翘着一小撮灵动的呆毛。
+校服毛衣：除了正常校服外，背心下摆还别着三个卡通徽章，分别是小猫造型、黄色笑脸造型和印着红心的蓝色圆形徽章。
+短袖常服：上身穿着奶黄色波点短袖上衣，领口和袖口都缀着可爱的白色木耳边，衣摆处也有白黄相间的荷叶边设计，露出内搭的白色细肩带，腰间斜挎着一个系着红色领结的小猫造型小挎包，左手腕还戴着一串淡紫色的珠串手链。下装搭配蓝灰调迷彩卷边短裤。
+长袖常服：内穿雾霾蓝的收腰连衣裙，裙摆处拼接了白蓝格纹的褶边，裙身点缀着两枚银色圆扣；外搭短款深灰色小外套，衣领是和裙摆呼应的格纹连帽设计，衣身有金色线条和金属扣做装饰。斜挎着一条绿色的背带，挎包是吐着舌头的卡通青蛙造型，腿上搭配奶白色连裤袜。
+角色提示词：muxin,yellow eyes,brown pupil,brown hair,hair bobbles,hair ornament,short hair,hair ribbon,twintails,antenna hair
+短袖常服：muxinxiafu,beads,bracelet,collarbone,jewelry,polka dot,polka dot shirt,shorts,wrist scrunchie,shoulder bag
+长袖常服：muxindongfu,dress,jacket,long sleeves,white pantyhose,shoulder bag
+
+罗小涵
+性别：女
+职业：高三学生
+设定：成绩顶尖的学霸，年级前十，独立生活能力强。住在主角隔壁的青梅竹马，因为父母离异各自再婚所以总是独自一人。不善于表达的她，会默默地守护你。但坚强的外表下，却是一颗细腻和容易受伤的心。
+外貌：文静知性少女，生着澄澈的浅碧色杏眼，留着亮泽的墨黑色长直发，发丝柔顺垂落至腰际，一侧鬓发编了枚精巧的细麻花辫，脸上架着一副细框眼镜。
+短袖常服：上身穿着浅薄荷绿的短袖上衣，领口、袖口和衣摆都做了深灰色的锯齿形花边设计，门襟处用深灰色布面和同色系小圆扣做装饰。下装搭配深咖色的修身长裤。
+长袖常服：内搭米白色高领长款上衣，衣摆处有两道浅咖色的条纹做装饰，外搭一件印着细小花纹的黑色短款开衫，颈间围着正红色的针织围巾。下装搭配藏蓝色修身长裤。
+角色提示词：black-framed eyewear,luoxiaohan,green eyes,dark pupil,black hair,braid,long hair
+短袖常服：xiaohanxiafu,collarbone,pants,short sleeves,shirt,thigh gap,puffy short sleeves
+长袖常服：xiaohandongfu,denim,jeans,long sleeves,pants,red scarf,shirt,thigh gap,black jacket
+
+曲琪
+性别：女
+职业：高三学生、班长
+设定：本班班长，外号是曲奇虽然很想认真负责的当班长，却因为太单纯而经常把事情做砸。看起来不是很可靠但依然是一个值得信赖的人。需要帮助的时候，勇敢的向她求助吧。
+外貌：傲娇灵动少女，生着透亮的宝石蓝杏眼，留着清爽的浅紫色短碎发，发梢微微向上翘起，带着少年气的利落感，左侧鬓发别着一枚黄橙配色的四叶草发饰。
+角色提示词：quqi,short hair,hair ornament,blue eyes,purple hair,hairclip
+

@@ -9,6 +9,7 @@ import java.util.function.Consumer;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 public class LocalVoiceApi implements VoiceModel {
@@ -18,7 +19,7 @@ public class LocalVoiceApi implements VoiceModel {
 	@SuppressWarnings("unchecked")
 	public LocalVoiceApi(File file) throws JsonSyntaxException, IOException {
 		super();
-		this.botids=gs.fromJson(FileUtil.readString(new File(file,"localvoice.json")), Map.class);
+		this.botids=gs.fromJson(FileUtil.readString(ConfigPaths.localVoice(file)), Map.class);
 		vt=new VoiceTagger(file);
 	}
 	@Override

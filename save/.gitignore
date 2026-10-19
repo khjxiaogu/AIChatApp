@@ -1,17 +1,31 @@
+# ---- 运行时数据 ----
 /saveData/
 /messages.db
 /resource/
 /voice/
 /logs/
-/tos.json
-/img.json
+/painter_images/
+/ircimages/
 /mimovoice/
 /music/
-/crontab.json
+
+# ---- 站点配置（密钥或部署本地数据，不入库）----
+/site.json
+/config/object-storage.json
+/config/image-generation.json
+/config/local-voice.json
+/config/volcano-voice.json
+/config/agents.json
+/config/crontab.json
+/config/sdxl/loras.json
+/config/sdxl/reference-images.json
+
+# ---- 旧位置：已迁移到 config/，保留忽略以免残留文件被误提交 ----
+/tos.json
+/img.json
+/loras.json
+/reference_image.json
 /localvoice.json
 /volcanovoice.json
 /agents.json
-/loras.json
-/reference_image.json
-/painter_images/
-/ircimages/
+/crontab.json

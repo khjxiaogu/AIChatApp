@@ -71,6 +71,7 @@ import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
 import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
+import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.MusicMcp;
@@ -94,11 +95,13 @@ import com.khjxiaogu.aiwuxia.state.session.AIGroupSession.CurrentContext;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.utils.BotCallback;
 import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
+import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager;
 import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager.OrderHandle;
 import com.khjxiaogu.aiwuxia.utils.ResourceOrderManager.ResourceAccess;
+import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.vision.ImageNoise;
 import com.khjxiaogu.aiwuxia.vision.SDXLLocalModelClient;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
@@ -126,11 +129,12 @@ public class NapCatAIConnector extends WebSocketClient {
 	public NapCatAIConnector(File dataFolder, String url,
 			String token, AIGroupSession... states) throws JsonSyntaxException, IOException, InterruptedException {
 		super(URI.create("ws://" + url), Map.of("Authorization", "Bearer " + token));
-		SDXLLocalModelClient lmc=new SDXLLocalModelClient(URI.create("wss://khjxiaogu.com/aichat/kh$localModelDeploy"), resourceLock, true, 1000);
+		// 本地模型部署地址：站点域名默认读 save/site.json，可用 --site-host / -Dsite_host 覆盖
+		SDXLLocalModelClient lmc=new SDXLLocalModelClient(URI.create(SiteConfig.resolve(dataFolder).webSocketUrl(SiteConfig.DEFAULT_HOST, "/aichat/kh$localModelDeploy")), resourceLock, true, 1000);
 		lmc.connectBlocking();
 		
 		try {
-			File tosConfigFile = new File(dataFolder, "tos.json");
+			File tosConfigFile = ConfigPaths.objectStorage(dataFolder);
 			if (tosConfigFile.exists()) {
 				JsonObject tosCfg = JsonParser.parseString(FileUtil.readString(tosConfigFile)).getAsJsonObject();
 				tos = new DelegatingStorage(new File(dataFolder, "ircimages"), new TOStorage(tosCfg));
@@ -143,7 +147,7 @@ public class NapCatAIConnector extends WebSocketClient {
 			tos = new LocalStorage(new File(dataFolder, "ircimages"));
 			System.out.println("绘画图片存储: 仅本地 (TOS初始化失败)");
 		}
-		imgKey = JsonParser.parseString(FileUtil.readString(new File(dataFolder, "img.json"))).getAsJsonObject();
+		imgKey = JsonParser.parseString(FileUtil.readString(ConfigPaths.imageGeneration(dataFolder))).getAsJsonObject();
 		connectBlocking();
 		for(AIGroupSession sess:states) {
 
@@ -255,7 +259,7 @@ public class NapCatAIConnector extends WebSocketClient {
 			}
 		}
 		Map<String, LoraConfigurations> lora = new LinkedHashMap<>();
-		File lfn=new File(dataFolder,"loras.json");
+		File lfn=ConfigPaths.sdxlLoras(dataFolder);
 		if(lfn.exists()) {
 			JsonObject refimg=JsonParser.parseString(FileUtil.readString(lfn)).getAsJsonObject();
 			for(String key:refimg.keySet()) {
@@ -269,7 +273,7 @@ public class NapCatAIConnector extends WebSocketClient {
 			}
 		}
 		Map<String, String> refimage = new LinkedHashMap<>();
-		File rfn=new File(dataFolder,"reference_image.json");
+		File rfn=ConfigPaths.sdxlReferenceImages(dataFolder);
 		if(rfn.exists()) {
 			JsonObject refimg=JsonParser.parseString(FileUtil.readString(rfn)).getAsJsonObject();
 			for(String key:refimg.keySet()) {
@@ -309,7 +313,7 @@ public class NapCatAIConnector extends WebSocketClient {
 			public CompletableFuture<String> sendImage(String tool, CompletableFuture<String> url,boolean censored) {
 				if(censored) {
 					url.thenApply(image->{
-						String readerUrl="https://www.khjxiaogu.com/works/imgView.html?img="+URLEncoder.encode(image,StandardCharsets.UTF_8);
+						String readerUrl=SiteConfig.resolve(dataFolder).readerUrl(SiteConfig.DEFAULT_READER_HOST, "/works/imgView.html?img="+URLEncoder.encode(image,StandardCharsets.UTF_8));
 						try(ByteArrayOutputStream baos=new ByteArrayOutputStream()){
 							try(InputStream bais=FileUtil.fetch(image)){
 								BufferedImage bi=ImageIO.read(bais);
@@ -348,8 +352,11 @@ public class NapCatAIConnector extends WebSocketClient {
 				result.thenAccept(msg->state.addStatus("<tool name=\""+tool+"\">"+msg+"</tool>"))
 				.exceptionally(t->{state.addStatus("<tool name=\""+tool+"\">失败</tool>");return null;});
 			}};
-		if(skillSet.contains("fetch"))
+		if(skillSet.contains("fetch")) {
 			state.registerTools(FetchMcp.create(state, tos));
+			// DeepSeek Search API：仅在配置了 deepseektoken 时才会真正注册 web_search
+			state.registerTools(DeepseekSearchMcp.create(state));
+		}
 
 		if(skillSet.contains("multimodal"))
 			state.registerTools(MultiModalMcp.create(tos,state::addUsage));
@@ -359,15 +366,15 @@ public class NapCatAIConnector extends WebSocketClient {
 		}
 		
 		if(skillSet.contains("sdxl"))
-			state.registerTools(SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),false,resourceLock));
+			state.registerTools(SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),false,resourceLock));
 		if(skillSet.contains("sdxl-nsfw"))
-			state.registerTools(SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),true,resourceLock));
+			state.registerTools(SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),true,resourceLock));
 
 		if(skillSet.contains("sdxl-agent"))
-			state.registerTools(SDXLAgentMcp.createImage(new File(dataFolder,"painteragent"),state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),callback,false,resourceLock));
+			state.registerTools(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder),state, tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),callback,false,resourceLock));
 		if(skillSet.contains("sdxl-agent-nsfw"))
-			state.registerTools(SDXLAgentMcp.createImage(new File(dataFolder,"painteragent"),state, tos, lora,SDXLMcp.readLinesFromFile(new File(dataFolder,"promptdo.txt")),callback,true,resourceLock));
-		CrontabMcp.setPath(new File(dataFolder,"crontab.json"));
+			state.registerTools(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder),state, tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),callback,true,resourceLock));
+		CrontabMcp.setPath(ConfigPaths.crontab(dataFolder));
 		if(skillSet.contains("cron"))
 			state.registerTools(CrontabMcp.create(state.botId, callback));
 		if(skillSet.contains("music"))
@@ -697,11 +704,13 @@ public class NapCatAIConnector extends WebSocketClient {
 	@SuppressWarnings("resource")
 	public static void main(String[] args) throws Throwable {
 		try {
+			// 站点域名：--site-host=example.com 或 -Dsite_host=example.com
+			SiteConfig.applyArgs(args);
 			LLMConnector.initDefault();
 			
 			File dataFolder = new File("save");
 			VoiceModelHandler.init(dataFolder);
-			JsonArray jarr=JsonParser.parseString(FileUtil.readString(new File(dataFolder,"agents.json"))).getAsJsonArray();
+			JsonArray jarr=JsonParser.parseString(FileUtil.readString(ConfigPaths.agents(dataFolder))).getAsJsonArray();
 			AIGroupSession[] states=new AIGroupSession[jarr.size()];
 			int i=0;
 			for(JsonElement jelm:jarr) {

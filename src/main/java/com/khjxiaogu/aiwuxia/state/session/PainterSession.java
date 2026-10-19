@@ -19,6 +19,7 @@ import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
@@ -125,6 +126,8 @@ public class PainterSession extends WebSocketAISession {
      *   <li>{@code send_image}（{@link MultiModalMcp} 的发送图片工具）；</li>
      *   <li>{@code search_character}（{@link SDXLMcp} 搜索角色提示词）；</li>
      *   <li>{@code web_view}（{@link FetchMcp} 抓取网页，即“fetch”）；</li>
+     *   <li>{@code web_search}（{@link DeepseekSearchMcp} 的 DeepSeek 网页搜索，未配置
+     *       {@code deepseektoken} 时不注册）；</li>
      *   <li>{@code moegirl_search}（{@link FetchMcp} 萌娘百科搜索，即“search_moegirl”）。</li>
      * </ul>
      * <p>
@@ -133,7 +136,7 @@ public class PainterSession extends WebSocketAISession {
      * </p>
      */
     private static final Set<String> UNLIMITED_TOOLS = Collections.unmodifiableSet(
-        new LinkedHashSet<>(Arrays.asList("send_image", "search_character", "web_view", "moegirl_search")));
+        new LinkedHashSet<>(Arrays.asList("send_image", "search_character", "web_view", "web_search", "moegirl_search")));
 
     private final ConcurrentHashMap<String, BotCallbackPromise> pendingLocalRequests = new ConcurrentHashMap<>();
 
@@ -145,6 +148,7 @@ public class PainterSession extends WebSocketAISession {
         registerTools(MultiModalMcp.createOutput(this,par.getPainterStorage(), Collections.emptyMap(),this::addUsage));
         registerTools(SDXLMcp.createRemoteLocalModel(this,par.getPainterStorage(), par.lora,par.chara,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true));
         registerTools(FetchMcp.create(this, par.getPainterStorage()));
+        registerTools(DeepseekSearchMcp.create(this));
     }
 
     /**

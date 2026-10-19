@@ -60,6 +60,7 @@ public class SDXLAgentMcp {
 		MCPTools tools=new MCPTools();
 		MCPTools sdxl=SDXLMcp.createLocal(state, tos, lora, charas, isNsfw, lock);
 		FetchMcp.create(state, tos).mergeInto(sdxl);
+		DeepseekSearchMcp.create(state).mergeInto(sdxl);
 		MultiModalMcp.create(tos, state::addUsage).mergeInto(sdxl);
 
 		/*

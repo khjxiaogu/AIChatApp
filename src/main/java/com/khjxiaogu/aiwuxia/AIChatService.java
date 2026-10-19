@@ -79,10 +79,12 @@ import com.khjxiaogu.aiwuxia.state.session.ChatIdentity;
 import com.khjxiaogu.aiwuxia.state.session.PainterSession;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
+import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
+import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.webserver.annotations.Adapter;
@@ -218,7 +220,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		initModelNames();
 		defaultRule=FileUtil.readString(new File(path,"apps/custom/prompt.txt"));
 		
-		File lfn=new File(path,"loras.json");
+		File lfn=ConfigPaths.sdxlLoras(path);
 		if(lfn.exists()) {
 			JsonObject refimg=JsonParser.parseString(FileUtil.readString(lfn)).getAsJsonObject();
 			for(String key:refimg.keySet()) {
@@ -226,7 +228,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				lora.put(key, new LoraConfigurations(jo.get("key").getAsString(),jo.get("weight").getAsFloat()));
 			}
 		}
-		chara=SDXLMcp.readLinesFromFile(new File(path,"promptdo.txt"));
+		chara=SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(path));
 		logger.info("正在链接SQLITE信息数据库...");
 		try {
 			database = DriverManager.getConnection("jdbc:sqlite:" + new File(path, "messages.db"));
@@ -346,7 +348,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		resource = new FilePageService(new File(parent, "resource"));
 		voice = new FilePageService(new File(parent, "voice"));
 		try {
-			File tosConfigFile = new File(parent, "tos.json");
+			File tosConfigFile = ConfigPaths.objectStorage(parent);
 			if (tosConfigFile.exists()) {
 				JsonObject tosCfg = JsonParser.parseString(FileUtil.readString(tosConfigFile)).getAsJsonObject();
 				painterStorage = new DelegatingStorage(new File(parent, "painter_images"), new TOStorage(tosCfg));
@@ -1242,6 +1244,27 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@Adapter
 	public ResultDTO aiProtocolJs() throws IOException {
 		return new ResultDTO(200, new File(parent, "ai-protocol.js"));
+	}
+	/**
+	 * HTTP GET端点：返回前端站点配置 site-config.js。
+	 * <p>
+	 * 站点域名默认读取数据目录下的 {@code site.json}（{@code "host"} 字段），
+	 * 也可以用启动参数 {@code --site-host=example.com}（或 {@code -Dsite_host=example.com}）临时覆盖，
+	 * 见 {@link SiteConfig}。未配置时下发空域名，前端各页面会自动跟随当前访问域名，
+	 * 因此自建部署无需修改任何 HTML。
+	 * </p>
+	 *
+	 * @return 包含配置脚本的ResultDTO
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/site-config.js")
+	@Adapter
+	public ResultDTO siteConfigJs() {
+		ResultDTO res = new ResultDTO(200, SiteConfig.resolve(parent).toScript());
+		// 脚本内容保持纯ASCII，Content-Length按字符数计算才不会截断
+		res.addHeader(HttpHeaderNames.CONTENT_TYPE, "application/javascript; charset=UTF-8");
+		res.addHeader(HttpHeaderNames.CACHE_CONTROL, "no-cache");
+		return res;
 	}
 	@HttpMethod("GET")
 	@HttpPath("/ai-ui.css")

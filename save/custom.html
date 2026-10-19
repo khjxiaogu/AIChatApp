@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI智能对话</title>
+    <script src="site-config.js"></script>
     <script src="feather.min.js"></script>
     <script src="vue.js"></script>
     <script src="modeltree.js"></script>
@@ -152,6 +153,13 @@
 							<span class="setting-switch-knob"></span>
 						</button>
 					</div>
+					<!-- 语音开关：开启后新回复会自动朗读 -->
+					<div class="setting-row" v-show="aiVoiceUsable">
+						<span class="setting-row-label">默认使用朗读</span>
+						<button class="setting-switch" :class="{ 'is-on': aiVoiceEnabled }" @click.stop="setVoiceEnabled(!aiVoiceEnabled)" :aria-pressed="aiVoiceEnabled ? 'true' : 'false'" :disabled="!aiConnected">
+							<span class="setting-switch-knob"></span>
+						</button>
+					</div>
 					<!-- 模型选择区域：按 "/" 分层的目录树，默认全部展开；连接断开时整块置灰 -->
 					<div class="model-selector" :class="{ 'is-disabled': !aiConnected }">
 						<label>选择模型</label>
@@ -165,13 +173,6 @@
 					<button class="btn setting-export-btn" @click="exportMemory" :disabled="!aiConnected">
 						<i data-feather="download"></i> 导出记忆
 					</button>
-					<!-- 语音开关：开启后新回复会自动朗读 -->
-					<div class="setting-row" v-show="aiVoiceUsable">
-						<span class="setting-row-label">默认使用朗读</span>
-						<button class="setting-switch" :class="{ 'is-on': aiVoiceEnabled }" @click.stop="setVoiceEnabled(!aiVoiceEnabled)" :aria-pressed="aiVoiceEnabled ? 'true' : 'false'" :disabled="!aiConnected">
-							<span class="setting-switch-knob"></span>
-						</button>
-					</div>
 				</div>
 			</div>
 		</div>
@@ -438,7 +439,8 @@
 					},
 					/* ============ 公共协议层（ai-protocol.js）：连接与帧钩子 ============ */
 					aiSocketUrl(){
-						return (location.protocol=="http:"?"ws:":"wss:")+"//khjxiaogu.com"+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+encodeURIComponent(aiUid());
+						// 站点地址来自 site-config.js（启动参数 --site-host / -Dsite_host），未配置时跟随页面域名
+						return aiSiteWsBase()+this.url+"/chatsocket?app="+this.appId+"&chatid="+this.chatId+"&userId="+encodeURIComponent(aiUid());
 					},
 					aiOnSocketOpen(){
 						this.prepared=true;

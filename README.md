@@ -16,6 +16,8 @@
 - **权限与公测**：基于 SQLite 数据库记录用户权限，支持应用级的公测限制（每个用户仅可创建一个对话）。
 - **对话导出**：可将整个对话历史导出为 UTF-8 文本文件（带 BOM 头）。
 - **模型路由**：通过 `ModelProvider` 接口支持多模型提供商（Deepseek、火山引擎等），根据请求类型自动路由。
+- **网页搜索**：通过 MCP 工具 `web_search` 接入 DeepSeek 官方 Search API（需 `deepseektoken`），
+  按成功请求次数准确计费，失败/无结果不计费。
 - **前后端分离**：前端通过 WebSocket 进行实时通信，HTTP 接口用于获取应用列表、对话列表等。
 
 ---
@@ -140,14 +142,88 @@
 
 | 属性名               | 说明                             |
 |-------------------|--------------------------------|
-| `deepseektoken`   | Deepseek API 的 Token，若存在则启用 Deepseek 模型提供商 |
+| `deepseektoken`   | Deepseek API 的 Token，若存在则启用 Deepseek 模型提供商，并启用网页搜索工具 `web_search` |
 | `volcmodeltoken`  | 火山引擎模型 Token，若存在则启用火山模型提供商           |
 | `localVoiceToken` | 本地语音模型的 Bearer Token，用于验证 WebSocket 连接 |
+| `site_host`       | 站点对外域名的临时覆盖（一般不用传，改 `save/site.json` 即可） |
 
 启动时通过 `-D` 参数传入，例如：
 ```bash
 java -Ddeepseektoken=your_token -DlocalVoiceToken=voice_token -jar aichat.jar
 ```
+
+#### 站点域名：`save/site.json`
+
+站点域名不再写死在 HTML 里，默认从数据目录下的 `save/site.json` 读取：
+
+```json
+{
+  "host": "example.com",
+  "reader_host": "www.example.com"
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `host` | 否 | 站点对外域名。可写裸域名 `example.com`、带端口 `example.com:8443` 或完整地址 `https://example.com`；写成 `http://...` 会得到 `ws`/`http` 地址。**留空或文件不存在时，前端自动跟随访问页面的域名**（`location.host`），Java 端回退到 `SiteConfig.DEFAULT_HOST` |
+| `reader_host` | 否 | 图片查看页（`/works/imgView.html`）所在域名，缺省与 `host` 相同 |
+
+优先级：启动参数 `--site-host=example.com` / `-Dsite_host=example.com` > `save/site.json` > 跟随访问域名。
+需要临时覆盖时用启动参数（对 `AIServerMain` 与 `NapCatAIConnector` 都生效）：
+
+```bash
+java -jar aichat.jar --site-host=example.com
+# 等价于
+java -Dsite_host=example.com -jar aichat.jar
+```
+
+修改 `save/site.json` 后无需重启前端：每次打开页面都会重新拉取 `/aichat/site-config.js`。
+
+#### 站点配置目录：`save/config/`
+
+其余手工维护的配置统一放在 `save/config/`，文件名可读，路径由 `ConfigPaths` 统一定义；
+生图（SDXL / Seedream）相关的配置集中在 `config/sdxl/`：
+
+```
+save/
+├─ site.json                     # 站点域名（见上一节）
+└─ config/
+   ├─ object-storage.json        # 对象存储（火山 TOS）凭据：region / endpoint / bucket / accessKey / secretKey
+   ├─ image-generation.json      # 图片/视频生成（Seedream）凭据：accessKey / secretKey
+   ├─ voice-tags.txt             # 语音标签提示词（按情感切分台词，供语音合成）
+   ├─ local-voice.json           # 本地语音模型 bot 映射 {角色名: botid}
+   ├─ volcano-voice.json         # 火山语音复刻 bot 映射 {角色名: voice_type}
+   ├─ agents.json                # QQ 群 agent 清单（name / save / voice …）
+   ├─ crontab.json               # 定时任务
+   └─ sdxl/                      # 生图相关
+      ├─ character-tags.txt      #   角色 tag 库（一行一个，生成提示词时按关键词检索）
+      ├─ loras.json              #   LoRA 配置 {触发词: {key, weight}}
+      ├─ reference-images.json   #   参考图 {名称: 图片地址}
+      └─ agent/                  #   绘画 agent 提示词
+         ├─ role.txt             #     角色
+         ├─ charaset.txt         #     角色设定
+         └─ rules.txt            #     生成规则
+```
+
+| 旧位置 | 新位置 |
+|---|---|
+| `save/tos.json` | `save/config/object-storage.json` |
+| `save/img.json` | `save/config/image-generation.json` |
+| `save/voicetag.txt` | `save/config/voice-tags.txt` |
+| `save/localvoice.json` | `save/config/local-voice.json` |
+| `save/volcanovoice.json` | `save/config/volcano-voice.json` |
+| `save/agents.json` | `save/config/agents.json` |
+| `save/crontab.json` | `save/config/crontab.json` |
+| `save/promptdo.txt` | `save/config/sdxl/character-tags.txt` |
+| `save/loras.json` | `save/config/sdxl/loras.json` |
+| `save/reference_image.json` | `save/config/sdxl/reference-images.json` |
+| `save/painteragent/` | `save/config/sdxl/agent/` |
+
+新位置不存在时会退回旧位置并在控制台提示一次，**新位置一旦存在旧位置即被忽略**，
+建议直接把文件挪进 `save/config/`。详见 `save/config/README.md`。
+
+> 🚚 **从旧版本升级**：配置目录与站点域名（`save/site.json`）的完整迁移步骤、可重复执行的搬迁脚本、
+> 验证清单与回滚方法，见 **[docs/MIGRATION.md](docs/MIGRATION.md)**。
 
 ### 运行主服务
 
@@ -167,6 +243,10 @@ public static void main(String[] args) {
 
 - 静态页面位于服务根目录下（如 `aiindex.html`, `chat.html`），通过 HTTP 访问。
 - WebSocket 连接地址：`ws://host:port/chatsocket?chatid=xxx&app=xxx&userId=xxx`
+- 页面里**不再写死站点域名**：服务端通过 `/aichat/site-config.js` 下发 `window.AI_SITE`
+  （内容来自 `save/site.json` 的 `host`），各页面用 `aiSiteWsBase()` / `aiSiteHttpBase()`
+  （见 `save/ai-protocol.js`）拼接地址；未配置时这两个函数回退到 `location.host` / `location.protocol`，
+  所以反代、换域名、本地调试都不用改 HTML。
 
 ### 让 Deepseek Harness 接管 QQ（DeepseekHarnessConnector）
 
@@ -261,6 +341,26 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 
 ## 配置说明
 
+### 网页搜索（DeepSeek Search API）
+
+`DeepseekSearchMcp` 按官方
+[网页搜索与抓取](https://api-docs.deepseek.com/zh-cn/guides/search) 文档接入
+`POST https://api.deepseek.com/v1/tools/search`：对话模型通过工具 `web_search` 搜索实时网页，
+拿到标题、链接、发布时间、权威度与长摘要。鉴权复用 `deepseektoken`，**未配置时不注册该工具**。
+
+| 事项 | 说明 |
+|---|---|
+| 挂载位置 | QQ 群 agent 的 `tools` 含 `fetch` 时注册；绘画会话与绘画 subagent 也注册 |
+| 请求参数 | `query`（必填，≤128 字符，支持 `site:`/`-site:`/`-关键词`/`"精确短语"`/`lang:`/`after:`/`before:` 语法）、`count`（1～20，默认 10） |
+| 返回内容 | 每条结果的标题、链接、`发布时间 · 站点 · 相关度 · 权威度` 与摘要；不返回正文（需要正文用 `web_view` 打开链接） |
+| 计费口径 | 官方按**成功请求次数**计费：每 1000 次 5 元（每次 0.005 元），与 `count`、token 无关；仅 HTTP 200 且 `results` 非空才计费 |
+| 系统记账 | 按 1 元 = 500000 等效 token 折算，每次成功搜索记 2500 等效 token（0.005 元），明细类型为「DeepSeek 网页搜索」；失败、超时、空结果一律不记账 |
+| 重试 | 仅对 408 / 429 / 5xx 自动重试（最多 3 次尝试），其它 4xx 直接返回错误说明给模型 |
+
+```bash
+java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话与 web_search
+```
+
 ### 数据库
 
 服务启动时会自动在数据目录下创建 `messages.db`。核心表：
@@ -307,12 +407,23 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 `limited`/`auth`（→ permission）等写法。**已弃用的 `trial` 字段仍然兼容**：未配置 `access` 时，
 `trial: true` 等价于 `access: "public"`，`trial: false` 等价于 `access: "permission"`。
 
-`type` 字段决定了使用哪个 `AIApplicationFactory` 创建实例。内置类型：
-- `wuxia`：武侠世界
-- `article`：文章写作
-- `talk`：角色对话
-- `trpg`：TRPG 跑团
-- 等等（可在 `AIChatService.reload()` 中查看）
+`type` 字段决定了使用哪个 `AIApplicationFactory` 创建实例。内置类型（见 `AIApplicationRegistry`）：
+
+| `type` | 说明 | 前端页面 |
+|---|---|---|
+| `talk` | 角色对话（立绘 + 场景标签 + 语音） | `galgame.html` |
+| `galgame` | Galgame 风格多幕叙事 | `ptrpg.html` |
+| `trpg` | TRPG 跑团（多角色立绘） | `trpg.html` |
+| `wuxia` | 武侠/修仙模拟（属性面板） | —（`chat.html` 已移除） |
+| `write` | 写作辅助（大纲 + 正文） | — |
+| `sql` | 根据表定义生成 SQL | — |
+| `custom` | 配置型智能体（提示词存在会话里） | `custom.html` |
+| `group` | QQ 群聊机器人（由 `NapCatAIConnector` 拉起） | — |
+
+> ⚠️ 注意：`meta.json` 的 `name` **不是界面显示名**，只用于加载门槛与传给工厂；
+> 界面显示的是各 app 类 `getName()` 的返回值（所以 `wuxia` 目录写"修仙模拟器"，界面显示"武侠模拟器"）。
+
+各应用的玩法、必需文件、输出格式与坑位，见 **[docs/apps/builtin-apps.md](docs/apps/builtin-apps.md)**。
 
 ---
 
@@ -375,12 +486,33 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 
 ## 扩展开发
 
-### 添加新的 AI 应用类型
+### 不写代码做应用（推荐先看这个）
 
-1. 实现 `AIApplication` 抽象类，重写核心方法（`getName`, `constructSystem`, `getBrief`, `provideInitial` 等）。
-2. 实现 `AIApplicationFactory` 接口，在 `createInstance` 中实例化上述应用。
-3. 在应用启动时（或静态代码块中）调用 `AIApplicationRegistry.register("type", factory)` 注册工厂。
-4. 在应用目录下创建对应的 `meta.json`，`type` 字段与注册的名称一致。
+做应用 = 建一个目录 + 写 `meta.json` + 写几个提示词 txt + 重启服务，**不需要编译**。
+完整教程见 **[docs/apps/](docs/apps/README.md)**：
+
+| 文档 | 内容 |
+|---|---|
+| [tutorial.md](docs/apps/tutorial.md) | 三个练习：网页做智能体 → 复制角色对话 → 做文字冒险 |
+| [prompting.md](docs/apps/prompting.md) | 提示词编写：五个文件分工、格式契约、人设不崩、迭代 |
+| [files.md](docs/apps/files.md) | 文件作用：三层结构、每个文件谁在读、存档与数据库 |
+| [configuration.md](docs/apps/configuration.md) | 配置：`meta.json` 全字段、可见性/授权、计费、站点配置 |
+| [builtin-apps.md](docs/apps/builtin-apps.md) | 8 种内置类型的玩法、必需文件、输出格式、坑 |
+| [troubleshooting.md](docs/apps/troubleshooting.md) | 排错决策树、常见改造、调试手段 |
+
+### 新增一种玩法类型（需要写 Java）
+
+仅当"换提示词 + 换配置"表达不了新玩法时才需要：
+
+1. 继承 `AIApplication`，实现 `getName` / `constructSystem(ApplicationState)` / `getBrief` /
+   `getMemory` / `provideInitial`（详见[开发者参考](docs/dev/java-api.md)）。
+2. 注册工厂：在 `AIApplicationRegistry` 的静态块里
+   `register("yourtype", (base, folder, name, meta) -> new YourApp(folder))`。
+3. 建目录 `save/apps/<appid>/`，写 `meta.json`（`type` 与注册名一致）与该类型需要的提示词文件。
+4. 重启服务，看日志出现 `AI加载成功：<appid>`。
+
+文档：[docs/dev/java-api.md](docs/dev/java-api.md)（API 参考）、
+[docs/dev/java-recipes.md](docs/dev/java-recipes.md)（改造配方与排错）。
 
 ### 添加新的模型提供商
 

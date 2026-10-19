@@ -13,6 +13,7 @@
     <script>window.AIWUXIA_THEME_DEFAULT = 'day';</script>
     <script src="theme.js"></script>
     <script src="heartbeat.js"></script>
+    <script src="site-config.js"></script>
     <script src="ai-protocol.js"></script>
     <style>
 		* {
@@ -1067,9 +1068,9 @@ async function realUploadImage(file, conversationId) {
     };
 }
 
-// 根据图片ID获取图片URL - 调用真实后端接口
+// 根据图片ID获取图片URL - 调用真实后端接口（站点地址来自 site-config.js，未配置时跟随页面域名）
 async function fetchImageById(imageId, conversationId) {
-    return `https://www.khjxiaogu.com/aichat/painter/image?image_id=${encodeURIComponent(imageId)}`;
+    return `${aiSiteHttpBase()}/aichat/painter/image?image_id=${encodeURIComponent(imageId)}`;
 }
 
 // Vue 主应用
@@ -1261,10 +1262,9 @@ var main=new Vue({
             }).catch(err => console.error("发送local_response失败", err));
         },
         /* ================= 公共协议层：连接相关 ================= */
-        // 绘画前端的连接地址（协议与主机跟随当前页面）
+        // 绘画前端的连接地址（站点地址来自 site-config.js，未配置时跟随当前页面）
         aiSocketUrl() {
-            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            return `${protocol}//${location.host}/aichat/chatsocket?chatid=${encodeURIComponent(this.conversationId)}&app=${PAINTER_APP}&userId=${encodeURIComponent(aiUid())}`;
+            return `${aiSiteWsBase()}/aichat/chatsocket?chatid=${encodeURIComponent(this.conversationId)}&app=${PAINTER_APP}&userId=${encodeURIComponent(aiUid())}`;
         },
         aiOnSocketOpen() {
             console.log('WebSocket 已连接, 会话ID:', this.conversationId);
