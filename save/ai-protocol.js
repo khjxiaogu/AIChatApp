@@ -1382,6 +1382,62 @@
 		});
 	}
 
+	/* ======================= 站点地址 ======================= */
+	/*
+	 * 站点域名不再写死在页面里，取值顺序：
+	 *   1. 服务端 site-config.js 注入的 window.AI_SITE.host
+	 *      （对应启动参数 --site-host=example.com 或 -Dsite_host=example.com）；
+	 *   2. 未配置时回退到当前页面的 location.host / location.protocol，
+	 *      因此自建部署、反代、本地调试都不需要改代码。
+	 * 注意：site-config.js 加载失败（例如直接以 file:// 打开）时同样走回退逻辑。
+	 */
+
+	/**
+	 * 站点域名（host[:port]）。
+	 *
+	 * @return {String} 站点域名
+	 */
+	function siteHost() {
+		var cfg = global.AI_SITE;
+		if (cfg && typeof cfg.host === 'string' && cfg.host)
+			return cfg.host;
+		return global.location && global.location.host ? global.location.host : 'localhost';
+	}
+
+	/**
+	 * 站点是否使用加密协议（wss / https）。
+	 *
+	 * @return {Boolean} 是否加密
+	 */
+	function siteSecure() {
+		var cfg = global.AI_SITE;
+		if (cfg && typeof cfg.host === 'string' && cfg.host)
+			return cfg.secure !== false;
+		return !!(global.location && global.location.protocol === 'https:');
+	}
+
+	/**
+	 * 站点 WebSocket 地址前缀。
+	 *
+	 * @return {String} 形如 wss://example.com
+	 */
+	function aiSiteWsBase() {
+		return (siteSecure() ? 'wss:' : 'ws:') + '//' + siteHost();
+	}
+
+	/**
+	 * 站点 HTTP 地址前缀。
+	 *
+	 * @return {String} 形如 https://example.com
+	 */
+	function aiSiteHttpBase() {
+		return (siteSecure() ? 'https:' : 'http:') + '//' + siteHost();
+	}
+
+	global.aiSiteHost = siteHost;
+	global.aiSiteSecure = siteSecure;
+	global.aiSiteWsBase = aiSiteWsBase;
+	global.aiSiteHttpBase = aiSiteHttpBase;
 	global.AIProtocolMixin = AIProtocolMixin;
 	global.aiContentToText = contentToText;
 })(window);

@@ -23,6 +23,7 @@ import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
+import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 public class VoiceTagger {
@@ -31,7 +32,7 @@ public class VoiceTagger {
 	HashSet<String> emotions=new HashSet<>();
 	public VoiceTagger(File basePath) throws IOException {
 		curPath=basePath;
-		sysprompt=FileUtil.readString(new File(curPath,"voicetag.txt"));
+		sysprompt=FileUtil.readString(ConfigPaths.voiceTags(curPath));
 		emotions.add("开心");
 		emotions.add("吃惊");
 		emotions.add("恐惧");

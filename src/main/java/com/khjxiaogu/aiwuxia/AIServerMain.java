@@ -30,6 +30,7 @@ import java.sql.SQLException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
+import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 import com.khjxiaogu.webserver.loging.LogStream;
 
@@ -40,6 +41,8 @@ public class AIServerMain {
 	}
 	public final static SimpleDateFormat logformatter = new SimpleDateFormat("yyyy-MM-dd-hh-mm-ss'.log'");
 	public static void main(String[] args) throws ClassNotFoundException, InterruptedException, SQLException, IOException {
+		// 站点域名：默认读 save/site.json，可用 --site-host=example.com 或 -Dsite_host=example.com 覆盖
+		SiteConfig.applyArgs(args);
 		File log = new File( "latest.log");
 		new File("logs/").mkdir();
 		if (!log.exists())
@@ -62,6 +65,7 @@ public class AIServerMain {
 			.serverHttp(8999)
 
 			.info("http服务端 http://0.0.0.0:8999/aichat 已开启")
+			.info("站点域名: " + SiteConfig.resolve(new File("save")))
 			.info("服务端已开启")
 			.info("网页服务端By khjxiaogu 启动完毕").await();
 		}
