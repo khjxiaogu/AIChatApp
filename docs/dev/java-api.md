@@ -8,7 +8,7 @@
 目录结构与文件作用见 [files.md](../apps/files.md)，配置字段见 [configuration.md](../apps/configuration.md)。
 
 > 只想改提示词、不想动代码？那你需要的不是本篇，而是**配置型智能体**（`custom` 类型 +
-> `agentedit` 页面运行时配置），见 [配置型智能体](../apps/configuration.md#4-配置型智能体不改代码不重启)。
+> `agentedit` 页面运行时配置），见 [配置型智能体](../apps/configuration.md#sec-custom-agent)。
 
 ---
 
@@ -22,7 +22,7 @@
 | `String constructSystem(ApplicationState state)` | 框架内部在需要"纯状态版"系统提示时调用 | 绝大多数 app 直接 `return ""`，真正的系统提示在自己的 `constructSystem(AISession)` 重载里拼 |
 | `String getBrief(AISession state)` | 对话标题（未手动重命名时） | 一句话标题；`custom` 用存档里的 `brief`，角色类 app 用应用名 |
 | `String getMemory(AISession state)` | 记忆导出（`/exportMemory`）、记忆页 | 记忆文本，通常 `return state.getLastSummary()` |
-| `void provideInitial(AISession state)` | **每次 WebSocket 连上时**都会跑（`WebSocketAISession.onOpen` → `prepareInitialHint`），加载已有存档时 `onLoad` 还会再跑一次 | 初始化阶段与首条提示。**必须用 `stage` 守卫**，否则重连会重复弹窗/重复开局，见 [§3](#3-生命周期与阶段) |
+| `void provideInitial(AISession state)` | **每次 WebSocket 连上时**都会跑（`WebSocketAISession.onOpen` → `prepareInitialHint`），加载已有存档时 `onLoad` 还会再跑一次 | 初始化阶段与首条提示。**必须用 `stage` 守卫**，否则重连会重复弹窗/重复开局，见 [§3](#sec-lifecycle) |
 
 可选覆写（都有默认空实现）：
 
@@ -63,6 +63,7 @@ public AICustomMain(File basePath, JsonObject meta) throws IOException {
 
 ---
 
+<a id="sec-lifecycle"></a>
 ## 3. 生命周期与阶段
 
 ```
@@ -336,8 +337,12 @@ state.registerTools(tools);                  // 挂到会话，随后 AIRequest.
 - `Tool.run(String params)` 收到的是**参数 JSON 字符串**，返回的字符串直接给模型看；
 - 工具回调里可拿到 `ToolCallContext`，用 `state.addUsage(...)` 记账、`callback.addToolStatus(...)` 反馈进度；
 - 审批流由 `ToolApprovalManager` / `ToolCallApprover` 控制；生产环境建议挂审批，见 `ManagedToolCallApprover`；
+- 内置联网工具：`FetchMcp` 提供 `web_view` / `moegirl_search`；`DeepseekSearchMcp` 提供 `web_search`
+  （DeepSeek 官方 Search API，需要 `-Ddeepseektoken`，未配置时不注册，见 README「网页搜索」一节）。
+  **按次计费**的外部接口要等确认成功后再记账：搜索每次成功请求折算 2500 等效 token（0.005 元），
+  失败、超时与空结果不记账（见 `DeepseekSearchUsage`）；
 - 注意：**内置 app 一个工具都没挂**（`apps/` 里没有 `registerTool` 调用），工具只在 QQ 群侧
-  （`NapCatAIConnector` 按 skill 注册 SDXL/QQ/Fetch 等）和绘画会话里用。
+  （`NapCatAIConnector` 按 `tools` 清单注册 SDXL/QQ/Fetch/搜索等）和绘画会话里用。
 
 ---
 

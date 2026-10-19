@@ -16,6 +16,8 @@
 - **权限与公测**：基于 SQLite 数据库记录用户权限，支持应用级的公测限制（每个用户仅可创建一个对话）。
 - **对话导出**：可将整个对话历史导出为 UTF-8 文本文件（带 BOM 头）。
 - **模型路由**：通过 `ModelProvider` 接口支持多模型提供商（Deepseek、火山引擎等），根据请求类型自动路由。
+- **网页搜索**：通过 MCP 工具 `web_search` 接入 DeepSeek 官方 Search API（需 `deepseektoken`），
+  按成功请求次数准确计费，失败/无结果不计费。
 - **前后端分离**：前端通过 WebSocket 进行实时通信，HTTP 接口用于获取应用列表、对话列表等。
 
 ---
@@ -140,7 +142,7 @@
 
 | 属性名               | 说明                             |
 |-------------------|--------------------------------|
-| `deepseektoken`   | Deepseek API 的 Token，若存在则启用 Deepseek 模型提供商 |
+| `deepseektoken`   | Deepseek API 的 Token，若存在则启用 Deepseek 模型提供商，并启用网页搜索工具 `web_search` |
 | `volcmodeltoken`  | 火山引擎模型 Token，若存在则启用火山模型提供商           |
 | `localVoiceToken` | 本地语音模型的 Bearer Token，用于验证 WebSocket 连接 |
 | `site_host`       | 站点对外域名的临时覆盖（一般不用传，改 `save/site.json` 即可） |
@@ -293,6 +295,26 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 ---
 
 ## 配置说明
+
+### 网页搜索（DeepSeek Search API）
+
+`DeepseekSearchMcp` 按官方
+[网页搜索与抓取](https://api-docs.deepseek.com/zh-cn/guides/search) 文档接入
+`POST https://api.deepseek.com/v1/tools/search`：对话模型通过工具 `web_search` 搜索实时网页，
+拿到标题、链接、发布时间、权威度与长摘要。鉴权复用 `deepseektoken`，**未配置时不注册该工具**。
+
+| 事项 | 说明 |
+|---|---|
+| 挂载位置 | QQ 群 agent 的 `tools` 含 `fetch` 时注册；绘画会话与绘画 subagent 也注册 |
+| 请求参数 | `query`（必填，≤128 字符，支持 `site:`/`-site:`/`-关键词`/`"精确短语"`/`lang:`/`after:`/`before:` 语法）、`count`（1～20，默认 10） |
+| 返回内容 | 每条结果的标题、链接、`发布时间 · 站点 · 相关度 · 权威度` 与摘要；不返回正文（需要正文用 `web_view` 打开链接） |
+| 计费口径 | 官方按**成功请求次数**计费：每 1000 次 5 元（每次 0.005 元），与 `count`、token 无关；仅 HTTP 200 且 `results` 非空才计费 |
+| 系统记账 | 按 1 元 = 500000 等效 token 折算，每次成功搜索记 2500 等效 token（0.005 元），明细类型为「DeepSeek 网页搜索」；失败、超时、空结果一律不记账 |
+| 重试 | 仅对 408 / 429 / 5xx 自动重试（最多 3 次尝试），其它 4xx 直接返回错误说明给模型 |
+
+```bash
+java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话与 web_search
+```
 
 ### 数据库
 

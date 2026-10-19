@@ -61,6 +61,7 @@ save/                                  ← 数据根目录（所有东西都在�
 
 ---
 
+<a id="sec-file-usage"></a>
 ## 3. 应用目录里的文件，谁在读
 
 | 文件 | 哪些类型会读 | 作用 | 必需性 |
@@ -112,7 +113,7 @@ save/                                  ← 数据根目录（所有东西都在�
 ```
 
 ⚠️ **`name` 不是界面显示名**。界面显示的名字是程序里写死的（每个类型一个，见
-[configuration.md](configuration.md#15-界面显示名对不上)），`name` 只是加载所必需、并且会传给部分类型当角色名。
+[configuration.md](configuration.md#sec-display-name)），`name` 只是加载所必需、并且会传给部分类型当角色名。
 
 字段全表与默认值：[configuration.md](configuration.md)。
 

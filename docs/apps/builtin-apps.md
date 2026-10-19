@@ -144,7 +144,7 @@ A市，上午，晴。
 **玩法**：机器人挂在 QQ 群里，@ 它就对话。**没有网页**。
 
 **在哪里配**：`save/config/agents.json` 列出"哪个应用目录 × 哪个群 × 哪个存档文件"，
-然后用 NapCat 相关启动参数拉起（见 [configuration.md §6](configuration.md#6-启动参数)）。
+然后用 NapCat 相关启动参数拉起（见 [configuration.md §6](configuration.md#sec-startup-args)）。
 
 **必需文件**：`role.txt`、`charaset.txt`、`rules.txt`、`summary.txt`
 

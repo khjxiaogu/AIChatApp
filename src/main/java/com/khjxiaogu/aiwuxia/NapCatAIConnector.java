@@ -71,6 +71,7 @@ import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
 import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
+import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.MusicMcp;
@@ -351,8 +352,11 @@ public class NapCatAIConnector extends WebSocketClient {
 				result.thenAccept(msg->state.addStatus("<tool name=\""+tool+"\">"+msg+"</tool>"))
 				.exceptionally(t->{state.addStatus("<tool name=\""+tool+"\">失败</tool>");return null;});
 			}};
-		if(skillSet.contains("fetch"))
+		if(skillSet.contains("fetch")) {
 			state.registerTools(FetchMcp.create(state, tos));
+			// DeepSeek Search API：仅在配置了 deepseektoken 时才会真正注册 web_search
+			state.registerTools(DeepseekSearchMcp.create(state));
+		}
 
 		if(skillSet.contains("multimodal"))
 			state.registerTools(MultiModalMcp.create(tos,state::addUsage));

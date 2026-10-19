@@ -95,6 +95,7 @@ AI 回复里能看到 `==场景==` 这种标记（本来该被隐藏）
 2. 加一行 `"角色名": "音色ID"`（键 = 你在 `meta.json` 里写的 `name`）；
 3. 重启，进入对话打开语音开关。
 
+<a id="sec-qq-group"></a>
 ### 接一个 QQ 群
 
 1. 复制一个 `group` 类型的应用目录（如 `save/apps/painterirc`），改 `meta.json`：
@@ -113,13 +114,13 @@ AI 回复里能看到 `==场景==` 这种标记（本来该被隐藏）
 
 - 完全不扣额度：`"freeNow": true`
 - 只扣付费余额：`"paidOnly": true`
-- 两者都写时以 `paidOnly` 为准。详见 [configuration.md §1.1](configuration.md#11-框架字段服务启动时读取)
+- 两者都写时以 `paidOnly` 为准。详见 [configuration.md §1.1](configuration.md#sec-meta-framework)
 
 ### 只开放给部分人
 
 1. `meta.json` 写 `"access": "permission"`；
 2. 往数据库 `permission` 表插一条 `(uid, app, '1')`（SQL 见
-   [configuration.md §3](configuration.md#3-可见性与授权)）；
+   [configuration.md §3](configuration.md#sec-access)）；
 3. 重启后该用户才能看到。
 
 ### 对话卡在奇怪的状态（一直要取名 / 一直重复开场）

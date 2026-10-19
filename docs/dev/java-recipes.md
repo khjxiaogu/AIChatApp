@@ -118,7 +118,9 @@ state.registerTools(tools);      // 之后 AIRequest.builder(state) 自动带上
 - 工具**必须**在 `AIRequest.builder(state)` 之前挂上，否则本次请求不带；
 - 生产环境建议挂审批（`ManagedToolCallApprover` / `ToolCallPermission`），避免模型乱调写操作；
 - 工具调用过程会用 `tool_call` 帧推给前端，`ToolCallDisplay` 控制展示；
-- 计费：工具内部产生的模型调用要自己 `addUsage`，否则漏账。
+- 计费：工具内部产生的模型调用要自己 `addUsage`，否则漏账；**按次计费**的外部接口（如
+  `DeepseekSearchMcp` 的 `web_search`）要在确认成功并拿到结果之后再记账，失败、超时与空结果不要记，
+  见 `DeepseekSearchUsage`。
 
 验证：问一个需要工具的问题，日志应出现工具名与参数，前端出现工具调用卡片。
 

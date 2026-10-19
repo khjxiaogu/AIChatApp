@@ -71,9 +71,9 @@ AIWuxia 里的每个「AI 应用」= **一套内置玩法（类型）+ 一个应
 
 | 你想做 | 走哪条 | 需要重启 | 看哪篇 |
 |---|---|---|---|
-| 一个"人设/专家"，随时改提示词 | 网页 `agentedit` 建 **`custom` 智能体** | ❌ | [tutorial 练习一](tutorial.md#练习一用网页做一个智能体最快) |
-| 一个角色/一个世界观，要现成界面 | 复制 `talk`/`galgame`/`trpg` 目录换提示词 | ✅ | [tutorial 练习二、三](tutorial.md#练习二复制一个角色对话应用) |
-| 群聊机器人 | 复制 `group` 目录 + 配 `agents.json` | ✅ | [troubleshooting §2](troubleshooting.md#接一个-qq-群) |
+| 一个"人设/专家"，随时改提示词 | 网页 `agentedit` 建 **`custom` 智能体** | ❌ | [tutorial 练习一](tutorial.md#sec-ex1) |
+| 一个角色/一个世界观，要现成界面 | 复制 `talk`/`galgame`/`trpg` 目录换提示词 | ✅ | [tutorial 练习二、三](tutorial.md#sec-ex2) |
+| 群聊机器人 | 复制 `group` 目录 + 配 `agents.json` | ✅ | [troubleshooting §2](troubleshooting.md#sec-qq-group) |
 | 全新玩法/新界面 | ❌ 配置做不到 | — | [docs/dev/](../dev/java-api.md) |
 
 ---
@@ -99,15 +99,15 @@ AIWuxia 里的每个「AI 应用」= **一套内置玩法（类型）+ 一个应
 
 | 我想 | 去哪 |
 |---|---|
-| 5 分钟做一个能聊的智能体 | [tutorial 练习一](tutorial.md#练习一用网页做一个智能体最快) |
-| 加一个新角色（有立绘有语音） | [tutorial 练习二](tutorial.md#练习二复制一个角色对话应用) |
-| 做一个带数值的冒险 | [tutorial 练习三](tutorial.md#练习三做一个文字冒险应用) |
+| 5 分钟做一个能聊的智能体 | [tutorial 练习一](tutorial.md#sec-ex1) |
+| 加一个新角色（有立绘有语音） | [tutorial 练习二](tutorial.md#sec-ex2) |
+| 做一个带数值的冒险 | [tutorial 练习三](tutorial.md#sec-ex3) |
 | 让 AI 输出稳定的格式 | [prompting.md](prompting.md) |
-| 修人设崩/说话太啰嗦 | [prompting.md §4、§5](prompting.md#4-人设不崩的四个技巧) |
+| 修人设崩/说话太啰嗦 | [prompting.md §4、§5](prompting.md#sec-persona) |
 | 查某个类型要哪些文件 | [builtin-apps.md](builtin-apps.md) |
 | 搞清哪个文件是干嘛的 | [files.md](files.md) |
 | 只让部分人能用 / 免费 / 计费 | [configuration.md §1、§3](configuration.md) |
-| 接 QQ 群 | [troubleshooting §2](troubleshooting.md#接一个-qq-群) |
+| 接 QQ 群 | [troubleshooting §2](troubleshooting.md#sec-qq-group) |
 | 配音色/域名/存储凭据 | [configuration.md §5、§6](configuration.md) |
 | 应用不出现、没反应、格式乱 | [troubleshooting.md](troubleshooting.md) |
 | 新增玩法类型 / 新页面 | [docs/dev/java-api.md](../dev/java-api.md)（需要编程） |

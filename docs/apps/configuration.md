@@ -15,6 +15,7 @@
 路径 `save/apps/<应用ID>/meta.json`。**应用ID 就是目录名**，也是数据库里记录应用的值——
 **改目录名等于换应用ID，已有存档会与新应用对不上，别随便改**。
 
+<a id="sec-meta-framework"></a>
 ### 1.1 框架字段（服务启动时读取）
 
 | 字段 | 类型 | 默认 | 说明 |
@@ -22,7 +23,7 @@
 | `type` | 字符串 | **无（必需）** | 玩法类型：`write`/`talk`/`galgame`/`group`/`sql`/`trpg`/`wuxia`/`custom`，**不能自创** |
 | `name` | 字符串 | **无（必需）** | 缺这个字段目录**直接不加载**。⚠️ 它不是界面显示名，见 §1.5 |
 | `enabled` | 布尔 | `true` | `false` 则完全停用（日志："忽视AI：X 出于配置原因"）。写 `"true"`/`"false"` 字符串也生效 |
-| `access` | 字符串 | `permission` | 可见性，见 [§3](#3-可见性与授权) |
+| `access` | 字符串 | `permission` | 可见性，见 [§3](#sec-access) |
 | `models` | 字符串数组 | 空 = 不限 | 允许使用的模型白名单，如 `["deepseek/pro","deepseek/flash"]`；网页上只能在这些里选 |
 | `defaultModel` | 字符串 | 白名单第一个 | 新对话默认模型 |
 | `paidOnly` | 布尔 | `false` | 只扣付费余额；余额不足不能新建对话 |
@@ -76,6 +77,7 @@
 4. 该类型必需的文件齐全吗？（`galgame`/`custom` 缺文件会直接加载失败）
 5. 看启动日志：`AI加载失败：<应用ID>` 后面通常跟着原因。
 
+<a id="sec-display-name"></a>
 ### 1.5 界面显示名对不上
 
 界面显示的名字是**程序里为每种类型固定好的**，不是 `meta.json` 的 `name`：
@@ -95,7 +97,7 @@
 ## 2. 应用目录里的提示词
 
 文件分工、格式契约、枚举一致性这些写作技巧，见 [prompting.md](prompting.md)；
-每个文件被哪个类型读取，见 [files.md](files.md#3-应用目录里的文件谁在读)。
+每个文件被哪个类型读取，见 [files.md](files.md#sec-file-usage)。
 
 三条硬规矩：
 
@@ -105,6 +107,7 @@
 
 ---
 
+<a id="sec-access"></a>
 ## 3. 可见性与授权
 
 `access` 三个取值：
@@ -131,6 +134,7 @@ DELETE FROM permission WHERE uid='12345' AND app='mywuxia';
 
 ---
 
+<a id="sec-custom-agent"></a>
 ## 4. 配置型智能体（不改代码、不重启）
 
 在 `agentedit` 页面填表单，保存即用。它**不需要应用目录**——提示词存在**每个对话的存档**里，
@@ -189,6 +193,7 @@ save/config/
 
 ---
 
+<a id="sec-startup-args"></a>
 ## 6. 启动参数
 
 服务是 `java -D参数=值 …` 启动的。常用参数：
@@ -197,7 +202,7 @@ save/config/
 
 | 参数 | 作用 |
 |---|---|
-| `deepseektoken` | 启用 Deepseek（最常用） |
+| `deepseektoken` | 启用 Deepseek（最常用），同时启用网页搜索工具 `web_search` |
 | `volcmodeltoken` | 启用火山引擎 |
 | `mimotoken` | 启用 Mimo（也用于 Mimo 语音） |
 | `groktoken` / `silicontoken` | 启用 Grok / 硅基流动 |
