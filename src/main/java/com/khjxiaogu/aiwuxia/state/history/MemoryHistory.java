@@ -569,6 +569,23 @@ public class MemoryHistory implements Serializable, HistoryHolder {
 		throw new IllegalArgumentException("Not a valid memory history");
 	}
 
+	/**
+	 * 设置指定条目的本轮配额用量。
+	 *
+	 * @param hi        历史条目，必须为 {@link HistoryMemoryItem} 实例
+	 * @param tokenCost 本轮配额用量
+	 * @throws IllegalArgumentException 如果条目不是 {@link HistoryMemoryItem}
+	 */
+	@Override
+	public void setTokenCost(HistoryItem hi, double tokenCost) {
+		if (hi instanceof HistoryMemoryItem) {
+			HistoryMemoryItem mhi = (HistoryMemoryItem) hi;
+			mhi.setTokenCost(tokenCost);
+			return;
+		}
+		throw new IllegalArgumentException("Not a valid memory history");
+	}
+
 	// ── 未完成条目 ────────────────────────────────────────
 
 	/**

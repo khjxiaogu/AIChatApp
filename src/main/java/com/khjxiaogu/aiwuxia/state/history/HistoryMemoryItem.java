@@ -55,6 +55,8 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	private int prevIdentifier = -1;
 	/** 令牌长度（transient，不参与序列化） */
 	private transient long tokenLength = 0;
+	/** 本轮消耗的配额（token），随条目一起序列化，历史重新加载后仍可显示 */
+	private double tokenCost = 0;
 	/** 条目关联的角色 */
 	private Role role;
 	/** 显示内容（始终写入） */
@@ -477,6 +479,26 @@ class HistoryMemoryItem implements Serializable, MutableHistoryItem {
 	@Override
 	public void setTokenLength(long tokenLength) {
 		this.tokenLength = tokenLength;
+	}
+
+	/**
+	 * 获取本轮消耗的配额（token）。
+	 *
+	 * @return 本轮配额用量，没有记录时为 0
+	 */
+	@Override
+	public double getTokenCost() {
+		return tokenCost;
+	}
+
+	/**
+	 * 设置本轮消耗的配额（token）。
+	 *
+	 * @param tokenCost 本轮配额用量
+	 */
+	@Override
+	public void setTokenCost(double tokenCost) {
+		this.tokenCost = tokenCost;
 	}
 
 	@Override

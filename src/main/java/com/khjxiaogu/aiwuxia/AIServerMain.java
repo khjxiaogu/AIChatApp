@@ -31,7 +31,9 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 
 import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
+import com.khjxiaogu.webserver.builder.RootContext;
 import com.khjxiaogu.webserver.loging.LogStream;
+import com.khjxiaogu.webserver.web.URIMatchDispatchHandler;
 
 public class AIServerMain {
 
@@ -53,15 +55,23 @@ public class AIServerMain {
 		        LogStream ls = new LogStream(fos)) {
 			System.setOut(ls);
 			System.setErr(ls);
-			BasicWebServerBuilder.build().createURIRoot()
-			.createWrapper(new AIChatService("http://127.0.0.1:8999/aichat",new File("save"))).rule("/aichat")
-			.complete()
-			.complete()
+			AIChatService chatService = new AIChatService("http://127.0.0.1:8999/aichat", new File("save"));
+			BasicWebServerBuilder builder = BasicWebServerBuilder.build();
+			RootContext<URIMatchDispatchHandler, BasicWebServerBuilder> root = builder.createURIRoot()
+					.createWrapper(chatService).rule("/aichat")
+					.complete();
+			// MCP 服务端：把本地 ToolData 以 MCP 协议暴露给外部客户端（Bearer 令牌鉴权 + 扣费）
+			if (chatService.getMcpEndpoint() != null) {
+				root.createContext("/mcp", chatService.getMcpEndpoint());
+			}
+			root.complete()
 			.setNotFound(new File(new File("save"), "404.html"))
 			.compile()
 			.serverHttp(8999)
 
 			.info("http服务端 http://0.0.0.0:8999/aichat 已开启")
+			.info(chatService.getMcpEndpoint() != null ? "MCP服务端 http://0.0.0.0:8999/mcp 已开启（使用访问令牌调用）"
+					: "MCP服务端未启用")
 			.info("服务端已开启")
 			.info("网页服务端By khjxiaogu 启动完毕").await();
 		}

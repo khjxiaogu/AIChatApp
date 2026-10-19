@@ -130,6 +130,18 @@ public interface MutableHistoryItem extends HistoryItem {
 	void setTokenLength(long tokenLength);
 
 	/**
+	 * 设置该条目所属对话轮次消耗的配额（token）。
+	 * <p>
+	 * 与 {@link #setTokenLength(long)} 不是一回事：令牌长度用于上下文窗口管理，
+	 * 本方法是这一轮实际产生的配额用量。供应用的未完成条目在提交前使用；
+	 * 已经进入历史的条目请改用 {@link HistoryHolder#setTokenCost(HistoryItem, double)}。
+	 * </p>
+	 *
+	 * @param tokenCost 本轮配额用量
+	 */
+	void setTokenCost(double tokenCost);
+
+	/**
 	 * 设置该条目是否为有效的上下文。
 	 * <p>
 	 * 供应用的未完成条目（{@link HistoryHolder#beginPending(Role, boolean)}）

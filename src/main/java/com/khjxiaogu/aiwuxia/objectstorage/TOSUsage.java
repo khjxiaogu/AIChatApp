@@ -16,7 +16,7 @@ public class TOSUsage implements UsageIntf<TOSUsage> {
 
 	@Override
 	public double getEquivantTokens() {
-		return size/1024d/1024d/1024d*3d*1000000d;
+		return size/1024d/1024d/1024d*.3d*1000000d;
 	}
 
 	@Override

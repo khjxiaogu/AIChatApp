@@ -91,8 +91,21 @@ public class UsageTracker {
 		
 	}
 
+	/**
+	 * 获取累计配额用量，即全部用量对象 {@link UsageIntf#getEquivantTokens()} 的合计。
+	 * <p>
+	 * 用 {@code double} 返回而不像 {@link #getTotalTokenPrice()} 那样截断成 {@code float}：
+	 * 累计用量很大时 {@code float} 的有效位不足，两次读取相减得到的单轮增量会失真。
+	 * </p>
+	 *
+	 * @return 累计配额用量
+	 */
+	public synchronized double getTotalEquivantTokens() {
+		return ((TotalCredits)usages.get(TotalCredits.class)).getEquivantTokens();
+	}
+
 	public float getTotalTokenPrice() {
-		return (float) ((TotalCredits)usages.get(TotalCredits.class)).getEquivantTokens();
+		return (float) getTotalEquivantTokens();
 	}
 
 	public String calculatePrice() {

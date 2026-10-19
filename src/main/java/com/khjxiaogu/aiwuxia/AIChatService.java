@@ -37,6 +37,8 @@ import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -56,8 +58,15 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
+import com.khjxiaogu.aiwuxia.mcp.client.McpClientManager;
+import com.khjxiaogu.aiwuxia.mcp.server.McpAccessTokenStore;
+import com.khjxiaogu.aiwuxia.mcp.server.McpBuiltinTools;
+import com.khjxiaogu.aiwuxia.mcp.server.McpServerEndpoint;
+import com.khjxiaogu.aiwuxia.mcp.server.McpToolRegistry;
+import com.khjxiaogu.aiwuxia.mcp.server.McpToolSource;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
@@ -73,6 +82,7 @@ import com.khjxiaogu.aiwuxia.tools.NameTranslator;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
+import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.webserver.annotations.Adapter;
@@ -146,6 +156,13 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 	/** 语音资源文件服务（用于提供音频文件） */
 	private FilePageService voice;
+
+	/** MCP 服务端端点（挂载在 /mcp），初始化失败时为 null */
+	private McpServerEndpoint mcpEndpoint;
+	/** MCP 客户端管理器（读取 save/mcp-client.json），未启用时为 null */
+	private McpClientManager mcpClients;
+	/** MCP 访问令牌与计费存储 */
+	private McpAccessTokenStore mcpTokenStore;
 	// 默认每个用户每天的免费token额度
 	private static final int DEFAULT_FREE_DAILY_LIMIT = 500_000;
 	/** 每日签到一次可获得的补充额度（token） */
@@ -322,6 +339,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		LLMConnector.initDefault();
 		VoiceModelHandler.init(path);
 		parent = path;
+		// MCP 服务端（把本地 ToolData 暴露给外部）与客户端（把外部 ToolData 接入本地）初始化
+		initMcp(path);
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();
 		resource = new FilePageService(new File(parent, "resource"));
@@ -341,6 +360,139 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			logger.info("绘画图片存储: 仅本地 (TOS初始化失败)");
 		}
 		reload();
+	}
+
+	/**
+	 * 初始化 MCP 服务端与客户端。
+	 * <p>
+	 * 服务端读取 {@code save/mcp.json}（可选）：默认单次调用价格、是否暴露在线会话工具、写入用量统计的类型；
+	 * 然后创建访问令牌存储（与主库共用 {@code messages.db}）、工具注册表并注册内置自检工具。
+	 * 客户端读取 {@code save/mcp-client.json}，在后台线程连接配置中的 MCP 服务端，
+	 * 连接成功后把远程工具注册到在线会话。
+	 * </p>
+	 * <p>
+	 * 任何一步失败都只记录日志，不影响主服务启动（MCP 功能不可用）。
+	 * </p>
+	 *
+	 * @param path 服务数据根目录
+	 */
+	private void initMcp(File path) {
+		JsonObject config = new JsonObject();
+		File configFile = new File(path, "mcp.json");
+		if (configFile.isFile()) {
+			try {
+				config = JsonParser.parseString(FileUtil.readString(configFile)).getAsJsonObject();
+			} catch (Exception ex) {
+				logger.warning("MCP 服务端配置解析失败，使用默认配置：" + ex.getMessage());
+			}
+		}
+		if (config.has("enabled") && !config.get("enabled").getAsBoolean()) {
+			logger.info("MCP 服务端已在 mcp.json 中禁用");
+		} else {
+			try {
+				initMcpServer(config);
+			} catch (Throwable ex) {
+				logger.printStackTrace(ex);
+				logger.warning("MCP 服务端初始化失败：" + ex.getMessage());
+				mcpEndpoint = null;
+			}
+		}
+		// 客户端与服务端互相独立：即使服务端禁用，也允许连接外部 MCP 服务端
+		try {
+			mcpClients = new McpClientManager(new File(path, "mcp-client.json"));
+			mcpClients.addChangeListener(this::applyMcpClientTools);
+			mcpClients.startAsync();
+		} catch (Throwable ex) {
+			logger.printStackTrace(ex);
+			logger.warning("MCP 客户端初始化失败：" + ex.getMessage());
+			mcpClients = null;
+		}
+	}
+
+	/**
+	 * 初始化 MCP 服务端：令牌存储、工具注册表与端点。
+	 *
+	 * @param config {@code save/mcp.json} 解析结果
+	 * @throws Exception 初始化失败（调用方记录日志并降级为不启用）
+	 */
+	private void initMcpServer(JsonObject config) throws Exception {
+		int defaultPrice = config.has("defaultPrice") ? Math.max(0, config.get("defaultPrice").getAsInt()) : 1000;
+		String usageType = config.has("usageType") ? config.get("usageType").getAsString()
+				: McpAccessTokenStore.DEFAULT_USAGE_TYPE;
+		boolean exposeSessionTools = config.has("exposeSessionTools")
+				&& config.get("exposeSessionTools").getAsBoolean();
+
+		mcpTokenStore = new McpAccessTokenStore(database, usageType);
+		McpToolRegistry registry = new McpToolRegistry();
+		McpBuiltinTools.register(registry);
+		if (exposeSessionTools) {
+			// 可选：让令牌所属用户调用自己在线会话中的工具（默认关闭，避免远程触发聊天副作用）
+			registry.addSource(new McpToolSource() {
+				@Override
+				public String getName() {
+					return "active-sessions";
+				}
+
+				@Override
+				public Collection<ToolData> getTools(String uid) {
+					if (uid == null || uid.isEmpty()) {
+						return Collections.emptyList();
+					}
+					Map<String, ToolData> result = new LinkedHashMap<>();
+					for (AISession session : uidsockets.values()) {
+						if (session == null || !uid.equals(session.user)) {
+							continue;
+						}
+						for (ToolData tool : session.getToolCallManager().getTools().values()) {
+							if (!result.containsKey(tool.name)) {
+								result.put(tool.name, tool);
+							}
+						}
+					}
+					return result.values();
+				}
+			});
+		}
+		mcpEndpoint = new McpServerEndpoint(registry, mcpTokenStore, defaultPrice, "AIWuxia-MCP", "0.0.1");
+		logger.info("MCP 服务端已启用：/mcp，默认单次价格 " + defaultPrice + " 额外配额"
+				+ (exposeSessionTools ? "，并暴露在线会话工具" : ""));
+	}
+
+	/** MCP 服务端端点（供 {@code AIServerMain} 挂载到 /mcp），未启用时为 null。 */
+	public McpServerEndpoint getMcpEndpoint() {
+		return mcpEndpoint;
+	}
+
+	/** MCP 客户端管理器，未启用时为 null。 */
+	public McpClientManager getMcpClientManager() {
+		return mcpClients;
+	}
+
+	/** MCP 访问令牌与消费记录存储，未启用时为 null。 */
+	public McpAccessTokenStore getMcpTokenStore() {
+		return mcpTokenStore;
+	}
+
+	/**
+	 * 把 MCP 客户端当前提供的工具注册到所有在线会话。
+	 * <p>由 {@link McpClientManager} 在后台连接完成时回调；同名工具覆盖。</p>
+	 */
+	private void applyMcpClientTools() {
+		if (mcpClients == null) {
+			return;
+		}
+		MCPTools tools = mcpClients.getTools();
+		if (tools.getTools().isEmpty() || uidsockets.isEmpty()) {
+			return;
+		}
+		for (AISession session : uidsockets.values()) {
+			try {
+				session.registerTools(tools);
+			} catch (Throwable ex) {
+				logger.printStackTrace(ex);
+			}
+		}
+		logger.info("已向在线会话注册 " + tools.getTools().size() + " 个 MCP 客户端工具");
 	}
 
 	/** 存档状态：正常，在聊天页与存档管理页均可见 */
@@ -975,6 +1127,22 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@Adapter
 	public ResultDTO chatjs() throws IOException {
 		return new ResultDTO(200, new File(parent, "chat.js"));
+	}
+	/**
+	 * HTTP GET端点：返回 MCP 访问令牌管理页面。
+	 * <p>
+	 * 页面通过 {@code /mcp/token}、{@code /mcp/usage} 等管理接口完成令牌的创建、停用与消费记录查看。
+	 * 用户 ID 从页面参数 {@code uid}（或 {@code userId}）读取，页面内也可手动填写。
+	 * </p>
+	 *
+	 * @return 包含页面文件的ResultDTO
+	 * @throws IOException 文件读取失败
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/mcptoken")
+	@Adapter
+	public ResultDTO mcpTokenPage() throws IOException {
+		return new ResultDTO(200, new File(parent, "mcptoken.html"));
 	}
 	@HttpMethod("GET")
 	@HttpPath("/ptrpg")
@@ -1708,11 +1876,22 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return loadSession(uid,rcid,attribute,data);
 	}
 	public AISession loadSession(String uid, String rcid,ApplicationAttributes attribute, File data) throws IOException{
+		AISession session;
 		if("painter".equals(attribute.ui))
-			return new PainterSession(this, uid, rcid, attribute.app, attribute, data,
+			session = new PainterSession(this, uid, rcid, attribute.app, attribute, data,
 					AIApplication.saveDataFromJson(data));
-		return new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
-			AIApplication.saveDataFromJson(data));
+		else
+			session = new WebSocketAISession(this, uid, rcid, attribute.app,attribute, data,
+				AIApplication.saveDataFromJson(data));
+		// 把 MCP 客户端当前提供的远程工具注册进会话，AI 可像本地工具一样调用
+		if (mcpClients != null) {
+			try {
+				session.registerTools(mcpClients.getTools());
+			} catch (Throwable ex) {
+				logger.printStackTrace(ex);
+			}
+		}
+		return session;
 	}
 	@HttpPath("/chatconfig")
 	@Adapter

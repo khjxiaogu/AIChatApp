@@ -581,8 +581,17 @@
         .msg-actions {
             display: flex;
             gap: 8px;
+            align-items: center;
             margin-top: 6px;
             animation: fadeIn 0.18s ease;
+        }
+        /* 本轮配额用量：显示在该轮回复下方，只给数值、不带明细 */
+        .turn-tokens {
+            margin-top: 4px;
+            font-size: 0.75rem;
+            color: #7b8794;
+            opacity: 0.85;
+            user-select: none;
         }
         .btn-action {
             background: #fff;
@@ -901,6 +910,8 @@
                             <video :src="item.video_url" controls style="width:100%;"></video>
                         </div>
                     </div>
+                    <!-- 本轮配额用量：历史记录随消息下发 token_cost，实时轮次由 done.tokens 补到本条 -->
+                    <div v-if="msg.tokenCost > 0" class="turn-tokens" title="本轮对话消耗的配额">本轮配额 {{ formatTurnTokens(msg.tokenCost) }}</div>
                 </div>
             </div>
             <!-- 撤回/重新生成：跟随最新一条消息；生成中或连接断开时不显示 -->
@@ -1404,6 +1415,8 @@ var main=new Vue({
         aiOnMessage(frame) {
             const parsed = this.parseContentArray(frame.content);
             const isUser = this.aiIsUserMessage(frame);
+            // 服务端在历史记录上带的该轮配额用量（本帧通常为 0，实时值随 done.tokens 补上）
+            const tokenCost = Number(frame.token_cost) || 0;
             let existing = this.messages.find(m => m._id === frame.id);
             if (!existing && !isUser) {
                 const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
@@ -1413,6 +1426,7 @@ var main=new Vue({
                 if (!isUser) {
                     existing._id = frame.id;
                     existing.contentItems = parsed.contentItems;
+                    if (tokenCost > 0) existing.tokenCost = tokenCost;
                 }
             } else {
                 this.messages.push({
@@ -1420,11 +1434,23 @@ var main=new Vue({
                     _key: this.aiMessageKey(frame.id),
                     role: isUser ? 'user' : 'assistant',
                     thinkingSegments: [],
-                    contentItems: parsed.contentItems
+                    contentItems: parsed.contentItems,
+                    tokenCost: isUser ? 0 : tokenCost
                 });
             }
             this.resolveAllPartUrls();
             this.scrollToBottom();
+        },
+        // 本轮结束：把 done.tokens 记到本轮回复上，历史重载后由 token_cost 提供同样的值
+        aiOnDone(frame) {
+            const cost = Number(frame && frame.tokens) || 0;
+            if (cost <= 0) return;
+            for (let i = this.messages.length - 1; i >= 0; i--) {
+                if (this.messages[i].role === 'assistant') {
+                    this.messages[i].tokenCost = cost;
+                    return;
+                }
+            }
         },
         // 删除一条消息（id 为历史记录标识符）
         aiOnRemove(frame) {
@@ -1435,6 +1461,12 @@ var main=new Vue({
             } else {
                 this.messages = this.messages.filter((m, idx) => idx !== removedId);
             }
+        },
+        // 本轮配额用量的展示格式：只保留最多两位小数
+        formatTurnTokens(value) {
+            const num = Number(value);
+            if (!isFinite(num)) return '0';
+            return num.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
         },
         // 历史记录分页落地（视口锚定与分页状态由公共层负责）
         aiOnBatch(items, meta) {
@@ -1473,7 +1505,9 @@ var main=new Vue({
                     _key: this.aiMessageKey(item.id),
                     role: isUser ? 'user' : 'assistant',
                     thinkingSegments: thinkingSegs,
-                    contentItems: this.parseContentArray(item.content).contentItems
+                    contentItems: this.parseContentArray(item.content).contentItems,
+                    // 该条记录所属轮次的配额用量（公共层已把 token_cost 标准化为 tokenCost）
+                    tokenCost: isUser ? 0 : (Number(item.tokenCost) || 0)
                 };
             };
             if (meta.prepend) {

@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP 访问令牌</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #202124;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --primary: #2563eb;
+    --danger: #dc2626;
+    --ok: #059669;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card: #1d2026;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --line: #2f333b;
+      --primary: #60a5fa;
+      --danger: #f87171;
+      --ok: #34d399;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  .sub { color: var(--muted); margin-bottom: 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  label { color: var(--muted); font-size: 13px; }
+  input, button, select {
+    font: inherit;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 10px;
+  }
+  input:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat b { display: block; font-size: 20px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+  .muted { color: var(--muted); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 12px; border: 1px solid var(--line); }
+  .tag.ok { color: var(--ok); border-color: var(--ok); }
+  .tag.off { color: var(--muted); }
+  .token-box {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px dashed var(--primary);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--primary) 8%, var(--card));
+  }
+  .token-box input { width: 100%; margin: 8px 0; }
+  .error { color: var(--danger); white-space: pre-wrap; }
+  .empty { color: var(--muted); padding: 12px 0; }
+  details { margin-top: 6px; }
+  summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MCP 访问令牌</h1>
+  <p class="sub">
+    访问令牌用于让外部 MCP 客户端（如 Claude、VS Code、自建脚本）调用本服务的工具。
+    每次工具调用都会从令牌所属用户的<strong>额外配额（补充配额）</strong>中扣费，并记录消费明细。
+    令牌明文只显示一次，请妥善保存。
+  </p>
+
+  <div class="card">
+    <div class="row">
+      <label for="uid">用户 ID</label>
+      <input id="uid" placeholder="与聊天页面相同的 uid" style="min-width:260px">
+      <button class="primary" id="load">加载</button>
+      <span class="muted" id="hint"></span>
+    </div>
+    <div class="stats" id="stats" style="margin-top:16px; display:none">
+      <div class="stat"><b id="paidBalance">-</b><span>剩余额外配额</span></div>
+      <div class="stat"><b id="tokenTotal">-</b><span>令牌数</span></div>
+      <div class="stat"><b id="callTotal">-</b><span>累计调用</span></div>
+      <div class="stat"><b id="costTotal">-</b><span>累计消费</span></div>
+      <div class="stat"><b id="defaultPrice">-</b><span>默认单次价格</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>创建令牌</h2>
+    <div class="row">
+      <label for="name">备注名</label>
+      <input id="name" placeholder="例如：我的 Claude" style="min-width:200px">
+      <label for="quotaLimit">令牌额度上限</label>
+      <input id="quotaLimit" type="number" min="0" value="0" style="width:130px" title="0 表示不限制，只受用户额外配额约束">
+      <label for="expiresInDays">有效天数</label>
+      <input id="expiresInDays" type="number" min="0" value="0" style="width:110px" title="0 表示永不过期">
+      <button class="primary" id="create">创建</button>
+    </div>
+    <div id="created" class="token-box" style="display:none">
+      <div>新令牌已创建，<strong>关闭后无法再次查看明文</strong>：</div>
+      <input id="createdToken" class="mono" readonly>
+      <div class="row">
+        <button id="copy">复制</button>
+        <a class="muted" id="example">查看配置示例</a>
+      </div>
+      <pre id="exampleBox" class="mono" style="display:none; overflow:auto; background:var(--bg); padding:10px; border-radius:8px"></pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>我的令牌</h2>
+    <div id="tokens"></div>
+  </div>
+
+  <div class="card">
+    <h2>消费记录</h2>
+    <div class="row" style="margin-bottom:8px">
+      <label for="limit">最近条数</label>
+      <input id="limit" type="number" min="1" max="500" value="50" style="width:100px">
+      <button id="refreshUsage">刷新</button>
+    </div>
+    <div id="usage"></div>
+  </div>
+
+  <div id="error" class="error"></div>
+</div>
+
+<script>
+(function () {
+  var API = location.pathname.replace(/\/aichat\/mcptoken\/?$/, '') + '/mcp';
+  var uidInput = document.getElementById('uid');
+  var params = new URLSearchParams(location.search);
+  var uid = params.get('uid') || params.get('userId') || '';
+  uidInput.value = uid;
+
+  function esc(text) {
+    return String(text == null ? '' : text).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function fmtTime(value) {
+    if (!value) return '-';
+    var date = new Date(Number(value));
+    if (isNaN(date.getTime())) return '-';
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' +
+      pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+  }
+
+  function showError(message) {
+    document.getElementById('error').textContent = message ? String(message) : '';
+  }
+
+  async function api(path, options) {
+    var response = await fetch(API + path, options || {});
+    var text = await response.text();
+    var json;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch (ex) {
+      throw new Error('服务端返回了非 JSON 内容（HTTP ' + response.status + '）：' + text.slice(0, 200));
+    }
+    if (!response.ok || json.ok === false) {
+      throw new Error(json.error || ('HTTP ' + response.status));
+    }
+    return json.data || {};
+  }
+
+  function currentUid() {
+    var value = uidInput.value.trim();
+    if (!value) {
+      throw new Error('请先填写用户 ID');
+    }
+    return value;
+  }
+
+  async function loadTokens() {
+    showError('');
+    var data = await api('/token?uid=' + encodeURIComponent(currentUid()));
+    var tokens = data.tokens || [];
+    document.getElementById('stats').style.display = 'flex';
+    document.getElementById('paidBalance').textContent = data.paidBalance == null ? '-' : data.paidBalance;
+    document.getElementById('defaultPrice').textContent = data.defaultPrice == null ? '-' : data.defaultPrice;
+    document.getElementById('tokenTotal').textContent = tokens.length;
+
+    var rows = tokens.map(function (token) {
+      var quota = token.quotaLimit > 0 ? (token.quotaUsed + ' / ' + token.quotaLimit)
+        : (token.quotaUsed + ' / 不限');
+      return '<tr>' +
+        '<td class="mono">' + esc(token.tokenPrefix) + '…</td>' +
+        '<td>' + esc(token.name || '-') + '</td>' +
+        '<td>' + esc(quota) + '</td>' +
+        '<td>' + esc(token.callCount) + '</td>' +
+        '<td>' + (token.enabled ? '<span class="tag ok">启用</span>' : '<span class="tag off">已停用</span>') + '</td>' +
+        '<td class="muted">' + esc(token.expiresAt ? fmtTime(token.expiresAt) : '永不') + '</td>' +
+        '<td class="muted">' + esc(token.lastUsedAt ? fmtTime(token.lastUsedAt) : '从未使用') + '</td>' +
+        '<td><button class="danger" data-revoke="' + esc(token.id) + '">' + (token.enabled ? '停用' : '删除') +
+        '</button></td>' +
+        '</tr>';
+    }).join('');
+
+    document.getElementById('tokens').innerHTML = tokens.length
+      ? '<table><thead><tr><th>前缀</th><th>备注</th><th>已用额度</th><th>调用次数</th><th>状态</th>' +
+        '<th>过期时间</th><th>最后使用</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+      : '<div class="empty">还没有令牌，先在上方创建一个。</div>';
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-revoke]'), function (button) {
+      button.addEventListener('click', function () {
+        revokeToken(button.getAttribute('data-revoke'), button.textContent === '删除');
+      });
+    });
+    await loadUsage(tokens);
+  }
+
+  async function loadUsage(tokens) {
+    var limit = Math.max(1, Math.min(500, Number(document.getElementById('limit').value) || 50));
+    var data = await api('/usage?uid=' + encodeURIComponent(currentUid()) + '&limit=' + limit);
+    var stats = data.statistics || {};
+    document.getElementById('callTotal').textContent = stats.callTotal || 0;
+    document.getElementById('costTotal').textContent = stats.costTotal || 0;
+    var tokenNames = {};
+    (tokens || []).forEach(function (token) { tokenNames[token.id] = token.name || token.tokenPrefix; });
+    var records = data.records || [];
+    if (!records.length) {
+      document.getElementById('usage').innerHTML = '<div class="empty">暂无消费记录。</div>';
+      return;
+    }
+    var rows = records.map(function (record) {
+      return '<tr>' +
+        '<td class="muted">' + esc(record.createdAtText || fmtTime(record.createdAt)) + '</td>' +
+        '<td>' + esc(tokenNames[record.tokenId] || ('#' + record.tokenId)) + '</td>' +
+        '<td class="mono">' + esc(record.tool) + '</td>' +
+        '<td>' + esc(record.cost) + '</td>' +
+        '<td>' + (record.ok ? '<span class="tag ok">成功</span>' : '<span class="tag off">失败</span>') + '</td>' +
+        '<td class="muted">' + esc(record.durationMs) + ' ms</td>' +
+        '<td class="muted">' + esc(record.error || '') + '</td>' +
+        '</tr>';
+    }).join('');
+    document.getElementById('usage').innerHTML = '<table><thead><tr><th>时间</th><th>令牌</th><th>工具</th>' +
+      '<th>消费</th><th>结果</th><th>耗时</th><th>说明</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  async function revokeToken(id, remove) {
+    var action = remove ? '删除' : '停用';
+    if (!confirm('确认要' + action + '该令牌吗？')) {
+      return;
+    }
+    try {
+      await api(remove ? '/token/delete' : '/token/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: currentUid(), id: Number(id) })
+      });
+      await loadTokens();
+    } catch (ex) {
+      showError(ex.message);
+    }
+  }
+
+  async function createToken() {
+    showError('');
+    document.getElementById('created').style.display = 'none';
+    var body = {
+      uid: uidInput.value.trim(),
+      name: document.getElementById('name').value.trim(),
+      quotaLimit: Number(document.getElementById('quotaLimit').value) || 0,
+      expiresInDays: Number(document.getElementById('expiresInDays').value) || 0
+    };
+    if (!body.uid) {
+      showError('请先填写用户 ID');
+      return;
+    }
+    try {
+      var data = await api('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      document.getElementById('createdToken').value = data.token;
+      document.getElementById('created').style.display = 'block';
+      document.getElementById('exampleBox').textContent = JSON.stringify({
+        mcpServers: {
+          aiwuxia: {
+            type: 'http',
+            url: location.origin + API,
+            headers: { Authorization: 'Bearer ' + data.token }
+          }
+        }
+      }, null, 2);
+      await loadTokens();
+    } catch (ex) {
+      showError(ex.message);
+    }
+  }
+
+  document.getElementById('load').addEventListener('click', function () {
+    loadTokens().catch(function (ex) { showError(ex.message); });
+  });
+  document.getElementById('create').addEventListener('click', createToken);
+  document.getElementById('refreshUsage').addEventListener('click', function () {
+    loadTokens().catch(function (ex) { showError(ex.message); });
+  });
+  document.getElementById('copy').addEventListener('click', function () {
+    var input = document.getElementById('createdToken');
+    input.select();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(input.value).catch(function () {});
+    } else {
+      document.execCommand('copy');
+    }
+  });
+  document.getElementById('example').addEventListener('click', function (event) {
+    event.preventDefault();
+    var box = document.getElementById('exampleBox');
+    box.style.display = box.style.display === 'none' ? 'block' : 'none';
+  });
+  uidInput.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') {
+      loadTokens().catch(function (ex) { showError(ex.message); });
+    }
+  });
+
+  if (uid) {
+    loadTokens().catch(function (ex) { showError(ex.message); });
+  }
+})();
+</script>
+</body>
+</html>

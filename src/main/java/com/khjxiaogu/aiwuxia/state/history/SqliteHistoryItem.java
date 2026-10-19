@@ -58,6 +58,8 @@ class SqliteHistoryItem implements HistoryItem {
 	int identifier = -1;
 	int prevIdentifier = -1;
 	long tokenLength = 0;
+	/** 所属对话轮次消耗的配额（token），与 {@link #tokenLength} 无关 */
+	double tokenCost = 0;
 	Role role;
 	boolean shouldSend;
 	boolean deleted = false;
@@ -163,6 +165,11 @@ class SqliteHistoryItem implements HistoryItem {
 	@Override
 	public long getTokenLength() {
 		return tokenLength;
+	}
+
+	@Override
+	public double getTokenCost() {
+		return tokenCost;
 	}
 
 	@Override

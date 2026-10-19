@@ -271,6 +271,18 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	void setTokenLength(HistoryItem hi, long l);
 
 	/**
+	 * 设置指定条目所属对话轮次消耗的配额（token）。
+	 * <p>
+	 * 与 {@link #setTokenLength(HistoryItem, long)} 不同：令牌长度用于上下文窗口管理，
+	 * 本方法是这一轮实际产生的配额用量，会随条目持久化（SQLite 历史写入 {@code token_cost} 列）。
+	 * </p>
+	 *
+	 * @param hi        历史条目
+	 * @param tokenCost 本轮配额用量
+	 */
+	void setTokenCost(HistoryItem hi, double tokenCost);
+
+	/**
 	 * 设置指定条目的最后应用状态。
 	 *
 	 * @param hi        历史条目

@@ -341,6 +341,11 @@ class SessionWriteContext implements HistoryWriteContext {
 	}
 
 	@Override
+	public double getTokenCost() {
+		return item.getTokenCost();
+	}
+
+	@Override
 	public boolean maySendReasoner() {
 		return item.maySendReasoner();
 	}
@@ -505,6 +510,19 @@ class SessionWriteContext implements HistoryWriteContext {
 				mutable().setTokenLength(tokenLength);
 			} else {
 				session.getHistory().setTokenLength(item, tokenLength);
+			}
+			session.setUpdated();
+		}
+	}
+
+	@Override
+	public void setTokenCost(double tokenCost) {
+		synchronized (writeLock) {
+			checkWritable();
+			if (pending) {
+				mutable().setTokenCost(tokenCost);
+			} else {
+				session.getHistory().setTokenCost(item, tokenCost);
 			}
 			session.setUpdated();
 		}

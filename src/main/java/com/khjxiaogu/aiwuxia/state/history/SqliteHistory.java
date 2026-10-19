@@ -98,6 +98,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	private final PreparedStatement updateSendReasonerStmt;
 	private final PreparedStatement updateAudioIdStmt;
 	private final PreparedStatement updateTokenLengthStmt;
+	private final PreparedStatement updateTokenCostStmt;
 	private final PreparedStatement deleteMetaStmt;
 	private final PreparedStatement selectByIdStmt;
 	private final PreparedStatement selectMaxIdStmt;
@@ -155,8 +156,13 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 					+ "deleted INTEGER NOT NULL DEFAULT 0, "
 					+ "send_reasoner INTEGER NOT NULL DEFAULT 0, "
 					+ "audio_id TEXT, "
-					+ "token_length INTEGER NOT NULL DEFAULT 0"
+					+ "token_length INTEGER NOT NULL DEFAULT 0, "
+					+ "token_cost REAL NOT NULL DEFAULT 0"
 					+ ")");
+			// 旧库没有 token_cost 列：补上，已有条目的本轮配额按 0 处理
+			if (!hasColumn(stmt, "history", "token_cost")) {
+				stmt.execute("ALTER TABLE history ADD COLUMN token_cost REAL NOT NULL DEFAULT 0");
+			}
 		}
 
 		// 初始化 idCounter
@@ -171,8 +177,8 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 		// 预编译 SQL
 		insertStmt = conn.prepareStatement(
 				"INSERT INTO history (identifier, prev_identifier, role, "
-				+ "should_send, deleted, send_reasoner, audio_id, token_length) "
-				+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+				+ "should_send, deleted, send_reasoner, audio_id, token_length, token_cost) "
+				+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
 		updateShouldSendStmt = conn.prepareStatement(
 				"UPDATE history SET should_send=? WHERE identifier=?");
@@ -184,13 +190,15 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 				"UPDATE history SET audio_id=? WHERE identifier=?");
 		updateTokenLengthStmt = conn.prepareStatement(
 				"UPDATE history SET token_length=? WHERE identifier=?");
+		updateTokenCostStmt = conn.prepareStatement(
+				"UPDATE history SET token_cost=? WHERE identifier=?");
 
 		deleteMetaStmt = conn.prepareStatement(
 				"DELETE FROM history WHERE identifier=?");
 
 		selectByIdStmt = conn.prepareStatement(
 				"SELECT identifier, prev_identifier, role, should_send, "
-				+ "deleted, send_reasoner, audio_id, token_length "
+				+ "deleted, send_reasoner, audio_id, token_length, token_cost "
 				+ "FROM history WHERE identifier=?");
 
 		selectMaxIdStmt = conn.prepareStatement(
@@ -205,6 +213,29 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 	}
 
 	// ── HeavyDataProvider ─────────────────────────────────
+
+	/**
+	 * 判断指定表是否已经有某一列。
+	 * <p>
+	 * 用于旧库的列迁移：{@code CREATE TABLE IF NOT EXISTS} 不会给已存在的表补列，
+	 * 需要按 {@code PRAGMA table_info} 判断后再 {@code ALTER TABLE}。
+	 * </p>
+	 *
+	 * @param stmt   可复用的语句对象
+	 * @param table  表名
+	 * @param column 列名
+	 * @return 已存在返回 {@code true}
+	 * @throws SQLException 查询失败
+	 */
+	private static boolean hasColumn(Statement stmt, String table, String column) throws SQLException {
+		try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(" + table + ")")) {
+			while (rs.next()) {
+				if (column.equalsIgnoreCase(rs.getString("name")))
+					return true;
+			}
+		}
+		return false;
+	}
 
 	@Override
 	public void loadHeavy(SqliteHistoryItem item) {
@@ -262,6 +293,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 					if (rs.wasNull())
 						item.audioId = null;
 					item.tokenLength = rs.getLong(8);
+					item.tokenCost = rs.getDouble(9);
 					cache.put(identifier, item);
 				}
 			}
@@ -325,6 +357,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 			insertStmt.setInt(6, pending.maySendReasoner() ? 1 : 0);
 			insertStmt.setString(7, pending.getAudioId());
 			insertStmt.setLong(8, pending.getTokenLength());
+			insertStmt.setDouble(9, pending.getTokenCost());
 			insertStmt.executeUpdate();
 		} catch (SQLException e) {
 			throw new RuntimeException(e);
@@ -338,6 +371,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 		committed.sendReasoner = pending.maySendReasoner();
 		committed.audioId = pending.getAudioId();
 		committed.tokenLength = pending.getTokenLength();
+		committed.tokenCost = pending.getTokenCost();
 		committed.displayContent = new MutableMessageContents(pending.getDisplayContent());
 		committed.contextContent = pending.hasContextContent()
 				? new MutableMessageContents(pending.getContextContent())
@@ -408,6 +442,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 			insertStmt.setInt(6, 0);
 			insertStmt.setString(7, null);
 			insertStmt.setLong(8, 0);
+			insertStmt.setDouble(9, 0);
 			insertStmt.executeUpdate();
 		} catch (SQLException e) {
 			throw new RuntimeException(e);
@@ -625,6 +660,32 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 			updateTokenLengthStmt.setLong(1, l);
 			updateTokenLengthStmt.setInt(2, item.identifier);
 			updateTokenLengthStmt.executeUpdate();
+		} catch (SQLException e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	/**
+	 * 设置指定条目所属对话轮次消耗的配额（token），写入数据库的 {@code token_cost} 列。
+	 *
+	 * @param hi        历史条目
+	 * @param tokenCost 本轮配额用量
+	 */
+	@Override
+	public void setTokenCost(HistoryItem hi, double tokenCost) {
+		if (hi instanceof MutableHistoryItem) {
+			// 未完成条目：只改内存状态，它还没有数据库行（提交时才写进去）
+			((MutableHistoryItem) hi).setTokenCost(tokenCost);
+			return;
+		}
+		if (!(hi instanceof SqliteHistoryItem))
+			return;
+		SqliteHistoryItem item = (SqliteHistoryItem) hi;
+		item.tokenCost = tokenCost;
+		try {
+			updateTokenCostStmt.setDouble(1, tokenCost);
+			updateTokenCostStmt.setInt(2, item.identifier);
+			updateTokenCostStmt.executeUpdate();
 		} catch (SQLException e) {
 			throw new RuntimeException(e);
 		}
@@ -849,6 +910,7 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 			updateSendReasonerStmt.close();
 			updateAudioIdStmt.close();
 			updateTokenLengthStmt.close();
+			updateTokenCostStmt.close();
 			deleteMetaStmt.close();
 			selectByIdStmt.close();
 			selectMaxIdStmt.close();

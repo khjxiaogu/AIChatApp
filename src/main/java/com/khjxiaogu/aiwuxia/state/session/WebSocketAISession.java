@@ -141,6 +141,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("generating", isGenerating())
 				.add("conversation_id", chatId)
 				.add("price", this.getPrice())
+				.add("tokens", this.getLastTurnTokens())
 				.add("isVoiceEnabled",super.getExtraData().isAudioSession)
 				.add("isVoiceUsable",hasAudioService)
 				.add("models", buildModelList())
@@ -750,13 +751,15 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 					}
 				}
 			}
-			// 统一协议：每条历史记录只带结构化 content 与思考过程
+			// 统一协议：每条历史记录只带结构化 content、思考过程与本轮配额用量
 			JsonObjectBuilder<JsonArrayBuilder<JsonObjectBuilder<JsonObject>>> ix=ja.object()
 				.add("id", i.getIdentifier())
 				.add("title", getRoleName(i.getRole()))
 				// role 为内部小写标识，前端据此判断消息归属
 				.add("role", i.getRole().getRoleName())
 				.add("thinking", thinking)
+				// 本轮配额用量（该条记录所属轮次的累计 getEquivantTokens 增加值），只有数值、不带明细
+				.add("token_cost", i.getTokenCost())
 				.add("content", contentsToJson(i.getDisplayContent()));
 			if(i.getAudioId()!=null)
 				ix.add("audioId", i.getAudioId());
@@ -782,7 +785,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 * </p>
 	 */
 	protected void sendGenerationStatus() {
-		sendFrame(JsonBuilder.object().add("type", "status").add("generating", isGenerating()).end().toString());
+		sendFrame(JsonBuilder.object().add("type", "status").add("generating", isGenerating())
+				.add("tokens", getLastTurnTokens()).end().toString());
 	}
 
 	@Override
@@ -803,9 +807,11 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		
 		parent.setPrice(chatId, price);
 		super.onGenComplete();
+		// tokens 为本轮新增的配额用量（累计 getEquivantTokens 的增加值），只有数值、不带明细
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object()
 				.add("type", "done")
-				.add("price",price).end().toString()));
+				.add("price",price)
+				.add("tokens",getLastTurnTokens()).end().toString()));
 		if(this.conn.isEmpty()) {
 			parent.markRelease(this);
 		}

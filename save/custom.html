@@ -50,6 +50,13 @@
 		.setting-export-btn:hover {
 			background: #2a7fff;
 		}
+		/* 本轮配额用量：显示在该轮回复下方，只给数值、不带明细 */
+		.token-cost {
+			margin-top: 2px;
+			font-size: 0.75rem;
+			opacity: 0.6;
+			user-select: none;
+		}
     </style>
 </head>
 <body>
@@ -108,6 +115,8 @@
 					<div v-for="msg2 in aiRevealedLines(msg)">
 						<template v-if="msg2.length>0"><template v-if="msg.title !== '系统'&&msg.title!=''">【{{ msg.title }}】「</template><span v-html="msg2"></span><template v-if="msg.title !== '系统'&&msg.title!=''">」</template></template>
 					</div>
+					<!-- 本轮配额用量：历史记录随消息下发 token_cost，实时轮次由 done.tokens 补到本条 -->
+					<div v-if="msg.tokenCost > 0" class="token-cost" title="本轮对话消耗的配额">本轮配额 {{ formatTurnTokens(msg.tokenCost) }}</div>
 					<!-- 撤回/重说/朗读跟随最新一条消息，避免占用手边的工具栏；生成过程中不显示 -->
 					<div class="msg-actions" v-if="idx === recentMessages.length - 1 && aiConnected && !aiGenerating">
 						<button class="btn msg-action-btn" v-if="!lastMessageIsUser" @click="aiSendRegen" title="重新生成这条回复"><svg class="msg-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>重说</button>
@@ -476,12 +485,15 @@
 						}else if(frame.type=='message'){
 							var full=this.aiContentToText(frame.content);
 							var exist=this.messages.find(m=>m.id===frame.id);
+							// 该条记录所属轮次的配额用量（message 帧通常为 0，实时值随 done.tokens 补上）
+							var cost=Number(frame.token_cost)||0;
 							if(exist){
 								// 同一标识的消息已存在（例如流式过程中补齐）：更新全文并继续揭示
 								exist.text=full;
+								if(cost>0) exist.tokenCost=cost;
 								this.aiRevealStart(exist);
 							}else{
-								var msg=this.addMessage(frame.id,frame.title,full,frame.audioId,frame.role);
+								var msg=this.addMessage(frame.id,frame.title,full,frame.audioId,frame.role,cost);
 								msg.revealed=0;
 								this.aiRevealStart(msg);
 							}
@@ -519,7 +531,7 @@
 									if(known[old.id]) continue;
 									known[old.id]=true;
 								}
-								incoming.push({text:old.text,title:old.title,id:old.id,audioId:old.audioId,role:old.role,revealed:null});
+								incoming.push({text:old.text,title:old.title,id:old.id,audioId:old.audioId,role:old.role,revealed:null,tokenCost:old.tokenCost});
 							}
 							for(var j=incoming.length-1;j>=0;j--){
 								this.messages.unshift(incoming[j]);
@@ -545,7 +557,7 @@
 								this.messages.push(kept[k]);
 							}
 							for(var i=0;i<items.length;i++){
-								this.addMessage(items[i].id,items[i].title,items[i].text,items[i].audioId,items[i].role);
+								this.addMessage(items[i].id,items[i].title,items[i].text,items[i].audioId,items[i].role,items[i].tokenCost);
 							}
 						}
 					},
@@ -557,6 +569,23 @@
 							if(id!=null&&(oldest===null||id<oldest)) oldest=id;
 						}
 						return oldest===null?0:oldest;
+					},
+					// 本轮结束：把 done.tokens 记到本轮回复上，历史重载后由 token_cost 提供同样的值
+					aiOnDone(frame){
+						var cost=Number(frame&&frame.tokens)||0;
+						if(cost<=0) return;
+						for(var i=this.messages.length-1;i>=0;i--){
+							if(this.messages[i].role==='assistant'){
+								this.messages[i].tokenCost=cost;
+								return;
+							}
+						}
+					},
+					// 本轮配额用量的展示格式：只保留最多两位小数
+					formatTurnTokens(value){
+						var num=Number(value);
+						if(!isFinite(num)) return '0';
+						return num.toLocaleString('zh-CN', {maximumFractionDigits: 2});
 					},
 					openApp(app,id,done){
 						this.chatId=id;
@@ -585,8 +614,8 @@
 		                     }
 		                 });
 		             },
-		             addMessage(id,title,text,aid,role) {
-		                 const msg={ text: text, title: title, id: id , audioId:aid, role: role || (title === this.aiUserTitle ? 'user' : 'assistant'), revealed: null };
+		             addMessage(id,title,text,aid,role,tokenCost) {
+		                 const msg={ text: text, title: title, id: id , audioId:aid, role: role || (title === this.aiUserTitle ? 'user' : 'assistant'), revealed: null, tokenCost: tokenCost || 0 };
 		                 this.messages.push(msg);
 		                 this.$nextTick(() => {
 		                     const textarea = this.$refs.messageInput;

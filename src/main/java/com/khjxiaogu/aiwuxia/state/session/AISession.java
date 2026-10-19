@@ -167,6 +167,11 @@ public class AISession implements ISaveData,AutoCloseable{
 	protected final ExecutorService commandExec;
 	/** 标记当前是否正在生成 AI 输出（用于避免重复触发或状态冲突） */
 	volatile transient boolean isGenerating;
+
+	/** 本轮生成开始时的累计配额用量快照，用于算出本轮增量 */
+	private double turnUsageBase;
+	/** 本轮新增的配额用量（累计用量相比开始时的增加值），生成结束时更新 */
+	private volatile double lastTurnTokens;
 	
 	volatile transient AIOutput currentOutput;
 
@@ -877,9 +882,16 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 
 	/**
-	 * 当生成完成时调用，清除生成标记并设置更新标记。
+	 * 当生成完成时调用，结算本轮配额用量，清除生成标记并设置更新标记。
 	 */
 	public void onGenComplete() {
+		// 本轮配额用量 = 累计用量相比开始时快照的增加值；按 0.01 取整，避免浮点误差带出尾巴
+		double delta = getExtraData().usage.getTotalEquivantTokens() - turnUsageBase;
+		lastTurnTokens = delta > 0 ? Math.round(delta * 100d) / 100d : 0;
+		// 把本轮配额记到本轮回复（最后一条助手记录）上：历史分页/重新加载后仍能显示
+		HistoryItem reply = getLast();
+		if (reply != null && reply.getRole() == Role.ASSISTANT)
+			setTokenCost(reply, lastTurnTokens);
 		setUpdated();
 		isGenerating = false;
 		this.currentOutput=null;
@@ -932,6 +944,28 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 	public float getTokens() {
 		return getExtraData().usage.getTotalTokenPrice();
+	}
+
+	/**
+	 * 获取累计配额用量（全部用量对象的 {@code getEquivantTokens()} 合计）。
+	 *
+	 * @return 累计配额用量
+	 */
+	public double getTotalEquivantTokens() {
+		return getExtraData().usage.getTotalEquivantTokens();
+	}
+
+	/**
+	 * 获取本轮对话新增的配额用量。
+	 * <p>
+	 * 即本轮生成期间 {@code getEquivantTokens()} 总和的增加值：{@link #onGenerateStart()} 记下当时的累计值，
+	 * {@link #onGenComplete()} 用新的累计值相减得到。没有详情，只给一个数；还没生成过时为 0。
+	 * </p>
+	 *
+	 * @return 本轮新增配额用量
+	 */
+	public double getLastTurnTokens() {
+		return lastTurnTokens;
 	}
 	/**
 	 * 获取当前对话阶段。
@@ -1069,9 +1103,16 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 
 	/**
-	 * 标记生成过程开始，设置 {@link #isGenerating} 为 true。
+	 * 标记生成过程开始，设置 {@link #isGenerating} 为 true，并记下本轮开始时的累计配额用量。
+	 * <p>
+	 * 记下的值用于在 {@link #onGenComplete()} 时算出本轮新增的配额用量
+	 * （{@link #getLastTurnTokens()}）。
+	 * </p>
 	 */
 	public void onGenerateStart() {
+		// 先取快照再置生成标记：本轮后续产生的用量都算在这一轮里
+		turnUsageBase = getExtraData().usage.getTotalEquivantTokens();
+		lastTurnTokens = 0;
 		isGenerating = true;
 	}
 
@@ -1230,6 +1271,15 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 	public void setTokenLength(HistoryItem hi, long l) {
 		getHistory().setTokenLength(hi, l);
+	}
+	/**
+	 * 设置指定历史条目所属对话轮次消耗的配额（token）。
+	 *
+	 * @param hi        历史条目
+	 * @param tokenCost 本轮配额用量
+	 */
+	public void setTokenCost(HistoryItem hi, double tokenCost) {
+		getHistory().setTokenCost(hi, tokenCost);
 	}
 
 

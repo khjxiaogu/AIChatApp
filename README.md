@@ -171,17 +171,29 @@ public static void main(String[] args) {
 ### 让 Deepseek Harness 接管 QQ（DeepseekHarnessConnector）
 
 `DeepseekHarnessConnector` 与 `NapCatAIConnector` 方向相反：不再由 AIWuxia 的 AI 应用作答，
-而是把 QQ 消息转给 **Deepseek Harness** 运行时，再把它的正文与思维链转发回 QQ。
+而是把 QQ 消息转给 **Deepseek Harness** 运行时，再把它的输出转发回 QQ。
 
 工作方式：
 
-1. 以 `dsh --profile sdk` 拉起 Deepseek Harness，通过官方 SDK 协议（stdio 上按换行分帧的 JSON-RPC 2.0）
-   握手、投递消息、接收 `session.event` / `session.status` 通知；
+1. 以 `dsh --profile web` 拉起 Deepseek Harness：这个表层会起一个**浏览器界面**，
+   并通过 `--patch` 覆盖层补上 SDK 的 stdio JSON-RPC 服务端。两边在同一进程里，
+   所以**界面里看到的正是连接器驱动的会话**。启动日志会打印带 token 的界面地址，
+   默认还会自动打开浏览器；
 2. 作为 OneBot v11 正向 WebSocket 客户端连接 NapCat；
-3. **只转发两样东西**：助手正文（`content[].type == "text"`）与思维链（`content[].type == "reasoning"`），
-   工具调用、系统提示、运行上下文等一律丢弃；
-4. 私聊消息直接视为发消息，群聊消息必须 **at 机器人** 才投递；
-5. 转发时按行切分，**每超过 20 个字的一行作为一条消息发送**（可用 `dsh_msg_limit` 调整）。
+3. **DSH 的输出先转成项目自己的消息模型**再发送：正文与思维链累积为
+   `MutableMessageContents`（纯文本段落），工具调用转成 `ToolCallContent`，工具结果转成 `ToolContent`。
+   发送时统一遍历 `MessageContents`，因此新增内容类型只需改一处；
+4. **只处理指定机器人在指定群的群消息**：`bot` / `group` 把本实例钉死在一个机器人账号的一个群里，
+   其它群、其它账号的事件直接忽略；**私聊消息一律不处理**；群消息还必须 at 机器人才投递；
+5. **不再按行拆分**：换行随文本一起保留，整段文本发成一条消息（超过 `dsh_msg_limit`
+   才按纯字数切开）。发送是**流式**的：单行攒到 `dsh_flush_line`（默认 700）字、或多行累计到
+   `dsh_flush_multiline`（默认 400）字就立刻推送；遇到**工具调用/工具结果**时也会先把已攒文本冲掉、
+   再把工具消息立刻发出，不必等整轮结束（同一次调用的多个工具合并成一条，只显示工具名）；
+   投递给模型的每条消息都会重申「本群管理员是 QQ `adminId`」，非管理员的发言会带
+   `untrusted="true"` 与 `[不可信]` 标记（涉及提权、删除、外发等要求先取得管理员同意）；
+6. **工具调用许可**：DSH 的审批 seam 只在进程内分发、SDK 协议并不承载审批，所以连接器用
+   `--patch` 覆盖层插入 `approval-bridge.mjs`，该插件把 `approval/request`
+   经本机回环 TCP 转给连接器，连接器在 QQ 里问「允许/拒绝」，再把决定原路返回。
 
 ```bash
 java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
@@ -194,23 +206,56 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 |------------------------|--------------------|---------------------------------|
 | `napcat_url`           | `127.0.0.1:3001`   | NapCat 的 OneBot 正向 WS 地址 host:port |
 | `napcat_token`         | 空                  | OneBot 访问令牌                     |
+| `bot`                  | `0`                | 只处理这个 QQ 号（bot 账号）收到的消息，`0` = 不限制 |
+| `group`                | `0`                | 只处理这个群的消息，`0` = 不限制            |
+| `adminId`              | `0`                | 管理员 QQ 号；每次投递都会声明，非管理员发言标记为不可信 |
 | `dsh_home`             | `~/.dsh`           | Deepseek Harness 的 DSH_HOME      |
+| `dsh_profile`          | `web`              | 启动的 dsh profile：`web` 带浏览器界面，`sdk` 纯无头 |
+| `dsh_web_port`         | `0`                | web 表层的端口，`0` 由系统分配（避免和桌面版 19387 冲突） |
+| `dsh_open_browser`     | `true`             | 是否让 web 表层自动打开浏览器（也可用日志里的地址手动打开） |
+| `dsh_agent_preset`     | `standard`         | agent preset：web 表层的**工具与提示词都由它挂载**，不设就没有工具 |
 | `dsh_root`             | 自动探测               | Deepseek Harness 安装根目录          |
 | `dsh_launcher`         | 自动探测               | 启动器路径（`DeepSeek Harness.exe` 或 `dsh.cmd`） |
 | `dsh_provider`         | `deepseek-account` | 模型提供方路由                         |
 | `dsh_model`            | `deepseek-flash`   | 模型 id                           |
 | `dsh_reasoning`        | `high`             | 推理强度，留空则不指定                     |
 | `dsh_cwd`              | `save/dsh-workspace` | 会话工作目录（agent 工具的活动范围）           |
-| `dsh_msg_limit`        | `20`               | 每条消息的字数上限                       |
+| `dsh_msg_limit`        | `300`              | 单条消息的最大字数（超过才按纯字数切开，不再按行拆）      |
+| `dsh_flush_line`       | `700`              | 单行文本攒到这么多字就**立刻发送**（不等整轮结束） |
+| `dsh_flush_multiline`  | `400`              | 多行文本累计到这么多字就**立刻发送**           |
 | `dsh_output_reasoning` | `true`             | 是否转发思维链                         |
-| `dsh_prefix`           | `true`             | 是否给消息加【思考】/【回复】前缀               |
-| `dsh_interval_ms`      | `200`              | 连续发送消息之间的间隔（毫秒）                 |
+| `dsh_reasoning_forward` | `false`           | 思维链**与工具调用**是否整轮合并成**一条转发消息**（打开后不再分段实时推送） |
+| `dsh_output_tools`     | `false`            | 是否转发工具调用与工具结果（同一次调用的多个工具合并成一条，**只显示工具名、不显示参数**） |
+| `dsh_prefix`           | `true`             | 是否给思维链加 💭、工具加 🔧（正文回复不加任何标签） |
+| `dsh_send_delay_min_ms` | `1000`            | 每条消息发出前随机等待的下限（等上一条回执之后）      |
+| `dsh_send_delay_max_ms` | `3000`            | 每条消息发出前随机等待的上限                   |
+| `dsh_send_ack_timeout_ms` | `15000`          | 等上一条发送回执的超时（毫秒）                  |
+| `dsh_like_emoji`       | `424`              | 被 at 时给该消息贴的表情 id，留空则关闭           |
 | `dsh_turn_timeout_ms`  | `300000`           | 单轮回复超时（毫秒）                      |
 | `dsh_max_messages`     | `200`              | 单轮最多发送多少条消息，防止刷屏                |
 | `dsh_guard_prompt`     | `true`             | 用 `qq-message` 信封隔离不可信聊天输入       |
 | `dsh_relay_context`    | `false`            | 群聊里未被 at 的消息是否作为上下文附带给模型        |
+| `dsh_approval`         | `qq`               | 工具许可：`qq` 在 QQ 里问用户、`allow` 一律放行、`deny` 一律拒绝、`off` 不接审批 |
+| `dsh_approval_timeout_ms` | `120000`        | 等用户答复工具许可的超时（毫秒），超时按拒绝处理        |
+| `dsh_watchdog`         | `true`             | DSH 侧看门狗：连接器消失后让它自己退出           |
+| `dsh_watchdog_interval_ms` | `10000`         | 心跳写入（也是看门狗检查）间隔                 |
+| `dsh_watchdog_timeout_ms`  | `30000`         | 心跳多久没更新就判定连接器已死                 |
 
-会话映射保存在 `save/dsh-sessions.json`（QQ 会话 → DSH sessionId），重启后对话不丢。
+工具许可开启时，**授权请求走私聊**：
+
+- 触发者是管理员本人 → 直接私聊管理员（你自己发起，私聊里回 `允许` / `拒绝` 即可）；
+- 触发者不是管理员 → 私聊管理员请求授权，同时私聊告知触发者「正在等待管理员批准」；
+- 管理员在私聊里回复 `允许` / `同意` / `1` / `ok` 表示放行，`拒绝` / `不同意` / `2` / `no` 表示拒绝；
+- 批复结果会回到群里，并私聊再通知一次非管理员触发者；
+- 这些回复会被连接器消费掉，不会变成新一轮对话；非管理员的私聊消息一律忽略。
+
+关闭行为分三层：连接器退出时关闭钩子会先发 SDK `shutdown` 再 `destroy`（实测 DSH 0.5 秒退出）；
+即使钩子没执行（被强杀），DSH 也会因为 stdin EOF 自行退出（同样约 0.5 秒）；
+若两者都没生效，插件的心跳看门狗会在 30 秒内把它收掉。
+
+运行时生成的文件：会话映射 `save/dsh-sessions.json`（QQ 会话 → DSH sessionId，重启后对话不丢）、
+插件副本 `save/dsh-approval-bridge.mjs`、`--patch` 覆盖层 `save/dsh-approval-patch.yml`（每次启动覆盖）、
+心跳文件 `save/dsh-heartbeat`（看门狗用）。
 
 ---
 

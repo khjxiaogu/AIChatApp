@@ -12,5 +12,12 @@
 /mimo.exe
 /.dshsrc
 /.build-check
-/.e2e
+/.e2e*
 /tools
+
+# DeepseekHarnessConnector 运行时生成
+/save/dsh-approval-bridge.mjs
+/save/dsh-approval-patch.yml
+/save/dsh-heartbeat
+/save/dsh-sessions.json
+/save/dsh-workspace/

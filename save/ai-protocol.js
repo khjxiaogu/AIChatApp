@@ -18,12 +18,15 @@
  *     }});
  *
  * 统一下行协议（服务端 -> 浏览器，全部带 type）：
- *   status{generating,[conversation_id,price,isVoiceEnabled,isVoiceUsable,models,modelTree,model]}
+ *   status{generating,[conversation_id,price,tokens,isVoiceEnabled,isVoiceUsable,models,modelTree,model]}
  *   model{model} / voice{isVoiceEnabled?|isVoiceUsable?} / notice{content} / sendbox{content}
  *   message{id,title,content[]} / content{id,content[]} / remove{id} / batch_messages{messages[],prepend,hasMore,oldestId,newestId}
- *   thinking{content} / tool_call{tool_name} / audio{id,audioId} / done{price} / scene{scene,scene_data}
+ *   thinking{content} / tool_call{tool_name} / audio{id,audioId} / done{price,tokens} / scene{scene,scene_data}
  *   input{input,prompt} / toolApproval{...} / toolApprovalResult{...} / local_request{...} / pong{id}
- * 其中 content[] 为结构化内容数组（{type:"text",text}/{type:"image",image_url}/...）。
+ * 其中 content[] 为结构化内容数组（{type:"text",text}/{type:"image",image_url}/...）；
+ * tokens 为本轮新增的配额用量（当轮累计 getEquivantTokens 的增加值，只有数值、不带明细）；
+ * 历史记录（batch_messages 的每一项）另带 token_cost，表示该条记录所属轮次的配额用量
+ * （标准化后为 aiOnBatch 收到的 items[].tokenCost），实时轮次的同一个值由 done.tokens 下发。
  */
 (function (global) {
 	'use strict';
@@ -139,6 +142,7 @@
 				aiGenerating: false,       // 服务端是否正在生成（status.generating，done 会复位）
 				aiStopping: false,         // 是否已请求停止、正在等服务端结束本轮（aiSendStop 置位，done/status 复位）
 				aiPrice: '0.00',           // 本会话消费价格（status.price / done.price）
+				aiTurnTokens: 0,           // 本轮新增配额用量（status.tokens / done.tokens），只有数值不带明细
 				aiVoiceEnabled: false,     // 语音会话开关（status.isVoiceEnabled / voice.isVoiceEnabled）
 				aiVoiceUsable: false,      // 当前是否可用语音（status.isVoiceUsable / voice.isVoiceUsable）
 				aiModel: '',               // 当前生效模型标识（status.model / model.model，空为默认模型）
@@ -1061,6 +1065,9 @@
 						this.aiStopping = false;
 						if (frame.price != null)
 							this.aiPrice = formatPrice(frame.price);
+						// 本轮配额用量（累计 getEquivantTokens 的增加值），只有数值、不带明细
+						if (frame.tokens != null)
+							this.aiTurnTokens = Number(frame.tokens) || 0;
 						this.aiOnDone(frame);
 						return;
 					case 'batch_messages':
@@ -1138,6 +1145,8 @@
 				}
 				if (frame.price != null)
 					this.aiPrice = formatPrice(frame.price);
+				if (frame.tokens != null)
+					this.aiTurnTokens = Number(frame.tokens) || 0;
 				if (frame.isVoiceEnabled != null)
 					this.aiVoiceEnabled = !!frame.isVoiceEnabled;
 				if (frame.isVoiceUsable != null)
@@ -1171,7 +1180,7 @@
 				this._aiMsgKeySeq = (this._aiMsgKeySeq || 0) + 1;
 				return 'k' + this._aiMsgKeySeq;
 			},
-			/** 把一批历史记录标准化为 {id,title,role,text,content,thinking,audioId} */
+			/** 把一批历史记录标准化为 {id,title,role,text,content,thinking,audioId,tokenCost} */
 			aiNormalizeBatchItems: function (messages) {
 				var items = [];
 				if (!Array.isArray(messages))
@@ -1186,6 +1195,8 @@
 						text: contentToText(m.content),
 						thinking: Array.isArray(m.thinking) ? m.thinking : [],
 						audioId: m.audioId != null ? m.audioId : null,
+						// 该条记录所属轮次的配额用量（服务端历史字段 token_cost）
+						tokenCost: Number(m.token_cost) || 0,
 					});
 				}
 				return items;

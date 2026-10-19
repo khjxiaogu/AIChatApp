@@ -125,6 +125,20 @@ public interface HistoryItem {
 	long getTokenLength();
 
 	/**
+	 * 获取该条目所属对话轮次消耗的配额（token）。
+	 * <p>
+	 * 与 {@link #getTokenLength()} 不是一回事：后者是用于上下文窗口管理的模拟令牌数，
+	 * 本方法是这一轮实际产生的配额用量（当轮累计 {@code getEquivantTokens} 的增加值），
+	 * 通常只挂在轮次回复（助手条目）上，历史重新加载后仍能显示。
+	 * </p>
+	 *
+	 * @return 本轮配额用量，没有记录时为 0
+	 */
+	default double getTokenCost() {
+		return 0;
+	}
+
+	/**
 	 * 判断是否允许将推理内容发送给客户端。
 	 *
 	 * @return {@code true} 如果允许发送推理内容；{@code false} 否则
