@@ -56,7 +56,7 @@ public class McpHttpClient extends McpClientBase {
      * 创建 HTTP 客户端。
      *
      * @param name 客户端名称
-     * @param url  MCP 端点地址（例如 {@code http://127.0.0.1:8999/mcp}）
+     * @param url  MCP 端点地址（例如 {@code http://127.0.0.1:8999/aichat/mcp}）
      */
     public McpHttpClient(String name, String url) {
         this(name, url, null, null, 10000, 60000);

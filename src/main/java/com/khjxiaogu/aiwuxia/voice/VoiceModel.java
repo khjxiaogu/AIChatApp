@@ -48,4 +48,19 @@ public interface VoiceModel {
 	boolean canProcessVoice(String roleName);
 	boolean isHinted(String modelName);
 
+	/**
+	 * 是否配置了指定音色（不检查服务是否在线）。
+	 * <p>
+	 * {@link #canProcessVoice(String)} 表示"现在能否真正合成"，可能包含在线检查；
+	 * 本方法只表示"配置里有没有这个音色"，用于前端判断是否展示朗读入口。
+	 * 远端接口没有额外的在线状态，默认与 {@link #canProcessVoice(String)} 一致。
+	 * </p>
+	 *
+	 * @param roleName 音色标识
+	 * @return 配置中存在该音色时返回 true
+	 */
+	default boolean supportsVoice(String roleName) {
+		return canProcessVoice(roleName);
+	}
+
 }

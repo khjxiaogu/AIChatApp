@@ -31,6 +31,7 @@
 | `void prepareScene(AISession state)` | 准备场景图片数据（要求线程安全、只读），配合 `state.sendSceneContent(...)` |
 | `String getRoleName(AISession state, Role role)` | 自定义角色显示名（`Role.ASSISTANT` 换成角色名） |
 | `CompletableFuture<Boolean> generateVoice(AISession state, String text, String audioId)` | 生成语音，默认返回 `false`（不生成） |
+| `boolean supportsVoice()` | 是否声明本应用包含朗读服务；默认 `false`，`talk` 返回 `true`。前端据此展示朗读入口，与语音服务是否在线无关 |
 | `void onload(AISession state)` | 默认实现就是 `provideInitial(state)`，一般不用覆写 |
 | `String constructBackLog(AISession state)` | 导出/调试用的纯文本历史 |
 

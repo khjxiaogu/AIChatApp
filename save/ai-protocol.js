@@ -18,8 +18,8 @@
  *     }});
  *
  * 统一下行协议（服务端 -> 浏览器，全部带 type）：
- *   status{generating,[conversation_id,price,tokens,isVoiceEnabled,isVoiceUsable,models,modelTree,model]}
- *   model{model} / voice{isVoiceEnabled?|isVoiceUsable?} / notice{content} / sendbox{content}
+ *   status{generating,[conversation_id,price,tokens,isVoiceEnabled,isVoiceSupported,isVoiceUsable,models,modelTree,model]}
+ *   model{model} / voice{isVoiceEnabled?|isVoiceSupported?|isVoiceUsable?} / notice{content} / sendbox{content}
  *   message{id,title,content[]} / content{id,content[]} / remove{id} / batch_messages{messages[],prepend,hasMore,oldestId,newestId}
  *   thinking{content} / tool_call{tool_name} / audio{id,audioId} / done{price,tokens} / scene{scene,scene_data}
  *   input{input,prompt} / toolApproval{...} / toolApprovalResult{...} / local_request{...} / pong{id}
@@ -144,7 +144,8 @@
 				aiPrice: '0.00',           // 本会话消费价格（status.price / done.price）
 				aiTurnTokens: 0,           // 本轮新增配额用量（status.tokens / done.tokens），只有数值不带明细
 				aiVoiceEnabled: false,     // 语音会话开关（status.isVoiceEnabled / voice.isVoiceEnabled）
-				aiVoiceUsable: false,      // 当前是否可用语音（status.isVoiceUsable / voice.isVoiceUsable）
+				aiVoiceSupported: false,   // 对应 App 是否包含朗读服务（status.isVoiceSupported；与在线状态无关）
+				aiVoiceUsable: false,      // 当前语音服务是否在线可用（status.isVoiceUsable / voice.isVoiceUsable）
 				aiModel: '',               // 当前生效模型标识（status.model / model.model，空为默认模型）
 				aiModelTree: [],           // 可用模型目录树（status.modelTree）
 				// ---- 场景图片：地址 + 加载状态都由公共层维护，模板直接绑定 aiImages / aiImageLists ----
@@ -1086,6 +1087,8 @@
 					case 'voice':
 						if (frame.isVoiceEnabled != null)
 							this.aiVoiceEnabled = !!frame.isVoiceEnabled;
+						if (frame.isVoiceSupported != null)
+							this.aiVoiceSupported = !!frame.isVoiceSupported;
 						if (frame.isVoiceUsable != null)
 							this.aiVoiceUsable = !!frame.isVoiceUsable;
 						this.aiOnVoice(frame);
@@ -1149,6 +1152,8 @@
 					this.aiTurnTokens = Number(frame.tokens) || 0;
 				if (frame.isVoiceEnabled != null)
 					this.aiVoiceEnabled = !!frame.isVoiceEnabled;
+				if (frame.isVoiceSupported != null)
+					this.aiVoiceSupported = !!frame.isVoiceSupported;
 				if (frame.isVoiceUsable != null)
 					this.aiVoiceUsable = !!frame.isVoiceUsable;
 				if (frame.model !== undefined)

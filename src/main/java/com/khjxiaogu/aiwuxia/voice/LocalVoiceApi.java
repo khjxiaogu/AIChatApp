@@ -33,6 +33,11 @@ public class LocalVoiceApi implements VoiceModel {
 		return botids.containsKey(roleName)&&LocalModel.hasOnlineService(ModelType.AUDIO);
 	}
 	@Override
+	public boolean supportsVoice(String roleName) {
+		// 只判断音色映射是否存在：本地服务是否在线由 canProcessVoice 另行判断
+		return botids.containsKey(roleName);
+	}
+	@Override
 	public boolean isHinted(String modelName) {
 		return "gptsovits".equals(modelName);
 	}

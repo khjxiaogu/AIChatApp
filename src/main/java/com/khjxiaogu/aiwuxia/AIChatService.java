@@ -159,7 +159,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/** 语音资源文件服务（用于提供音频文件） */
 	private FilePageService voice;
 
-	/** MCP 服务端端点（挂载在 /mcp），初始化失败时为 null */
+	/** MCP 服务端端点（挂在 /aichat/mcp 上），初始化失败时为 null */
 	private McpServerEndpoint mcpEndpoint;
 	/** MCP 客户端管理器（读取 save/mcp-client.json），未启用时为 null */
 	private McpClientManager mcpClients;
@@ -456,11 +456,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			});
 		}
 		mcpEndpoint = new McpServerEndpoint(registry, mcpTokenStore, defaultPrice, "AIWuxia-MCP", "0.0.1");
-		logger.info("MCP 服务端已启用：/mcp，默认单次价格 " + defaultPrice + " 额外配额"
+		logger.info("MCP 服务端已启用：/aichat/mcp，默认单次价格 " + defaultPrice + " 额外配额"
 				+ (exposeSessionTools ? "，并暴露在线会话工具" : ""));
 	}
 
-	/** MCP 服务端端点（供 {@code AIServerMain} 挂载到 /mcp），未启用时为 null。 */
+	/** MCP 服务端端点（由 {@code /aichat/mcp} 转发），未启用时为 null。 */
 	public McpServerEndpoint getMcpEndpoint() {
 		return mcpEndpoint;
 	}
@@ -1133,8 +1133,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/**
 	 * HTTP GET端点：返回 MCP 访问令牌管理页面。
 	 * <p>
-	 * 页面通过 {@code /mcp/token}、{@code /mcp/usage} 等管理接口完成令牌的创建、停用与消费记录查看。
-	 * 用户 ID 从页面参数 {@code uid}（或 {@code userId}）读取，页面内也可手动填写。
+	 * 页面通过 {@code /aichat/mcp/token}、{@code /aichat/mcp/usage} 等管理接口完成令牌的创建、停用与消费记录查看。
+	 * 用户身份由外部框架通过 URL 查询参数注入，页面不展示，接口也不从请求体读取。
 	 * </p>
 	 *
 	 * @return 包含页面文件的ResultDTO
@@ -1145,6 +1145,26 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@Adapter
 	public ResultDTO mcpTokenPage() throws IOException {
 		return new ResultDTO(200, new File(parent, "mcptoken.html"));
+	}
+
+	/**
+	 * HTTP端点：把 {@code /aichat/mcp} 及其子路径转发给 MCP 服务端端点。
+	 * <p>
+	 * MCP 的 JSON-RPC 端点（{@code /aichat/mcp}）与令牌管理接口（{@code /aichat/mcp/token} 等）
+	 * 都由 {@link McpServerEndpoint} 按剩余路径分派，因此不需要在 {@code AIServerMain} 单独挂载。
+	 * 未启用 MCP 服务端（{@code save/mcp.json} 中 {@code enabled=false}）时返回 404。
+	 * </p>
+	 *
+	 * @param req 请求对象
+	 * @param res 响应对象
+	 */
+	@HttpPath("/mcp")
+	public void mcp(Request req, Response res) {
+		if (mcpEndpoint == null) {
+			res.write(404, "Not Found");
+			return;
+		}
+		mcpEndpoint.call(req, res);
 	}
 	@HttpMethod("GET")
 	@HttpPath("/ptrpg")

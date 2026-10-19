@@ -67,6 +67,21 @@ public class VoiceModelHandler {
     	                .filter(p -> p.canProcessVoice(roleName))
     	                .findAny().isPresent();
 	};
+	/**
+	 * 判断配置中是否存在可朗读指定音色的语音服务（不检查服务是否在线）。
+	 * <p>
+	 * 供前端决定是否展示朗读入口：只要应用声明了朗读能力、且配置里有该角色的音色，
+	 * 即使本地语音服务暂时离线也应当展示入口。
+	 * </p>
+	 *
+	 * @param roleName 音色标识
+	 * @return 配置中存在可处理该音色的服务时返回 true
+	 */
+	public static boolean hasConfiguredAudio(String roleName){
+		return models.stream()
+				.filter(p -> p.supportsVoice(roleName))
+				.findAny().isPresent();
+	};
 	public static void init(File dataFolder) throws JsonSyntaxException, IOException {
 		models=new ArrayList<>();
 		if(System.getProperty("localVoiceToken")!=null)

@@ -416,6 +416,19 @@ public abstract class AIApplication {
 	public void onload(AISession state) {
 		this.provideInitial(state);
 	}
+	/**
+	 * 本应用是否包含朗读（语音合成）服务。
+	 * <p>
+	 * 用于前端决定是否展示朗读入口：与语音服务当前是否在线无关，只看应用是否实现了
+	 * {@link #generateVoice(AISession, String, String)}。默认没有语音能力，需要朗读的
+	 * 应用应同时覆写本方法和 {@link #generateVoice(AISession, String, String)}。
+	 * </p>
+	 *
+	 * @return 包含朗读服务时返回 true
+	 */
+	public boolean supportsVoice() {
+		return false;
+	}
 	public CompletableFuture<Boolean> generateVoice(AISession state,String orgText,String audioId){
 		return CompletableFuture.completedFuture(false);
 	}

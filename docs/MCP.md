@@ -15,7 +15,7 @@
         │  Streamable HTTP + Bearer 令牌
         ▼
 ┌──────────────────────────────────────────────┐
-│ /mcp  McpServerEndpoint                      │
+│ /aichat/mcp  McpServerEndpoint               │
 │  ├─ 认证：McpAccessTokenStore（SHA-256 摘要） │
 │  ├─ 协议：McpServer（initialize/tools/*）     │
 │  ├─ 工具：McpToolRegistry ← 本地 ToolData     │
@@ -46,10 +46,10 @@
 
 ### 2.1 挂载与启用
 
-`AIServerMain` 在启动 HTTP 服务时，把 `AIChatService#getMcpEndpoint()` 挂载到 `/mcp`：
+MCP 服务端由 `AIChatService#mcp` 转发到 `/aichat/mcp`（不再在 `AIServerMain` 单独挂载）：
 
-- MCP 端点：`http://<host>:8999/mcp`
-- 令牌管理页：`http://<host>:8999/aichat/mcptoken?uid=<用户ID>`
+- MCP 端点：`http://<host>:8999/aichat/mcp`
+- 令牌管理页：`http://<host>:8999/aichat/mcptoken`（用户标识由外部框架通过 URL 参数注入，页面上不展示）
 
 配置文件 `save/mcp.json`（不存在时使用默认值，服务端默认启用）：
 
@@ -64,7 +64,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| `enabled` | 服务端开关；`false` 时不注册 `/mcp`，也不初始化令牌存储（客户端不受影响） |
+| `enabled` | 服务端开关；`false` 时不转发 `/aichat/mcp`，也不初始化令牌存储（客户端不受影响） |
 | `defaultPrice` | 未单独定价的工具每次调用扣除的额外配额，默认 `1000` |
 | `usageType` | 写入 `paid_usage_record.usage_type` 的用量类型，默认 `MCP工具` |
 | `exposeSessionTools` | 是否把令牌所属用户**在线会话**中的工具一并暴露（默认关闭） |
@@ -76,7 +76,7 @@
 
 ### 2.2 协议支持
 
-- 传输：**Streamable HTTP**（`POST /mcp`，返回 `application/json`；客户端 `Accept` 含 `text/event-stream` 时仍返回 JSON）
+- 传输：**Streamable HTTP**（`POST /aichat/mcp`，返回 `application/json`；客户端 `Accept` 含 `text/event-stream` 时仍返回 JSON）
 - 版本协商：`2025-06-18` / `2025-03-26` / `2024-11-05`，客户端提出受支持的版本时原样回显
 - 方法：
   - `initialize`、`notifications/initialized`、`ping`
@@ -86,7 +86,7 @@
   - `logging/setLevel`、`completion/complete` 空实现
   - 未知方法返回 `-32601`；支持 JSON-RPC 批量请求
 - 会话：`initialize` 下发 `Mcp-Session-Id`，后续请求可回传；服务端无状态，不强制校验
-- `GET /mcp` 返回 405（不支持服务端主动推送），`DELETE /mcp` 返回 200（结束会话）
+- `GET /aichat/mcp` 返回 405（不支持服务端主动推送），`DELETE /aichat/mcp` 返回 200（结束会话）
 
 ### 2.3 注册要暴露的工具
 
@@ -141,18 +141,21 @@ mcp_tool_price(tool PRIMARY KEY, cost)
 
 管理 API：
 
+用户标识（`uid`）只从请求 URL 的查询参数读取，由外部框架在打开页面/发起请求时注入；
+**请求体一律不携带用户标识**，只放业务字段。
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/mcp/token` | 创建令牌，`{uid,name,quotaLimit,expiresInDays}`，返回一次性明文 |
-| `GET` | `/mcp/token?uid=` | 列出用户的令牌（不含明文） |
-| `POST` | `/mcp/token/revoke` | 停用令牌，`{uid,id}` |
-| `POST` | `/mcp/token/delete` | 删除令牌及其调用记录，`{uid,id}` |
-| `GET` | `/mcp/usage?uid=&tokenId=&limit=` | 消费记录 + 汇总统计 |
-| `GET` | `/mcp/price` | 默认价与单工具价格 |
-| `POST` | `/mcp/price` | 设置价格 `{tool,cost}`，`cost<0` 表示删除 |
-| `GET` | `/mcp/status` | 统计信息 |
-| `GET` | `/mcp/tools?uid=` | 当前暴露的工具列表 |
-| `GET` | `/mcp/whoami` | 用令牌自检（需要 `Authorization`） |
+| `POST` | `/aichat/mcp/token?uid=` | 创建令牌，请求体 `{name,quotaLimit,expiresInDays}`，返回一次性明文 |
+| `GET` | `/aichat/mcp/token?uid=` | 列出用户的令牌（不含明文） |
+| `POST` | `/aichat/mcp/token/revoke?uid=` | 停用令牌，请求体 `{id}` |
+| `POST` | `/aichat/mcp/token/delete?uid=` | 删除令牌及其调用记录，请求体 `{id}` |
+| `GET` | `/aichat/mcp/usage?uid=&tokenId=&limit=` | 消费记录 + 汇总统计 |
+| `GET` | `/aichat/mcp/price` | 默认价与单工具价格 |
+| `POST` | `/aichat/mcp/price` | 设置价格 `{tool,cost}`，`cost<0` 表示删除 |
+| `GET` | `/aichat/mcp/status` | 统计信息 |
+| `GET` | `/aichat/mcp/tools?uid=` | 当前暴露的工具列表 |
+| `GET` | `/aichat/mcp/whoami` | 用令牌自检（需要 `Authorization`） |
 
 ### 2.5 计费规则
 
@@ -178,7 +181,7 @@ mcp_tool_price(tool PRIMARY KEY, cost)
 单工具价格可通过 API 或数据库设置，优先级高于 `defaultPrice`：
 
 ```bash
-curl -X POST http://127.0.0.1:8999/mcp/price \
+curl -X POST http://127.0.0.1:8999/aichat/mcp/price \
   -H 'Content-Type: application/json' \
   -d '{"tool":"sdxl_gen_image","cost":5000}'
 ```
@@ -186,13 +189,13 @@ curl -X POST http://127.0.0.1:8999/mcp/price \
 ### 2.6 调用示例
 
 ```bash
-# 1) 创建令牌（uid 与聊天页面一致）
-curl -X POST http://127.0.0.1:8999/mcp/token \
+# 1) 创建令牌（用户标识从 URL 查询参数读取，请求体不带）
+curl -X POST 'http://127.0.0.1:8999/aichat/mcp/token?uid=your-uid' \
   -H 'Content-Type: application/json' \
-  -d '{"uid":"your-uid","name":"claude","quotaLimit":0,"expiresInDays":30}'
+  -d '{"name":"claude","quotaLimit":0,"expiresInDays":30}'
 
 # 2) initialize（响应头会带 Mcp-Session-Id）
-curl -X POST http://127.0.0.1:8999/mcp \
+curl -X POST http://127.0.0.1:8999/aichat/mcp \
   -H 'Authorization: Bearer mcp_xxxxxxxx' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
@@ -200,13 +203,13 @@ curl -X POST http://127.0.0.1:8999/mcp \
         "clientInfo":{"name":"curl","version":"1.0"}}}'
 
 # 3) 列出工具
-curl -X POST http://127.0.0.1:8999/mcp \
+curl -X POST http://127.0.0.1:8999/aichat/mcp \
   -H 'Authorization: Bearer mcp_xxxxxxxx' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 
 # 4) 调用工具（按 mcp_echo 价格扣费）
-curl -X POST http://127.0.0.1:8999/mcp \
+curl -X POST http://127.0.0.1:8999/aichat/mcp \
   -H 'Authorization: Bearer mcp_xxxxxxxx' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
@@ -231,9 +234,11 @@ curl -X POST http://127.0.0.1:8999/mcp \
 浏览器打开：
 
 ```
-http://127.0.0.1:8999/aichat/mcptoken?uid=<用户ID>
+http://127.0.0.1:8999/aichat/mcptoken
 ```
 
+页面不展示、也不手工填写用户标识：外部框架打开页面时通过 URL 参数注入身份，
+页面把该 URL 参数原样转发到管理接口（请求体不携带），服务端只从请求 URL 读取。
 页面支持创建令牌（明文复制一次）、查看额度/调用次数/过期时间、停用或删除、查看消费记录，
 并给出客户端配置示例。页面文件为 `save/mcptoken.html`。
 
@@ -251,7 +256,7 @@ http://127.0.0.1:8999/aichat/mcptoken?uid=<用户ID>
     {
       "name": "aiwuxia",
       "type": "http",
-      "url": "http://127.0.0.1:8999/mcp",
+      "url": "http://127.0.0.1:8999/aichat/mcp",
       "token": "mcp_xxxxxxxx",
       "prefix": "wx_",
       "connectTimeoutMs": 10000,
@@ -301,7 +306,7 @@ http://127.0.0.1:8999/aichat/mcptoken?uid=<用户ID>
 ### 3.3 代码内使用
 
 ```java
-McpHttpClient client = new McpHttpClient("remote", "http://127.0.0.1:8999/mcp", token, null, 10000, 60000);
+McpHttpClient client = new McpHttpClient("remote", "http://127.0.0.1:8999/aichat/mcp", token, null, 10000, 60000);
 client.initialize();
 MCPTools tools = McpToolBridge.toTools(client, "wx_");
 session.registerTools(tools);          // AI 即可调用
@@ -316,10 +321,11 @@ String text = client.callTool("mcp_echo", new JsonObject());
 
 - 令牌明文只返回一次，数据库只存 SHA-256；泄露后可在管理页停用或删除。
 - 令牌权限等于所属用户：会扣除该用户的额外配额，并可调用该用户可见的工具。
-- 管理 API（`/mcp/token` 等）与本项目其他接口一样**不做登录校验**（依赖部署方代理鉴权）。
+- 管理 API（`/aichat/mcp/token` 等）与本项目其他接口一样**不做登录校验**：
+  身份只认请求 URL 中的用户标识，且该参数由外部框架注入，请求体不作为身份来源。
   对外部署时请：
-  - 把 `/mcp/token`、`/mcp/usage` 等管理路径限制为内网/本机；
-  - 或只监听 `127.0.0.1`，由反向代理转发并添加鉴权；
+  - 把 `/aichat/mcp/token`、`/aichat/mcp/usage` 等管理路径限制为内网/本机；
+  - 或只监听 `127.0.0.1`，由反向代理转发、注入 URL 参数并添加鉴权；
   - 生产环境使用 HTTPS（令牌以 Bearer 明文传输）。
 - 建议为对外令牌设置 `quotaLimit` 与有效期，降低泄露风险。
 
@@ -342,4 +348,4 @@ String text = client.callTool("mcp_echo", new JsonObject());
 
 - 服务端 + HTTP/stdio 客户端 + 令牌 + 计费 41 项断言：初始化/列表/调用、按价扣费、价格覆盖、
   管理 API、令牌额度、余额不足、失败退款、吊销、批量请求、stdio 客户端、ToolData 桥接；
-- `AIChatService` 集成测试：`/aichat` 与 `/mcp` 同时挂载、令牌扣费写入主库、管理 API 可达。
+- `AIChatService` 集成测试：`/aichat/mcp` 由服务内方法转发、令牌扣费写入主库、管理 API 可达。

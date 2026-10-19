@@ -27,7 +27,7 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
  * <pre>{@code
  * {
  *   "servers": [
- *     { "name": "aiwuxia", "type": "http", "url": "http://127.0.0.1:8999/mcp",
+ *     { "name": "aiwuxia", "type": "http", "url": "http://127.0.0.1:8999/aichat/mcp",
  *       "token": "mcp_xxx", "prefix": "wx_" },
  *     { "name": "filesystem", "type": "stdio",
  *       "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "I:\\data"],

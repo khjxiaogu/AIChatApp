@@ -97,13 +97,7 @@
   </p>
 
   <div class="card">
-    <div class="row">
-      <label for="uid">用户 ID</label>
-      <input id="uid" placeholder="与聊天页面相同的 uid" style="min-width:260px">
-      <button class="primary" id="load">加载</button>
-      <span class="muted" id="hint"></span>
-    </div>
-    <div class="stats" id="stats" style="margin-top:16px; display:none">
+    <div class="stats" id="stats" style="display:none">
       <div class="stat"><b id="paidBalance">-</b><span>剩余额外配额</span></div>
       <div class="stat"><b id="tokenTotal">-</b><span>令牌数</span></div>
       <div class="stat"><b id="callTotal">-</b><span>累计调用</span></div>
@@ -154,11 +148,16 @@
 
 <script>
 (function () {
-  var API = location.pathname.replace(/\/aichat\/mcptoken\/?$/, '') + '/mcp';
-  var uidInput = document.getElementById('uid');
-  var params = new URLSearchParams(location.search);
-  var uid = params.get('uid') || params.get('userId') || '';
-  uidInput.value = uid;
+  var API = location.pathname.replace(/\/mcptoken\/?$/, '') + '/mcp';
+
+  // 身份由外部框架在 URL 参数中注入：这里原样转发给管理接口，前端不保存、不展示
+  function withPageQuery(url) {
+    var query = location.search.replace(/^\?/, '');
+    if (!query) {
+      return url;
+    }
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + query;
+  }
 
   function esc(text) {
     return String(text == null ? '' : text).replace(/[&<>"']/g, function (c) {
@@ -180,7 +179,7 @@
   }
 
   async function api(path, options) {
-    var response = await fetch(API + path, options || {});
+    var response = await fetch(withPageQuery(API + path), options || {});
     var text = await response.text();
     var json;
     try {
@@ -194,17 +193,9 @@
     return json.data || {};
   }
 
-  function currentUid() {
-    var value = uidInput.value.trim();
-    if (!value) {
-      throw new Error('请先填写用户 ID');
-    }
-    return value;
-  }
-
   async function loadTokens() {
     showError('');
-    var data = await api('/token?uid=' + encodeURIComponent(currentUid()));
+    var data = await api('/token');
     var tokens = data.tokens || [];
     document.getElementById('stats').style.display = 'flex';
     document.getElementById('paidBalance').textContent = data.paidBalance == null ? '-' : data.paidBalance;
@@ -242,7 +233,7 @@
 
   async function loadUsage(tokens) {
     var limit = Math.max(1, Math.min(500, Number(document.getElementById('limit').value) || 50));
-    var data = await api('/usage?uid=' + encodeURIComponent(currentUid()) + '&limit=' + limit);
+    var data = await api('/usage?limit=' + limit);
     var stats = data.statistics || {};
     document.getElementById('callTotal').textContent = stats.callTotal || 0;
     document.getElementById('costTotal').textContent = stats.costTotal || 0;
@@ -277,7 +268,7 @@
       await api(remove ? '/token/delete' : '/token/revoke', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: currentUid(), id: Number(id) })
+        body: JSON.stringify({ id: Number(id) })
       });
       await loadTokens();
     } catch (ex) {
@@ -289,15 +280,10 @@
     showError('');
     document.getElementById('created').style.display = 'none';
     var body = {
-      uid: uidInput.value.trim(),
       name: document.getElementById('name').value.trim(),
       quotaLimit: Number(document.getElementById('quotaLimit').value) || 0,
       expiresInDays: Number(document.getElementById('expiresInDays').value) || 0
     };
-    if (!body.uid) {
-      showError('请先填写用户 ID');
-      return;
-    }
     try {
       var data = await api('/token', {
         method: 'POST',
@@ -321,9 +307,6 @@
     }
   }
 
-  document.getElementById('load').addEventListener('click', function () {
-    loadTokens().catch(function (ex) { showError(ex.message); });
-  });
   document.getElementById('create').addEventListener('click', createToken);
   document.getElementById('refreshUsage').addEventListener('click', function () {
     loadTokens().catch(function (ex) { showError(ex.message); });
@@ -342,15 +325,8 @@
     var box = document.getElementById('exampleBox');
     box.style.display = box.style.display === 'none' ? 'block' : 'none';
   });
-  uidInput.addEventListener('keydown', function (event) {
-    if (event.key === 'Enter') {
-      loadTokens().catch(function (ex) { showError(ex.message); });
-    }
-  });
 
-  if (uid) {
-    loadTokens().catch(function (ex) { showError(ex.message); });
-  }
+  loadTokens().catch(function (ex) { showError(ex.message); });
 })();
 </script>
 </body>

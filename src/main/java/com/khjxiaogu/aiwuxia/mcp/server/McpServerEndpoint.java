@@ -23,21 +23,21 @@ import io.netty.buffer.ByteBuf;
 /**
  * MCP 服务端的 HTTP 传输层（Streamable HTTP）与令牌管理 API。
  * <p>
- * 挂载在 {@code /mcp} 路径上（见 {@code AIServerMain}），按剩余路径分派：
+ * 挂载在 {@code /aichat/mcp} 路径上（由 {@code AIChatService#mcp} 转发），按剩余路径分派：
  * </p>
  * <ul>
- *   <li>{@code /mcp}：MCP JSON-RPC 端点。POST 处理请求，GET/DELETE 按协议返回 405/200；</li>
- *   <li>{@code /mcp/token}、{@code /mcp/token/revoke}、{@code /mcp/token/delete}：令牌创建/列表/吊销/删除；</li>
- *   <li>{@code /mcp/usage}：消费记录查询；</li>
- *   <li>{@code /mcp/price}：单工具价格查询与设置；</li>
- *   <li>{@code /mcp/status}、{@code /mcp/tools}：统计与工具列表；</li>
- *   <li>{@code /mcp/whoami}：用令牌自检（需要 Authorization）。</li>
+ *   <li>{@code /aichat/mcp}：MCP JSON-RPC 端点。POST 处理请求，GET/DELETE 按协议返回 405/200；</li>
+ *   <li>{@code /aichat/mcp/token}、{@code /aichat/mcp/token/revoke}、{@code /aichat/mcp/token/delete}：令牌创建/列表/吊销/删除；</li>
+ *   <li>{@code /aichat/mcp/usage}：消费记录查询；</li>
+ *   <li>{@code /aichat/mcp/price}：单工具价格查询与设置；</li>
+ *   <li>{@code /aichat/mcp/status}、{@code /aichat/mcp/tools}：统计与工具列表；</li>
+ *   <li>{@code /aichat/mcp/whoami}：用令牌自检（需要 Authorization）。</li>
  * </ul>
  * <p>
  * 鉴权：MCP 请求必须携带 {@code Authorization: Bearer mcp_xxx}（或 {@code X-MCP-Token}），
  * 令牌由 {@link McpAccessTokenStore} 校验；工具调用会从令牌所属用户的额外配额（补充配额）中扣费。
- * 管理 API 沿用本项目既有的“uid 即身份”做法，不做额外登录校验，
- * 部署时请放在反向代理/内网之后，或只监听本机。
+ * 管理 API 沿用本项目既有的“用户标识即身份”做法，身份只从请求 URL 的查询参数读取（由外部框架注入），
+ * 不从请求体读取；不做额外登录校验，部署时请放在反向代理/内网之后，或只监听本机。
  * </p>
  */
 public class McpServerEndpoint implements CallBack {
@@ -112,7 +112,7 @@ public class McpServerEndpoint implements CallBack {
 
     // ==================== MCP 端点 ====================
 
-    /** 处理 {@code /mcp} 上的请求。 */
+    /** 处理 {@code /aichat/mcp} 上的请求。 */
     private void handleRpc(Request request, Response response) {
         String method = request.getMethod();
         if ("OPTIONS".equalsIgnoreCase(method)) {
@@ -304,16 +304,16 @@ public class McpServerEndpoint implements CallBack {
         }
     }
 
-    /** 创建令牌。 */
+    /**
+     * 创建令牌。
+     * <p>
+     * 用户标识只取自 URL 查询参数（由外部框架注入），请求体不再携带；
+     * 请求体仅提供备注名、额度上限与有效期。
+     * </p>
+     */
     private void createToken(Request request, Response response) throws McpException {
         JsonObject body = readJsonObject(request);
-        String uid = stringField(body, "uid");
-        if (uid == null) {
-            uid = query(request, "uid");
-        }
-        if (uid == null || uid.trim().isEmpty()) {
-            throw new IllegalArgumentException("缺少 uid");
-        }
+        String uid = requireUid(request);
         String name = stringField(body, "name");
         Integer quotaLimit = intField(body, "quotaLimit");
         Long expiresAt = longField(body, "expiresAt");
@@ -328,7 +328,7 @@ public class McpServerEndpoint implements CallBack {
             JsonObject data = created.getToken().toJson();
             // 明文只在此处返回一次，客户端需自行保存
             data.addProperty("token", created.getPlaintext());
-            data.addProperty("paidBalance", store.getPaidBalance(uid.trim()));
+            data.addProperty("paidBalance", store.getPaidBalance(uid));
             writeJson(response, 200, success(data));
             logger.info("为用户 " + uid + " 创建 MCP 访问令牌 #" + created.getToken().getId());
         } catch (java.sql.SQLException ex) {
@@ -337,29 +337,27 @@ public class McpServerEndpoint implements CallBack {
         }
     }
 
-    /** 列出令牌。 */
+    /** 列出令牌（用户标识取自 URL 查询参数）。 */
     private void listTokens(Request request, Response response) {
-        String uid = query(request, "uid");
+        String uid = requireUid(request);
         JsonObject data = new JsonObject();
         JsonArray tokens = new JsonArray();
         for (McpAccessTokenStore.Token token : store.listTokens(uid)) {
             tokens.add(token.toJson());
         }
         data.add("tokens", tokens);
-        if (uid != null && !uid.trim().isEmpty()) {
-            data.addProperty("paidBalance", store.getPaidBalance(uid));
-            data.addProperty("defaultPrice", defaultPrice);
-        }
+        data.addProperty("paidBalance", store.getPaidBalance(uid));
+        data.addProperty("defaultPrice", defaultPrice);
         writeJson(response, 200, success(data));
     }
 
-    /** 吊销或删除令牌。 */
+    /** 吊销或删除令牌（用户标识取自 URL 查询参数，请求体只带令牌 id）。 */
     private void updateTokenState(Request request, Response response, boolean delete) throws McpException {
         JsonObject body = readJsonObject(request);
-        String uid = stringField(body, "uid");
+        String uid = requireUid(request);
         Integer id = intField(body, "id");
-        if (uid == null || id == null) {
-            throw new IllegalArgumentException("缺少 uid 或 id");
+        if (id == null) {
+            throw new IllegalArgumentException("缺少令牌 id");
         }
         boolean changed = delete ? store.deleteToken(uid, id.longValue())
                 : store.revokeToken(uid, id.longValue());
@@ -369,9 +367,9 @@ public class McpServerEndpoint implements CallBack {
         writeJson(response, changed ? 200 : 404, changed ? success(data) : failure("令牌不存在或不属于该用户"));
     }
 
-    /** 查询消费记录。 */
+    /** 查询消费记录（用户标识取自 URL 查询参数）。 */
     private void usage(Request request, Response response) {
-        String uid = query(request, "uid");
+        String uid = requireUid(request);
         String tokenIdText = query(request, "tokenId");
         Integer limit = parseInt(query(request, "limit"));
         Long tokenId = null;
@@ -587,6 +585,15 @@ public class McpServerEndpoint implements CallBack {
     private static String query(Request request, String key) {
         Map<String, String> query = request.getQuery();
         return query == null ? null : query.get(key);
+    }
+
+    /** 读取 URL 查询参数中的用户标识（由外部框架注入）；缺失时返回 400。 */
+    private static String requireUid(Request request) {
+        String uid = query(request, "uid");
+        if (uid == null || uid.trim().isEmpty()) {
+            throw new IllegalArgumentException("缺少用户标识");
+        }
+        return uid.trim();
     }
 
     /** 读取字符串字段。 */

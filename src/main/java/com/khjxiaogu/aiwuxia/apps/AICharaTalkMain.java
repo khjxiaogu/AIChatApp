@@ -417,6 +417,11 @@ public class AICharaTalkMain extends AIApplication {
 		return oldstate;
 	}
 	@Override
+	public boolean supportsVoice() {
+		// 角色对话是内置类型里唯一带朗读服务的应用
+		return true;
+	}
+	@Override
 	public CompletableFuture<Boolean> generateVoice(AISession state,String orgText,String audioId){
 		
 		//

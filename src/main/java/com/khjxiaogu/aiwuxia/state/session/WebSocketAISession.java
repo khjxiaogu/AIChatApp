@@ -135,7 +135,10 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		sendGeneratingReasoning();
 		
 		getAiapp().prepareScene(this);
-		boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
+		// 朗读入口的展示只看应用本身是否包含朗读服务、配置里是否有该音色，不受语音服务在线状态影响；
+		// isVoiceUsable 仍表示"现在能否真正合成"，供需要区分在线状态的逻辑使用。
+		boolean voiceSupported=isVoiceSupported();
+		boolean hasAudioService=isVoiceUsable();
 		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object()
 				.add("type", "status")
 				.add("generating", isGenerating())
@@ -143,10 +146,34 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("price", this.getPrice())
 				.add("tokens", this.getLastTurnTokens())
 				.add("isVoiceEnabled",super.getExtraData().isAudioSession)
+				.add("isVoiceSupported",voiceSupported)
 				.add("isVoiceUsable",hasAudioService)
 				.add("models", buildModelList())
 				.add("modelTree", buildModelTree())
 				.add("model", getModelHint()).end().toString()));
+	}
+
+	/**
+	 * 当前应用是否包含朗读服务，且配置中存在对应音色。
+	 * <p>
+	 * 只看应用能力与音色配置，不检查语音服务是否在线；前端据此决定是否展示朗读入口。
+	 * </p>
+	 *
+	 * @return 应当展示朗读入口时返回 true
+	 */
+	protected boolean isVoiceSupported() {
+		return getAiapp().supportsVoice()
+				&&VoiceModelHandler.hasConfiguredAudio(getRoleName(Role.ASSISTANT));
+	}
+
+	/**
+	 * 语音服务当前是否可以真正合成（应用支持、音色已配置且服务在线）。
+	 *
+	 * @return 可以立即合成语音时返回 true
+	 */
+	protected boolean isVoiceUsable() {
+		return isVoiceSupported()
+				&&VoiceModelHandler.hasSupportedAudio(getRoleName(Role.ASSISTANT));
 	}
 
 	/**
@@ -568,7 +595,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 			getCommandExec().submit(()->{
 				try {
 					getAiapp().handleSpeech(this,new MutableMessageContents(speech));
-					boolean hasAudioService=VoiceModelHandler.hasSupportedAudio(this.getRoleName(Role.ASSISTANT));
+					boolean hasAudioService=isVoiceUsable();
 					if(hasAudioService&&!super.isAudioSession()) {
 						if(isLocalAudioEnabled!=hasAudioService) {
 							isLocalAudioEnabled=hasAudioService;
