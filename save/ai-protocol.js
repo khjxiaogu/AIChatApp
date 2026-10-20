@@ -339,6 +339,70 @@
 			aiSendMessage: function (text) {
 				return this.aiSendFrame('message', { content: text });
 			},
+			/**
+			 * 构造带引用消息的用户文本。
+			 * <p>
+			 * 引用正文逐行加 {@code > } 前缀，并用「【引用消息·对方/我】」与
+			 * 「【引用结束】」包起来，便于模型区分引用内容与用户本轮输入；
+			 * 前端也用同一格式还原引用块。
+			 * </p>
+			 *
+			 * @param {Object} quote 被引用消息 {role:'user'|'assistant', text:'...'}
+			 * @param {String} body  用户本轮输入
+			 * @return {String} 发送给服务端的完整文本
+			 */
+			aiBuildQuotedMessage: function (quote, body) {
+				var content = body == null ? '' : String(body);
+				if (!quote || !quote.text)
+					return content;
+				var author = quote.role === 'assistant' ? '对方' : '我';
+				var lines = String(quote.text).replace(/\r\n/g, '\n').split('\n');
+				var quoted = lines.map(function (line) {
+					return '> ' + line;
+				}).join('\n');
+				return '【引用消息·' + author + '】\n' + quoted + '\n【引用结束】\n\n' + content;
+			},
+			/**
+			 * 解析带引用消息的文本，返回 {author, quoted, body}；不是引用消息时返回 null。
+			 *
+			 * @param {String} text 消息文本
+			 * @return {Object|null}
+			 */
+			aiParseQuotedMessage: function (text) {
+				var src = String(text == null ? '' : text).replace(/\r\n/g, '\n');
+				var lines = src.split('\n');
+				if (!lines.length)
+					return null;
+				var head = /^【引用消息(?:·(我|对方))?】$/.exec(lines[0].trim());
+				if (!head)
+					return null;
+				var end = -1;
+				for (var i = 1; i < lines.length; i++) {
+					if (lines[i].trim() === '【引用结束】') {
+						end = i;
+						break;
+					}
+				}
+				if (end < 0)
+					return null;
+				var quoted = lines.slice(1, end).map(function (line) {
+					return line.replace(/^>\s?/, '');
+				}).join('\n');
+				var body = lines.slice(end + 1).join('\n').replace(/^\n+/, '');
+				return { author: head[1] || '', quoted: quoted, body: body };
+			},
+			/**
+			 * 把引用正文裁剪到指定长度，避免引用整段超长回复撑爆上下文。
+			 *
+			 * @param {String} text  引用正文
+			 * @param {Number} [max] 最大字符数，默认 2000
+			 * @return {String}
+			 */
+			aiTruncateQuote: function (text, max) {
+				var src = String(text == null ? '' : text).trim();
+				var limit = max || 2000;
+				return src.length > limit ? src.slice(0, limit) + '\n…（引用已截断）' : src;
+			},
 			/** 触发生成 */
 			aiSendGenerate: function () {
 				return this.aiSendFrame('generate');

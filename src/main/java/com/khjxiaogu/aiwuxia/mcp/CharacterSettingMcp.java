@@ -3,6 +3,7 @@ package com.khjxiaogu.aiwuxia.mcp;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -13,10 +14,10 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 /**
@@ -51,7 +52,7 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
  *   <li>{@code get_character_setting}：获取角色完整设定，并同时返回所属作品的公共设定。</li>
  * </ul>
  */
-public class CharacterSettingMcp {
+public class CharacterSettingMcp implements ToolProvider {
 
     /** 角色设定索引文件名。 */
     public static final String CONFIG_NAME = ConfigPaths.SDXL_CHARACTER_LIST;
@@ -63,34 +64,41 @@ public class CharacterSettingMcp {
 
     private static final SimpleLogger logger = new SimpleLogger("角色设定");
 
-    private CharacterSettingMcp() {
-    }
+    /** 角色设定数据目录。 */
+    private final File dataFolder;
 
     /**
-     * 创建角色设定工具集合。
+     * 创建角色设定工具集。
      *
      * @param dataFolder 数据目录（通常是 {@code save}），不能为 null
-     * @return 工具集合
      */
-    public static MCPTools create(File dataFolder) {
+    public CharacterSettingMcp(File dataFolder) {
         if (dataFolder == null) {
             throw new IllegalArgumentException("dataFolder 不能为 null");
         }
+        this.dataFolder = dataFolder;
+    }
+
+    /**
+     * 角色设定查询工具：列表、搜索、获取完整设定共用同一份索引数据。
+     */
+    @Override
+    public Collection<ToolData> getTools() {
         final File folder = dataFolder;
-        MCPTools tools = new MCPTools();
-        tools.register(new ToolData.Builder("list_characters",
+        List<ToolData> tools = new ArrayList<>();
+        tools.add(new ToolData.Builder("list_characters",
                 "列出角色设定库中的全部作品与角色（含别名）。想知道有哪些角色可以查询时先调用它。")
                 .presenter(ToolCallPresenter.ofName("列出角色"))
                 .tool(arguments -> list(folder))
                 .build());
-        tools.register(new ToolData.Builder("search_characters",
+        tools.add(new ToolData.Builder("search_characters",
                 "按角色名字、别名（支持拼音、外号）或作品名模糊搜索角色，返回匹配的角色及所属作品。"
                         + "需要确认某个角色是否存在、同名角色属于哪部作品时使用；拿到完整角色名后再用 get_character_setting 获取设定。")
                 .putParam("query", "角色名字、别名（拼音/外号）或作品名，支持部分匹配。")
                 .presenter(ToolCallPresenter.ofArgument("搜索角色", "query"))
                 .tool(arguments -> runSearch(folder, arguments))
                 .build());
-        tools.register(new ToolData.Builder("get_character_setting",
+        tools.add(new ToolData.Builder("get_character_setting",
                 "获取指定角色的完整设定，并同时返回其所属作品的公共设定（校服、世界观等）。"
                         + "character 支持模糊匹配与别名；同名角色（如归海枫）需要用 work 指定作品。")
                 .putParam("character", "角色名字，支持模糊匹配与别名，例如“枫茜”或“fengxi”。")

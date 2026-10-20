@@ -25,7 +25,6 @@ import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekSearchUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 /**
@@ -73,21 +72,19 @@ public class DeepseekSearchMcp {
 	 *
 	 * @return 工具集合，可能为空
 	 */
-	public static MCPTools create() {
-		MCPTools tools = new MCPTools();
+	public static ToolData createWebSearch() {
 		if (token().isEmpty()) {
-			return tools;
+			return null;
 		}
-		tools.register(new ToolData.Builder("web_search",
+		return new ToolData.Builder("web_search",
 				"用 DeepSeek 搜索引擎搜索网页，返回标题、链接、发布时间、权威度与摘要。"
 						+ "需要最新信息、新闻、事实核查或资料查找时使用；常识与闲聊不要调用。"
 						+ "query 支持 site:/ -site:/ -关键词/ \"精确短语\"/ lang:/ after:/ before: 等语法；")
 				.putParam("query", "搜索词，1～128 个字符，不能全为空白，支持 site:/lang:/after:/before:/\"精确短语\" 等语法")
 				.putParam("count", "返回结果条数，1～20，不确定时填 10")
 				.presenter(ToolCallPresenter.ofArgument("搜索网页", "query"))
-				.tool((params, output, manager) -> runTool(output, params))
-				.build());
-		return tools;
+				.toolText((params, output, manager) -> runTool(output, params))
+				.build();
 	}
 
 	/**

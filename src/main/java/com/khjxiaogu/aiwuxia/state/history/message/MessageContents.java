@@ -69,6 +69,7 @@ public interface MessageContents extends Iterable<MessageContent> {
 		Map<String, Class<? extends MessageContent>> types = new HashMap<>();
 		types.put("image", ImageContent.class);
 		types.put("text", PlainText.class);
+		types.put("audio", AudioContent.class);
 		types.put("video", VideoContent.class);
 		types.put("tool", ToolContent.class);
 		types.put("tool_call", ToolCallContent.class);

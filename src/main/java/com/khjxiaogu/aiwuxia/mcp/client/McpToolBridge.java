@@ -1,6 +1,8 @@
 package com.khjxiaogu.aiwuxia.mcp.client;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -12,7 +14,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpException;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
 /**
  * 把 MCP 远程工具桥接为本地 {@link ToolData}。
@@ -39,12 +40,12 @@ public final class McpToolBridge {
      *
      * @param client 已初始化的 MCP 客户端
      * @param prefix 工具名前缀，可为 null
-     * @return 本地工具集合（同名工具会自动改名保证唯一）
+     * @return 本地工具列表（同名工具会自动改名保证唯一）
      * @throws IOException  读取远程工具列表失败
      * @throws McpException 协议错误
      */
-    public static MCPTools toTools(McpClient client, String prefix) throws IOException, McpException {
-        MCPTools tools = new MCPTools();
+    public static List<ToolData> toTools(McpClient client, String prefix) throws IOException, McpException {
+        List<ToolData> tools = new ArrayList<>();
         Set<String> used = new HashSet<>();
         List<McpRemoteTool> remoteTools = client.listTools();
         for (final McpRemoteTool remote : remoteTools) {
@@ -73,7 +74,7 @@ public final class McpToolBridge {
                         }
                     })
                     .build();
-            tools.register(data);
+            tools.add(data);
         }
         return tools;
     }
@@ -160,14 +161,12 @@ public final class McpToolBridge {
      * 把 {@link ToolData} 集合复制到一个新的工具表（便于快照）。
      *
      * @param tools 工具集合
-     * @return 新的 MCPTools
+     * @return 新的工具列表
      */
-    public static MCPTools copyOf(MCPTools tools) {
-        MCPTools copy = new MCPTools();
+    public static List<ToolData> copyOf(Collection<ToolData> tools) {
+        List<ToolData> copy = new ArrayList<>();
         if (tools != null) {
-            for (ToolData tool : tools.getTools()) {
-                copy.register(tool);
-            }
+            copy.addAll(tools);
         }
         return copy;
     }
@@ -191,10 +190,10 @@ public final class McpToolBridge {
     }
 
     /** 便于调试：工具名到说明的映射。 */
-    public static Map<String, String> describe(MCPTools tools) {
+    public static Map<String, String> describe(Collection<ToolData> tools) {
         Map<String, String> result = new LinkedHashMap<>();
         if (tools != null) {
-            for (ToolData tool : tools.getTools()) {
+            for (ToolData tool : tools) {
                 result.put(tool.name, tool.description);
             }
         }

@@ -66,9 +66,10 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.AIGroupApplication;
-import com.khjxiaogu.aiwuxia.llm.AgentMessager;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
+import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
 import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
@@ -76,6 +77,7 @@ import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.MusicMcp;
 import com.khjxiaogu.aiwuxia.mcp.QQMcp;
+import com.khjxiaogu.aiwuxia.mcp.QQMediaMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLAgentMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfiguration;
@@ -87,9 +89,12 @@ import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
+import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession.CurrentContext;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
@@ -114,6 +119,7 @@ public class NapCatAIConnector extends WebSocketClient {
 
 	Deque<Mid2Bid> mbid=new ArrayDeque<>(200);
 	ObjectStorageProvider tos;
+	private final File dataFolder;
 	static class Mid2Bid{
 		String mid;
 		long bid;
@@ -129,6 +135,7 @@ public class NapCatAIConnector extends WebSocketClient {
 	public NapCatAIConnector(File dataFolder, String url,
 			String token, AIGroupSession... states) throws JsonSyntaxException, IOException, InterruptedException {
 		super(URI.create("ws://" + url), Map.of("Authorization", "Bearer " + token));
+		this.dataFolder = dataFolder;
 		// 本地模型部署地址：站点域名默认读 save/site.json，可用 --site-host / -Dsite_host 覆盖
 		SDXLLocalModelClient lmc=new SDXLLocalModelClient(URI.create(SiteConfig.resolve(dataFolder).webSocketUrl(SiteConfig.DEFAULT_HOST, "/aichat/kh$localModelDeploy")), resourceLock, true, 1000);
 		lmc.connectBlocking();
@@ -239,18 +246,132 @@ public class NapCatAIConnector extends WebSocketClient {
         ImageNoise.addLaplaceNoise(scaledImage, 17);
         return scaledImage;
     }
-    public void addFutureTask(AIGroupSession state,String name,CompletableFuture<String> future) {
-    	future.thenAccept(t->{
-    		state.addMessage(0, "", Arrays.asList(()->new PlainText("<tool name=\""+name+"\">"+t+"</tool>")),true);
-    		submitMessage(state);
-    		
-    	}).exceptionally(exc->{
-    		state.addMessage(0, "", Arrays.asList(()->new PlainText("<tool name=\""+name+"\">"+"失败，原因："+exc.getMessage()+"</tool>")),true);
-    		submitMessage(state);
-    		return null;
-    	});
-    	
-    }
+	/**
+	 * 会话处理工具附件：由 QQ 会话调用，把图片/音频/视频真正发送到群里。
+	 *
+	 * @param state   会话
+	 * @param content 工具产生的附件
+	 */
+	public void sendToolAttachment(AIGroupSession state, MessageContent content) {
+		if (content == null) {
+			return;
+		}
+		CompletableFuture.runAsync(() -> {
+			try {
+				if (content instanceof ImageContent) {
+					ImageContent image = (ImageContent) content;
+					sendImageMessage(state, image.getImageUrl(), image.getDescription(), image.isCensored());
+				} else if (content instanceof VideoContent) {
+					sendVideoMessage(state, ((VideoContent) content).getVideoUrl());
+				} else if (content instanceof AudioContent) {
+					sendAudioMessage(state, ((AudioContent) content).getAudioUrl());
+				}
+			} catch (Throwable ex) {
+				ex.printStackTrace();
+				state.addStatus("<tool status=\"failed\">附件发送失败：" + ex.getMessage() + "</tool>");
+			}
+		});
+	}
+
+	/**
+	 * 异步工具任务完成：在会话命令线程里发送附件、写入工具通知并触发下一轮。
+	 *
+	 * @param state 会话
+	 * @param task  已完成的任务
+	 */
+	public void handleToolTaskCompletion(AIGroupSession state, ToolTask task) {
+		state.getCommandExec().submit(() -> {
+			try {
+				String text;
+				String status;
+				if (task.isFailed()) {
+					status = "failed";
+					Throwable error = task.getError();
+					text = "失败，原因：" + (error == null || error.getMessage() == null ? "未知错误" : error.getMessage());
+				} else {
+					status = "success";
+					text = task.getResult() == null ? "" : task.getResult().getText();
+					if (task.getResult() != null) {
+						for (MessageContent attachment : task.getResult().getAttachments()) {
+							sendToolAttachment(state, attachment);
+						}
+					}
+				}
+				String notice = "<tool name=\"" + task.getToolName() + "\" task_id=\"" + task.getId()
+						+ "\" status=\"" + status + "\">" + text + "</tool>";
+				state.addMessage(0, "", Arrays.asList(() -> new PlainText(notice)), true);
+				submitMessage(state);
+			} catch (Throwable ex) {
+				ex.printStackTrace();
+				state.addStatus("<tool status=\"failed\">异步任务处理失败：" + ex.getMessage() + "</tool>");
+			}
+		});
+	}
+
+	/** 发送图片消息，返回消息 id 或失败说明。 */
+	public String sendImageMessage(AIGroupSession state, String image, String description, boolean censored)
+			throws Exception {
+		if (censored) {
+			String readerUrl = SiteConfig.resolve(dataFolder).readerUrl(SiteConfig.DEFAULT_READER_HOST,
+					"/works/imgView.html?img=" + URLEncoder.encode(image, StandardCharsets.UTF_8));
+			try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+				try (InputStream bais = FileUtil.fetch(image)) {
+					BufferedImage bi = ImageIO.read(bais);
+					BufferedImage bo = shrinkToQuarter(bi);
+					ImageIO.write(bo, "jpg", baos);
+				}
+				JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
+						.add("group_id", state.groupId)
+						.array("message").object().add("type", "image").object("data")
+						.add("file", FileUtil.toDataUrl(baos.toByteArray())).end().end().object().add("type", "text")
+						.object("data").add("text", readerUrl).end().end().end().end()
+						.end()).get();
+
+				appendMid(jo.get("message_id").getAsString(), state.botId);
+				return "发送图片成功，消息id：" + jo.get("message_id").getAsString();
+			} catch (Exception e2) {
+				e2.printStackTrace();
+				try {
+					JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg")
+							.object("params").add("group_id", state.groupId)
+							.array("message").object().add("type", "text").object("data").add("text", readerUrl).end()
+							.end().end().end()
+							.end()).get();
+					appendMid(jo.get("message_id").getAsString(), state.botId);
+					return "发送图片成功，消息id：" + jo.get("message_id").getAsString();
+				} catch (Exception e3) {
+					e3.printStackTrace();
+					return "发送失败";
+				}
+			}
+		}
+		JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
+				.add("group_id", state.groupId)
+				.object("message").add("type", "image").object("data").add("file", image).end().end().end().end())
+				.get();
+		appendMid(jo.get("message_id").getAsString(), state.botId);
+		return "发送图片消息id：" + jo.get("message_id").getAsString();
+	}
+
+	/** 发送视频消息。 */
+	public String sendVideoMessage(AIGroupSession state, String video) throws Exception {
+		JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
+				.add("group_id", state.groupId)
+				.object("message").add("type", "video").object("data").add("file", video).end().end().end()
+				.end()).get();
+		appendMid(jo.get("message_id").getAsString(), state.botId);
+		return "发送生成视频消息成功，消息id：" + jo.get("message_id").getAsString();
+	}
+
+	/** 发送音频消息。 */
+	public String sendAudioMessage(AIGroupSession state, String audio) throws Exception {
+		JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
+				.add("group_id", state.groupId)
+				.object("message").add("type", "record").object("data").add("file", audio).end().end().end()
+				.end()).get();
+		appendMid(jo.get("message_id").getAsString(), state.botId);
+		return "发送音频消息id：" + jo.get("message_id").getAsString();
+	}
 	public void registerSkills(AIGroupSession state,File dataFolder,JsonObject config) throws IOException {
 		Set<String> skillSet=new HashSet<>();
 		if(config.has("tools")) {
@@ -287,104 +408,59 @@ public class NapCatAIConnector extends WebSocketClient {
 				emojis.put(je,jo.get(je).getAsString());
 			}
 		}
-		AgentMessager callback=new AgentMessager() {
-
-			@Override
-			public void sendAsyncTool(String tool, CompletableFuture<String> result) {
-				addFutureTask(state,tool,result);
-			}
-
-			@Override
-			public CompletableFuture<String> sendMusic(String tool, CompletableFuture<String> url) {
-				return url.thenCompose(t->sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
-					.add("group_id", state.groupId).object("message").add("type", "record").object("data")
-					.add("file", t).end().end().end().end()))
-				.thenApply(jo->"发送音频消息id："+jo.get("message_id").getAsString());
-			}
-
-			@Override
-			public CompletableFuture<String> sendVideo(String tool, CompletableFuture<String> url) {
-				return url.thenCompose(video->sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-					.object("message").add("type", "video").object("data").add("file", video).end().end().end()
-					.end())).thenApply(jo->"发送生成视频消息成功，消息id："+jo.get("message_id").getAsString());
-			}
-
-			@Override
-			public CompletableFuture<String> sendImage(String tool, CompletableFuture<String> url,boolean censored) {
-				if(censored) {
-					url.thenApply(image->{
-						String readerUrl=SiteConfig.resolve(dataFolder).readerUrl(SiteConfig.DEFAULT_READER_HOST, "/works/imgView.html?img="+URLEncoder.encode(image,StandardCharsets.UTF_8));
-						try(ByteArrayOutputStream baos=new ByteArrayOutputStream()){
-							try(InputStream bais=FileUtil.fetch(image)){
-								BufferedImage bi=ImageIO.read(bais);
-								BufferedImage bo=shrinkToQuarter(bi);
-								ImageIO.write(bo, "jpg", baos);
-							}
-							JsonObject jo=sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-									.array("message").object().add("type", "image").object("data").add("file", FileUtil.toDataUrl(baos.toByteArray())).end().end().object().add("type", "text").object("data").add("text",readerUrl).end().end().end().end()
-									.end()).get();
-			
-							appendMid(jo.get("message_id").getAsString(),state.botId);
-							return "发送图片成功，消息id："+jo.get("message_id").getAsString();
-						} catch(Exception e2) {
-							e2.printStackTrace();
-							try {
-								JsonObject jo=sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-										.array("message").object().add("type", "text").object("data").add("text", readerUrl).end().end().end().end()
-										.end()).get();
-								appendMid(jo.get("message_id").getAsString(),state.botId);
-								return "发送图片成功，消息id："+jo.get("message_id").getAsString();
-							} catch(Exception e3) {
-								e3.printStackTrace();
-								return "发送失败";
-							}
-						}
-					});
-				}
-				return url.thenCompose(t->sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", state.groupId)
-					.object("message").add("type", "image").object("data").add("file", t).end().end().end().end()))
-				.thenApply(jo->"发送图片消息id："+jo.get("message_id").getAsString());
-			}
-
-			@Override
-			public void addToolStatus(String tool, CompletableFuture<String> result) {
-
-				result.thenAccept(msg->state.addStatus("<tool name=\""+tool+"\">"+msg+"</tool>"))
-				.exceptionally(t->{state.addStatus("<tool name=\""+tool+"\">失败</tool>");return null;});
-			}};
-		if(skillSet.contains("fetch")) {
-			state.registerTools(FetchMcp.create(tos));
+		state.setToolAttachmentHandler(content -> sendToolAttachment(state, content));
+		state.setToolTaskCompletionHandler(task -> handleToolTaskCompletion(state, task));
+		List<String> charas = SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder));
+		if (skillSet.contains("fetch")) {
+			state.registerTool(FetchMcp.createWebView(tos));
+			state.registerTool(FetchMcp.createMoegirlSearch(tos));
 			// DeepSeek Search API：仅在配置了 deepseektoken 时才会真正注册 web_search
-			state.registerTools(DeepseekSearchMcp.create());
+			ToolData webSearch = DeepseekSearchMcp.createWebSearch();
+			if (webSearch != null) {
+				state.registerTool(webSearch);
+			}
 		}
 
-		if(skillSet.contains("multimodal"))
-			state.registerTools(MultiModalMcp.create(tos));
+		if (skillSet.contains("multimodal"))
+			state.registerTool(MultiModalMcp.createImageRecognition(tos));
 
-		if(skillSet.contains("qq")) {
-			state.registerTools(QQMcp.create(""+state.groupId, tos,callback,emojis));
+		if (skillSet.contains("qq")) {
+			state.registerTool(QQMcp.createAvatarFetch(tos));
+			state.registerTool(QQMcp.createAvatarGroupRecognition("" + state.groupId, tos));
+			state.registerTool(QQMediaMcp.createSendImage(tos));
+			state.registerTool(QQMediaMcp.createSendEmojiImage(tos, emojis));
 		}
-		
-		if(skillSet.contains("sdxl"))
-			state.registerTools(SDXLMcp.createLocal(tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),false,resourceLock));
-		if(skillSet.contains("sdxl-nsfw"))
-			state.registerTools(SDXLMcp.createLocal(tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),true,resourceLock));
 
-		if(skillSet.contains("sdxl-agent"))
-			state.registerTools(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),callback,false,resourceLock));
-		if(skillSet.contains("sdxl-agent-nsfw"))
-			state.registerTools(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),callback,true,resourceLock));
+		if (skillSet.contains("sdxl")) {
+			state.registerTools(SDXLMcp.createLocal(tos, lora, false, resourceLock));
+			if (charas != null) {
+				state.registerTool(SDXLMcp.createSearchCharacter(charas));
+			}
+		}
+		if (skillSet.contains("sdxl-nsfw")) {
+			state.registerTools(SDXLMcp.createLocal(tos, lora, true, resourceLock));
+			if (charas != null) {
+				state.registerTool(SDXLMcp.createSearchCharacter(charas));
+			}
+		}
+
+		if (skillSet.contains("sdxl-agent"))
+			state.registerTool(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, false,
+					resourceLock));
+		if (skillSet.contains("sdxl-agent-nsfw"))
+			state.registerTool(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, true,
+					resourceLock));
 		CrontabMcp.setPath(ConfigPaths.crontab(dataFolder));
-		if(skillSet.contains("cron"))
-			state.registerTools(CrontabMcp.create(state.botId, callback));
-		if(skillSet.contains("music"))
-			state.registerTools(MusicMcp.create(new File(dataFolder,"music"),config.get("voice").getAsString(),state.getRoleName(Role.ASSISTANT),callback,resourceLock));
-		if(skillSet.contains("seedimage"))
-			state.registerTools(SeedreamMcp.createImage(imgKey, callback, refimage, tos));
-		if(skillSet.contains("seedvideo"))
-			state.registerTools(SeedreamMcp.createVideo(imgKey, callback, refimage, tos));
-		state.registerTools(AgentPingMcp.create(state.getRoleName(Role.ASSISTANT), callback));
-
+		if (skillSet.contains("cron"))
+			state.registerTools(new CrontabMcp(state.botId, state));
+		if (skillSet.contains("music"))
+			state.registerTools(new MusicMcp(new File(dataFolder, "music"), config.get("voice").getAsString(),
+					state.getRoleName(Role.ASSISTANT), resourceLock));
+		if (skillSet.contains("seedimage"))
+			state.registerTool(SeedreamMcp.createImage(imgKey, refimage, tos));
+		if (skillSet.contains("seedvideo"))
+			state.registerTool(SeedreamMcp.createVideo(imgKey, refimage, tos));
+		state.registerTools(new AgentPingMcp(state.getRoleName(Role.ASSISTANT), state));
 	}
 
 	@Override

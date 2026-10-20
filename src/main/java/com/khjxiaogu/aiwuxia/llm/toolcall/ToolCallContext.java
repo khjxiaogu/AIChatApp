@@ -4,12 +4,16 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.ToolCallCollector;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
@@ -20,27 +24,13 @@ import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
  * 单次模型调用（一次生成）的工具调用上下文。
  * <p>
  * 承载这次调用过程中的全部可变状态：工具调用增量收集器、轮次计数、总调用次数、
- * 各工具调用次数、超限提示标记。调用规则（次数、权限、许可）由可变的 {@link ToolCallManager}
- * 直接提供，调用方为每次生成创建（并最终丢弃）一个本对象，
+ * 各工具调用次数、共享次数组计数、超限提示标记。调用规则（次数、权限、许可）由可变的
+ * {@link ToolCallManager} 直接提供，调用方为每次生成创建（并最终丢弃）一个本对象，
  * 从而把“管理规则”和“单次执行状态”分离。
  * </p>
- *
- * <p>本类负责（全部通过 {@link ToolCallManager} 提供的工具表与调用规则执行）：</p>
- * <ul>
- *   <li><b>调用次数</b>：轮次上限、总次数上限、<b>各工具执行次数上限</b>，超限时统一回传提示文本；
- *       声明为不限次的工具（{@link ToolCallManager#isUnlimited(String)}）不受这些上限约束，
- *       既不消耗轮次与总次数额度，也不会因超限被拒绝；</li>
- *   <li><b>权限</b>：每个调用执行前询问管理器上注册的全部权限监听器，结果按
- *       “拒绝 &gt; 询问 &gt; 允许 &gt; 忽略”合并（遇拒绝短路）；</li>
- *   <li><b>许可</b>：权限判定为“询问”时交由许可方决定是否执行；</li>
- *   <li><b>处理</b>：工具查找、执行、异常兜底、结果推送到流式输出、写入请求历史；</li>
- *   <li><b>显示</b>：调用与结果都经工具的 {@link ToolCallPresenter} 转换为用户友好显示
- *       （简述替代工具名 + 具体内容），随 {@code ToolCallContent}/{@code ToolContent} 下发。</li>
- * </ul>
- *
  * <p>
- * 计数使用原子变量，因此并发收集增量的计数不会丢失；但 {@link #process(String)}
- * 涉及“收集 → 执行 → 写历史”的顺序语义，必须由调用方保证同一时刻只有一个线程在处理。
+ * 工具统一返回 {@link CompletableFuture}。同步工具等待完成后返回真实结果；注册为异步的工具
+ * 立即返回“任务已创建，任务ID：...”，任务完成由 {@link ToolCallManager} 通知会话。
  * </p>
  */
 public class ToolCallContext {
@@ -134,6 +124,8 @@ public class ToolCallContext {
 	private final AtomicInteger calls = new AtomicInteger();
 	/** 各工具已实际执行的次数 */
 	private final Map<String, AtomicInteger> toolCalls = new ConcurrentHashMap<>();
+	/** 各共享次数组已实际执行的次数 */
+	private final Map<Integer, AtomicInteger> groupCalls = new ConcurrentHashMap<>();
 	/** 是否已经因超限提示过模型一次 */
 	private final AtomicBoolean limitNotified = new AtomicBoolean();
 	/** 本轮是否已有调用因触及次数上限而未执行 */
@@ -204,8 +196,8 @@ public class ToolCallContext {
 	/**
 	 * 统一处理当前收集到的工具调用。
 	 * <p>
-	 * 依次完成：计数校验（轮次/总次数/单工具次数）→ 权限判定 → 许可 → 执行 → 结果推送与历史写入。
-	 * 处理后收集器自动重置，可直接进入下一轮。
+	 * 依次完成：计数校验（轮次/总次数/单工具次数/共享组次数）→ 权限判定 → 许可 → 执行
+	 * → 结果推送与历史写入。处理后收集器自动重置，可直接进入下一轮。
 	 * </p>
 	 *
 	 * @param reasonerText 本轮累积的思维链/正文文本，用于写入助手历史消息，可为 null
@@ -267,27 +259,33 @@ public class ToolCallContext {
 
 	/**
 	 * 执行单个工具调用：查找 → 次数校验 → 权限 → 许可 → 执行，任何一步失败都以工具结果形式回传给模型。
-	 *
-	 * @param call         原始工具调用
-	 * @param callDisplay  该调用的用户友好显示（由工具自己的转换器生成）
 	 */
 	private ToolContent execute(ToolCall call, ToolCallDisplay callDisplay) {
 		if (call.function == null) {
 			return notExecuted(call, manager.getMissingToolMessage(), callDisplay);
 		}
-		ToolData data = manager.getTools().get(call.function.name);
-		if (data == null) {
+		ToolRegistration registration = manager.getRegistration(call.function.name);
+		if (registration == null) {
 			return notExecuted(call, manager.getMissingToolMessage(), callDisplay);
 		}
+		ToolData data = registration.getData();
 		// 声明为不限次的工具不参与任何次数校验，也不占用总次数上限的额度
 		boolean unlimited = manager.isUnlimited(call.function.name);
 		if (!unlimited && manager.hasCallLimit() && calls.get() >= manager.getMaxCalls()) {
 			callLimitExhausted.set(true);
 			return notExecuted(call, manager.getLimitMessage(), callDisplay);
 		}
-		// 单个工具的执行次数上限
-		if (!unlimited && manager.hasToolCallLimit(call.function.name)
-				&& getToolCallCount(call.function.name) >= manager.getToolCallLimit(call.function.name)) {
+		int groupId = registration.getGroupId();
+		if (!unlimited && groupId > 0 && manager.hasGroupLimit(groupId)) {
+			int groupLimit = manager.getGroupMaxCalls(groupId);
+			if (getGroupCallCount(groupId) >= groupLimit) {
+				callLimitExhausted.set(true);
+				return notExecuted(call, manager.getGroupLimitMessage(), callDisplay);
+			}
+		}
+		// 单个工具的执行次数上限（属于共享组时以组上限为准）
+		if (!unlimited && groupId <= 0 && registration.getMaxCalls() >= 0
+				&& getToolCallCount(call.function.name) >= registration.getMaxCalls()) {
 			callLimitExhausted.set(true);
 			return notExecuted(call, manager.getToolLimitMessage(), callDisplay);
 		}
@@ -313,20 +311,56 @@ public class ToolCallContext {
 			calls.incrementAndGet();
 		}
 		toolCalls.computeIfAbsent(call.function.name, n -> new AtomicInteger()).incrementAndGet();
+		if (groupId > 0) {
+			groupCalls.computeIfAbsent(groupId, n -> new AtomicInteger()).incrementAndGet();
+		}
 		try {
-			String result = data.tool.run(call.function.arguments, output, manager);
-			return new ToolContent(call.id, result, buildResultDisplay(call, callDisplay, result));
+			CompletableFuture<ToolResult> future = data.tool == null ? null
+					: data.tool.run(call.function.arguments, output, manager);
+			if (future == null) {
+				return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
+			}
+			if (registration.isAsync()) {
+				ToolTask task = manager.submitTask(call.function.name, call.id, future, callDisplay);
+				if (task == null) {
+					return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
+				}
+				return new ToolContent(call.id, manager.asyncReply(task), ToolCallDisplay.of(callDisplay.getBrief()));
+			}
+			ToolResult result = future.get();
+			if (result == null) {
+				return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
+			}
+			attachContents(result.getAttachments());
+			return new ToolContent(call.id, result.getText(), buildResultDisplay(call, callDisplay, result.getText()));
+		} catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
+		} catch (ExecutionException ex) {
+			ex.printStackTrace();
+			return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
 		} catch (Throwable ex) {
 			ex.printStackTrace();
 			return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
 		}
 	}
 
+	/** 把同步工具结果中的附件交给本次输出的监听方（通常是会话）。 */
+	private void attachContents(List<MessageContent> attachments) {
+		if (output == null || attachments == null || attachments.isEmpty()) {
+			return;
+		}
+		for (MessageContent attachment : attachments) {
+			if (attachment != null) {
+				output.attachContent(attachment);
+			}
+		}
+	}
+
 	/**
 	 * 本批调用是否需要消耗一轮配额。
 	 * <p>
-	 * 只要本批中存在至少一个受轮次限制的调用就计一轮；全部由声明为不限次的工具组成时不计轮次，
-	 * 因此这些工具可以反复调用而不推进（也不触发）总轮次上限。
+	 * 只要本批中存在至少一个受轮次限制的调用就计一轮；全部由声明为不限次的工具组成时不计轮次。
 	 * </p>
 	 *
 	 * @param toolCalls 本批工具调用
@@ -352,8 +386,7 @@ public class ToolCallContext {
 	}
 
 	/**
-	 * 把原始调用信息转换为用户友好显示，交给管理器的统一实现
-	 * （与历史重新加载后的重算使用同一套转换规则）。
+	 * 把原始调用信息转换为用户友好显示，交给管理器的统一实现。
 	 */
 	private List<ToolCallDisplay> buildCallDisplays(List<ToolCall> calls) {
 		List<ToolCallDisplay> displays = new ArrayList<>(calls.size());
@@ -376,16 +409,17 @@ public class ToolCallContext {
 		rounds.set(0);
 		calls.set(0);
 		toolCalls.clear();
+		groupCalls.clear();
 		limitNotified.set(false);
 		callLimitExhausted.set(false);
 	}
 
-	/** 已处理的、计入轮次上限的工具调用轮次（全为不限次工具的那一批不计入）。 */
+	/** 已处理的、计入轮次上限的工具调用轮次。 */
 	public int getRounds() {
 		return rounds.get();
 	}
 
-	/** 已实际执行的、计入总次数上限的工具调用次数（不限次工具不计入）。 */
+	/** 已实际执行的、计入总次数上限的工具调用次数。 */
 	public int getCallCount() {
 		return calls.get();
 	}
@@ -393,6 +427,12 @@ public class ToolCallContext {
 	/** 指定工具已实际执行的次数（含不限次工具，仅用于统计）。 */
 	public int getToolCallCount(String toolName) {
 		AtomicInteger count = toolCalls.get(toolName);
+		return count == null ? 0 : count.get();
+	}
+
+	/** 指定共享组已实际执行的次数。 */
+	public int getGroupCallCount(int groupId) {
+		AtomicInteger count = groupCalls.get(groupId);
 		return count == null ? 0 : count.get();
 	}
 
@@ -408,10 +448,18 @@ public class ToolCallContext {
 
 	/** 指定工具剩余可用执行次数，未配置上限时返回 -1。 */
 	public int getRemainingCallsOf(String toolName) {
-		if (!manager.hasToolCallLimit(toolName)) {
+		ToolRegistration registration = manager.getRegistration(toolName);
+		if (registration == null) {
 			return -1;
 		}
-		return Math.max(0, manager.getToolCallLimit(toolName) - getToolCallCount(toolName));
+		int groupId = registration.getGroupId();
+		if (groupId > 0 && manager.hasGroupLimit(groupId)) {
+			return Math.max(0, manager.getGroupMaxCalls(groupId) - getGroupCallCount(groupId));
+		}
+		if (registration.getMaxCalls() < 0) {
+			return -1;
+		}
+		return Math.max(0, registration.getMaxCalls() - getToolCallCount(toolName));
 	}
 
 	/** 当前使用的工具调用管理器（提供工具表与调用规则）。 */

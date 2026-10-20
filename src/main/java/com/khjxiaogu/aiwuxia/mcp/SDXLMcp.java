@@ -38,6 +38,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
@@ -50,12 +51,23 @@ import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.aiwuxia.vision.LocalSDXLUsage;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelType;
 
-public class SDXLMcp {
+public class SDXLMcp implements ToolProvider {
+	/** 本次提供的工具集合。 */
+	private final List<ToolData> tools = new ArrayList<>();
+	/** 画面比例 → 宽高。 */
+	private final Map<String, int[]> resolutions = new HashMap<>();
+	private final List<PromptClass> commonNegatives = new ArrayList<>();
+	private final List<PromptClass> commonPositive = new ArrayList<>();
+	private final ObjectStorageProvider tos;
+	private final Map<String, LoraConfigurations> lora;
+	private final boolean isNsfw;
+	private final BiFunction<String, AIOutput, String> urlGetter;
+	private final BiFunction<String, String, CompletableFuture<JsonObject>> func;
+
 	public static class LoraConfigurations{
 		public final List<LoraConfiguration> li=new ArrayList<>(5);
 		public LoraConfigurations(String loraName, float loraValue) {
@@ -238,11 +250,11 @@ public class SDXLMcp {
 		sb.deleteCharAt(sb.length()-1);
 		return sb.toString();
     }
-    public static MCPTools createRemoteLocalModel(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,BiFunction<String,AIOutput,String> urlGetter,boolean isNsfw) {
+    public static SDXLMcp createRemoteLocalModel(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,BiFunction<String,AIOutput,String> urlGetter,boolean isNsfw) {
 		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,data)->LocalModel.require(ModelType.SDXL,UUID.randomUUID().toString(), JsonBuilder.object().add("path", url).add("data", data).end()).thenApply(t->JsonParser.parseString(new String(t.bodyData,StandardCharsets.UTF_8)).getAsJsonObject());
-		return create(tos,lora,charas,isNsfw,urlGetter,func);
+		return create(tos,lora,isNsfw,urlGetter,func);
 	}
-	public static MCPTools createLocal(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,boolean isNsfw,ResourceLock lock) {
+	public static SDXLMcp createLocal(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,ResourceLock lock) {
 		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,payload)->CompletableFuture.supplyAsync(()->{
 			try(ResourcePermit l=lock.acquire(12))  {
 				return HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
@@ -256,7 +268,7 @@ public class SDXLMcp {
 				throw new RuntimeException(e);
 			}
 		});
-		return create(tos,lora,charas,isNsfw,(s,output)->{
+		return create(tos,lora,isNsfw,(s,output)->{
 			try {
 				return Base64.getEncoder().encodeToString(tos.download(s, output == null ? null : output::addUsage));
 			} catch (IOException e) {
@@ -327,47 +339,40 @@ public class SDXLMcp {
 		}
 	    return null;
 	}
-	public static MCPTools create(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,boolean isNsfw,BiFunction<String,AIOutput,String> urlGetter,BiFunction<String,String,CompletableFuture<JsonObject>> func) {
-		MCPTools tools=new MCPTools();
-		
-		Map<String, int[]> resolutions = new HashMap<>();
-		resolutions.put("16:9", new int[] { 1920, 1080 });
-		resolutions.put("9:16", new int[] { 1080, 1920 });
-		resolutions.put("3:4", new int[] { 1200, 1600 });
-		resolutions.put("4:3", new int[] { 1600, 1200 });
-		resolutions.put("1:1", new int[] { 1200, 1200 });
-		/*resolutions.put("16:9", new int[] { 1280, 720 });
-		resolutions.put("9:16", new int[] { 720, 1280 });
-		resolutions.put("3:4", new int[] { 960, 1280 });
-		resolutions.put("4:3", new int[] { 1280, 960 });
-		resolutions.put("1:1", new int[] { 1280, 1280 });*/
-		List<PromptClass> commonNegatives=new ArrayList<>();
-		for(String s:"low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs,trademark,artist's name,username,watermark,signature,watermark,text,words,extra limbs,missing limbs,distorted,blurry,fused toes,too many toes,extra toes".split(",")) {
-			commonNegatives.add(new PromptClass(s));
-		}
-		List<PromptClass> commonPositive=new ArrayList<>();
-		for(String s:"(masterpiece),(best quality),(absurdres)".split(",")) {
-			commonPositive.add(new PromptClass(s));
-		}
-		if(!isNsfw) {
-			commonNegatives.add(new PromptClass("nsfw","((nsfw))"));
-			commonNegatives.add(new PromptClass("nipples","((nipples))"));
-			commonNegatives.add(new PromptClass("pussy","((pussy))"));
-			commonNegatives.add(new PromptClass("penis","((penis))"));
-		}
+	/**
+	 * 创建 SDXL 图片工具集。
+	 *
+	 * @param tos       对象存储
+	 * @param lora      Lora 配置
+	 * @param isNsfw    是否允许不宜内容
+	 * @param urlGetter 图片 id → 图片内容
+	 * @param func      调用 SDXL 服务的函数
+	 * @return 工具集
+	 */
+	public static SDXLMcp create(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
+			BiFunction<String, AIOutput, String> urlGetter,
+			BiFunction<String, String, CompletableFuture<JsonObject>> func) {
+		return new SDXLMcp(tos, lora, isNsfw, urlGetter, func);
+	}
 
-		if(charas!=null)
-		tools.register(new ToolData.Builder("search_character", "通过关键词搜索特定角色的提示词，返回相符的提示词，以,隔开")
+	/**
+	 * 创建角色提示词搜索工具。该工具与 SDXL 图片工具没有共享状态，因此独立注册。
+	 *
+	 * @param charas 角色提示词列表
+	 * @return 独立的工具定义
+	 */
+	public static ToolData createSearchCharacter(List<String> charas) {
+		return new ToolData.Builder("search_character", "通过关键词搜索特定角色的提示词，返回相符的提示词，以,隔开")
 				.putParam("keyword", "角色英文名")
 				.presenter(ToolCallPresenter.ofArgument("搜索角色", "keyword"))
 				.tool((data) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-						
-						String keyword=jo.get("keyword").getAsString();
+
+						String keyword = jo.get("keyword").getAsString();
 						System.out.println(keyword);
-						StringBuilder sb=new StringBuilder("符合的角色提示词列表：");
-						for(String key:searchContainingAllKeywords(charas,keyword)) {
+						StringBuilder sb = new StringBuilder("符合的角色提示词列表：");
+						for (String key : searchContainingAllKeywords(charas, keyword)) {
 							sb.append(key).append(",");
 						}
 						return sb.toString();
@@ -375,11 +380,41 @@ public class SDXLMcp {
 						e.printStackTrace();
 					}
 					return "参数格式错误";
-				}).build());
-		tools.register(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
+				}).build();
+	}
+
+	public SDXLMcp(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
+			BiFunction<String, AIOutput, String> urlGetter,
+			BiFunction<String, String, CompletableFuture<JsonObject>> func) {
+		this.tos = tos;
+		this.lora = lora;
+		this.isNsfw = isNsfw;
+		this.urlGetter = urlGetter;
+		this.func = func;
+
+		resolutions.put("16:9", new int[] { 1920, 1080 });
+		resolutions.put("9:16", new int[] { 1080, 1920 });
+		resolutions.put("3:4", new int[] { 1200, 1600 });
+		resolutions.put("4:3", new int[] { 1600, 1200 });
+		resolutions.put("1:1", new int[] { 1200, 1200 });
+		for (String s : "low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs,trademark,artist's name,username,watermark,signature,watermark,text,words,extra limbs,missing limbs,distorted,blurry,fused toes,too many toes,extra toes"
+				.split(",")) {
+			commonNegatives.add(new PromptClass(s));
+		}
+		for (String s : "(masterpiece),(best quality),(absurdres)".split(",")) {
+			commonPositive.add(new PromptClass(s));
+		}
+		if (!isNsfw) {
+			commonNegatives.add(new PromptClass("nsfw", "((nsfw))"));
+			commonNegatives.add(new PromptClass("nipples", "((nipples))"));
+			commonNegatives.add(new PromptClass("pussy", "((pussy))"));
+			commonNegatives.add(new PromptClass("penis", "((penis))"));
+		}
+
+		tools.add(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
 				.presenter(ToolCallPresenter.ofName("反推提示词"))
-				.tool((data, output, manager) -> {
+				.toolText((data, output, manager) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
 					Matcher mtch = patt.matcher(data);
 					if (mtch.find()) {
@@ -402,7 +437,7 @@ public class SDXLMcp {
 					return "参数格式错误";
 				}).build());
 		
-		tools.register(new ToolData.Builder("sdxl_gen_image",
+		tools.add(new ToolData.Builder("sdxl_gen_image",
 				"使用Stable Diffusion XL生成图片，生成后需要使用其他工具发送。")
 				.putParam("positive", "正面提示词，必须是纯英文，不需要包含画质提示词。")
 				.putParam("negative", "负面提示词，必须是纯英文，不需要包含画质提示词。")
@@ -415,7 +450,7 @@ public class SDXLMcp {
 					content.append("\n画面比例:"+jo.get("resolution").getAsString());
 					return ToolCallDisplay.of("文生图", content);
 				})
-				.tool((data, output, manager) -> {
+				.toolText((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						System.out.println(data);
@@ -479,7 +514,7 @@ public class SDXLMcp {
 						return "参数格式错误";
 					}
 				}).build());
-		tools.register(new ToolData.Builder("regional_image",
+		tools.add(new ToolData.Builder("regional_image",
 				"使用Stable Diffusion XL搭配分区提示词生成图片，不需要包含画质提示词，提示词必须是纯英文，生成后需要使用其他工具发送。")
 				.putParam("picture_id", "如果要使用图生图，务必在这里填上图片ID，否则不填或留空")
 				.putParam("strength", "如果不使用图生图，该参数无效。重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。")
@@ -502,7 +537,7 @@ public class SDXLMcp {
 					content.append("\n画面比例:"+jo.get("resolution").getAsString());
 					return ToolCallDisplay.of("分区图片", content);
 				})
-				.tool((data, output, manager) -> {
+				.toolText((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					System.out.println(data);
 					try {
@@ -595,7 +630,7 @@ public class SDXLMcp {
 						return "参数格式错误";
 					}
 				}).build());
-		tools.register(new ToolData.Builder("image_to_image",
+		tools.add(new ToolData.Builder("image_to_image",
 				"使用Stable Diffusion XL的图生图功能，生成后需要使用其他工具发送。")
 				.putParam("positive", "正面提示词，必须是纯英文。")
 				.putParam("negative", "负面提示词，必须是纯英文。")
@@ -613,7 +648,7 @@ public class SDXLMcp {
 					content.append("\n强度:"+jo.get("strength").getAsString());
 					return ToolCallDisplay.of("图生图", content);
 				})
-				.tool((data, output, manager) -> {
+				.toolText((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						System.out.println(data);
@@ -672,8 +707,13 @@ public class SDXLMcp {
 						return "参数格式错误";
 					}
 				}).build());
-		return tools;
 	}
+
+	@Override
+	public Collection<ToolData> getTools() {
+		return java.util.Collections.unmodifiableList(tools);
+	}
+
 	public static Set<LoraConfigurations> addLoras(String prompt,Map<String, LoraConfigurations> lora) {
 		Set<LoraConfigurations> usingLoras=new HashSet<>();
 		for(Entry<String, LoraConfigurations> s:lora.entrySet()) {

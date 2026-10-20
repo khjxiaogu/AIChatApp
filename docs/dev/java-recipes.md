@@ -101,7 +101,7 @@ write.setLastState(snapshot);
 // 1) 描述工具：名字、描述、参数（名称 → 说明），回调拿到的是参数 JSON 字符串
 ToolData weather = new ToolData.Builder("get_weather", "查询城市天气")
         .putParam("city", "城市名，例如：北京")
-        .tool((paramsJson, output, manager) -> {       // Tool：run(params, AIOutput, ToolCallManager)
+        .toolText((paramsJson, output, manager) -> {   // 直接返回文本的便捷写法
             JsonObject args = JsonParser.parseString(paramsJson).getAsJsonObject();
             // output.addUsage(...) 可写入本次工具产生的用量；不需要时忽略
             return fetchWeather(args.get("city").getAsString());   // 返回字符串给模型
@@ -109,9 +109,7 @@ ToolData weather = new ToolData.Builder("get_weather", "查询城市天气")
         .build();
 
 // 2) 挂到会话（构造 app 时或 app 初始化时）
-MCPTools tools = new MCPTools();
-tools.register(weather);
-state.registerTools(tools);      // 之后 AIRequest.builder(state) 自动带上
+state.registerTool(weather);      // 之后 AIRequest.builder(state) 自动带上
 ```
 
 要点：

@@ -331,15 +331,18 @@ QQ 群侧（`NapCatAIConnector`）会给会话挂工具（`SDXLMcp`、`QQMcp`、
 ```java
 ToolData t = new ToolData.Builder("get_weather", "查询城市天气")
         .putParam("city", "城市名")          // 参数名 → 说明（写进给模型的工具描述）
-        .tool((paramsJson, output, manager) -> "晴，26℃")  // Tool：run(params, AIOutput, ToolCallManager)
+        .toolText((paramsJson, output, manager) -> "晴，26℃")  // 直接返回文本
         .build();
-MCPTools tools = new MCPTools();
-tools.register(t);
-state.registerTools(tools);                  // 挂到会话，随后 AIRequest.builder(state) 自动带上
+state.registerTool(t);                       // 挂到会话，随后 AIRequest.builder(state) 自动带上
 ```
 
-- `Tool.run(String params, AIOutput output, ToolCallManager manager)` 收到的是**参数 JSON 字符串**，返回的字符串直接给模型看；
-- 工具**不再绑定会话**：同一份 `ToolData` / `MCPTools` 可以在任意会话、任意一次生成中复用；
+- `Tool.run(String params, AIOutput output, ToolCallManager manager)` 收到的是**参数 JSON 字符串**，返回 `CompletableFuture<ToolResult>`；
+  只返回文本的工具可以用 `ToolData.Builder.toolText(...)`，需要附件或真正异步时返回 `CompletableFuture<ToolResult>`；
+- 工具**不再绑定会话**：同一份 `ToolData` 可以在任意会话、任意一次生成中复用；
+- 一组需要共享配置/状态的工具实现 `ToolProvider`，用 `state.registerTools(provider)` 注册；
+- 异步工具在注册时声明（`async()` 或 `registerTool(tool, true, maxCalls)`），管理器会立即返回任务 ID，完成时通知会话；
+- 注册工具集的共享次数：`state.registerTools(provider, 10)` 让该工具集内所有工具共享 10 次；
+  也可以先注册再 `state.bindTools(10, "tool_a", "tool_b")` 把已有工具绑定为共享组（组 ID 自动递增）；
 - 工具产生的用量写入 `output.addUsage(...)`（会话通过 `output.addUsageListener(state::addUsage)` 统一记账）；
   只使用参数的简单工具仍可写单参数 lambda，`ToolData.Builder` 会自动适配；
 - 需要会话级行为时使用传入的 `manager`（例如读取本次生成的上下文、下发图片），不要持有 `AISession`；

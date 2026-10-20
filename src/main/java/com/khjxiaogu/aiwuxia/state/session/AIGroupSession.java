@@ -34,7 +34,11 @@ import java.util.function.Supplier;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
+import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
+import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
+import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
@@ -87,6 +91,10 @@ public class AIGroupSession extends AISession {
 	public File saveData;
 	public boolean outputReaonser;
 	public boolean outputPrice;
+	/** 会话处理工具附件的入口，由 QQ 连接器注入；工具本身不直接发送消息。 */
+	private volatile Consumer<MessageContent> toolAttachmentHandler;
+	/** 异步工具任务完成后的会话入口，由 QQ 连接器注入，用于写入通知并触发下一轮。 */
+	private volatile Consumer<ToolTask> toolTaskCompletionHandler;
 	public AIGroupSession(String user, ISaveData data,File saveData, AIApplication aiapp,JsonObject config) {
 		super(user, data, aiapp);
 		this.groupId=config.get("groupId").getAsLong();
@@ -111,6 +119,48 @@ public class AIGroupSession extends AISession {
 			lastState=new StringBuilder();
 			return ret;
 		}
+	}
+
+	/**
+	 * 设置工具附件处理器（由 QQ 连接器注入）。
+	 *
+	 * @param handler 附件处理器，null 表示不发送附件
+	 */
+	public void setToolAttachmentHandler(Consumer<MessageContent> handler) {
+		this.toolAttachmentHandler = handler;
+	}
+
+	/**
+	 * 设置异步工具任务完成处理器（由 QQ 连接器注入）。
+	 *
+	 * @param handler 任务完成处理器，null 表示使用默认状态通知
+	 */
+	public void setToolTaskCompletionHandler(Consumer<ToolTask> handler) {
+		this.toolTaskCompletionHandler = handler;
+	}
+
+	@Override
+	protected void handleToolAttachment(MessageContent content) {
+		Consumer<MessageContent> handler = toolAttachmentHandler;
+		if (handler != null) {
+			handler.accept(content);
+		}
+	}
+
+	@Override
+	protected void notifyToolStatus(String tool, String message, boolean success) {
+		addStatus("<tool name=\"" + tool + "\" status=\"" + (success ? "success" : "failed") + "\">" + message
+				+ "</tool>");
+	}
+
+	@Override
+	protected void handleToolTaskCompleted(ToolTask task) {
+		Consumer<ToolTask> handler = toolTaskCompletionHandler;
+		if (handler != null) {
+			handler.accept(task);
+			return;
+		}
+		super.handleToolTaskCompleted(task);
 	}
     /**
      * 思维链写入钩子。
@@ -168,5 +218,13 @@ public class AIGroupSession extends AISession {
 	@Override
 	public void onToolcall(ToolCallContent content) {
 		printReasoning();
+	}
+
+	@Override
+	public void close() {
+		// 注销角色呼叫与定时触发绑定，避免静态表继续持有已关闭的会话
+		AgentPingMcp.unregister(getRoleName(Role.ASSISTANT), this);
+		CrontabMcp.unregister(botId, this);
+		super.close();
 	}
 }

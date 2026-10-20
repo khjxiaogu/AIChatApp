@@ -23,6 +23,7 @@ import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
+import com.khjxiaogu.aiwuxia.mcp.PainterMediaMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
@@ -148,14 +149,18 @@ public class PainterSession extends WebSocketAISession {
                           ApplicationAttributes attr, File fn, ISaveData data) {
         super(par, uid, chatid, aiapp, attr, fn, data);
         // 工具直接注册进会话的工具调用管理器，由管理器统一处理调用次数、权限、许可与执行
-        registerTools(MultiModalMcp.create(par.getPainterStorage()));
-        registerTools(MultiModalMcp.createOutput(par.getPainterStorage(), Collections.emptyMap()));
-        registerTools(SDXLMcp.createRemoteLocalModel(par.getPainterStorage(), par.lora, par.chara,
+        registerTool(MultiModalMcp.createImageRecognition(par.getPainterStorage()));
+        registerTool(PainterMediaMcp.createSendImage(par.getPainterStorage()));
+        registerTools(SDXLMcp.createRemoteLocalModel(par.getPainterStorage(), par.lora,
                 (imgid, output) -> par.urlbase + "/painter/image?conversation_id=" + chatid + "&image_id=" + imgid, true));
-        registerTools(FetchMcp.create(par.getPainterStorage()));
-        registerTools(DeepseekSearchMcp.create());
+        if (par.chara != null) {
+            registerTool(SDXLMcp.createSearchCharacter(par.chara));
+        }
+        registerTool(FetchMcp.createWebView(par.getPainterStorage()));
+        registerTool(FetchMcp.createMoegirlSearch(par.getPainterStorage()));
+        registerTool(DeepseekSearchMcp.createWebSearch());
         // 按需查询角色设定（数据来自人类可读索引 character-list.txt）
-        registerTools(CharacterSettingMcp.create(par.getDataFolder()));
+        registerTools(new CharacterSettingMcp(par.getDataFolder()));
     }
 
     /**

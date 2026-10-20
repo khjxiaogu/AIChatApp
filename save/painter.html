@@ -650,6 +650,78 @@
             justify-content: flex-end;
         }
 
+        /* ---- 引用消息 ---- */
+        .quote-message-btn {
+            margin-top: 4px;
+            background: transparent;
+            color: #7b8794;
+            border: 1px solid #d7e0ec;
+            padding: 2px 10px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            line-height: 1.4;
+        }
+        .quote-message-btn:hover {
+            color: #1e6fdf;
+            border-color: #1e6fdf;
+        }
+        .message-quote-bar {
+            display: flex;
+            justify-content: flex-end;
+        }
+        .quote-block {
+            margin: 4px 0 8px;
+            padding: 6px 10px;
+            border-left: 3px solid #94a3b8;
+            border-radius: 6px;
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+        .quote-block-author {
+            font-weight: 600;
+            margin-bottom: 2px;
+            color: #64748b;
+        }
+        .quote-block-text {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .quote-preview {
+            margin: 0 12px 8px;
+            padding: 8px 10px;
+            border-left: 3px solid #2563eb;
+            border-radius: 6px;
+            background: #f1f5f9;
+            color: #334155;
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+        .quote-preview-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #64748b;
+            font-weight: 600;
+        }
+        .quote-preview-close {
+            background: transparent;
+            border: none;
+            color: #64748b;
+            font-size: 1rem;
+            line-height: 1;
+            padding: 0 2px;
+            cursor: pointer;
+        }
+        .quote-preview-body {
+            margin-top: 4px;
+            max-height: 72px;
+            overflow: hidden;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
         /* ---- 图片安全模式：对话里的图片深度模糊，全屏查看时保持清晰 ---- */
         .image-safe .message-image {
             overflow: hidden;
@@ -728,6 +800,25 @@
         html:not(.day-mode) .message-image {
             border-color: #2b333e;
             background: #1a212a;
+        }
+        html:not(.day-mode) .quote-block,
+        html:not(.day-mode) .quote-preview {
+            background: #232b35;
+            border-left-color: #3b82f6;
+            color: #c2ccd9;
+        }
+        html:not(.day-mode) .quote-block-author,
+        html:not(.day-mode) .quote-preview-head,
+        html:not(.day-mode) .quote-preview-close,
+        html:not(.day-mode) .quote-message-btn {
+            color: #93a3b8;
+        }
+        html:not(.day-mode) .quote-message-btn {
+            border-color: #33404e;
+        }
+        html:not(.day-mode) .quote-message-btn:hover {
+            color: #9dc0ff;
+            border-color: #3b82f6;
         }
         html:not(.day-mode) .loading-indicator,
         html:not(.day-mode) .history-tip {
@@ -888,6 +979,10 @@
                 <!-- 用户消息：支持文本和图片 -->
                 <div v-if="msg.role === 'user'">
                     <div v-for="(part, pIdx) in msg.contentItems" :key="'u'+pIdx">
+                        <div v-if="part.type === 'quote'" class="quote-block">
+                            <div v-if="part.author" class="quote-block-author">引用{{ part.author }}</div>
+                            <div class="quote-block-text">{{ part.content }}</div>
+                        </div>
                         <div v-if="part.type === 'text'" style="white-space: pre-wrap;">{{ part.content }}</div>
                         <div v-if="part.type === 'image'" class="message-image">
                             <img v-if="part.image_url" :src="part.image_url" :alt="part.description || '用户上传图片'" :title="part.description || ''" @click.stop="openFullscreen(part.image_url, part.description)" style="cursor:pointer" />
@@ -899,6 +994,9 @@
                         </div>
                     </div>
                     <button v-if="!aiGenerating&&idx==messages.length-1" class="btn-generate" @click="triggerGenerate" :disabled="!aiConnected" :title="aiConnected ? '按当前对话生成' : '连接断开，暂时无法生成'">生成</button>
+                    <div class="message-quote-bar">
+                        <button v-if="messageQuoteText(msg)" class="quote-message-btn" @click="startQuote(msg)" title="引用这条消息">引用</button>
+                    </div>
                 </div>
 
                 <!-- AI 消息：支持思维链 + 按顺序排列的内容 -->
@@ -941,6 +1039,10 @@
                     </div>
                     <!-- 按顺序渲染所有内容（文本、图片、视频） -->
                     <div v-for="(item, cIdx) in msg.contentItems" :key="'c'+cIdx">
+                        <div v-if="item.type === 'quote'" class="quote-block">
+                            <div v-if="item.author" class="quote-block-author">引用{{ item.author }}</div>
+                            <div class="quote-block-text">{{ item.content }}</div>
+                        </div>
                         <div v-if="item.type === 'text' && item.content" class="final-content">{{ item.content }}</div>
                         <div v-if="item.type === 'image'" class="message-image">
                             <img v-if="item.image_url" :src="item.image_url" :alt="item.description || 'AI生成的图片'" :title="item.description || ''" @click.stop="openFullscreen(item.image_url, item.description)" style="cursor:pointer" />
@@ -953,6 +1055,9 @@
                     </div>
                     <!-- 本轮配额用量：历史记录随消息下发 token_cost，实时轮次由 done.tokens 补到本条 -->
                     <div v-if="msg.tokenCost > 0" class="turn-tokens" title="本轮对话消耗的配额">本轮配额 {{ formatTurnTokens(msg.tokenCost) }}</div>
+                    <div class="message-quote-bar">
+                        <button v-if="messageQuoteText(msg)" class="quote-message-btn" @click="startQuote(msg)" title="引用这条消息">引用</button>
+                    </div>
                 </div>
             </div>
             <!-- 撤回/重新生成：跟随最新一条消息；生成中或连接断开时不显示 -->
@@ -969,10 +1074,17 @@
 
 </div>
     <div class="input-area">
+        <div v-if="quoteMessage" class="quote-preview">
+            <div class="quote-preview-head">
+                <span>引用{{ quoteMessage.role === 'assistant' ? '对方' : '我' }}的消息</span>
+                <button class="quote-preview-close" @click="cancelQuote" title="取消引用">×</button>
+            </div>
+            <div class="quote-preview-body">{{ quoteMessage.text }}</div>
+        </div>
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
             <!-- 连接断开时发送/停止/图片一律禁用；设置属于本地功能，始终可用 -->
-            <button @click="sendTextMessage" v-if="!aiGenerating" :disabled="!aiConnected || (!inputText.trim() && !uploadedImageId)">发送</button>
+            <button @click="sendTextMessage" v-if="!aiGenerating" :disabled="!aiConnected || (!inputText.trim() && !quoteMessage)">发送</button>
 			<!-- 停止：点击后进入"停止中"，等服务端本轮结束（done/status）才恢复，期间禁止重复点击 -->
 			<button @click="aiSendStop" v-if="aiGenerating" :disabled="!aiConnected || aiStopping" :class="{ 'btn-waiting': aiStopping }">{{ aiStopping ? '停止中…' : '停止' }}</button>
 
@@ -1124,6 +1236,8 @@ var main=new Vue({
         conversationId: '',
         messages: [],
         inputText: '',
+        // 待引用的消息：{role:'user'|'assistant', text:'消息正文'}，发送后清空
+        quoteMessage: null,
         selectedFile: null,
         uploadedImageId: null,
         fullscreenImage: null,
@@ -1249,6 +1363,7 @@ var main=new Vue({
             if (chatid === this.conversationId) { this.showSidebar = false; return; }
             this.showSidebar = false;
             this.messages = [];
+            this.quoteMessage = null;
             this.aiResetHistory();
             this.conversationId = chatid;
             const newUrl = `${window.location.pathname}?conversation_id=${chatid}`;
@@ -1262,6 +1377,7 @@ var main=new Vue({
                 .then(p => p.text())
                 .then(cid => {
                     this.messages = [];
+                    this.quoteMessage = null;
                     this.aiResetHistory();
                     this.conversationId = cid;
                     const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
@@ -1634,16 +1750,25 @@ var main=new Vue({
         aiOnScroll(container) {
             this.pinnedToBottom = (container.scrollHeight - container.scrollTop - container.clientHeight) <= 60;
         },
+        // 把一段文本加入内容列表：引用格式拆成引用块 + 正文，其它按普通文本处理
+        pushTextPart(result, text) {
+            const parsed = this.aiParseQuotedMessage(text);
+            if (parsed) {
+                result.contentItems.push({ type: 'quote', author: parsed.author, content: parsed.quoted });
+                if (parsed.body) result.contentItems.push({ type: 'text', content: parsed.body });
+            } else if (text) {
+                result.contentItems.push({ type: 'text', content: text });
+            }
+        },
         parseContentArray(content) {
             const result = { contentItems: [] };
             if (!content) return result;
             const items = Array.isArray(content) ? content : (typeof content === 'string' ? [{ type: 'text', text: content }] : []);
             for (const item of items) {
                 if (typeof item === 'string') {
-                    result.contentItems.push({ type: 'text', content: item });
+                    this.pushTextPart(result, item);
                 } else if (item.type === 'text') {
-                    const t = item.text || '';
-                    if (t) result.contentItems.push({ type: 'text', content: t });
+                    this.pushTextPart(result, item.text || '');
                 } else if (item.type === 'image') {
                     const p = { type: 'image', image_id: item.image_url, image_url: null, description: item.description || '' };
                     result.contentItems.push(p);
@@ -1652,7 +1777,7 @@ var main=new Vue({
                     result.contentItems.push(p);
                 } else {
                     const t = item.description || item.result || '';
-                    if (t) result.contentItems.push({ type: 'text', content: t });
+                    this.pushTextPart(result, t);
                 }
             }
             return result;
@@ -1690,20 +1815,46 @@ var main=new Vue({
         async loadImageById(imageId) {
             return await fetchImageById(imageId, this.conversationId);
         },
+        // 取消息正文（仅文本，忽略图片/工具/已有的引用块），用于引用
+        messageQuoteText(msg) {
+            if (!msg || !msg.contentItems) return '';
+            const parts = [];
+            for (let i = 0; i < msg.contentItems.length; i++) {
+                const part = msg.contentItems[i];
+                if (part.type === 'text' && part.content) parts.push(part.content);
+            }
+            return this.aiTruncateQuote(parts.join('\n'), 2000);
+        },
+        // 引用这条消息：记录快照并在输入框上方展示引用预览
+        startQuote(msg) {
+            const text = this.messageQuoteText(msg);
+            if (!text) return;
+            this.quoteMessage = { role: msg.role, text: text };
+            this.$nextTick(function () {
+                const input = document.querySelector('.input-area textarea');
+                if (input) input.focus();
+            });
+        },
+        cancelQuote() {
+            this.quoteMessage = null;
+        },
         // 发送文本消息（通过websocket）— 只添加到历史，不触发生成
         sendTextMessage() {
             if (this.aiGenerationBusy) return;
             const text = this.inputText.trim();
-            if (!text) {
+            if (!text && !this.quoteMessage) {
                 return;
             }
-            if (!this.aiSendMessage(text)) {
+            // 引用正文与用户输入一起作为本轮用户消息发送给模型，格式由公共协议层统一生成
+            const content = this.aiBuildQuotedMessage(this.quoteMessage, text || '（引用上述消息）');
+            if (!this.aiSendMessage(content)) {
                 // 连接未就绪：重连后补发一次
                 console.warn("WebSocket未就绪, 重新连接");
                 this.aiConnect();
-                setTimeout(() => this.aiSendMessage(text), 500);
+                setTimeout(() => this.aiSendMessage(content), 500);
             }
             this.inputText = '';
+            this.quoteMessage = null;
             this.scrollToBottom(true);
         },
         // 触发AI生成

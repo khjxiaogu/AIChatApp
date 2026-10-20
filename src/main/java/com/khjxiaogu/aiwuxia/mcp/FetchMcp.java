@@ -25,45 +25,57 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
 public class FetchMcp {
-	public static MCPTools create(ObjectStorageProvider tos) {
-		MCPTools tools=new MCPTools();
-		tools.register(new ToolData.Builder("web_view", "获取链接指定的内容，只支持ftp/http/https链接").putParam("url", "网页链接")
+	/**
+	 * 创建网页抓取工具。
+	 *
+	 * @param tos 对象存储
+	 * @return 独立的工具定义
+	 */
+	public static ToolData createWebView(ObjectStorageProvider tos) {
+		return new ToolData.Builder("web_view", "获取链接指定的内容，只支持ftp/http/https链接").putParam("url", "网页链接")
 				.presenter(ToolCallPresenter.ofArgument("查看网页", "url"))
-				.tool((data, output, manager) -> {
+				.toolText((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						if (jo.has("url")) {
 							String url = jo.get("url").getAsString();
 							if (url.startsWith("ftp") || url.startsWith("http"))
-								return fetch(output,url,tos);
+								return fetch(output, url, tos);
 
 						}
 					} catch (Throwable err) {
 						err.printStackTrace();
 					}
 					return "参数格式错误";
-				}).build());
-		tools.register(new ToolData.Builder("moegirl_search", "搜索萌娘百科，如果有不知道的人物、角色或作品在这搜索。").putParam("keyword", "关键词")
-				.presenter(ToolCallPresenter.ofArgument("搜索萌娘百科", "keyword"))
-				.tool((data, output, manager) -> {
-			try {
-				JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-				if (jo.has("keyword")) {
-					String keyword = jo.get("keyword").getAsString();
-					return fetch(output,"https://zh.moegirl.org.cn/index.php?search="
-							+ URLEncoder.encode(keyword, StandardCharsets.UTF_8)
-							+ "&title=Special%3A%E6%90%9C%E7%B4%A2",tos);
+				}).build();
+	}
 
-				}
-			} catch (Throwable err) {
-				err.printStackTrace();
-			}
-			return "参数格式错误";
-		}).build());
-		return tools;
+	/**
+	 * 创建萌娘百科搜索工具。
+	 *
+	 * @param tos 对象存储
+	 * @return 独立的工具定义
+	 */
+	public static ToolData createMoegirlSearch(ObjectStorageProvider tos) {
+		return new ToolData.Builder("moegirl_search", "搜索萌娘百科，如果有不知道的人物、角色或作品在这搜索。").putParam("keyword", "关键词")
+				.presenter(ToolCallPresenter.ofArgument("搜索萌娘百科", "keyword"))
+				.toolText((data, output, manager) -> {
+					try {
+						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
+						if (jo.has("keyword")) {
+							String keyword = jo.get("keyword").getAsString();
+							return fetch(output, "https://zh.moegirl.org.cn/index.php?search="
+									+ URLEncoder.encode(keyword, StandardCharsets.UTF_8)
+									+ "&title=Special%3A%E6%90%9C%E7%B4%A2", tos);
+
+						}
+					} catch (Throwable err) {
+						err.printStackTrace();
+					}
+					return "参数格式错误";
+				}).build();
 	}
 
 	/**

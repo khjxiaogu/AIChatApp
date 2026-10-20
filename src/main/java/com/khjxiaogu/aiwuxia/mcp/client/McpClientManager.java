@@ -16,7 +16,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 /**
@@ -36,7 +35,7 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
  * }
  * }</pre>
  * <p>
- * 每个服务端初始化后把工具桥接为 {@link ToolData}，再汇总为一份 {@link MCPTools}；
+ * 每个服务端初始化后把工具桥接为 {@link ToolData}，再汇总为一份工具列表；
  * 宿主程序（{@code AIChatService}）把它注册到会话中，AI 就能像调用本地工具一样调用远程 MCP 工具。
  * 连接在后台线程进行，失败只记录日志，不影响主服务启动。
  * </p>
@@ -49,14 +48,14 @@ public class McpClientManager implements Closeable {
     private final SimpleLogger logger = new SimpleLogger("MCP客户端");
     /** 已连接的客户端：配置名 → 客户端。 */
     private final Map<String, McpClient> clients = new LinkedHashMap<>();
-    /** 各客户端的工具：配置名 → 工具集合。 */
-    private final Map<String, MCPTools> serverTools = new LinkedHashMap<>();
+    /** 各客户端的工具：配置名 → 工具列表。 */
+    private final Map<String, List<ToolData>> serverTools = new LinkedHashMap<>();
     /** 各服务端的工具名前缀。 */
     private final Map<String, String> prefixes = new LinkedHashMap<>();
     /** 配置变更/连接完成后的回调。 */
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
-    /** 汇总后的工具表（整体替换，读取无需加锁）。 */
-    private volatile MCPTools combined = new MCPTools();
+    /** 汇总后的工具列表（整体替换，读取无需加锁）。 */
+    private volatile List<ToolData> combined = new ArrayList<>();
     /** 是否已启动。 */
     private volatile boolean started;
     /** 最近一次失败原因，供状态接口展示。 */
@@ -116,9 +115,9 @@ public class McpClientManager implements Closeable {
     /**
      * 当前汇总工具表的快照（每次返回新集合，调用方可安全注册到会话）。
      *
-     * @return 工具集合，永不 null
+     * @return 工具列表，永不 null
      */
-    public MCPTools getTools() {
+    public List<ToolData> getTools() {
         return McpToolBridge.copyOf(combined);
     }
 
@@ -164,7 +163,7 @@ public class McpClientManager implements Closeable {
         json.addProperty("configFile", configFile == null ? "" : configFile.getPath());
         json.addProperty("started", started);
         json.addProperty("connected", !clients.isEmpty());
-        json.addProperty("toolCount", combined.getTools().size());
+        json.addProperty("toolCount", combined.size());
         if (lastError != null) {
             json.addProperty("lastError", lastError);
         }
@@ -176,8 +175,8 @@ public class McpClientManager implements Closeable {
             server.addProperty("type", client instanceof McpStdioClient ? "stdio" : "http");
             server.addProperty("protocolVersion", client.getProtocolVersion());
             server.addProperty("prefix", prefixes.get(entry.getKey()));
-            MCPTools tools = serverTools.get(entry.getKey());
-            server.addProperty("toolCount", tools == null ? 0 : tools.getTools().size());
+            List<ToolData> tools = serverTools.get(entry.getKey());
+            server.addProperty("toolCount", tools == null ? 0 : tools.size());
             servers.add(server);
         }
         json.add("servers", servers);
@@ -193,7 +192,7 @@ public class McpClientManager implements Closeable {
         clients.clear();
         serverTools.clear();
         prefixes.clear();
-        combined = new MCPTools();
+        combined = new ArrayList<>();
     }
 
     // ==================== 连接实现 ====================
@@ -207,7 +206,8 @@ public class McpClientManager implements Closeable {
         serverTools.clear();
         prefixes.clear();
         lastError = null;
-        MCPTools merged = new MCPTools();
+        List<ToolData> merged = new ArrayList<>();
+        Map<String, Boolean> mergedNames = new LinkedHashMap<>();
         if (configFile == null || !configFile.isFile()) {
             lastError = "未找到 MCP 客户端配置文件：" + (configFile == null ? "" : configFile.getPath());
             combined = merged;
@@ -248,18 +248,19 @@ public class McpClientManager implements Closeable {
             try {
                 client = createClient(name, entry);
                 client.initialize();
-                MCPTools tools = McpToolBridge.toTools(client, prefix);
+                List<ToolData> tools = McpToolBridge.toTools(client, prefix);
                 clients.put(name, client);
                 serverTools.put(name, tools);
                 prefixes.put(name, prefix);
-                for (ToolData tool : tools.getTools()) {
-                    if (merged.get(tool.name) == null) {
-                        merged.register(tool);
+                for (ToolData tool : tools) {
+                    if (!mergedNames.containsKey(tool.name)) {
+                        merged.add(tool);
+                        mergedNames.put(tool.name, Boolean.TRUE);
                     } else {
                         logger.warning("MCP 工具重名，已忽略后注册的同名工具：" + tool.name);
                     }
                 }
-                logger.info("已连接 MCP 服务端 " + name + "（" + tools.getTools().size() + " 个工具，协议 "
+                logger.info("已连接 MCP 服务端 " + name + "（" + tools.size() + " 个工具，协议 "
                         + client.getProtocolVersion() + "）");
             } catch (Throwable ex) {
                 if (client != null) {
@@ -270,7 +271,7 @@ public class McpClientManager implements Closeable {
             }
         }
         combined = merged;
-        if (merged.getTools().isEmpty() && lastError == null) {
+        if (merged.isEmpty() && lastError == null) {
             lastError = "未连接任何 MCP 服务端";
         }
         notifyListeners();

@@ -365,7 +365,7 @@ session.registerTools(CharacterSettingMcp.create(dataFolder));
 ```java
 McpHttpClient client = new McpHttpClient("remote", "http://127.0.0.1:8999/aichat/mcp", token, null, 10000, 60000);
 client.initialize();
-MCPTools tools = McpToolBridge.toTools(client, "wx_");
+List<ToolData> tools = McpToolBridge.toTools(client, "wx_");
 session.registerTools(tools);          // AI 即可调用
 String text = client.callTool("mcp_echo", new JsonObject());
 ```

@@ -3,94 +3,98 @@ package com.khjxiaogu.aiwuxia.mcp;
 import java.io.File;
 import java.io.IOException;
 import java.net.URLEncoder;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.khjxiaogu.aiwuxia.llm.AgentMessager;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.ToolProvider;
+import com.khjxiaogu.aiwuxia.llm.ToolResult;
+import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
 
 import kotlin.text.Charsets;
 
-public class MusicMcp {
-	public static MCPTools create(File localFolder,String voiceId,String name,AgentMessager genMusic,ResourceLock lock) {
-		MCPTools tools=new MCPTools();
-		tools.register(new ToolData.Builder("list_music", "获取本地歌曲列表，可以用于发送进行歌唱或者播放")
+public class MusicMcp implements ToolProvider {
+	private final File localFolder;
+	private final String voiceId;
+	private final String name;
+	private final ResourceLock lock;
+
+	public MusicMcp(File localFolder, String voiceId, String name, ResourceLock lock) {
+		this.localFolder = localFolder;
+		this.voiceId = voiceId;
+		this.name = name;
+		this.lock = lock;
+	}
+
+	@Override
+	public Collection<ToolData> getTools() {
+		List<ToolData> tools = new ArrayList<>();
+		tools.add(new ToolData.Builder("list_music", "获取本地歌曲列表，可以用于发送进行歌唱或者播放")
 				.tool((data) -> {
-					StringBuilder files=new StringBuilder();
-					for(String fn:localFolder.list()) {
+					StringBuilder files = new StringBuilder();
+					for (String fn : localFolder.list()) {
 						files.append(fn).append("\n");
-					};
+					}
 					return files.toString();
 				}).build());
-		tools.register(new ToolData.Builder("send_music", "发送歌曲文件")
+		tools.add(new ToolData.Builder("send_music", "发送歌曲文件")
 				.putParam("file_name", "要发送的文件名，包含扩展名")
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-					String fn=jo.get("file_name").getAsString();
-					if(!new File(localFolder,fn).exists())
-						return "文件不存在，请查询文件列表并检查输入";
-					;
+					String fn = jo.get("file_name").getAsString();
+					File file = new File(localFolder, fn);
+					if (!file.exists())
+						return CompletableFuture.completedFuture(ToolResult.text("文件不存在，请查询文件列表并检查输入"));
 					try {
-						return genMusic.sendMusic("send_music", CompletableFuture.supplyAsync(()->{
-							try {
-								return FileUtil.toDataUrl(FileUtil.readAll(new File(localFolder,fn)));
-							} catch (IOException e) {
-								e.printStackTrace();
-								throw new RuntimeException(e);
-							}
-							
-						}))
-						.get();
-					} catch (InterruptedException e) {
-						// TODO Auto-generated catch block
+						return CompletableFuture.completedFuture(ToolResult.of("音频已提交发送",
+								new AudioContent(FileUtil.toDataUrl(FileUtil.readAll(file)), fn)));
+					} catch (IOException e) {
 						e.printStackTrace();
-					} catch (ExecutionException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
+						return CompletableFuture.completedFuture(ToolResult.text("发送失败"));
 					}
-					return "发送失败";
 				}).build());
-		String svsHost=System.getProperty("svsHost");
-		if(svsHost!=null) {
+		String svsHost = System.getProperty("svsHost");
+		if (svsHost != null) {
 			String regex = "[\\\\/:*?\"<>|\\x00-\\x1F]";
-			
-			tools.register(new ToolData.Builder("download_music", "从音乐平台搜索歌曲列表，可用于歌唱。")
+
+			tools.add(new ToolData.Builder("download_music", "从音乐平台搜索歌曲列表，可用于歌唱。")
 					.putParam("keyword", "歌曲搜索关键词，需要包含歌名，歌手等信息。")
 					.tool((data) -> {
-						
+
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-						String keyword=jo.get("keyword").getAsString();
+						String keyword = jo.get("keyword").getAsString();
 						try {
-							JsonArray ss =HttpRequestBuilder.create("u.y.qq.com")
+							JsonArray ss = HttpRequestBuilder.create("u.y.qq.com")
 									.url("/cgi-bin/musicu.fcg")
 									.defUA()
 									.referer("https://y.qq.com")
 									.post()
 									.send(JsonBuilder.object()
 											.object("music.search.SearchCgiService")
-												.add("module", "music.search.SearchCgiService")
-												.add("method", "DoSearchForQQMusicDesktop")
-												.object("param")
-													.add("query", keyword)
-													.add("num_per_page", 5)
-													.add("search_type", 0)
-													.add("page_num", 1)
-												.end()
+											.add("module", "music.search.SearchCgiService")
+											.add("method", "DoSearchForQQMusicDesktop")
+											.object("param")
+											.add("query", keyword)
+											.add("num_per_page", 5)
+											.add("search_type", 0)
+											.add("page_num", 1)
 											.end()
-										.toString())
+											.end()
+											.toString())
 									.readJson()
 									.getAsJsonObject()
 									.get("music.search.SearchCgiService").getAsJsonObject()
@@ -98,113 +102,112 @@ public class MusicMcp {
 									.get("body").getAsJsonObject()
 									.get("song").getAsJsonObject()
 									.get("list").getAsJsonArray();
-									StringBuilder sb=new StringBuilder("搜索结果：\n");
-									for(int i=0;i<ss.size();i++) {
-										JsonObject song = ss.get(i).getAsJsonObject();
-										String mid = song.get("mid").getAsString();
-										String desc;
-										try {
-											JsonArray singers = song.get("singer").getAsJsonArray();
-											StringBuilder sgs = new StringBuilder();
-											for (JsonElement je : singers) {
-												sgs.append(je.getAsJsonObject().get("name").getAsString());
-												sgs.append(";");
-											}
-											sgs.deleteCharAt(sgs.length() - 1);
-											desc = sgs.toString();
-										} catch (Exception e) {
-											desc = song.get("album").getAsJsonObject().get("name").getAsString();
-										}
-										sb.append(" 歌名：").append(song.get("title").getAsString()).append(" 歌手：").append(desc).append(" 歌曲id：").append(mid);
+							StringBuilder sb = new StringBuilder("搜索结果：\n");
+							for (int i = 0; i < ss.size(); i++) {
+								JsonObject song = ss.get(i).getAsJsonObject();
+								String mid = song.get("mid").getAsString();
+								String desc;
+								try {
+									JsonArray singers = song.get("singer").getAsJsonArray();
+									StringBuilder sgs = new StringBuilder();
+									for (JsonElement je : singers) {
+										sgs.append(je.getAsJsonObject().get("name").getAsString());
+										sgs.append(";");
 									}
-									
-									return sb.toString();
+									sgs.deleteCharAt(sgs.length() - 1);
+									desc = sgs.toString();
+								} catch (Exception e) {
+									desc = song.get("album").getAsJsonObject().get("name").getAsString();
+								}
+								sb.append(" 歌名：").append(song.get("title").getAsString()).append(" 歌手：").append(desc)
+										.append(" 歌曲id：").append(mid);
+							}
+
+							return sb.toString();
 						} catch (Exception e) {
-							// TODO Auto-generated catch block
 							e.printStackTrace();
 							return "没有搜索到音乐。";
 						}
-						
+
 					}).build());
-			tools.register(new ToolData.Builder("sing_music", "从音乐平台下载歌曲，并生成当前角色歌唱版本，放入到歌曲列表。")
+			tools.add(new ToolData.Builder("sing_music", "从音乐平台下载歌曲，并生成当前角色歌唱版本，放入到歌曲列表。")
 					.putParam("music_id", "歌曲id")
-					.tool((data) -> {
-						
+					.async()
+					.tool((data, output, manager) -> {
+
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-						String mid=jo.get("music_id").getAsString();
+						String mid = jo.get("music_id").getAsString();
 						String desc;
 						JsonObject song;
 						try {
 							song = querySongDetail(mid);
-						
-						JsonArray singers = song.get("singer").getAsJsonArray();
-						StringBuilder sgs = new StringBuilder();
-						for (JsonElement je : singers) {
-							sgs.append(je.getAsJsonObject().get("name").getAsString());
-							sgs.append(";");
-						}
-						sgs.deleteCharAt(sgs.length() - 1);
-						desc = sgs.toString();
-						}catch(Exception ex) {
+
+							JsonArray singers = song.get("singer").getAsJsonArray();
+							StringBuilder sgs = new StringBuilder();
+							for (JsonElement je : singers) {
+								sgs.append(je.getAsJsonObject().get("name").getAsString());
+								sgs.append(";");
+							}
+							sgs.deleteCharAt(sgs.length() - 1);
+							desc = sgs.toString();
+						} catch (Exception ex) {
 							ex.printStackTrace();
-							return "音乐ID错误";
+							return CompletableFuture.completedFuture(ToolResult.text("音乐ID错误"));
 						}
-						String url=queryRealUrl(mid);
-						if(!FileUtil.isExistent(url))
-							return "该音乐无法下载";
-						String fnout=(song.get("title").getAsString()+"（"+desc+"）").replaceAll(regex, "");
-						File fileout=new File(localFolder,fnout+"（"+name+"）.mp3");
-						if(fileout.exists()) {
-							return "歌曲已存在："+fileout.getName();
+						String url = queryRealUrl(mid);
+						if (!FileUtil.isExistent(url))
+							return CompletableFuture.completedFuture(ToolResult.text("该音乐无法下载"));
+						String fnout = (song.get("title").getAsString() + "（" + desc + "）").replaceAll(regex, "");
+						File fileout = new File(localFolder, fnout + "（" + name + "）.mp3");
+						if (fileout.exists()) {
+							return CompletableFuture
+									.completedFuture(ToolResult.text("歌曲已存在：" + fileout.getName()));
 						}
 						try {
-							
-					        String reqid=UUID.randomUUID().toString();
-					        CompletableFuture<ModelGenerationResult> cf=LocalModel.registerTask(reqid);
-					        CompletableFuture.runAsync(()->{
-								try (ResourcePermit l=lock.acquire(4)){
-									System.out.println(HttpRequestBuilder.create("http",svsHost).url("?url="+URLEncoder.encode(url, Charsets.UTF_8)+"&name="+URLEncoder.encode(fnout, Charsets.UTF_8)+"&voice="+voiceId+"&reqid="+reqid).get().readString());
+
+							String reqid = UUID.randomUUID().toString();
+							CompletableFuture<ModelGenerationResult> cf = LocalModel.registerTask(reqid);
+							CompletableFuture.runAsync(() -> {
+								try (ResourcePermit l = lock.acquire(4)) {
+									System.out.println(HttpRequestBuilder.create("http", svsHost)
+											.url("?url=" + URLEncoder.encode(url, Charsets.UTF_8) + "&name="
+													+ URLEncoder.encode(fnout, Charsets.UTF_8) + "&voice=" + voiceId
+													+ "&reqid=" + reqid)
+											.get().readString());
 								} catch (IOException e) {
-									// TODO Auto-generated catch block
 									e.printStackTrace();
 								}
-					        });
-					        genMusic.sendAsyncTool("sing_music",cf.thenApply(vg->{
-					        	try {
-						        	
-						        	FileUtil.transfer(vg.bodyData, fileout);
-						        	return "歌声音频生成成功，已放到本地歌曲列表，名为：“"+fileout.getName()+"”";
-					        	} catch (IOException e) {
+							});
+							return cf.thenApply(vg -> {
+								try {
+									FileUtil.transfer(vg.bodyData, fileout);
+									return ToolResult.text("歌声音频生成成功，已放到本地歌曲列表，名为：“" + fileout.getName() + "”");
+								} catch (IOException e) {
 									e.printStackTrace();
 									throw new RuntimeException(e);
 								}
-					        	
-					        }));
+							});
 						} catch (Exception e) {
-							// TODO Auto-generated catch block
 							e.printStackTrace();
-							return "处理失败";
+							return CompletableFuture.completedFuture(ToolResult.text("处理失败"));
 						}
-						return "已提交任务，请等待。";
 					}).build());
-			tools.register(new ToolData.Builder("send_net_music", "直接发送音乐平台歌曲。")
+			tools.add(new ToolData.Builder("send_net_music", "直接发送音乐平台歌曲。")
 					.putParam("music_id", "歌曲id")
-					.tool((data) -> {
+					.tool((data, output, manager) -> {
 						try {
 							System.out.println(data);
 							JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-							String mid=jo.get("music_id").getAsString();
-							String url=queryRealUrl(mid);
-							if(!FileUtil.isExistent(url))
-								return "该音乐无法下载";
-							return genMusic.sendMusic("", CompletableFuture.completedFuture(url)).get();
+							String mid = jo.get("music_id").getAsString();
+							String url = queryRealUrl(mid);
+							if (!FileUtil.isExistent(url))
+								return CompletableFuture.completedFuture(ToolResult.text("该音乐无法下载"));
+							return CompletableFuture.completedFuture(
+									ToolResult.of("音频已提交发送", new AudioContent(url, mid)));
 						} catch (Exception e) {
-							// TODO Auto-generated catch block
 							e.printStackTrace();
-							return "音乐id错误";
+							return CompletableFuture.completedFuture(ToolResult.text("音乐id错误"));
 						}
-						
-						
 					}).build());
 		}
 		return tools;

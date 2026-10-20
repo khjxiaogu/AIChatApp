@@ -10,6 +10,8 @@ import java.lang.reflect.Type;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -26,11 +28,12 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
-import com.khjxiaogu.aiwuxia.llm.AgentMessager;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
+import com.khjxiaogu.aiwuxia.llm.ToolProvider;
+import com.khjxiaogu.aiwuxia.llm.ToolResult;
+import com.khjxiaogu.aiwuxia.state.session.AISession;
 
-public class CrontabMcp {
+public class CrontabMcp implements ToolProvider {
 	public static class TimedTodoManager {
 	    private final List<TodoItem> items;
 	    private final Gson gson;
@@ -176,31 +179,65 @@ public class CrontabMcp {
 	    }
 	}
 	static TimedTodoManager manager;
-	static Map<Long,AgentMessager> triggers;
+	/** 机器人 id → 会话，定时触发时通过该会话的工具管理器登记异步任务。 */
+	static final Map<Long, AISession> SESSIONS = new HashMap<>();
 	static File savepath;
+	private final long id;
+	private final AISession session;
+
 	public static void setPath(File path) {
-		savepath=path;
+		savepath = path;
 	}
+
 	public static void init() throws IOException {
-		if(manager==null) {
-			triggers=new HashMap<>();
-			manager=new TimedTodoManager(savepath, (id,str)->{
-				AgentMessager csm=triggers.get(id);
-				if(csm!=null)
-					csm.sendAsyncTool("timed_trigger",CompletableFuture.completedFuture(str));
+		if (manager == null) {
+			manager = new TimedTodoManager(savepath, (id, str) -> {
+				AISession target;
+				synchronized (SESSIONS) {
+					target = SESSIONS.get(id);
+				}
+				if (target != null) {
+					target.getToolCallManager().submitTask("timed_trigger", null,
+							CompletableFuture.<ToolResult>completedFuture(ToolResult.text(str)));
+				}
 			});
 		}
 	}
-	public static MCPTools create(long id,AgentMessager trigger) throws IOException {
+
+	/**
+	 * 创建定时触发工具集。
+	 *
+	 * @param id      机器人 id
+	 * @param session 当前会话
+	 * @throws IOException 初始化定时器失败
+	 */
+	public CrontabMcp(long id, AISession session) throws IOException {
 		init();
-		triggers.put(id, trigger);
-		MCPTools tools=new MCPTools();
-		tools.register(new ToolData.Builder("timed_trigger", "创建一个定时触发器，达到设定的时间时会触发，可用于定时提醒或定时任务。")
+		this.id = id;
+		this.session = session;
+		synchronized (SESSIONS) {
+			SESSIONS.put(id, session);
+		}
+	}
+
+	/** 注销一个会话的定时触发绑定。 */
+	public static void unregister(long id, AISession session) {
+		synchronized (SESSIONS) {
+			if (SESSIONS.get(id) == session) {
+				SESSIONS.remove(id);
+			}
+		}
+	}
+
+	@Override
+	public Collection<ToolData> getTools() {
+		return Collections.singletonList(new ToolData.Builder("timed_trigger",
+				"创建一个定时触发器，达到设定的时间时会触发，可用于定时提醒或定时任务。")
 				.putParam("alert_time", "触发时间，格式是yyyy-mm-dd HH:MM:SS，系统本地时间")
 				.putParam("note", "触发器事项，在触发时会写入到上下文，需要详细描述任务内容。")
 				.tool((data) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-					SimpleDateFormat format=new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
+					SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
 					Date date;
 					try {
 						date = format.parse(jo.get("alert_time").getAsString());
@@ -208,10 +245,19 @@ public class CrontabMcp {
 						e.printStackTrace();
 						return "日期格式错误";
 					}
-					
-					manager.addTodo(id,jo.get("note").getAsString(), date);
+
+					manager.addTodo(id, jo.get("note").getAsString(), date);
 					return "待办设置成功";
 				}).build());
-		return tools;
+	}
+
+	/** 当前机器人 id。 */
+	public long getId() {
+		return id;
+	}
+
+	/** 当前会话。 */
+	public AISession getSession() {
+		return session;
 	}
 }

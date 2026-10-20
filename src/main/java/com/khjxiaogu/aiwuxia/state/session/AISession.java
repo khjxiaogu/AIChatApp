@@ -50,12 +50,14 @@ import java.util.function.Supplier;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTaskListener;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -63,6 +65,7 @@ import com.khjxiaogu.aiwuxia.state.UsageTracker;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
+import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
@@ -203,6 +206,43 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 
 	/**
+	 * 注册一个工具，并指定是否异步。
+	 *
+	 * @param tool  工具定义
+	 * @param async 是否异步
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTool(ToolData tool, boolean async) {
+		toolCallManager.registerTool(tool, async);
+		return this;
+	}
+
+	/**
+	 * 注册一个工具，并指定单工具最大调用次数。
+	 *
+	 * @param tool     工具定义
+	 * @param maxCalls 最大调用次数，-1 表示不限
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTool(ToolData tool, int maxCalls) {
+		toolCallManager.registerTool(tool, maxCalls);
+		return this;
+	}
+
+	/**
+	 * 注册一个工具，并指定异步模式与最大调用次数。
+	 *
+	 * @param tool     工具定义
+	 * @param async    是否异步
+	 * @param maxCalls 最大调用次数，-1 表示不限
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTool(ToolData tool, boolean async, int maxCalls) {
+		toolCallManager.registerTool(tool, async, maxCalls);
+		return this;
+	}
+
+	/**
 	 * 批量注册工具，由本会话的工具调用管理器统一处理。
 	 *
 	 * @param tools 工具定义集合
@@ -214,16 +254,76 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 
 	/**
-	 * 注册一个 MCP 模块提供的全部工具。
+	 * 批量注册工具，并让这些工具共享同一个最大调用次数。
 	 *
-	 * @param tools MCP 模块的工具集合
+	 * @param tools         工具定义集合
+	 * @param sharedMaxCalls 共享最大调用次数，-1 表示不限
 	 * @return 本会话，便于链式注册
 	 */
-	public AISession registerTools(MCPTools tools) {
-		if (tools != null) {
-			registerTools(tools.getTools());
-		}
+	public AISession registerTools(Collection<ToolData> tools, int sharedMaxCalls) {
+		toolCallManager.registerTools(tools, sharedMaxCalls);
 		return this;
+	}
+
+	/**
+	 * 批量注册工具，强制统一异步模式，并共享同一个最大调用次数。
+	 *
+	 * @param tools         工具定义集合
+	 * @param async         是否异步
+	 * @param sharedMaxCalls 共享最大调用次数，-1 表示不限
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTools(Collection<ToolData> tools, boolean async, int sharedMaxCalls) {
+		toolCallManager.registerTools(tools, async, sharedMaxCalls);
+		return this;
+	}
+
+	/**
+	 * 注册一个工具集提供的全部工具。
+	 *
+	 * @param provider 工具集
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTools(ToolProvider provider) {
+		toolCallManager.registerTools(provider);
+		return this;
+	}
+
+	/**
+	 * 注册一个工具集，并让其中全部工具共享同一个最大调用次数。
+	 *
+	 * @param provider      工具集
+	 * @param sharedMaxCalls 共享最大调用次数，-1 表示不限
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTools(ToolProvider provider, int sharedMaxCalls) {
+		toolCallManager.registerTools(provider, sharedMaxCalls);
+		return this;
+	}
+
+	/**
+	 * 注册一个工具集，强制统一异步模式，并共享同一个最大调用次数。
+	 *
+	 * @param provider      工具集
+	 * @param async         是否异步
+	 * @param sharedMaxCalls 共享最大调用次数，-1 表示不限
+	 * @return 本会话，便于链式注册
+	 */
+	public AISession registerTools(ToolProvider provider, boolean async, int sharedMaxCalls) {
+		toolCallManager.registerTools(provider, async, sharedMaxCalls);
+		return this;
+	}
+
+	/**
+	 * 把已经注册的一组工具绑定为共享调用次数的组。
+	 * <p>组 ID 由管理器自动递增生成；一个工具同一时间只能属于一个组，重新绑定会覆盖旧组。</p>
+	 *
+	 * @param maxCalls 该组共享的最大调用次数，-1 表示不限
+	 * @param toolNames 工具名称
+	 * @return 新的组 ID；没有有效工具时返回 0
+	 */
+	public int bindTools(int maxCalls, String... toolNames) {
+		return toolCallManager.bindTools(maxCalls, toolNames);
 	}
 
 	/**
@@ -332,11 +432,49 @@ public class AISession implements ISaveData,AutoCloseable{
 		}
 	}
 
-	/** 把工具附加到 AIOutput 的内容追加到本轮正在写入的记录（没有写入时忽略）。 */
+	/** 把工具附加到 AIOutput 的内容交给会话处理，并追加到本轮正在写入的记录（没有写入时忽略）。 */
 	private void appendAttachedContent(MessageContent content) {
+		handleToolAttachment(content);
+		// 音频附件可能是体积很大的 data URL，只交给会话发送，不写入历史持久化
+		if (content instanceof AudioContent) {
+			return;
+		}
 		HistoryWriteContext write = getCurrentWrite();
 		if (write != null) {
 			write.append(content, false);
+		}
+	}
+
+	/**
+	 * 会话处理同步工具结果中的附件。
+	 * <p>
+	 * 默认不做传输层动作：附件已由 {@link #appendAttachedContent(MessageContent)} 写入本轮记录，
+	 * 有前端通道的会话会通过历史追加帧自然下发。需要把附件真正发到外部平台（例如 QQ）的会话
+	 * 重写本方法。
+	 * </p>
+	 *
+	 * @param content 工具产生的附件
+	 */
+	protected void handleToolAttachment(MessageContent content) {
+	}
+
+	/**
+	 * 会话处理异步工具任务完成时携带的附件。
+	 * <p>
+	 * 此时本轮生成通常已经结束，没有可追加的写入上下文，因此默认只交给
+	 * {@link #handleToolAttachment(MessageContent)}；QQ 等会话可重写以发送消息。
+	 * </p>
+	 *
+	 * @param attachments 附件列表
+	 */
+	protected void handleToolAttachments(List<MessageContent> attachments) {
+		if (attachments == null) {
+			return;
+		}
+		for (MessageContent attachment : attachments) {
+			if (attachment != null) {
+				handleToolAttachment(attachment);
+			}
 		}
 	}
 
@@ -356,6 +494,64 @@ public class AISession implements ISaveData,AutoCloseable{
 		// 工具调用规则只在构造时写入一次；管理器可变，之后需要调整直接改管理器
 		applyToolCallRules(toolCallManager);
 		commandExec = new SerialExecutor(COMMAND_EXEC, this);
+		// 异步工具任务完成时统一通知会话；回调可能发生在任意线程，具体实现自行调度
+		toolCallManager.setTaskListener(new ToolTaskListener() {
+			@Override
+			public void onToolTaskCreated(ToolTask task) {
+				handleToolTaskCreated(task);
+			}
+
+			@Override
+			public void onToolTaskCompleted(ToolTask task) {
+				handleToolTaskCompleted(task);
+			}
+
+			@Override
+			public void onToolTaskFailed(ToolTask task) {
+				notifyToolStatus(task.getToolName(), "任务失败：" + errorText(task), false);
+				handleToolTaskCompleted(task);
+			}
+		});
+	}
+
+	/**
+	 * 异步任务创建时的会话钩子。
+	 *
+	 * @param task 新任务
+	 */
+	protected void handleToolTaskCreated(ToolTask task) {
+		notifyToolStatus(task.getToolName(), "任务已创建：" + task.getId(), true);
+	}
+
+	/**
+	 * 异步任务完成时的会话钩子。
+	 * <p>
+	 * 默认只把任务结果中的附件交给 {@link #handleToolAttachments(List)}，并发送状态通知；
+	 * 需要自动续跑的会话（例如 QQ 群聊）重写本方法。
+	 * </p>
+	 *
+	 * @param task 已完成的任务
+	 */
+	protected void handleToolTaskCompleted(ToolTask task) {
+		if (task.getResult() != null) {
+			handleToolAttachments(task.getResult().getAttachments());
+			notifyToolStatus(task.getToolName(), task.getResult().getText(), true);
+		}
+	}
+
+	/**
+	 * 工具任务状态通知钩子，默认空实现。
+	 *
+	 * @param tool    工具名称
+	 * @param message 状态文本
+	 * @param success 是否成功
+	 */
+	protected void notifyToolStatus(String tool, String message, boolean success) {
+	}
+
+	private static String errorText(ToolTask task) {
+		Throwable error = task.getError();
+		return error == null || error.getMessage() == null ? "未知错误" : error.getMessage();
 	}
 
 	/**
@@ -1316,6 +1512,8 @@ public class AISession implements ISaveData,AutoCloseable{
 	public void close(){
 		// 会话结束前把后台思维链写入等完，避免任务在会话释放后继续写历史
 		awaitReasonerWrites();
+		// 取消仍在运行的异步工具任务，完成回调不会再通知已关闭的会话
+		toolCallManager.shutdown();
 		commandExec.shutdown();
 	}
 }

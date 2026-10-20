@@ -10,7 +10,6 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import com.khjxiaogu.aiwuxia.llm.ToolData;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
 /**
  * MCP 服务端工具注册表。
@@ -53,17 +52,6 @@ public class McpToolRegistry {
         }
         for (ToolData tool : toRegister) {
             register(tool);
-        }
-    }
-
-    /**
-     * 批量注册一个 MCP 模块提供的全部工具。
-     *
-     * @param module 工具模块，可为 null
-     */
-    public synchronized void register(MCPTools module) {
-        if (module != null) {
-            registerAll(module.getTools());
         }
     }
 

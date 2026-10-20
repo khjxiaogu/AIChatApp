@@ -213,7 +213,8 @@ public class McpServer {
             // 服务端调用没有会话，用一个只收集用量的输出对象和一个空管理器传入；
             // 工具产生的用量不额外计费（价格仍按 priceOf(name) 计算）。
             AIOutput output = new AIOutput.FilledAIOutput(MessageContents.EMPTY, "", null);
-            text = tool.tool.run(McpJson.stringifyArguments(arguments), output, new ToolCallManager());
+            text = tool.tool.run(McpJson.stringifyArguments(arguments), output, new ToolCallManager()).join()
+                    .getText();
             if (text == null) {
                 text = "";
             }

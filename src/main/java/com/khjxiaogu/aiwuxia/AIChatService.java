@@ -84,7 +84,6 @@ import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
-import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
@@ -442,7 +441,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		McpToolRegistry registry = new McpToolRegistry();
 		McpBuiltinTools.register(registry);
 		// 角色设定查询工具：数据来自绘画 agent 目录下的人类可读索引 character-list.txt
-		registry.register(CharacterSettingMcp.create(path));
+		registry.registerAll(new CharacterSettingMcp(path).getTools());
 		if (exposeSessionTools) {
 			// 可选：让令牌所属用户调用自己在线会话中的工具（默认关闭，避免远程触发聊天副作用）
 			registry.addSource(new McpToolSource() {
@@ -462,7 +461,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 							continue;
 						}
 						for (ToolData tool : session.getToolCallManager().getTools().values()) {
-							if (!result.containsKey(tool.name)) {
+							// 会话专属工具（例如 QQ/绘画的发送图片）不暴露给远程 MCP 调用
+							if (!tool.sessionOnly && !result.containsKey(tool.name)) {
 								result.put(tool.name, tool);
 							}
 						}
@@ -499,8 +499,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		if (mcpClients == null) {
 			return;
 		}
-		MCPTools tools = mcpClients.getTools();
-		if (tools.getTools().isEmpty() || uidsockets.isEmpty()) {
+		Collection<ToolData> tools = mcpClients.getTools();
+		if (tools.isEmpty() || uidsockets.isEmpty()) {
 			return;
 		}
 		for (AISession session : uidsockets.values()) {
@@ -510,7 +510,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				logger.printStackTrace(ex);
 			}
 		}
-		logger.info("已向在线会话注册 " + tools.getTools().size() + " 个 MCP 客户端工具");
+		logger.info("已向在线会话注册 " + tools.size() + " 个 MCP 客户端工具");
 	}
 
 	/** 存档状态：正常，在聊天页与存档管理页均可见 */
