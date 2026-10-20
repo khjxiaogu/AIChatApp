@@ -10,9 +10,10 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
  * </p>
  * <ul>
  *   <li>{@code output}：本次生成的输出对象，工具产生的用量（如图片上传、搜索、额外模型调用）
- *       通过 {@link AIOutput#addUsage} 写入其中，由会话统一记账；</li>
- *   <li>{@code manager}：本次生成使用的工具调用管理器，工具可以读取会话上下文、
- *       下发额外内容（例如发送图片）或调整自身的调用规则。</li>
+ *       通过 {@link AIOutput#addUsage} 写入其中，发送的图片等内容通过 {@link AIOutput#attachContent}
+ *       附加，由会话统一处理；</li>
+ *   <li>{@code manager}：本次生成使用的工具调用管理器，工具可以读取会话上下文
+ *       或调整自身的调用规则。</li>
  * </ul>
  */
 @FunctionalInterface

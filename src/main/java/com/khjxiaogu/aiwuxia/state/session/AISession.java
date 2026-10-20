@@ -174,6 +174,8 @@ public class AISession implements ISaveData,AutoCloseable{
 	private volatile double lastTurnTokens;
 	
 	volatile transient AIOutput currentOutput;
+	/** 已经绑定过“附加内容 → 当前写入”监听的输出对象，避免重复注册导致同一图片追加多次。 */
+	private volatile AIOutput contentBoundOutput;
 
 	/**
 	 * 本会话持有的工具调用管理器（工具注册表 + 调用次数/权限/许可规则），创建后长期复用。
@@ -322,6 +324,20 @@ public class AISession implements ISaveData,AutoCloseable{
 
 	public void setCurrentOutput(AIOutput currentOutput) {
 		this.currentOutput = currentOutput;
+		// 工具把图片等内容直接附加到 AIOutput；会话在这里接收并写入本轮记录。
+		// 同一输出可能被多处重复设置（例如生成入口与处理入口各设置一次），只在首次绑定时注册监听。
+		if (currentOutput != null && currentOutput != contentBoundOutput) {
+			contentBoundOutput = currentOutput;
+			currentOutput.addContentListener(this::appendAttachedContent);
+		}
+	}
+
+	/** 把工具附加到 AIOutput 的内容追加到本轮正在写入的记录（没有写入时忽略）。 */
+	private void appendAttachedContent(MessageContent content) {
+		HistoryWriteContext write = getCurrentWrite();
+		if (write != null) {
+			write.append(content, false);
+		}
 	}
 
 	/**
@@ -339,13 +355,6 @@ public class AISession implements ISaveData,AutoCloseable{
 		this.aiapp = aiapp;
 		// 工具调用规则只在构造时写入一次；管理器可变，之后需要调整直接改管理器
 		applyToolCallRules(toolCallManager);
-		// 工具不再持有会话：需要把图片等内容追加到当前消息时，通过管理器交回给会话
-		toolCallManager.setContentSink(content -> {
-			HistoryWriteContext write = getCurrentWrite();
-			if (write != null) {
-				write.append(content, false);
-			}
-		});
 		commandExec = new SerialExecutor(COMMAND_EXEC, this);
 	}
 

@@ -209,6 +209,16 @@
             height: auto;
             display: block;
         }
+        /* 图片描述：作为网页描述展示在图片下方（来自 send_image 的 description） */
+        .image-caption {
+            padding: 6px 10px;
+            font-size: 0.75rem;
+            line-height: 1.4;
+            color: #5b6e8c;
+            background: #f8fafc;
+            border-top: 1px solid #e2e8f0;
+            word-break: break-word;
+        }
         .image-placeholder {
             padding: 20px;
             text-align: center;
@@ -374,6 +384,33 @@
             object-fit: contain;
             border-radius: 8px;
             box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+        }
+        /* 全屏图片的描述与下载：文件名取自图片描述 */
+        .fullscreen-caption {
+            position: fixed;
+            left: 50%;
+            bottom: 24px;
+            transform: translateX(-50%);
+            max-width: 70vw;
+            color: #fff;
+            font-size: 14px;
+            line-height: 1.5;
+            text-align: center;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+            pointer-events: none;
+        }
+        .fullscreen-download {
+            position: fixed;
+            right: 24px;
+            bottom: 24px;
+            padding: 8px 14px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.92);
+            color: #1e293b;
+            font-size: 14px;
+            text-decoration: none;
+            cursor: pointer;
+            z-index: 10001;
         }
         /* 侧边栏样式见 sidebar.css（custom / painter / painter-local 共用） */
         /* URL输入弹窗 */
@@ -853,8 +890,9 @@
                     <div v-for="(part, pIdx) in msg.contentItems" :key="'u'+pIdx">
                         <div v-if="part.type === 'text'" style="white-space: pre-wrap;">{{ part.content }}</div>
                         <div v-if="part.type === 'image'" class="message-image">
-                            <img v-if="part.image_url" :src="part.image_url" alt="用户上传图片" @click.stop="openFullscreen(part.image_url)" style="cursor:pointer" />
+                            <img v-if="part.image_url" :src="part.image_url" :alt="part.description || '用户上传图片'" :title="part.description || ''" @click.stop="openFullscreen(part.image_url, part.description)" style="cursor:pointer" />
                             <div v-else class="image-placeholder">加载中...</div>
+                            <div v-if="part.description" class="image-caption">{{ part.description }}</div>
                         </div>
                         <div v-if="part.type === 'video'" class="message-image">
                             <video :src="part.video_url" controls style="width:100%;"></video>
@@ -889,8 +927,9 @@
                                     <div v-for="(part, dIdx) in seg.detail" :key="'d' + dIdx">
                                         <div v-if="part.type === 'text'" class="tool-detail-text">{{ part.content }}</div>
                                         <div v-else-if="part.type === 'image'" class="message-image">
-                                            <img v-if="part.image_url" :src="part.image_url" alt="工具详情图片" @click.stop="openFullscreen(part.image_url)" style="cursor:pointer" />
+                                            <img v-if="part.image_url" :src="part.image_url" :alt="part.description || '工具详情图片'" :title="part.description || ''" @click.stop="openFullscreen(part.image_url, part.description)" style="cursor:pointer" />
                                             <div v-else class="image-placeholder">加载中...</div>
+                                            <div v-if="part.description" class="image-caption">{{ part.description }}</div>
                                         </div>
                                         <div v-else-if="part.type === 'video'" class="message-image">
                                             <video :src="part.video_url" controls style="width:100%;"></video>
@@ -904,8 +943,9 @@
                     <div v-for="(item, cIdx) in msg.contentItems" :key="'c'+cIdx">
                         <div v-if="item.type === 'text' && item.content" class="final-content">{{ item.content }}</div>
                         <div v-if="item.type === 'image'" class="message-image">
-                            <img v-if="item.image_url" :src="item.image_url" alt="AI生成的图片" @click.stop="openFullscreen(item.image_url)" style="cursor:pointer" />
+                            <img v-if="item.image_url" :src="item.image_url" :alt="item.description || 'AI生成的图片'" :title="item.description || ''" @click.stop="openFullscreen(item.image_url, item.description)" style="cursor:pointer" />
                             <div v-else class="image-placeholder">加载中...</div>
+                            <div v-if="item.description" class="image-caption">{{ item.description }}</div>
                         </div>
                         <div v-if="item.type === 'video'" class="message-image">
                             <video :src="item.video_url" controls style="width:100%;"></video>
@@ -943,7 +983,9 @@
     </div>
     <!-- 全屏看图 -->
     <div class="fullscreen-overlay" v-if="fullscreenImage" @click="closeFullscreen">
-        <img :src="fullscreenImage" />
+        <img :src="fullscreenImage" :alt="fullscreenDescription || '图片预览'" :title="fullscreenDescription || ''" />
+        <div v-if="fullscreenDescription" class="fullscreen-caption">{{ fullscreenDescription }}</div>
+        <a class="fullscreen-download" :href="fullscreenImage" :download="imageDownloadName(fullscreenDescription)" @click.prevent.stop="downloadImage(fullscreenImage, fullscreenDescription)">下载图片</a>
     </div>
 
     <!-- 设置弹窗：主题 / 图片安全 / 模型 -->
@@ -1085,6 +1127,8 @@ var main=new Vue({
         selectedFile: null,
         uploadedImageId: null,
         fullscreenImage: null,
+        // 全屏图片的网页描述（同时作为下载文件名来源）
+        fullscreenDescription: '',
         // 侧边栏
         showSidebar: false,
         chatList: [],
@@ -1278,10 +1322,11 @@ var main=new Vue({
             // 浏览器后退：全屏图片开着时只关闭它
             this._fullscreenPushed = false;
             this.fullscreenImage = null;
+            this.fullscreenDescription = '';
         },
         // ------------------------- 全屏看图
         // 打开时压入一条历史记录，使浏览器"后退"只关闭图片而不会离开页面
-        openFullscreen(url) {
+        openFullscreen(url, description) {
             if (!url) return;
             if (!this.fullscreenImage) {
                 try {
@@ -1294,11 +1339,47 @@ var main=new Vue({
                 }
             }
             this.fullscreenImage = url;
+            this.fullscreenDescription = description || '';
+        },
+        // 把图片描述转换为安全的下载文件名：去掉路径分隔符等非法字符，限制长度
+        imageDownloadName(description, mime) {
+            const raw = String(description || 'aiwuxia-image')
+                .replace(/[\\/:*?"<>|\r\n\t]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            const base = raw.slice(0, 60) || 'aiwuxia-image';
+            const type = String(mime || '');
+            const ext = type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0 ? '.jpg'
+                : type.indexOf('webp') >= 0 ? '.webp'
+                : type.indexOf('gif') >= 0 ? '.gif'
+                : '.png';
+            return base + ext;
+        },
+        // 用描述作为文件名下载图片；跨域或接口不支持 fetch 时退回打开原图
+        async downloadImage(url, description) {
+            if (!url) return;
+            try {
+                const resp = await fetch(url, { credentials: 'include' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const blob = await resp.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = objectUrl;
+                a.download = this.imageDownloadName(description, blob.type);
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+            } catch (e) {
+                console.warn('下载图片失败，改为打开原图', e);
+                window.open(url, '_blank');
+            }
         },
         // 关闭并消费掉压入的历史记录，避免历史栈里残留多余条目
         closeFullscreen() {
             if (!this.fullscreenImage) return;
             this.fullscreenImage = null;
+            this.fullscreenDescription = '';
             if (this._fullscreenPushed) {
                 this._fullscreenPushed = false;
                 history.back();
@@ -1308,6 +1389,7 @@ var main=new Vue({
         onPopState() {
             this._fullscreenPushed = false;
             this.fullscreenImage = null;
+            this.fullscreenDescription = '';
         },
         // ------------------------- 设置：模型 / 主题 / 图片安全
         openSettings() {

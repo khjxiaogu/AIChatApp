@@ -49,15 +49,22 @@ public class MultiModalMcp {
 
 		tools.register(new ToolData.Builder("send_image", "发送聊天图片")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身")
+				.putParam("description", "图片的简短描述，用作网页描述（alt）与下载文件名；建议 20 字以内，可为空字符串。")
 				.presenter(ToolCallPresenter.ofBrief(call -> "发送图片"))
 				.tool((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						String fn=jo.get("picture_id").getAsString();
+						String description=jo.has("description")&&!jo.get("description").isJsonNull()
+								?jo.get("description").getAsString().replaceAll("\\s+", " ").trim():"";
+						// 描述会进入网页 alt/文件名与模型上下文，限制长度，避免异常长的文本
+						if(description.length()>120) {
+							description=description.substring(0,120);
+						}
 						if(tos.exists(fn, output == null ? null : output::addUsage)) {
-							// 工具不持有会话：把图片交给本次生成的管理器，由会话追加到当前消息
-							if (manager != null) {
-								manager.emitContent(new ImageContent(fn));
+							// 工具不持有会话：把图片直接附加到本次生成的输出，由会话接收后写入当前消息
+							if (output != null) {
+								output.attachContent(new ImageContent(fn, description.isEmpty() ? null : description));
 							}
 							return "发送成功";
 						}
@@ -79,8 +86,8 @@ public class MultiModalMcp {
 						if(fn==null)
 							return "表情id不存在";
 						if(tos.exists(fn, output == null ? null : output::addUsage)) {
-							if (manager != null) {
-								manager.emitContent(new ImageContent(fn));
+							if (output != null) {
+								output.attachContent(new ImageContent(fn));
 							}
 							return "发送成功";
 						}
