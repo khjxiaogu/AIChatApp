@@ -201,7 +201,7 @@ public class VolcanoModelProvider implements ModelProvider{
 							logger.info("interrupted generation");
 							usage.zoomEquivantly();
 							try {
-								readable.setUsage(usage);
+								readable.addUsage(usage);
 							}finally {
 								readable.endContent();
 							}
@@ -214,7 +214,7 @@ public class VolcanoModelProvider implements ModelProvider{
 							logger.info("finish generation");
 							usage.zoomEquivantly();
 							try {
-								readable.setUsage(usage);
+								readable.addUsage(usage);
 							}finally {
 								readable.endContent();
 							}

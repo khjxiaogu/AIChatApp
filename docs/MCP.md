@@ -74,6 +74,9 @@ MCP 服务端由 `AIChatService#mcp` 转发到 `/aichat/mcp`（不再在 `AIServ
 - `mcp_echo`：参数 `text`，原样返回；
 - `mcp_server_time`：无参数，返回服务端当前时间。
 
+除此之外还会注册角色设定查询工具（`list_characters` / `search_characters` /
+`get_character_setting`），见 [2.8](#28-角色设定工具)。
+
 ### 2.2 协议支持
 
 - 传输：**Streamable HTTP**（`POST /aichat/mcp`，返回 `application/json`；客户端 `Accept` 含 `text/event-stream` 时仍返回 JSON）
@@ -97,14 +100,15 @@ McpToolRegistry registry = chatService.getMcpEndpoint().getRegistry();
 
 registry.register(new ToolData.Builder("my_search", "搜索内部资料")
         .putParam("keyword", "关键词")
-        .tool(arguments -> {
+        .tool((arguments, output, manager) -> {
             // arguments 是 JSON 文本，例如 {"keyword":"xxx"}
+            // 工具不绑定会话：需要记账时写 output.addUsage(...)，需要会话上下文时读 manager
             return "结果";
         })
         .build());
 
-// 也可以整批注册一个 MCP 模块
-registry.register(FetchMcp.create(session, tos));
+// 也可以整批注册一个 MCP 模块（工具不再需要会话参数）
+registry.register(FetchMcp.create(tos));
 ```
 
 也可以挂载**按用户动态返回工具**的来源：
@@ -241,6 +245,59 @@ http://127.0.0.1:8999/aichat/mcptoken
 页面把该 URL 参数原样转发到管理接口（请求体不携带），服务端只从请求 URL 读取。
 页面支持创建令牌（明文复制一次）、查看额度/调用次数/过期时间、停用或删除、查看消费记录，
 并给出客户端配置示例。页面文件为 `save/mcptoken.html`。
+
+### 2.8 角色设定工具
+
+服务端启动时还会注册一组只读的「角色设定」工具，数据来自人类可读的索引文件
+`character-list.txt`（不再读取 `charaset.txt`）。索引文件同时承担“角色列表”和“角色设定数据”
+两个职责，每次调用时重新读取，修改后立即生效。
+
+文件位置：新位置 `save/config/sdxl/agent/`，兼容旧位置 `save/painteragent/`。
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `list_characters` | 无 | 列出全部作品与角色（含别名） |
+| `search_characters` | `query` | 按角色名、别名（简称/拼音/外号）或作品名模糊搜索 |
+| `get_character_setting` | `character`、`work` | 取角色完整设定，并附所属作品的公共设定；同名角色用 `work` 区分 |
+
+索引文件格式：
+
+```text
+[work] 雪之本境
+
+[character] 江城雪
+别名：城雪, chengxue
+性别：女
+年龄：18
+身高：168
+设定：手无缚鸡之力，独自很难存活。
+身份：校花、江庭雪之姐
+外貌：留着通透亮粉色的顺滑长直发……
+常服：内搭黑色高领打底衫……
+角色提示词：chengxue,red eyes,pink hair,hair ornament,hairclip
+服装提示词：chengxuefu,pleated skirt,shoes,……
+```
+
+- `[work]` 开始作品，`[public]` 开始该作品的公共设定（可省略），`[character]` 开始角色；
+- 其余普通行按原文保存并返回，建议统一写成 `字段：值`；
+- `别名：` 行只用于模糊搜索，不会出现在设定正文里；
+- 查询角色时自动附带所属作品的 `[public]` 内容；
+- 同一角色名出现在多部作品时（如「归海枫」同时在《雾之本境》《雪之本境》），
+  用 `work` 指定作品。
+
+调用示例（JSON-RPC）：
+
+```json
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{
+  "name":"get_character_setting",
+  "arguments":{"character":"枫茜","work":""}}}
+```
+
+绘画会话（`PainterSession`）默认已注册这组工具；其它会话也可以手动注册：
+
+```java
+session.registerTools(CharacterSettingMcp.create(dataFolder));
+```
 
 ---
 

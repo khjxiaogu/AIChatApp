@@ -101,8 +101,9 @@ write.setLastState(snapshot);
 // 1) 描述工具：名字、描述、参数（名称 → 说明），回调拿到的是参数 JSON 字符串
 ToolData weather = new ToolData.Builder("get_weather", "查询城市天气")
         .putParam("city", "城市名，例如：北京")
-        .tool(paramsJson -> {                          // Tool 接口：String run(String params)
+        .tool((paramsJson, output, manager) -> {       // Tool：run(params, AIOutput, ToolCallManager)
             JsonObject args = JsonParser.parseString(paramsJson).getAsJsonObject();
+            // output.addUsage(...) 可写入本次工具产生的用量；不需要时忽略
             return fetchWeather(args.get("city").getAsString());   // 返回字符串给模型
         })
         .build();
@@ -118,7 +119,8 @@ state.registerTools(tools);      // 之后 AIRequest.builder(state) 自动带上
 - 工具**必须**在 `AIRequest.builder(state)` 之前挂上，否则本次请求不带；
 - 生产环境建议挂审批（`ManagedToolCallApprover` / `ToolCallPermission`），避免模型乱调写操作；
 - 工具调用过程会用 `tool_call` 帧推给前端，`ToolCallDisplay` 控制展示；
-- 计费：工具内部产生的模型调用要自己 `addUsage`，否则漏账；**按次计费**的外部接口（如
+- 计费：工具内部产生的用量（额外模型调用、图片上传、搜索等）写入本次的 `output.addUsage(...)`，
+  会话通过 `output.addUsageListener(state::addUsage)` 统一记账；**按次计费**的外部接口（如
   `DeepseekSearchMcp` 的 `web_search`）要在确认成功并拿到结果之后再记账，失败、超时与空结果不要记，
   见 `DeepseekSearchUsage`。
 

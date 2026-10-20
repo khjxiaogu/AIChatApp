@@ -314,7 +314,7 @@ public class ToolCallContext {
 		}
 		toolCalls.computeIfAbsent(call.function.name, n -> new AtomicInteger()).incrementAndGet();
 		try {
-			String result = data.tool.run(call.function.arguments);
+			String result = data.tool.run(call.function.arguments, output, manager);
 			return new ToolContent(call.id, result, buildResultDisplay(call, callDisplay, result));
 		} catch (Throwable ex) {
 			ex.printStackTrace();

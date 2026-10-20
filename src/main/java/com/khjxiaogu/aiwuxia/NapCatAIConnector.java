@@ -353,36 +353,36 @@ public class NapCatAIConnector extends WebSocketClient {
 				.exceptionally(t->{state.addStatus("<tool name=\""+tool+"\">失败</tool>");return null;});
 			}};
 		if(skillSet.contains("fetch")) {
-			state.registerTools(FetchMcp.create(state, tos));
+			state.registerTools(FetchMcp.create(tos));
 			// DeepSeek Search API：仅在配置了 deepseektoken 时才会真正注册 web_search
-			state.registerTools(DeepseekSearchMcp.create(state));
+			state.registerTools(DeepseekSearchMcp.create());
 		}
 
 		if(skillSet.contains("multimodal"))
-			state.registerTools(MultiModalMcp.create(tos,state::addUsage));
+			state.registerTools(MultiModalMcp.create(tos));
 
 		if(skillSet.contains("qq")) {
-			state.registerTools(QQMcp.create(state, ""+state.groupId, tos,callback,emojis));
+			state.registerTools(QQMcp.create(""+state.groupId, tos,callback,emojis));
 		}
 		
 		if(skillSet.contains("sdxl"))
-			state.registerTools(SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),false,resourceLock));
+			state.registerTools(SDXLMcp.createLocal(tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),false,resourceLock));
 		if(skillSet.contains("sdxl-nsfw"))
-			state.registerTools(SDXLMcp.createLocal(state, tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),true,resourceLock));
+			state.registerTools(SDXLMcp.createLocal(tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),true,resourceLock));
 
 		if(skillSet.contains("sdxl-agent"))
-			state.registerTools(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder),state, tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),callback,false,resourceLock));
+			state.registerTools(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),callback,false,resourceLock));
 		if(skillSet.contains("sdxl-agent-nsfw"))
-			state.registerTools(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder),state, tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),callback,true,resourceLock));
+			state.registerTools(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora,SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder)),callback,true,resourceLock));
 		CrontabMcp.setPath(ConfigPaths.crontab(dataFolder));
 		if(skillSet.contains("cron"))
 			state.registerTools(CrontabMcp.create(state.botId, callback));
 		if(skillSet.contains("music"))
 			state.registerTools(MusicMcp.create(new File(dataFolder,"music"),config.get("voice").getAsString(),state.getRoleName(Role.ASSISTANT),callback,resourceLock));
 		if(skillSet.contains("seedimage"))
-			state.registerTools(SeedreamMcp.createImage(state,imgKey, callback, refimage, tos));
+			state.registerTools(SeedreamMcp.createImage(imgKey, callback, refimage, tos));
 		if(skillSet.contains("seedvideo"))
-			state.registerTools(SeedreamMcp.createVideo(imgKey, callback, refimage, tos,state));
+			state.registerTools(SeedreamMcp.createVideo(imgKey, callback, refimage, tos));
 		state.registerTools(AgentPingMcp.create(state.getRoleName(Role.ASSISTANT), callback));
 
 	}
@@ -678,10 +678,13 @@ public class NapCatAIConnector extends WebSocketClient {
 				MutableMessageContents mst=new MutableMessageContents(lst);
 				for(MessageContent msg:prompt.content)
 					mst.add(msg);
-				if(prompt.ctx.qq!=0)
+				if(prompt.ctx.qq!=0) {
 					state.currentCtx=prompt.ctx;
+					state.getToolCallManager().setContext(prompt.ctx);
+				}
 				state.getAiapp().handleSpeech(state, mst);
 				state.currentCtx=null;
+				state.getToolCallManager().setContext(null);
 
 			
 				sendLastMessage(state,handle,state.getTokens()-priceBefore);

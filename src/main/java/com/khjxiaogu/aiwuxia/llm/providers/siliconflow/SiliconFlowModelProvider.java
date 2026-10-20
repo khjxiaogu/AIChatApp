@@ -259,7 +259,7 @@ public class SiliconFlowModelProvider implements ModelProvider{
 			logger.info(usage);
 			logger.info("finish generation");
 			try {
-				readable.setUsage(usage);
+				readable.addUsage(usage);
 			}finally {
 				readable.endContent();
 			}

@@ -19,6 +19,7 @@ import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
@@ -129,6 +130,8 @@ public class PainterSession extends WebSocketAISession {
      *   <li>{@code web_search}（{@link DeepseekSearchMcp} 的 DeepSeek 网页搜索，未配置
      *       {@code deepseektoken} 时不注册）；</li>
      *   <li>{@code moegirl_search}（{@link FetchMcp} 萌娘百科搜索，即“search_moegirl”）。</li>
+     *   <li>{@code list_characters} / {@code search_characters} / {@code get_character_setting}
+     *       （{@link CharacterSettingMcp} 的角色设定查询）。</li>
      * </ul>
      * <p>
      * 这几类调用属于搜索参考、取用素材与下发结果的辅助动作，一次绘画里可能反复触发：
@@ -136,7 +139,8 @@ public class PainterSession extends WebSocketAISession {
      * </p>
      */
     private static final Set<String> UNLIMITED_TOOLS = Collections.unmodifiableSet(
-        new LinkedHashSet<>(Arrays.asList("send_image", "search_character", "web_view", "web_search", "moegirl_search")));
+        new LinkedHashSet<>(Arrays.asList("send_image", "search_character", "web_view", "web_search", "moegirl_search",
+                "list_characters", "search_characters", "get_character_setting")));
 
     private final ConcurrentHashMap<String, BotCallbackPromise> pendingLocalRequests = new ConcurrentHashMap<>();
 
@@ -144,11 +148,14 @@ public class PainterSession extends WebSocketAISession {
                           ApplicationAttributes attr, File fn, ISaveData data) {
         super(par, uid, chatid, aiapp, attr, fn, data);
         // 工具直接注册进会话的工具调用管理器，由管理器统一处理调用次数、权限、许可与执行
-        registerTools(MultiModalMcp.create(par.getPainterStorage(), this::addUsage));
-        registerTools(MultiModalMcp.createOutput(this,par.getPainterStorage(), Collections.emptyMap(),this::addUsage));
-        registerTools(SDXLMcp.createRemoteLocalModel(this,par.getPainterStorage(), par.lora,par.chara,imgid->par.urlbase+"/painter/image?conversation_id="+chatid+"&image_id="+imgid, true));
-        registerTools(FetchMcp.create(this, par.getPainterStorage()));
-        registerTools(DeepseekSearchMcp.create(this));
+        registerTools(MultiModalMcp.create(par.getPainterStorage()));
+        registerTools(MultiModalMcp.createOutput(par.getPainterStorage(), Collections.emptyMap()));
+        registerTools(SDXLMcp.createRemoteLocalModel(par.getPainterStorage(), par.lora, par.chara,
+                (imgid, output) -> par.urlbase + "/painter/image?conversation_id=" + chatid + "&image_id=" + imgid, true));
+        registerTools(FetchMcp.create(par.getPainterStorage()));
+        registerTools(DeepseekSearchMcp.create());
+        // 按需查询角色设定（数据来自人类可读索引 character-list.txt）
+        registerTools(CharacterSettingMcp.create(par.getDataFolder()));
     }
 
     /**

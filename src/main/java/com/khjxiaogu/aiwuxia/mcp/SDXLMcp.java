@@ -20,7 +20,6 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiFunction;
-import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -46,8 +45,6 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
-import com.khjxiaogu.aiwuxia.state.session.AISession;
-import com.khjxiaogu.aiwuxia.state.session.PainterSession;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -241,15 +238,11 @@ public class SDXLMcp {
 		sb.deleteCharAt(sb.length()-1);
 		return sb.toString();
     }
-    public static MCPTools createRemoteLocalModel(PainterSession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,Function<String,String> urlGetter,boolean isNsfw) {
+    public static MCPTools createRemoteLocalModel(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,BiFunction<String,AIOutput,String> urlGetter,boolean isNsfw) {
 		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,data)->LocalModel.require(ModelType.SDXL,UUID.randomUUID().toString(), JsonBuilder.object().add("path", url).add("data", data).end()).thenApply(t->JsonParser.parseString(new String(t.bodyData,StandardCharsets.UTF_8)).getAsJsonObject());
-		return create(state,tos,lora,charas,isNsfw,urlGetter,func);
+		return create(tos,lora,charas,isNsfw,urlGetter,func);
 	}
-	public static MCPTools createRemoteLocal(PainterSession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,Function<String,String> urlGetter,boolean isNsfw) {
-		BiFunction<String,String,CompletableFuture<JsonObject>> func=state::requestLocal;
-		return create(state,tos,lora,charas,isNsfw,urlGetter,func);
-	}
-	public static MCPTools createLocal(AISession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,boolean isNsfw,ResourceLock lock) {
+	public static MCPTools createLocal(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,boolean isNsfw,ResourceLock lock) {
 		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,payload)->CompletableFuture.supplyAsync(()->{
 			try(ResourcePermit l=lock.acquire(12))  {
 				return HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
@@ -263,9 +256,9 @@ public class SDXLMcp {
 				throw new RuntimeException(e);
 			}
 		});
-		return create(state,tos,lora,charas,isNsfw,s->{
+		return create(tos,lora,charas,isNsfw,(s,output)->{
 			try {
-				return Base64.getEncoder().encodeToString(tos.download(s,state::addUsage));
+				return Base64.getEncoder().encodeToString(tos.download(s, output == null ? null : output::addUsage));
 			} catch (IOException e) {
 				e.printStackTrace();
 				throw new RuntimeException(e);
@@ -334,7 +327,7 @@ public class SDXLMcp {
 		}
 	    return null;
 	}
-	public static MCPTools create(AISession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,boolean isNsfw,Function<String,String> urlGetter,BiFunction<String,String,CompletableFuture<JsonObject>> func) {
+	public static MCPTools create(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,boolean isNsfw,BiFunction<String,AIOutput,String> urlGetter,BiFunction<String,String,CompletableFuture<JsonObject>> func) {
 		MCPTools tools=new MCPTools();
 		
 		Map<String, int[]> resolutions = new HashMap<>();
@@ -386,18 +379,19 @@ public class SDXLMcp {
 		tools.register(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
 				.presenter(ToolCallPresenter.ofName("反推提示词"))
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
 					Matcher mtch = patt.matcher(data);
 					if (mtch.find()) {
 						String id = mtch.group(1);
 						try {
-							JsonObject datax = interrogate(urlGetter.apply(id),func);
+							JsonObject datax = interrogate(urlGetter.apply(id, output),func);
 							StringBuilder sb=new StringBuilder("按可能性从大到小排列的提示词：");
 							for(String key:datax.keySet()) {
 								sb.append(key).append(",");
 							}
-							state.addUsage(new LocalSDXLUsage(0,1));
+							if(output!=null)
+								output.addUsage(new LocalSDXLUsage(0,1));
 							return sb.toString();
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -421,7 +415,7 @@ public class SDXLMcp {
 					content.append("\n画面比例:"+jo.get("resolution").getAsString());
 					return ToolCallDisplay.of("文生图", content);
 				})
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						System.out.println(data);
@@ -452,7 +446,7 @@ public class SDXLMcp {
 									its[0],
 									its[1],func);
 							
-							String fn = tos.uploadIfNotExists(image,state::addUsage);
+							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
@@ -460,19 +454,21 @@ public class SDXLMcp {
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,state::addUsage))));
+									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,output == null ? null : output::addUsage))));
 							builder.temperature(1.3f).maxTokens(3000).streamed();
 							String caption="";
 							for(int i=0;i<3;i++)
 								try {
-									AIOutput output=LLMConnector.call(builder.build());
-									output.addUsageListener(state::addUsage);
-									caption= FileUtil.printAndCollectContent(output.getContent());
+									AIOutput inner=LLMConnector.call(builder.build());
+									if(output!=null)
+										inner.addUsageListener(output::addUsage);
+									caption= FileUtil.printAndCollectContent(inner.getContent());
 									break;
 								}catch(Exception err) {
 									err.printStackTrace();
 								}
-							state.addUsage(new LocalSDXLUsage(1,0));
+							if(output!=null)
+								output.addUsage(new LocalSDXLUsage(1,0));
 							return "生成成功，图片id为："+fn+"。"+extras+caption;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -506,7 +502,7 @@ public class SDXLMcp {
 					content.append("\n画面比例:"+jo.get("resolution").getAsString());
 					return ToolCallDisplay.of("分区图片", content);
 				})
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					System.out.println(data);
 					try {
@@ -557,7 +553,7 @@ public class SDXLMcp {
 									else if(jes.isNumber())
 										strength=jes.getAsFloat();
 								}
-								image=generateRegionalImage2Image(urlGetter.apply(jo.get("picture_id").getAsString()),prompt,negative,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
+								image=generateRegionalImage2Image(urlGetter.apply(jo.get("picture_id").getAsString(),output),prompt,negative,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
 										its[0],
 										its[1],isRow,ratio,strength*0.2f+0.6f,func);
 							}else{
@@ -566,7 +562,7 @@ public class SDXLMcp {
 										its[1],isRow,ratio,func);
 							}
 							
-							String fn = tos.uploadIfNotExists(image,state::addUsage);
+							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
@@ -574,19 +570,21 @@ public class SDXLMcp {
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,state::addUsage))));
+									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,output == null ? null : output::addUsage))));
 							builder.temperature(1.3f).maxTokens(3000).streamed();
 							String caption="";
 							for(int i=0;i<3;i++)
 								try {
-									AIOutput output=LLMConnector.call(builder.build());
-									output.addUsageListener(state::addUsage);
-									caption= FileUtil.printAndCollectContent(output.getContent());
+									AIOutput inner=LLMConnector.call(builder.build());
+									if(output!=null)
+										inner.addUsageListener(output::addUsage);
+									caption= FileUtil.printAndCollectContent(inner.getContent());
 									break;
 								}catch(Exception err) {
 									err.printStackTrace();
 								}
-							state.addUsage(new LocalSDXLUsage(2,0));
+							if(output!=null)
+								output.addUsage(new LocalSDXLUsage(2,0));
 							return "生成成功，图片id为："+fn+"。"+caption;
 						} catch (IOException e) {
 							e.printStackTrace();
@@ -615,7 +613,7 @@ public class SDXLMcp {
 					content.append("\n强度:"+jo.get("strength").getAsString());
 					return ToolCallDisplay.of("图生图", content);
 				})
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						System.out.println(data);
@@ -642,13 +640,13 @@ public class SDXLMcp {
 						System.out.println(negative);
 						try {
 
-							byte[] image=generateImage2Image(urlGetter.apply(pid),prompt,negative
+							byte[] image=generateImage2Image(urlGetter.apply(pid,output),prompt,negative
 									,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
 									its[0],
 									its[1],strength*0.2f+0.6f,func);
 
 							
-							String fn = tos.uploadIfNotExists(image,state::addUsage);
+							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
@@ -656,12 +654,14 @@ public class SDXLMcp {
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,state::addUsage))));
-							AIOutput output=LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build());
-							output.addUsageListener(state::addUsage);
+									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,output == null ? null : output::addUsage))));
+							AIOutput inner=LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build());
+							if(output!=null)
+								inner.addUsageListener(output::addUsage);
 							String caption= FileUtil.printAndCollectContent(
-								output.getContent());
-							state.addUsage(new LocalSDXLUsage(1,0));
+								inner.getContent());
+							if(output!=null)
+								output.addUsage(new LocalSDXLUsage(1,0));
 							return "生成成功，图片id为："+fn+"。"+caption;
 						} catch (IOException e) {
 							e.printStackTrace();

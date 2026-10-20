@@ -21,20 +21,19 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
-import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.aiwuxia.vision.JimengImageGenerator;
 import com.khjxiaogu.aiwuxia.vision.JimengVideoGenerator;
 
 public class SeedreamMcp {
-	public static MCPTools createImage(AISession state,JsonObject config,AgentMessager imageCollector,Map<String,String> refImages,ObjectStorageProvider tos) {
+	public static MCPTools createImage(JsonObject config,AgentMessager imageCollector,Map<String,String> refImages,ObjectStorageProvider tos) {
 		JimengImageGenerator jig=new JimengImageGenerator(config);
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("jimeng_image", "使用即梦AI生成图片，注意参考图的图片id或名称不会被传递给模型，因此只能用从1开始的顺序索引指代图片。")
 				.putParam("reference", "参考图列表，以英文逗号,分隔后给出，参考图可以是图片id或者系统提供的内置参考图文本，同一个人仅使用一张参考图，参考图数量越少越好。")
 				.putParam("prompt", "提示词，使用中文自然语言详细描述整个画面的细节，不包含参考图的人物特征，使用“图一”“图二”等引用参考图，不得包含图片id，必须说明每个参考图的作用，描述人物时请写全名或者图片编号，禁止使用一切其他代称。比如“画面参考图2，图1角色身着图3所示服装。”")
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					System.out.println(data);
 					String ref=jo.get("reference").getAsString();
@@ -44,8 +43,8 @@ public class SeedreamMcp {
 					try {
 						for(String refImg:refs) {
 							if(refImg.length()==72) {
-								if(tos.exists(refImg.trim(),state::addUsage)) {
-									links.add(tos.getPublicUrl(refImg.trim(),state::addUsage));
+								if(tos.exists(refImg.trim(), output == null ? null : output::addUsage)) {
+									links.add(tos.getPublicUrl(refImg.trim(), output == null ? null : output::addUsage));
 								}else {
 									errors.add("参考图"+refImg.trim()+"已清理或不存在；");
 								}
@@ -73,7 +72,7 @@ public class SeedreamMcp {
 					CompletableFuture<String> cf=jig.generateImage(links, jo.get("prompt").getAsString()).thenApply(t -> {
 
 						try {
-							return "图片生成成功，图片id："+tos.uploadIfNotExists(t,state::addUsage);
+							return "图片生成成功，图片id："+tos.uploadIfNotExists(t, output == null ? null : output::addUsage);
 						} catch (IOException e) {
 							e.printStackTrace();
 							throw new RuntimeException(e);
@@ -101,18 +100,22 @@ public class SeedreamMcp {
 		return tools;
 	}
 
-	public static MCPTools createVideo(JsonObject config,AgentMessager videoCollector,Map<String,String> refImages,ObjectStorageProvider tos,AIGroupSession state) {
+	public static MCPTools createVideo(JsonObject config,AgentMessager videoCollector,Map<String,String> refImages,ObjectStorageProvider tos) {
 		JimengVideoGenerator jig=new JimengVideoGenerator(config);
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("jimeng_video", "使用即梦AI生成视频发送，注意参考图的图片id或名称不会被传递给模型，因此只能用从1开始的顺序索引指代图片。")
 				.putParam("reference", "参考图列表，以英文逗号,分隔后给出，参考图可以是图片id或者系统提供的内置参考图文本，同一个人仅使用一张参考图，参考图数量越少越好。")
 				.putParam("prompt", "提示词，使用中文自然语言描述视频内容，台词等信息，不包含参考图的人物特征，使用“图一”“图二”等引用参考图，不得包含图片id，必须说明每个参考图的作用，描述人物时请写全名或者图片编号，禁止使用一切其他代称。比如“画面参考图2，图1角色身着图3所示服装。”")
-				.tool((data) -> {
-					System.out.println(state.currentCtx);
-					if(state.currentCtx==null||state.currentCtx.qq!=1905387052L) {
+				.tool((data, output, manager) -> {
+					// 会话上下文（当前 QQ 消息）由 ToolCallManager 携带：工具本身不持有会话
+					AIGroupSession.CallContext ctx = manager != null
+							&& manager.getContext() instanceof AIGroupSession.CallContext
+									? (AIGroupSession.CallContext) manager.getContext()
+									: null;
+					if(ctx==null||ctx.qq!=1905387052L) {
 						return "该回复禁止使用视频生成。";
 					}
-					if(!state.currentCtx.text.contains("视频")) {
+					if(!ctx.text.contains("视频")) {
 
 						return "用户回复不包含“视频”，禁止使用。";
 					}
@@ -127,8 +130,8 @@ public class SeedreamMcp {
 					try {
 						for(String refImg:refs) {
 							if(refImg.length()==72) {
-								if(tos.exists(refImg.trim(),state::addUsage)) {
-									links.add(tos.getPublicUrl(refImg.trim(),state::addUsage));
+								if(tos.exists(refImg.trim(), output == null ? null : output::addUsage)) {
+									links.add(tos.getPublicUrl(refImg.trim(), output == null ? null : output::addUsage));
 								}else {
 									errors.add("参考图"+refImg.trim()+"已清理或不存在；");
 								}
@@ -162,9 +165,9 @@ public class SeedreamMcp {
 					AIRequest request=b.build();
 					CompletableFuture<String> cf= CompletableFuture.supplyAsync(()->{
 						try {
-							AIOutput output=LLMConnector.call(request);
-							FileUtil.printAndCollectContent(output.getReasoner());
-							return FileUtil.printAndCollectContent(output.getContent());
+							AIOutput inner=LLMConnector.call(request);
+							FileUtil.printAndCollectContent(inner.getReasoner());
+							return FileUtil.printAndCollectContent(inner.getContent());
 						} catch (ModelRouteException | IOException e) {
 							e.printStackTrace();
 							throw new RuntimeException("agent调用失败，请重试") ;

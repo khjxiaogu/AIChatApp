@@ -8,10 +8,13 @@ import java.util.Map.Entry;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpException;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpJson;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpProtocol;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 
 /**
  * MCP 服务端的协议实现（与传输方式无关）。
@@ -207,7 +210,10 @@ public class McpServer {
         long start = System.currentTimeMillis();
         String text;
         try {
-            text = tool.tool.run(McpJson.stringifyArguments(arguments));
+            // 服务端调用没有会话，用一个只收集用量的输出对象和一个空管理器传入；
+            // 工具产生的用量不额外计费（价格仍按 priceOf(name) 计算）。
+            AIOutput output = new AIOutput.FilledAIOutput(MessageContents.EMPTY, "", null);
+            text = tool.tool.run(McpJson.stringifyArguments(arguments), output, new ToolCallManager());
             if (text == null) {
                 text = "";
             }

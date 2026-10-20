@@ -145,7 +145,7 @@ public final class McpJson {
     /**
      * 把工具参数对象序列化为工具实现所接收的 JSON 文本。
      * <p>
-     * 工具调用统一以 JSON 字符串作为入参（见 {@code com.khjxiaogu.aiwuxia.llm.Tool#run(String)}），
+     * 工具调用统一以 JSON 字符串作为入参（见 {@code com.khjxiaogu.aiwuxia.llm.Tool#run}），
      * 因此服务端需要把 MCP 的 {@code arguments} 对象重新序列化。
      * </p>
      *

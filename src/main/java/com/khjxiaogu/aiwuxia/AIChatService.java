@@ -60,6 +60,7 @@ import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.mcp.client.McpClientManager;
 import com.khjxiaogu.aiwuxia.mcp.server.McpAccessTokenStore;
@@ -126,6 +127,18 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 */
 	public Connection getDatabase() {
 		return database;
+	}
+
+	/**
+	 * 获取数据目录（通常是 {@code save}）。
+	 * <p>
+	 * 供需要读取运行时配置文件（如角色设定、角色列表）的工具使用。
+	 * </p>
+	 *
+	 * @return 数据目录
+	 */
+	public File getDataFolder() {
+		return parent;
 	}
 
 	/** SQLite数据库连接，用于存储对话列表、权限、费用等信息 */
@@ -392,7 +405,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			logger.info("MCP 服务端已在 mcp.json 中禁用");
 		} else {
 			try {
-				initMcpServer(config);
+				initMcpServer(path, config);
 			} catch (Throwable ex) {
 				logger.printStackTrace(ex);
 				logger.warning("MCP 服务端初始化失败：" + ex.getMessage());
@@ -414,10 +427,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/**
 	 * 初始化 MCP 服务端：令牌存储、工具注册表与端点。
 	 *
+	 * @param path   数据目录（用于定位角色设定等运行时配置文件）
 	 * @param config {@code save/mcp.json} 解析结果
 	 * @throws Exception 初始化失败（调用方记录日志并降级为不启用）
 	 */
-	private void initMcpServer(JsonObject config) throws Exception {
+	private void initMcpServer(File path, JsonObject config) throws Exception {
 		int defaultPrice = config.has("defaultPrice") ? Math.max(0, config.get("defaultPrice").getAsInt()) : 1000;
 		String usageType = config.has("usageType") ? config.get("usageType").getAsString()
 				: McpAccessTokenStore.DEFAULT_USAGE_TYPE;
@@ -427,6 +441,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		mcpTokenStore = new McpAccessTokenStore(database, usageType);
 		McpToolRegistry registry = new McpToolRegistry();
 		McpBuiltinTools.register(registry);
+		// 角色设定查询工具：数据来自绘画 agent 目录下的人类可读索引 character-list.txt
+		registry.register(CharacterSettingMcp.create(path));
 		if (exposeSessionTools) {
 			// 可选：让令牌所属用户调用自己在线会话中的工具（默认关闭，避免远程触发聊天副作用）
 			registry.addSource(new McpToolSource() {

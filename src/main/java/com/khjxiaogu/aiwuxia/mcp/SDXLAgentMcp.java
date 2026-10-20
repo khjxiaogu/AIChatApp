@@ -5,8 +5,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -23,7 +24,6 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
@@ -56,12 +56,12 @@ public class SDXLAgentMcp {
 	/** 子 agent 内图生图/分区出图的次数上限。 */
 	private static final int SUBAGENT_IMAGE_EDIT_LIMIT = 2;
 
-	public static MCPTools createImage(File path,AISession state,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,AgentMessager callback,boolean isNsfw,ResourceLock lock)  throws IOException {
+	public static MCPTools createImage(File path,ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,List<String> charas,AgentMessager callback,boolean isNsfw,ResourceLock lock)  throws IOException {
 		MCPTools tools=new MCPTools();
-		MCPTools sdxl=SDXLMcp.createLocal(state, tos, lora, charas, isNsfw, lock);
-		FetchMcp.create(state, tos).mergeInto(sdxl);
-		DeepseekSearchMcp.create(state).mergeInto(sdxl);
-		MultiModalMcp.create(tos, state::addUsage).mergeInto(sdxl);
+		MCPTools sdxl=SDXLMcp.createLocal(tos, lora, charas, isNsfw, lock);
+		FetchMcp.create(tos).mergeInto(sdxl);
+		DeepseekSearchMcp.create().mergeInto(sdxl);
+		MultiModalMcp.create(tos).mergeInto(sdxl);
 
 		/*
 		 * 是否有出图子 agent 正在后台运行。
@@ -69,10 +69,7 @@ public class SDXLAgentMcp {
 		 * 很容易在同一轮生成里反复调用同一条提示词。这里让同一会话同时只跑一个子 agent：
 		 * 重复调用直接回“仍在生成中”，结果由正在跑的那个子 agent 送回。
 		 */
-		final AtomicBoolean inFlight=new AtomicBoolean(false);
-
-		// 调用规则兜底：每次生成最多只允许调用一次本工具
-		state.getToolCallManager().setToolCallLimit("sdxl_agent", MAX_CALLS_PER_GENERATION);
+		final Set<ToolCallManager> inFlight = ConcurrentHashMap.newKeySet();
 
 		String system = 
 				
@@ -83,7 +80,11 @@ public class SDXLAgentMcp {
 		tools.register(new ToolData.Builder("sdxl_agent", "调用多模态模型生成图片，同一张图片只能有0-2个角色。提示词只需描述画面大致内容即可，不要详细描述画面内容，涉及角色也只需描述角色名字，不要描述角色特征。一次请求只需调用一次本工具：调用后图片在后台生成，完成后结果会自动返回到对话中，不要重复调用等待。")
 				.putParam("reference", "参考图列表，包含多个图片id以英文逗号,分隔，只允许包含相关图片。")
 				.putParam("prompt", "提示词，使用中文自然语言详细描述整个画面的细节，不包含参考图的人物特征，使用“图一”“图二”等引用参考图，不得包含图片id，必须说明每个参考图的作用，描述人物时请写全名或者图片编号，禁止使用一切其他代称。比如“画面参考图2，图1角色身着图3所示服装。”")
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
+					// 调用规则兜底：每次生成最多只允许调用一次本工具（首次执行后生效）
+					if (manager != null) {
+						manager.setToolCallLimit("sdxl_agent", MAX_CALLS_PER_GENERATION);
+					}
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					System.out.println(data);
 					String promptText=jo.has("prompt")&&!jo.get("prompt").isJsonNull()?jo.get("prompt").getAsString():"";
@@ -101,8 +102,8 @@ public class SDXLAgentMcp {
 							int i=0;
 							for(String refImg:refs) {
 								if(refImg.length()==72) {
-									if(tos.exists(refImg.trim(),state::addUsage)) {
-										links.add(tos.getPublicUrl(refImg.trim(),state::addUsage));
+									if(tos.exists(refImg.trim(), output == null ? null : output::addUsage)) {
+										links.add(tos.getPublicUrl(refImg.trim(), output == null ? null : output::addUsage));
 										refss+="图"+(++i)+"id:"+refImg.trim()+"\n";
 									}else {
 										errors.add("参考图"+refImg.trim()+"已清理或不存在；");
@@ -124,8 +125,8 @@ public class SDXLAgentMcp {
 							return "参数错误："+sb.toString();
 						}
 					}
-					// 已有子 agent 在跑：不再新建，直接告知模型等待（此处已无提前返回，占用后必然会有 future 释放）
-					if(!inFlight.compareAndSet(false, true))
+					// 同一会话已有子 agent 在跑：不再新建，直接告知模型等待
+					if(manager != null && !inFlight.add(manager))
 						return "上一张图片仍在生成中，请勿重复调用本工具；完成后结果会自动返回到对话中。";
 					Builder b=AIRequest.builder("sdxlAgent").modelHint("deepseek/pro").taskType(TaskType.STORY).strength(ReasoningStrength.MEDIUM).temperature(0.2f).maxTokens(16384);
 					b.addHistoryItem(Role.SYSTEM, system);
@@ -141,15 +142,17 @@ public class SDXLAgentMcp {
 					AIRequest request=b.build();
 					CompletableFuture<String> task=CompletableFuture.supplyAsync(()->{
 						try {
-							AIOutput output = LLMConnector.call(request);
-							FileUtil.printAndCollectContent(output.getReasoner());
-							return FileUtil.printAndCollectContent(output.getContent());
+							AIOutput inner = LLMConnector.call(request);
+							FileUtil.printAndCollectContent(inner.getReasoner());
+							return FileUtil.printAndCollectContent(inner.getContent());
 						} catch (ModelRouteException | IOException e) {
 							e.printStackTrace();
 							return "agent调用失败";
 						} finally {
 							// 无论成功失败都要放开占用，否则一次失败会让本工具此后一直返回“仍在生成中”
-							inFlight.set(false);
+							if(manager != null) {
+								inFlight.remove(manager);
+							}
 						}
 						
 					});

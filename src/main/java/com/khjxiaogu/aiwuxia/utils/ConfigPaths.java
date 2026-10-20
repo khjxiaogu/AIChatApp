@@ -24,6 +24,8 @@
 package com.khjxiaogu.aiwuxia.utils;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -48,7 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *       ├─ character-tags.txt   角色 tag 库（提示词关键词）
  *       ├─ loras.json           LoRA 配置
  *       ├─ reference-images.json 参考图
- *       └─ agent/               绘画 agent 提示词（role.txt / charaset.txt / rules.txt）
+ *       └─ agent/               绘画 agent 提示词（role.txt / charaset.txt / rules.txt / character-list.txt）
  * </pre>
  * <p>
  * 为兼容旧部署，新位置不存在时会退回 {@code save} 根目录下的旧位置（{@code save/tos.json} 等），
@@ -87,6 +89,8 @@ public final class ConfigPaths {
 	public static final String SDXL_REFERENCE_IMAGES = "reference-images.json";
 	/** 绘画 agent 提示词目录（原 {@code save/painteragent}） */
 	public static final String SDXL_AGENT = "agent";
+	/** 角色设定索引（作品公共设定 + 角色设定 + 别名，人类可读） */
+	public static final String SDXL_CHARACTER_LIST = "character-list.txt";
 
 	// ---- 旧位置，仅用于平滑升级 ----
 	private static final String LEGACY_OBJECT_STORAGE = "tos.json";
@@ -235,6 +239,23 @@ public final class ConfigPaths {
 	 */
 	public static File sdxlAgent(File dataFolder) {
 		return locate(sdxlFolder(dataFolder), SDXL_AGENT, dataFolder, LEGACY_SDXL_AGENT);
+	}
+
+	/**
+	 * 绘画 agent 相关文件可能所在的目录，新位置在前。
+	 * <p>
+	 * 迁移过程中可能出现“新目录只放了部分文件”的情况，调用方应依次在两个目录中查找目标文件，
+	 * 而不是只看 {@link #sdxlAgent(File)} 返回的目录。
+	 * </p>
+	 *
+	 * @param dataFolder 数据目录
+	 * @return 候选目录列表，新位置在前，旧位置在后
+	 */
+	public static List<File> sdxlAgentCandidates(File dataFolder) {
+		List<File> candidates = new ArrayList<>(2);
+		candidates.add(new File(sdxlFolder(dataFolder), SDXL_AGENT));
+		candidates.add(new File(dataFolder, LEGACY_SDXL_AGENT));
+		return candidates;
 	}
 
 	/**

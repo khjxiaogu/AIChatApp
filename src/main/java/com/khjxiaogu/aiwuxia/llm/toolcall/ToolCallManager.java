@@ -8,9 +8,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 
 /**
  * 工具调用管理器（可变）。
@@ -585,6 +587,56 @@ public class ToolCallManager {
 	public ToolCallManager setUnapprovedMessage(String unapprovedMessage) {
 		this.unapprovedMessage = unapprovedMessage == null ? DEFAULT_UNAPPROVED_MESSAGE : unapprovedMessage;
 		return this;
+	}
+
+	// ==================== 会话上下文 ====================
+
+	/** 工具把额外内容（图片等）交回会话的接收器，由会话在构造时注册。 */
+	private volatile Consumer<MessageContent> contentSink;
+	/** 本次生成相关的会话上下文（例如 QQ 消息上下文），由会话在生成前写入。 */
+	private volatile Object context;
+
+	/**
+	 * 设置工具额外内容的接收器。
+	 * <p>
+	 * 工具本身不再持有会话，需要把图片等内容追加到当前消息时调用 {@link #emitContent(MessageContent)}，
+	 * 由接收器决定写到哪里（例如当前正在写入的历史记录）。
+	 * </p>
+	 *
+	 * @param contentSink 接收器，null 表示忽略工具产生的额外内容
+	 * @return 本管理器，便于链式调用
+	 */
+	public ToolCallManager setContentSink(Consumer<MessageContent> contentSink) {
+		this.contentSink = contentSink;
+		return this;
+	}
+
+	/**
+	 * 下发一段工具产生的额外内容。
+	 *
+	 * @param content 内容，null 忽略
+	 */
+	public void emitContent(MessageContent content) {
+		Consumer<MessageContent> sink = contentSink;
+		if (sink != null && content != null) {
+			sink.accept(content);
+		}
+	}
+
+	/**
+	 * 设置本次生成的会话上下文。
+	 *
+	 * @param context 上下文对象，可为 null
+	 * @return 本管理器，便于链式调用
+	 */
+	public ToolCallManager setContext(Object context) {
+		this.context = context;
+		return this;
+	}
+
+	/** 本次生成的会话上下文，未设置时为 null。 */
+	public Object getContext() {
+		return context;
 	}
 
 	@Override

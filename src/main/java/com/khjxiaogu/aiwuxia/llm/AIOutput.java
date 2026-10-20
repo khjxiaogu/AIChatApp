@@ -30,7 +30,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
@@ -107,18 +106,40 @@ public interface AIOutput {
     }
 
     /**
-     * 添加一个监听器，用于接收输出完成后的总使用情况信息。
-     * 使用情况通常包括token消耗数量、API调用成本等指标，具体由{@link GrokUsage}类定义。
+     * 添加一个用量监听器。
+     * <p>
+     * 监听器会先收到输出对象中已经累计的全部用量，之后每当 {@link #addUsage(UsageIntf)}
+     * 追加新用量时继续收到通知。会话通常在这里接 {@code state::addUsage} 完成计费与统计。
+     * </p>
      *
-     * @param listener 一个{@link Consumer}，用于处理{@link GrokUsage}对象。当有新的使用数据可用时会被调用。
+     * @param listener 用量接收方，null 忽略
      */
     public void addUsageListener(Consumer<UsageIntf<?>> listener);
+
+    /**
+     * 追加一条用量。
+     * <p>
+     * 模型提供者在流结束时写入模型自身的用量；工具在执行过程中也可以写入自己产生的用量
+     * （图片上传、搜索、额外模型调用等），会话通过 {@link #addUsageListener} 统一记账。
+     * </p>
+     *
+     * @param usage 本次产生的用量，null 忽略
+     */
+    public void addUsage(UsageIntf<?> usage);
+
+    /**
+     * 当前累计的全部用量（按加入顺序）。
+     *
+     * @return 只读快照，永不为 null
+     */
+    public List<UsageIntf<?>> getUsages();
+
 	public static class StreamedAIOutput implements AIOutput{
 		public final MessageReader reasoner;
 		public final BlockingReader content;
-		private UsageIntf<?> usage;
+		private final List<UsageIntf<?>> usages = new ArrayList<>();
+		private final List<Consumer<UsageIntf<?>>> usageListener = new ArrayList<>();
 		private boolean interrupted;
-		private List<Consumer<UsageIntf<?>>> usageListener=new ArrayList<>();
 		public StreamedAIOutput() {
 			reasoner=new MessageReader();
 			content=new BlockingReader();
@@ -148,22 +169,35 @@ public interface AIOutput {
 		public Reader getContent() {
 			return content;
 		}
-		public void setUsage(UsageIntf<?> usage) {
-			this.usage=usage;
-			if(usage!=null)
-				synchronized(usageListener) {
-					usageListener.forEach(t->t.accept(usage));
-					usageListener.clear();
+		@Override
+		public void addUsage(UsageIntf<?> usage) {
+			if (usage == null) {
+				return;
+			}
+			synchronized (usages) {
+				usages.add(usage);
+				for (Consumer<UsageIntf<?>> listener : usageListener) {
+					listener.accept(usage);
 				}
+			}
 		}
+		@Override
+		public List<UsageIntf<?>> getUsages() {
+			synchronized (usages) {
+				return new ArrayList<>(usages);
+			}
+		}
+		@Override
 		public void addUsageListener(Consumer<UsageIntf<?>> listener) {
-			if(this.usage!=null)
-				listener.accept(usage);
-			else
-				synchronized(usageListener) {
-					usageListener.add(listener);
+			if (listener == null) {
+				return;
+			}
+			synchronized (usages) {
+				for (UsageIntf<?> usage : usages) {
+					listener.accept(usage);
 				}
-			
+				usageListener.add(listener);
+			}
 		}
 		public boolean isInterrupted() {
 			return interrupted;
@@ -177,11 +211,14 @@ public interface AIOutput {
 	public static class FilledAIOutput implements AIOutput{
 		public final MessageReader reasoner;
 		public final Reader content;
-		private final UsageIntf<?> usage;
+		private final List<UsageIntf<?>> usages = new ArrayList<>();
+		private final List<Consumer<UsageIntf<?>>> usageListener = new ArrayList<>();
 		public FilledAIOutput(MessageContents reasoning,String content,UsageIntf<?> usage) {
 			this.reasoner=new MessageReader(reasoning);
 			this.content=new StringReader(content);
-			this.usage=usage;
+			if (usage != null) {
+				this.usages.add(usage);
+			}
 		}
 		@Override
 		public MessageReader getReasoner() {
@@ -195,8 +232,34 @@ public interface AIOutput {
 			return true;
 		}
 		@Override
+		public void addUsage(UsageIntf<?> usage) {
+			if (usage == null) {
+				return;
+			}
+			synchronized (usages) {
+				usages.add(usage);
+				for (Consumer<UsageIntf<?>> listener : usageListener) {
+					listener.accept(usage);
+				}
+			}
+		}
+		@Override
+		public List<UsageIntf<?>> getUsages() {
+			synchronized (usages) {
+				return new ArrayList<>(usages);
+			}
+		}
+		@Override
 		public void addUsageListener(Consumer<UsageIntf<?>> listener) {
-			listener.accept(usage);
+			if (listener == null) {
+				return;
+			}
+			synchronized (usages) {
+				for (UsageIntf<?> usage : usages) {
+					listener.accept(usage);
+				}
+				usageListener.add(listener);
+			}
 		}
 		@Override
 		public void interrupt() {

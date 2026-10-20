@@ -229,8 +229,9 @@ resp.addUsageListener(state::addUsage);               // ← 计费/用量统计
 | `String getContentText()` | 一次读完全部正文（非流式/摘要场景用） |
 | `boolean isEnded()` | 流是否已结束 |
 | `void interrupt()` | 中断生成 |
-| `addUsageListener(Consumer<UsageIntf<?>>)` | 用量回调，接 `state::addUsage` 才会计费 |
-| `setUsage(...)` | 由 provider 内部调用 |
+| `addUsageListener(Consumer<UsageIntf<?>>)` | 用量回调；会先补发已累计的用量，再持续接收新用量。接 `state::addUsage` 才会计费 |
+| `addUsage(UsageIntf<?>)` | 追加一条用量（模型提供者与工具都调用，用量在输出对象内按列表累计） |
+| `List<UsageIntf<?>> getUsages()` | 当前累计用量的只读快照 |
 
 **思维链必须异步读**，用基类给的方法，别自己另起线程：
 
@@ -328,15 +329,18 @@ QQ 群侧（`NapCatAIConnector`）会给会话挂工具（`SDXLMcp`、`QQMcp`、
 ```java
 ToolData t = new ToolData.Builder("get_weather", "查询城市天气")
         .putParam("city", "城市名")          // 参数名 → 说明（写进给模型的工具描述）
-        .tool(paramsJson -> "晴，26℃")       // Tool 接口：String run(String params)
+        .tool((paramsJson, output, manager) -> "晴，26℃")  // Tool：run(params, AIOutput, ToolCallManager)
         .build();
 MCPTools tools = new MCPTools();
 tools.register(t);
 state.registerTools(tools);                  // 挂到会话，随后 AIRequest.builder(state) 自动带上
 ```
 
-- `Tool.run(String params)` 收到的是**参数 JSON 字符串**，返回的字符串直接给模型看；
-- 工具回调里可拿到 `ToolCallContext`，用 `state.addUsage(...)` 记账、`callback.addToolStatus(...)` 反馈进度；
+- `Tool.run(String params, AIOutput output, ToolCallManager manager)` 收到的是**参数 JSON 字符串**，返回的字符串直接给模型看；
+- 工具**不再绑定会话**：同一份 `ToolData` / `MCPTools` 可以在任意会话、任意一次生成中复用；
+- 工具产生的用量写入 `output.addUsage(...)`（会话通过 `output.addUsageListener(state::addUsage)` 统一记账）；
+  只使用参数的简单工具仍可写单参数 lambda，`ToolData.Builder` 会自动适配；
+- 需要会话级行为时使用传入的 `manager`（例如读取本次生成的上下文、下发图片），不要持有 `AISession`；
 - 审批流由 `ToolApprovalManager` / `ToolCallApprover` 控制；生产环境建议挂审批，见 `ManagedToolCallApprover`；
 - 内置联网工具：`FetchMcp` 提供 `web_view` / `moegirl_search`；`DeepseekSearchMcp` 提供 `web_search`
   （DeepSeek 官方 Search API，需要 `-Ddeepseektoken`，未配置时不注册，见 README「网页搜索」一节）。

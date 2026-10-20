@@ -24,7 +24,8 @@ save/
       ├─ reference-images.json  #   参考图
       └─ agent/                 #   绘画 agent 提示词
          ├─ role.txt            #     角色
-         ├─ charaset.txt        #     角色设定
+         ├─ charaset.txt        #     角色设定（提示词用）
+         ├─ character-list.txt  #     角色设定索引（作品/角色/别名/设定，工具数据源）
          └─ rules.txt           #     生成规则
 ```
 
@@ -41,6 +42,7 @@ save/
 | `sdxl/loras.json` | LoRA 配置：`{"触发词": {"key": "文件名", "weight": 0.8}}` | 忽略（部署本地） |
 | `sdxl/reference-images.json` | 参考图：`{"名称": "图片地址"}`，供 Seedream 生图/生视频带参考图 | 忽略（部署本地） |
 | `sdxl/agent/` | 绘画 agent 提示词：`role.txt`（角色）、`charaset.txt`（设定）、`rules.txt`（规则） | `rules.txt` 入库，`role.txt`、`charaset.txt` 忽略（含个人信息） |
+| `sdxl/agent/character-list.txt` | 角色设定索引：`[work]` 作品、`[public]` 公共设定、`[character]` 角色设定与 `别名：`（人类可读，格式见文件头注释）。角色设定工具的数据来源，不依赖 `charaset.txt` | 入库 |
 
 ## 从旧位置迁移
 

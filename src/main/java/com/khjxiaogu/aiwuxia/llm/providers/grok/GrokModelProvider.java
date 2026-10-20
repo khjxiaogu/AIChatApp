@@ -130,7 +130,7 @@ public class GrokModelProvider implements ModelProvider {
 							if (readable.isInterrupted()) {
 								logger.info("interrupted generation");
 								try {
-									readable.setUsage(usage);
+									readable.addUsage(usage);
 								}finally {
 									readable.endContent();
 								}
@@ -142,7 +142,7 @@ public class GrokModelProvider implements ModelProvider {
 								logger.info(usage);
 								logger.info("finish generation");
 								try {
-									readable.setUsage(usage);
+									readable.addUsage(usage);
 								}finally {
 									readable.endContent();
 								}

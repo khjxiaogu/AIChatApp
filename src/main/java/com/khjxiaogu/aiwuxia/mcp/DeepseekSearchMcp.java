@@ -19,11 +19,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekSearchUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
-import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
@@ -66,14 +66,14 @@ public class DeepseekSearchMcp {
 	/**
 	 * 创建本模块的工具集合。
 	 * <p>
+	 * 工具不绑定会话：搜索成功的计费写入调用方传入的 {@link AIOutput}。
 	 * 未配置 {@code deepseektoken} 时返回空集合：接口必然 401，不注册工具可以避免模型白调、
 	 * 也避免把错误提示喂进上下文。
 	 * </p>
 	 *
-	 * @param state 当前会话（用于写入用量，可为 null，为 null 时只提供结果不计账）
 	 * @return 工具集合，可能为空
 	 */
-	public static MCPTools create(AISession state) {
+	public static MCPTools create() {
 		MCPTools tools = new MCPTools();
 		if (token().isEmpty()) {
 			return tools;
@@ -85,7 +85,7 @@ public class DeepseekSearchMcp {
 				.putParam("query", "搜索词，1～128 个字符，不能全为空白，支持 site:/lang:/after:/before:/\"精确短语\" 等语法")
 				.putParam("count", "返回结果条数，1～20，不确定时填 10")
 				.presenter(ToolCallPresenter.ofArgument("搜索网页", "query"))
-				.tool(params -> runTool(state, params))
+				.tool((params, output, manager) -> runTool(output, params))
 				.build());
 		return tools;
 	}
@@ -94,16 +94,17 @@ public class DeepseekSearchMcp {
 	 * 执行一次网页搜索，结果已格式化为便于模型阅读的文本。
 	 * <p>
 	 * 计费只发生在“HTTP 200 且 results 非空”的成功请求上，每次记一次
-	 * {@link DeepseekSearchUsage}（折算 2500 等效 token，即官方 0.005 元）。
+	 * {@link DeepseekSearchUsage}（折算 2500 等效 token，即官方 0.005 元），
+	 * 用量写入调用方传入的 {@link AIOutput}。
 	 * </p>
 	 *
-	 * @param state 当前会话，可为 null；为 null 时只返回结果、不记账
-	 * @param query 搜索词
-	 * @param count 期望条数（会被限制在 1～20）
+	 * @param output 本次生成的输出对象，可为 null（只返回结果、不记账）
+	 * @param query  搜索词
+	 * @param count  期望条数（会被限制在 1～20）
 	 * @return 给模型看的结果文本，失败时为中文错误说明
 	 */
-	public static String search(AISession state, String query, int count) {
-		return searchInternal(state == null ? null : state::addUsage, query, count);
+	public static String search(AIOutput output, String query, int count) {
+		return searchInternal(output == null ? null : output::addUsage, query, count);
 	}
 
 	/**
@@ -118,7 +119,7 @@ public class DeepseekSearchMcp {
 		return searchInternal(addUsage, query, count);
 	}
 
-	private static String runTool(AISession state, String params) {
+	private static String runTool(AIOutput output, String params) {
 		String query;
 		int count;
 		try {
@@ -139,7 +140,7 @@ public class DeepseekSearchMcp {
 		if (query.length() > MAX_QUERY_LENGTH) {
 			return "参数格式错误：query 最长 " + MAX_QUERY_LENGTH + " 个字符，当前 " + query.length() + " 个，请缩短后重试。";
 		}
-		return search(state, query, count);
+		return search(output, query, count);
 	}
 
 	private static String searchInternal(Consumer<UsageIntf<?>> addUsage, String query, int count) {

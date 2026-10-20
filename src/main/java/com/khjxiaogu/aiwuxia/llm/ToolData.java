@@ -2,6 +2,7 @@ package com.khjxiaogu.aiwuxia.llm;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Function;
 
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 
@@ -38,6 +39,21 @@ public class ToolData {
 
         public Builder tool(Tool tool) {
             this.tool = tool;
+            return this;
+        }
+
+        /**
+         * 设置只使用参数的简单工具实现。
+         * <p>
+         * 不需要写用量或读取会话上下文的工具可以继续用单参数写法，内部会适配为
+         * {@link Tool} 的三参数调用。
+         * </p>
+         *
+         * @param simple 参数文本到结果文本的转换
+         * @return 当前 Builder
+         */
+        public Builder tool(Function<String, String> simple) {
+            this.tool = (params, output, manager) -> simple.apply(params);
             return this;
         }
 

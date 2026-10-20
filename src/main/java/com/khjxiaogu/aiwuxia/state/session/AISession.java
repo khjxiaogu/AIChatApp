@@ -339,6 +339,13 @@ public class AISession implements ISaveData,AutoCloseable{
 		this.aiapp = aiapp;
 		// 工具调用规则只在构造时写入一次；管理器可变，之后需要调整直接改管理器
 		applyToolCallRules(toolCallManager);
+		// 工具不再持有会话：需要把图片等内容追加到当前消息时，通过管理器交回给会话
+		toolCallManager.setContentSink(content -> {
+			HistoryWriteContext write = getCurrentWrite();
+			if (write != null) {
+				write.append(content, false);
+			}
+		});
 		commandExec = new SerialExecutor(COMMAND_EXEC, this);
 	}
 

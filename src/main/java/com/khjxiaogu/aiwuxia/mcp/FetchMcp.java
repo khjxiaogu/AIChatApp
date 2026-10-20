@@ -24,22 +24,21 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.MCPTools;
 
 public class FetchMcp {
-	public static MCPTools create(AISession state,ObjectStorageProvider tos) {
+	public static MCPTools create(ObjectStorageProvider tos) {
 		MCPTools tools=new MCPTools();
 		tools.register(new ToolData.Builder("web_view", "获取链接指定的内容，只支持ftp/http/https链接").putParam("url", "网页链接")
 				.presenter(ToolCallPresenter.ofArgument("查看网页", "url"))
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						if (jo.has("url")) {
 							String url = jo.get("url").getAsString();
 							if (url.startsWith("ftp") || url.startsWith("http"))
-								return fetch(state,url,tos);
+								return fetch(output,url,tos);
 
 						}
 					} catch (Throwable err) {
@@ -49,12 +48,12 @@ public class FetchMcp {
 				}).build());
 		tools.register(new ToolData.Builder("moegirl_search", "搜索萌娘百科，如果有不知道的人物、角色或作品在这搜索。").putParam("keyword", "关键词")
 				.presenter(ToolCallPresenter.ofArgument("搜索萌娘百科", "keyword"))
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 			try {
 				JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 				if (jo.has("keyword")) {
 					String keyword = jo.get("keyword").getAsString();
-					return fetch(state,"https://zh.moegirl.org.cn/index.php?search="
+					return fetch(output,"https://zh.moegirl.org.cn/index.php?search="
 							+ URLEncoder.encode(keyword, StandardCharsets.UTF_8)
 							+ "&title=Special%3A%E6%90%9C%E7%B4%A2",tos);
 
@@ -89,11 +88,13 @@ public class FetchMcp {
 
 	/**
 	 * 根据URL获取内容
-	 * 
+	 *
+	 * @param output 本次生成的输出对象（图片上传的用量写入其中，可为 null）
 	 * @param urlStr 目标URL
+	 * @param tos    对象存储
 	 * @return 文本内容、图片识别结果或错误提示
 	 */
-	public static String fetch(AISession state,String urlStr,ObjectStorageProvider tos) {
+	public static String fetch(AIOutput output,String urlStr,ObjectStorageProvider tos) {
 		HttpURLConnection connection = null;
 		try {
 			URL url = new URL(urlStr);
@@ -125,15 +126,15 @@ public class FetchMcp {
 					// true);
 					//
 				AIRequest request=b.build();
-				AIOutput output=LLMConnector.call(request);
-				FileUtil.printAndCollectContent(output.getReasoner());
-				return FileUtil.printAndCollectContent(output.getContent());
+				AIOutput inner=LLMConnector.call(request);
+				FileUtil.printAndCollectContent(inner.getReasoner());
+				return FileUtil.printAndCollectContent(inner.getContent());
 			}
 			// 图片类型：只处理 JPEG 和 PNG
 			else if (isImageType(mimeType)) {
 				byte[] imageData = FileUtil.readAll(connection.getInputStream());
 
-				return "图片id："+tos.uploadIfNotExists(imageData,state::addUsage);
+				return "图片id："+tos.uploadIfNotExists(imageData, output == null ? null : output::addUsage);
 			}
 			// 其他不支持的类型，不下载正文
 			else {
