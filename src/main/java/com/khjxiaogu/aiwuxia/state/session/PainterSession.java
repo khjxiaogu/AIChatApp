@@ -149,10 +149,10 @@ public class PainterSession extends WebSocketAISession {
                           ApplicationAttributes attr, File fn, ISaveData data) {
         super(par, uid, chatid, aiapp, attr, fn, data);
         // 工具直接注册进会话的工具调用管理器，由管理器统一处理调用次数、权限、许可与执行
-        registerTool(MultiModalMcp.createImageRecognition(par.getPainterStorage()));
+        registerTool(MultiModalMcp.createImageRecognition(par.getPainterStorage()),5);
         registerTool(PainterMediaMcp.createSendImage(par.getPainterStorage()));
         registerTools(SDXLMcp.createRemoteLocalModel(par.getPainterStorage(), par.lora,
-                (imgid, output) -> par.urlbase + "/painter/image?conversation_id=" + chatid + "&image_id=" + imgid, true));
+                (imgid, output) -> par.urlbase + "/painter/image?conversation_id=" + chatid + "&image_id=" + imgid, true),5);
         if (par.chara != null) {
             registerTool(SDXLMcp.createSearchCharacter(par.chara));
         }

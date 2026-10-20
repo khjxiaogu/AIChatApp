@@ -184,10 +184,12 @@ save/config/
 **站点域名**单独放在 `save/site.json`：
 
 ```json
-{ "host": "example.com", "reader_host": "www.example.com" }
+{ "host": "example.com", "ws_host": "ws.example.com", "reader_host": "www.example.com" }
 ```
 
 - `host` 留空或文件不存在 → 网页自动跟随当前访问的域名（自建部署最省事）；
+- `ws_host` 可选，**WebSocket 专用域名**，与网页的 `host` 分开（例如网页 `example.com`、WebSocket `ws.example.com`）；
+  留空时与 `host` 相同；
 - `reader_host` 可选，用于图片查看页；
 - 详见根 [README.md](../../README.md)。
 

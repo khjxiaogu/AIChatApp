@@ -159,13 +159,15 @@ java -Ddeepseektoken=your_token -DlocalVoiceToken=voice_token -jar aichat.jar
 ```json
 {
   "host": "example.com",
+  "ws_host": "ws.example.com",
   "reader_host": "www.example.com"
 }
 ```
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `host` | 否 | 站点对外域名。可写裸域名 `example.com`、带端口 `example.com:8443` 或完整地址 `https://example.com`；写成 `http://...` 会得到 `ws`/`http` 地址。**留空或文件不存在时，前端自动跟随访问页面的域名**（`location.host`），Java 端回退到 `SiteConfig.DEFAULT_HOST` |
+| `host` | 否 | 站点对外域名（网页 / HTTP）。可写裸域名 `example.com`、带端口 `example.com:8443` 或完整地址 `https://example.com`；写成 `http://...` 会得到 `ws`/`http` 地址。**留空或文件不存在时，前端自动跟随访问页面的域名**（`location.host`），Java 端回退到 `SiteConfig.DEFAULT_HOST` |
+| `ws_host` | 否 | **WebSocket 专用域名**，与 `host` 分开配置，例如网页走 `example.com` 而 WebSocket 走 `ws.example.com` 或独立端口。规则同 `host`（支持裸域名 / 带端口 / 完整地址；写 `ws://` 或 `http://` 得到非加密的 `ws://`）。留空时与 `host` 相同 |
 | `reader_host` | 否 | 图片查看页（`/works/imgView.html`）所在域名，缺省与 `host` 相同 |
 
 优先级：启动参数 `--site-host=example.com` / `-Dsite_host=example.com` > `save/site.json` > 跟随访问域名。
@@ -244,8 +246,9 @@ public static void main(String[] args) {
 - 静态页面位于服务根目录下（如 `aiindex.html`, `chat.html`），通过 HTTP 访问。
 - WebSocket 连接地址：`ws://host:port/chatsocket?chatid=xxx&app=xxx&userId=xxx`
 - 页面里**不再写死站点域名**：服务端通过 `/aichat/site-config.js` 下发 `window.AI_SITE`
-  （内容来自 `save/site.json` 的 `host`），各页面用 `aiSiteWsBase()` / `aiSiteHttpBase()`
-  （见 `save/ai-protocol.js`）拼接地址；未配置时这两个函数回退到 `location.host` / `location.protocol`，
+  （内容来自 `save/site.json` 的 `host` / `ws_host`），各页面用 `aiSiteWsBase()` / `aiSiteHttpBase()`
+  （见 `save/ai-protocol.js`）拼接地址；`aiSiteWsBase()` 使用 `ws_host`（未配置时与 `host` 相同），
+  `aiSiteHttpBase()` 使用 `host`。两者都未配置时回退到 `location.host` / `location.protocol`，
   所以反代、换域名、本地调试都不用改 HTML。
 
 ### 让 Deepseek Harness 接管 QQ（DeepseekHarnessConnector）

@@ -22,12 +22,15 @@
 ```json
 {
   "host": "example.com",
+  "ws_host": "ws.example.com",
   "reader_host": "www.example.com"
 }
 ```
 
-- `host`：站点对外域名，可写 `example.com`、`example.com:8443`、`https://example.com`；
+- `host`：站点对外域名（网页 / HTTP），可写 `example.com`、`example.com:8443`、`https://example.com`；
   **留空或文件不存在 → 页面自动跟随当前访问的域名**（自建/反代最省事）；
+- `ws_host`：可选，**WebSocket 专用域名**，与 `host` 分开（例如网页 `example.com`、WebSocket `ws.example.com`）；
+  留空时与 `host` 相同；
 - `reader_host`：可选，图片查看页域名，缺省与 `host` 相同；
 - 临时覆盖：启动参数 `--site-host=example.com` 或 `-Dsite_host=example.com`（优先级最高）。
 

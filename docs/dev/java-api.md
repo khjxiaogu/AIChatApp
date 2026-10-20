@@ -232,8 +232,7 @@ resp.addUsageListener(state::addUsage);               // ← 计费/用量统计
 | `addUsageListener(Consumer<UsageIntf<?>>)` | 用量回调；会先补发已累计的用量，再持续接收新用量。接 `state::addUsage` 才会计费 |
 | `addUsage(UsageIntf<?>)` | 追加一条用量（模型提供者与工具都调用，用量在输出对象内按列表累计） |
 | `List<UsageIntf<?>> getUsages()` | 当前累计用量的只读快照 |
-| `attachContent(MessageContent)` | 附加要随本次输出展示的内容（工具发送图片等直接写这里） |
-| `List<MessageContent> getAttachedContents()` / `addContentListener(...)` | 读取/监听附加内容；会话在 `setCurrentOutput` 时自动接上并写入当前记录 |
+| `ToolResult` 附件 | 工具返回图片/音频/视频等附件；`ToolCallManager` 交给会话的 `handleToolAttachments(...)`，由会话写入当前上下文并按需发送 |
 
 **思维链必须异步读**，用基类给的方法，别自己另起线程：
 
@@ -371,7 +370,8 @@ state.registerTool(t);                       // 挂到会话，随后 AIRequest.
 
 完整帧表见 `save/ai-protocol.js` 文件头注释（`status`/`message`/`content`/`remove`/`batch_messages`/
 `thinking`/`tool_call`/`audio`/`done`/`scene`/`input`/`toolApproval`/`local_request`/`pong`…）。
-前端页面通过 `?chatid=xxx` 打开，WebSocket 地址由 `aiSiteWsBase() + this.url + "/chatsocket?..."` 拼出。
+前端页面通过 `?chatid=xxx` 打开，WebSocket 地址由 `aiSiteWsBase() + this.url + "/chatsocket?..."` 拼出；
+`aiSiteWsBase()` 使用 `save/site.json` 的 `ws_host`（未配置时与 `host` 相同），网页地址用 `aiSiteHttpBase()`。
 
 ---
 

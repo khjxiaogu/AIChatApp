@@ -1284,7 +1284,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/**
 	 * HTTP GET端点：返回前端站点配置 site-config.js。
 	 * <p>
-	 * 站点域名默认读取数据目录下的 {@code site.json}（{@code "host"} 字段），
+	 * 站点域名默认读取数据目录下的 {@code site.json}（{@code "host"} 字段，WebSocket 另可用
+	 * {@code "ws_host"} 单独指定），
 	 * 也可以用启动参数 {@code --site-host=example.com}（或 {@code -Dsite_host=example.com}）临时覆盖，
 	 * 见 {@link SiteConfig}。未配置时下发空域名，前端各页面会自动跟随当前访问域名，
 	 * 因此自建部署无需修改任何 HTML。

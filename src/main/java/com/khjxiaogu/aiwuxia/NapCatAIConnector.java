@@ -292,9 +292,8 @@ public class NapCatAIConnector extends WebSocketClient {
 					status = "success";
 					text = task.getResult() == null ? "" : task.getResult().getText();
 					if (task.getResult() != null) {
-						for (MessageContent attachment : task.getResult().getAttachments()) {
-							sendToolAttachment(state, attachment);
-						}
+						// 会话统一处理附件：写入当前上下文并按需发送
+						state.handleToolAttachments(task.getResult().getAttachments());
 					}
 				}
 				String notice = "<tool name=\"" + task.getToolName() + "\" task_id=\"" + task.getId()

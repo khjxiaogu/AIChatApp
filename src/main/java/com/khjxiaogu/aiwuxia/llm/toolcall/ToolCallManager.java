@@ -14,11 +14,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 
 /**
  * 工具调用管理器（可变）。
@@ -485,6 +487,51 @@ public class ToolCallManager {
 			return null;
 		}
 		return registrations.get(call.function.name);
+	}
+
+	// ==================== 工具附件 ====================
+
+	/** 同步工具结果附件的接收方，通常由会话设置为“写入当前上下文”。 */
+	private volatile Consumer<List<MessageContent>> attachmentHandler;
+
+	/**
+	 * 设置同步工具结果附件的接收方。
+	 * <p>
+	 * 工具不再通过 {@code AIOutput} 附加内容；{@link ToolCallContext} 只把附件交给本处理器，
+	 * 由会话决定写入哪个上下文、是否发送到外部平台。
+	 * </p>
+	 *
+	 * @param handler 附件处理器，可为 null
+	 * @return 本管理器，便于链式调用
+	 */
+	public ToolCallManager setAttachmentHandler(Consumer<List<MessageContent>> handler) {
+		this.attachmentHandler = handler;
+		return this;
+	}
+
+	/** 同步工具结果附件的接收方，未设置时为 null。 */
+	public Consumer<List<MessageContent>> getAttachmentHandler() {
+		return attachmentHandler;
+	}
+
+	/**
+	 * 把同步工具结果中的附件交给会话处理。
+	 *
+	 * @param attachments 附件列表，可为 null/空
+	 */
+	public void publishAttachments(List<MessageContent> attachments) {
+		if (attachments == null || attachments.isEmpty()) {
+			return;
+		}
+		Consumer<List<MessageContent>> handler = attachmentHandler;
+		if (handler == null) {
+			return;
+		}
+		try {
+			handler.accept(attachments);
+		} catch (Throwable ex) {
+			ex.printStackTrace();
+		}
 	}
 
 	// ==================== 异步任务 ====================

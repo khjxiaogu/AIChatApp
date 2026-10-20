@@ -1470,6 +1470,12 @@
 	 *   2. 未配置时回退到当前页面的 location.host / location.protocol，
 	 *      因此自建部署、反代、本地调试都不需要改代码。
 	 * 注意：site-config.js 加载失败（例如直接以 file:// 打开）时同样走回退逻辑。
+	 *
+	 * WebSocket 地址与网页地址分开：
+	 *   - 网页 / HTTP 地址用 host / secure；
+	 *   - WebSocket 地址用 wsHost / wsSecure（site.json 的 "ws_host"），
+	 *     wsHost 未配置时自动与 host 相同。于是网页可以走 example.com，
+	 *     而 WebSocket 走 ws.example.com 或独立端口。
 	 */
 
 	/**
@@ -1497,12 +1503,38 @@
 	}
 
 	/**
+	 * WebSocket 专用域名（host[:port]）。
+	 * <p>优先取 site-config.js 的 {@code wsHost}；未配置时与站点域名一致。</p>
+	 *
+	 * @return {String} WebSocket 域名
+	 */
+	function siteWsHost() {
+		var cfg = global.AI_SITE;
+		if (cfg && typeof cfg.wsHost === 'string' && cfg.wsHost)
+			return cfg.wsHost;
+		return siteHost();
+	}
+
+	/**
+	 * WebSocket 是否使用加密协议（wss）。
+	 * <p>取 site-config.js 的 {@code wsSecure}；未单独配置 {@code wsHost} 时与站点一致。</p>
+	 *
+	 * @return {Boolean} 是否加密
+	 */
+	function siteWsSecure() {
+		var cfg = global.AI_SITE;
+		if (cfg && typeof cfg.wsHost === 'string' && cfg.wsHost)
+			return cfg.wsSecure !== false;
+		return siteSecure();
+	}
+
+	/**
 	 * 站点 WebSocket 地址前缀。
 	 *
 	 * @return {String} 形如 wss://example.com
 	 */
 	function aiSiteWsBase() {
-		return (siteSecure() ? 'wss:' : 'ws:') + '//' + siteHost();
+		return (siteWsSecure() ? 'wss:' : 'ws:') + '//' + siteWsHost();
 	}
 
 	/**
@@ -1516,6 +1548,8 @@
 
 	global.aiSiteHost = siteHost;
 	global.aiSiteSecure = siteSecure;
+	global.aiSiteWsHost = siteWsHost;
+	global.aiSiteWsSecure = siteWsSecure;
 	global.aiSiteWsBase = aiSiteWsBase;
 	global.aiSiteHttpBase = aiSiteHttpBase;
 	global.AIProtocolMixin = AIProtocolMixin;

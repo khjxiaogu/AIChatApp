@@ -50,6 +50,7 @@ import com.google.gson.JsonParser;
  * <pre>
  * {
  *   "host": "example.com",
+ *   "ws_host": "ws.example.com",
  *   "reader_host": "www.example.com"
  * }
  * </pre>
@@ -57,6 +58,12 @@ import com.google.gson.JsonParser;
  * 配置值可写成裸域名 {@code example.com}、带端口 {@code example.com:8443}，
  * 或完整地址 {@code https://example.com}（协议只在 Java 端推断 ws/https 时使用；
  * 写成 {@code http://} 会得到 ws/http 地址）。{@code reader_host} 可选，缺省时与 {@code host} 相同。
+ * </p>
+ * <p>
+ * {@code ws_host} 可选，<b>专门决定 WebSocket 的 host</b>，与网页/HTTP 使用的 {@code host} 分开：
+ * 例如网页走 {@code example.com}，而 WebSocket 走 {@code ws.example.com} 或另一个端口。
+ * 缺省（空值）时 WebSocket 与 {@code host} 相同；显式写 {@code ws://...} / {@code http://...}
+ * 会得到非加密的 {@code ws://} 地址，写裸域名时沿用 {@code host} 的加密设置。
  * </p>
  */
 public final class SiteConfig {
@@ -82,19 +89,31 @@ public final class SiteConfig {
 	/** 站点域名，形如 {@code example.com} 或 {@code example.com:8443}；未配置时为空串。 */
 	private final String host;
 
+	/** WebSocket 专用的域名；为空表示与 {@link #host} 相同。 */
+	private final String wsHost;
+
 	/** 图片查看页域名；为空表示与 {@link #host} 相同。 */
 	private final String readerHost;
 
 	/** 该域名应使用加密协议（wss/https） */
 	private final boolean secure;
 
+	/** WebSocket 应使用加密协议（wss）；未单独配置 {@code ws_host} 时与 {@link #secure} 相同 */
+	private final boolean wsSecure;
+
 	/** 配置读取失败只提示一次，避免每次请求刷日志。 */
 	private static volatile boolean warnIssued = false;
 
 	private SiteConfig(String host, boolean secure, String readerHost) {
+		this(host, secure, readerHost, "", secure);
+	}
+
+	private SiteConfig(String host, boolean secure, String readerHost, String wsHost, boolean wsSecure) {
 		this.host = host;
 		this.secure = secure;
 		this.readerHost = readerHost == null ? "" : readerHost;
+		this.wsHost = wsHost == null ? "" : wsHost;
+		this.wsSecure = wsSecure;
 	}
 
 	/**
@@ -104,10 +123,45 @@ public final class SiteConfig {
 	 * @return 站点配置
 	 */
 	public static SiteConfig of(String raw) {
+		return of(raw, null);
+	}
+
+	/**
+	 * 解析站点域名与 WebSocket 域名两个配置值。
+	 *
+	 * @param raw   站点域名（裸域名、host:port 或完整 URL）；null/空白表示未配置
+	 * @param wsRaw WebSocket 域名；null/空白表示与 {@code raw} 相同
+	 * @return 站点配置
+	 */
+	public static SiteConfig of(String raw, String wsRaw) {
+		Parsed site = parse(raw, true);
+		Parsed ws = parse(wsRaw, site.secure);
+		return new SiteConfig(site.host, site.secure, "", ws.host, ws.secure);
+	}
+
+	/** 解析结果：域名 + 该域名是否使用加密协议。 */
+	private static final class Parsed {
+		private final String host;
+		private final boolean secure;
+
+		private Parsed(String host, boolean secure) {
+			this.host = host;
+			this.secure = secure;
+		}
+	}
+
+	/**
+	 * 解析单个配置值。
+	 *
+	 * @param raw           原始配置
+	 * @param defaultSecure 未写协议时的加密设置
+	 * @return 解析结果，未配置时 host 为空串
+	 */
+	private static Parsed parse(String raw, boolean defaultSecure) {
 		String value = raw == null ? "" : raw.trim();
 		if (value.isEmpty())
-			return new SiteConfig("", true, "");
-		boolean secure = true;
+			return new Parsed("", defaultSecure);
+		boolean secure = defaultSecure;
 		int schemeEnd = value.indexOf("://");
 		if (schemeEnd > 0) {
 			String scheme = value.substring(0, schemeEnd).toLowerCase(Locale.ROOT);
@@ -122,7 +176,7 @@ public final class SiteConfig {
 		if (queryStart >= 0)
 			value = value.substring(0, queryStart);
 		value = value.trim();
-		return new SiteConfig(value, secure, "");
+		return new Parsed(value, secure);
 	}
 
 	/**
@@ -155,10 +209,13 @@ public final class SiteConfig {
 			return of(null);
 		try {
 			JsonObject cfg = JsonParser.parseString(FileUtil.readString(file)).getAsJsonObject();
-			SiteConfig site = of(getString(cfg, "host"));
+			String ws = getString(cfg, "ws_host");
+			if (ws == null || ws.isEmpty())
+				ws = getString(cfg, "wsHost");
+			SiteConfig site = of(getString(cfg, "host"), ws);
 			String reader = getString(cfg, "reader_host");
 			if (reader != null && !reader.isEmpty())
-				return new SiteConfig(site.host, site.secure, of(reader).host);
+				return new SiteConfig(site.host, site.secure, of(reader).host, site.wsHost, site.wsSecure);
 			return site;
 		} catch (Throwable e) {
 			if (!warnIssued) {
@@ -243,6 +300,20 @@ public final class SiteConfig {
 	}
 
 	/**
+	 * @return WebSocket 专用域名；未单独配置时为空串（表示与 {@link #getHost()} 相同）
+	 */
+	public String getWebSocketHost() {
+		return wsHost;
+	}
+
+	/**
+	 * @return WebSocket 是否使用加密协议（wss）
+	 */
+	public boolean isWebSocketSecure() {
+		return wsSecure;
+	}
+
+	/**
 	 * 取站点域名，未配置时退回给定的默认域名。
 	 *
 	 * @param fallbackHost 默认域名
@@ -253,14 +324,30 @@ public final class SiteConfig {
 	}
 
 	/**
+	 * 取 WebSocket 域名：优先 {@code ws_host}，未配置时退回站点域名；两者都未配置时用默认域名。
+	 *
+	 * @param fallbackHost 默认域名
+	 * @return 实际使用的 WebSocket 域名
+	 */
+	public String webSocketHostOr(String fallbackHost) {
+		if (!wsHost.isEmpty())
+			return wsHost;
+		return hostOr(fallbackHost);
+	}
+
+	/**
 	 * 拼出站点的 WebSocket 地址。
+	 * <p>
+	 * host 取 {@code ws_host}（未配置时与 {@code host} 相同），协议取 WebSocket 自己的加密设置，
+	 * 因此 WebSocket 可以独立于网页走另一个域名或端口。
+	 * </p>
 	 *
 	 * @param fallbackHost 未配置时使用的默认域名
 	 * @param path         以 {@code /} 开头的路径
 	 * @return 形如 {@code wss://example.com/aichat} 的地址
 	 */
 	public String webSocketUrl(String fallbackHost, String path) {
-		return (secure ? "wss:" : "ws:") + "//" + hostOr(fallbackHost) + (path == null ? "" : path);
+		return (wsSecure ? "wss:" : "ws:") + "//" + webSocketHostOr(fallbackHost) + (path == null ? "" : path);
 	}
 
 	/**
@@ -302,7 +389,9 @@ public final class SiteConfig {
 	public String toScript() {
 		return "window.AI_SITE = {\n"
 			+ "\thost: " + new Gson().toJson(host) + ",\n"
-			+ "\tsecure: " + secure + "\n"
+			+ "\tsecure: " + secure + ",\n"
+			+ "\twsHost: " + new Gson().toJson(wsHost) + ",\n"
+			+ "\twsSecure: " + wsSecure + "\n"
 			+ "};\n";
 	}
 
@@ -311,6 +400,10 @@ public final class SiteConfig {
 		if (!isConfigured())
 			return "未配置（跟随访问域名）";
 		String base = (secure ? "wss" : "ws") + "://" + host;
-		return readerHost.isEmpty() || readerHost.equals(host) ? base : base + "（图片查看页: " + readerHost + "）";
+		if (!wsHost.isEmpty() && !wsHost.equals(host))
+			base += "（WebSocket: " + (wsSecure ? "wss" : "ws") + "://" + wsHost + "）";
+		if (!readerHost.isEmpty() && !readerHost.equals(host))
+			base += "（图片查看页: " + readerHost + "）";
+		return base;
 	}
 }

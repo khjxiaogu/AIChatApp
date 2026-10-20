@@ -163,7 +163,8 @@ new Vue({
 </script>
 ```
 
-- 页面里的站点地址一律用 `aiSiteWsBase()` / `aiSiteHttpBase()`，别写死域名；
+- 页面里的站点地址一律用 `aiSiteWsBase()` / `aiSiteHttpBase()`，别写死域名
+  （`aiSiteWsBase()` 走 `site.json` 的 `ws_host`，未配置时与 `host` 相同）；
 - 让应用指向这个页面：`meta.json` 的 `url`（存档页入口）或 `ui`（会话形态）；
 - 帧类型清单见 `save/ai-protocol.js` 文件头注释。
 

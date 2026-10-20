@@ -177,8 +177,6 @@ public class AISession implements ISaveData,AutoCloseable{
 	private volatile double lastTurnTokens;
 	
 	volatile transient AIOutput currentOutput;
-	/** 已经绑定过“附加内容 → 当前写入”监听的输出对象，避免重复注册导致同一图片追加多次。 */
-	private volatile AIOutput contentBoundOutput;
 
 	/**
 	 * 本会话持有的工具调用管理器（工具注册表 + 调用次数/权限/许可规则），创建后长期复用。
@@ -424,33 +422,13 @@ public class AISession implements ISaveData,AutoCloseable{
 
 	public void setCurrentOutput(AIOutput currentOutput) {
 		this.currentOutput = currentOutput;
-		// 工具把图片等内容直接附加到 AIOutput；会话在这里接收并写入本轮记录。
-		// 同一输出可能被多处重复设置（例如生成入口与处理入口各设置一次），只在首次绑定时注册监听。
-		if (currentOutput != null && currentOutput != contentBoundOutput) {
-			contentBoundOutput = currentOutput;
-			currentOutput.addContentListener(this::appendAttachedContent);
-		}
-	}
-
-	/** 把工具附加到 AIOutput 的内容交给会话处理，并追加到本轮正在写入的记录（没有写入时忽略）。 */
-	private void appendAttachedContent(MessageContent content) {
-		handleToolAttachment(content);
-		// 音频附件可能是体积很大的 data URL，只交给会话发送，不写入历史持久化
-		if (content instanceof AudioContent) {
-			return;
-		}
-		HistoryWriteContext write = getCurrentWrite();
-		if (write != null) {
-			write.append(content, false);
-		}
 	}
 
 	/**
-	 * 会话处理同步工具结果中的附件。
+	 * 会话处理同步工具结果中的单个附件。
 	 * <p>
-	 * 默认不做传输层动作：附件已由 {@link #appendAttachedContent(MessageContent)} 写入本轮记录，
-	 * 有前端通道的会话会通过历史追加帧自然下发。需要把附件真正发到外部平台（例如 QQ）的会话
-	 * 重写本方法。
+	 * 默认不做传输层动作；需要把附件真正发到外部平台（例如 QQ）的会话重写本方法。
+	 * 写入历史上下文由 {@link #handleToolAttachments(List)} 统一完成。
 	 * </p>
 	 *
 	 * @param content 工具产生的附件
@@ -459,21 +437,27 @@ public class AISession implements ISaveData,AutoCloseable{
 	}
 
 	/**
-	 * 会话处理异步工具任务完成时携带的附件。
+	 * 处理工具结果中的附件：写入当前上下文，并交给会话自己的传输层。
 	 * <p>
-	 * 此时本轮生成通常已经结束，没有可追加的写入上下文，因此默认只交给
-	 * {@link #handleToolAttachment(MessageContent)}；QQ 等会话可重写以发送消息。
+	 * 同步工具结果由 {@code ToolCallManager} 通过附件处理器调用本方法；
+	 * 异步任务完成时由会话的完成钩子调用。音频附件可能是体积很大的 data URL，
+	 * 只交给 {@link #handleToolAttachment(MessageContent)} 发送，不写入历史持久化。
 	 * </p>
 	 *
 	 * @param attachments 附件列表
 	 */
-	protected void handleToolAttachments(List<MessageContent> attachments) {
-		if (attachments == null) {
+	public void handleToolAttachments(List<MessageContent> attachments) {
+		if (attachments == null || attachments.isEmpty()) {
 			return;
 		}
+		HistoryWriteContext write = getCurrentWrite();
 		for (MessageContent attachment : attachments) {
-			if (attachment != null) {
-				handleToolAttachment(attachment);
+			if (attachment == null) {
+				continue;
+			}
+			handleToolAttachment(attachment);
+			if (write != null && !write.isResolved() && !(attachment instanceof AudioContent)) {
+				write.append(attachment, false);
 			}
 		}
 	}
@@ -494,6 +478,8 @@ public class AISession implements ISaveData,AutoCloseable{
 		// 工具调用规则只在构造时写入一次；管理器可变，之后需要调整直接改管理器
 		applyToolCallRules(toolCallManager);
 		commandExec = new SerialExecutor(COMMAND_EXEC, this);
+		// 工具结果附件不再经过 AIOutput，统一交给会话写入当前上下文
+		toolCallManager.setAttachmentHandler(this::handleToolAttachments);
 		// 异步工具任务完成时统一通知会话；回调可能发生在任意线程，具体实现自行调度
 		toolCallManager.setTaskListener(new ToolTaskListener() {
 			@Override

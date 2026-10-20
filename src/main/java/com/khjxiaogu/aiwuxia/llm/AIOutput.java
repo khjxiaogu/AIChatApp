@@ -134,42 +134,11 @@ public interface AIOutput {
      */
     public List<UsageIntf<?>> getUsages();
 
-    /**
-     * 附加一条要随本次输出展示的内容（例如工具发送的图片）。
-     * <p>
-     * 工具直接写本次生成的 {@link AIOutput}，不再依赖会话或工具管理器；
-     * 会话通过 {@link #addContentListener} 接收后追加到当前正在写入的记录。
-     * </p>
-     *
-     * @param content 要附加的内容，null 忽略
-     */
-    public void attachContent(MessageContent content);
-
-    /**
-     * 当前已附加的全部内容（按加入顺序）。
-     *
-     * @return 只读快照，永不为 null
-     */
-    public List<MessageContent> getAttachedContents();
-
-    /**
-     * 添加一个附加内容监听器。
-     * <p>
-     * 监听器会先收到输出对象中已经附加的全部内容，之后每当 {@link #attachContent(MessageContent)}
-     * 追加新内容时继续收到通知。
-     * </p>
-     *
-     * @param listener 内容接收方，null 忽略
-     */
-    public void addContentListener(Consumer<MessageContent> listener);
-
 	public static class StreamedAIOutput implements AIOutput{
 		public final MessageReader reasoner;
 		public final BlockingReader content;
 		private final List<UsageIntf<?>> usages = new ArrayList<>();
 		private final List<Consumer<UsageIntf<?>>> usageListener = new ArrayList<>();
-		private final List<MessageContent> attachedContents = new ArrayList<>();
-		private final List<Consumer<MessageContent>> contentListener = new ArrayList<>();
 		private boolean interrupted;
 		public StreamedAIOutput() {
 			reasoner=new MessageReader();
@@ -230,36 +199,6 @@ public interface AIOutput {
 				usageListener.add(listener);
 			}
 		}
-		@Override
-		public void attachContent(MessageContent content) {
-			if (content == null) {
-				return;
-			}
-			synchronized (attachedContents) {
-				attachedContents.add(content);
-				for (Consumer<MessageContent> listener : contentListener) {
-					listener.accept(content);
-				}
-			}
-		}
-		@Override
-		public List<MessageContent> getAttachedContents() {
-			synchronized (attachedContents) {
-				return new ArrayList<>(attachedContents);
-			}
-		}
-		@Override
-		public void addContentListener(Consumer<MessageContent> listener) {
-			if (listener == null) {
-				return;
-			}
-			synchronized (attachedContents) {
-				for (MessageContent content : attachedContents) {
-					listener.accept(content);
-				}
-				contentListener.add(listener);
-			}
-		}
 		public boolean isInterrupted() {
 			return interrupted;
 		}
@@ -274,8 +213,6 @@ public interface AIOutput {
 		public final Reader content;
 		private final List<UsageIntf<?>> usages = new ArrayList<>();
 		private final List<Consumer<UsageIntf<?>>> usageListener = new ArrayList<>();
-		private final List<MessageContent> attachedContents = new ArrayList<>();
-		private final List<Consumer<MessageContent>> contentListener = new ArrayList<>();
 		public FilledAIOutput(MessageContents reasoning,String content,UsageIntf<?> usage) {
 			this.reasoner=new MessageReader(reasoning);
 			this.content=new StringReader(content);
@@ -322,36 +259,6 @@ public interface AIOutput {
 					listener.accept(usage);
 				}
 				usageListener.add(listener);
-			}
-		}
-		@Override
-		public void attachContent(MessageContent content) {
-			if (content == null) {
-				return;
-			}
-			synchronized (attachedContents) {
-				attachedContents.add(content);
-				for (Consumer<MessageContent> listener : contentListener) {
-					listener.accept(content);
-				}
-			}
-		}
-		@Override
-		public List<MessageContent> getAttachedContents() {
-			synchronized (attachedContents) {
-				return new ArrayList<>(attachedContents);
-			}
-		}
-		@Override
-		public void addContentListener(Consumer<MessageContent> listener) {
-			if (listener == null) {
-				return;
-			}
-			synchronized (attachedContents) {
-				for (MessageContent content : attachedContents) {
-					listener.accept(content);
-				}
-				contentListener.add(listener);
 			}
 		}
 		@Override

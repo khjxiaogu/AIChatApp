@@ -331,7 +331,8 @@ public class ToolCallContext {
 			if (result == null) {
 				return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
 			}
-			attachContents(result.getAttachments());
+			// 工具附件不经过 AIOutput，直接交给会话写入当前上下文
+			manager.publishAttachments(result.getAttachments());
 			return new ToolContent(call.id, result.getText(), buildResultDisplay(call, callDisplay, result.getText()));
 		} catch (InterruptedException ex) {
 			Thread.currentThread().interrupt();
@@ -342,18 +343,6 @@ public class ToolCallContext {
 		} catch (Throwable ex) {
 			ex.printStackTrace();
 			return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
-		}
-	}
-
-	/** 把同步工具结果中的附件交给本次输出的监听方（通常是会话）。 */
-	private void attachContents(List<MessageContent> attachments) {
-		if (output == null || attachments == null || attachments.isEmpty()) {
-			return;
-		}
-		for (MessageContent attachment : attachments) {
-			if (attachment != null) {
-				output.attachContent(attachment);
-			}
 		}
 	}
 
