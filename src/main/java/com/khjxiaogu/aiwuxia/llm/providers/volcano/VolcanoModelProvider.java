@@ -25,6 +25,7 @@ package com.khjxiaogu.aiwuxia.llm.providers.volcano;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -48,7 +49,16 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 public class VolcanoModelProvider implements ModelProvider{
-	SimpleLogger logger=new SimpleLogger("Deepseek");
+	/**
+	 * 火山方舟 SSE 的读超时。
+	 * <p>
+	 * 方舟偶尔会把请求挂住：连接建立后一个字节都不返回，既不断开也不报错。
+	 * 沿用 30 分钟的默认读超时会让整轮对话长时间停在“生成中”，这里压到 5 分钟，
+	 * 让失败尽早暴露；发送过程中两段输出之间的正常停顿远达不到这个量级。
+	 * </p>
+	 */
+	private static final int SSE_READ_TIMEOUT_MS = 5 * 60 * 1000;
+	SimpleLogger logger=new SimpleLogger("火山方舟");
 	@Override
 	public boolean supports(AIRequest request) {
 		return request.multimodal.canSupport(true, true, false, true);
@@ -188,47 +198,42 @@ public class VolcanoModelProvider implements ModelProvider{
 		jo.add("stream_options", JsonBuilder.object().add("include_usage", true).add("chunk_include_usage", true).end());
 		String tosend = gs.toJson(jo);
 		StreamedAIOutput readable=new StreamedAIOutput();
-		exec.submit(()->{
-		try {
+		AtomicBoolean sawDone=new AtomicBoolean(false);
+		// 任务体交给 runGuarded：断流、读超时、协议解析异常（包括 RuntimeException）都会写进输出流，
+		// 并且结束时一定关闭流，等正文的调用方不会永久阻塞
+		readable.runGuarded(exec, () -> {
 			HttpRequestBuilder.create("ark.cn-beijing.volces.com").url("/api/v3/chat/completions")
 					.header("Content-Type", "application/json")
+					.header("Accept", "text/event-stream")
 					.header("Authorization", "Bearer "+System.getProperty("volcmodeltoken"))
+					.readTimeout(SSE_READ_TIMEOUT_MS)
 
 					.post(true).send(tosend).readSSE((ev,s)->{
 						if(readable.isInterrupted()) {
 							logger.info("=================Usage===============\n");
 							logger.info(usage);
 							logger.info("interrupted generation");
+							// 用户主动停止：属于正常收尾，不再提示“没有收到 [DONE]”
+							sawDone.set(true);
 							usage.zoomEquivantly();
-							try {
-								readable.addUsage(usage);
-							}finally {
-								readable.endContent();
-							}
+							readable.addUsage(usage);
 							return false;
 						}
 						if(s==null||"[DONE]".equals(s)) {
+							sawDone.set(true);
 							System.out.println();
 							logger.info("=================Usage===============\n");
 							logger.info(usage);
 							logger.info("finish generation");
 							usage.zoomEquivantly();
-							try {
-								readable.addUsage(usage);
-							}finally {
-								readable.endContent();
-							}
+							readable.addUsage(usage);
 							return false;
 						}
-						//if(readable.isEnded())
-						//	throw new ClientTruncatedException();
 						VolcanoRespScheme scheme=gs.fromJson(s, VolcanoRespScheme.class);
-						if(scheme.choices.size()>0) {
+						if(scheme.choices!=null&&scheme.choices.size()>0) {
 							Message delta=scheme.choices.get(0).delta;
 							if(delta!=null) {
-								if(delta.reasoning_content!=null&&!delta.reasoning_content.isEmpty()) {
-									readable.putReasoner(new PlainText(delta.reasoning_content));
-								}
+								putReasoner(readable,delta.reasoning_content);
 								if(delta.content!=null&&!delta.content.isEmpty()) {
 									readable.getReasoner().setEnded();
 									readable.putContent(delta.content);
@@ -243,13 +248,33 @@ public class VolcanoModelProvider implements ModelProvider{
 							usage.set(scheme.usage);
 						return true;
 					});
-		} catch (IOException e) {
-			e.printStackTrace();
-			readable.exception(e);
-		}
+		}).whenComplete((value,error) -> {
+			if(error!=null)
+				logger.severe("火山方舟流式请求失败：" + error);
+			else if(!sawDone.get())
+				logger.warning("火山方舟流式请求没有收到结束标记 [DONE]，按流结束处理");
 		});
 	
 		return readable;
+	}
+
+	/**
+	 * 写入一段推理内容；推理流已经结束时直接丢弃。
+	 * <p>
+	 * 火山方舟在正文开始后会结束推理流（{@link #sendAIStreamedRequest} 里对 reasoner 调用
+	 * {@code setEnded()}）。若后续分块仍带 {@code reasoning_content}，
+	 * 直接写入会让 {@code MessageReader.putCh} 抛 IllegalStateException 并中断整条流，
+	 * 这里按“迟到的推理段”丢弃处理。
+	 * </p>
+	 *
+	 * @param output 输出流
+	 * @param text   本次推理内容，可为 null
+	 */
+	private static void putReasoner(StreamedAIOutput output,String text) {
+		if(text==null||text.isEmpty())
+			return;
+		if(!output.getReasoner().isEnded())
+			output.putReasoner(new PlainText(text));
 	}
 
 	@Override

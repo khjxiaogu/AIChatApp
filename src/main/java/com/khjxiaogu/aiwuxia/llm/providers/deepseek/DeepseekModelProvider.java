@@ -229,7 +229,8 @@ public class DeepseekModelProvider implements ModelProvider{
 					//System.out.println(ja);
 					DeepseekV4Usage crnusage=createUsage(request);
 					MutableMessageContents reasoner=new MutableMessageContents();
-					// readSSE 会吞掉监听器抛出的异常，流内错误统一暂存在这里，读完流后再抛出
+					// readSSE 现在会把监听器异常转成 IOException 抛出；流内错误仍统一暂存在这里，
+					// 由监听器返回 false 提前结束读取，读完流后再抛出（保持原有的错误处理优先级）
 					AtomicReference<DeepseekApiError> streamError=new AtomicReference<>();
 						HttpRequestBuilder.create("api.deepseek.com").url("/beta/chat/completions")
 								.header("Content-Type", "application/json")

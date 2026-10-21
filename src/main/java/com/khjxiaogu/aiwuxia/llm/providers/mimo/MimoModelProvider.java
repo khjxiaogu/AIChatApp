@@ -210,8 +210,12 @@ public class MimoModelProvider implements ModelProvider{
 			logger.info("=================Usage===============\n");
 			logger.info(usage);
 			logger.info("finish generation");
-			readable.addUsage(usage);
-			readable.endContent();
+			// 记账监听器可能抛异常，必须保证输出流被关闭，否则读取方会一直阻塞
+			try {
+				readable.addUsage(usage);
+			} finally {
+				readable.endContent();
+			}
 		});
 	
 		return readable;

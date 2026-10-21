@@ -653,17 +653,30 @@
         /* ---- 引用消息 ---- */
         .quote-message-btn {
             margin-top: 4px;
-            background: transparent;
-            color: #7b8794;
-            border: 1px solid #d7e0ec;
+            background: #eef2ff;
+            color: #1554b3;
+            border: 1px solid #c9d8f2;
             padding: 2px 10px;
             border-radius: 999px;
             font-size: 0.72rem;
             line-height: 1.4;
         }
         .quote-message-btn:hover {
-            color: #1e6fdf;
+            background: #dfe9ff;
+            color: #0f3f8c;
             border-color: #1e6fdf;
+        }
+        /* 用户气泡是深蓝底：引用按钮改用浅底反色，才看得清 */
+        .user-message .quote-message-btn {
+            background: rgba(255,255,255,0.94);
+            color: #1554b3;
+            border-color: rgba(255,255,255,0.55);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+        }
+        .user-message .quote-message-btn:hover {
+            background: #fff;
+            color: #0f3f8c;
+            border-color: #fff;
         }
         .message-quote-bar {
             display: flex;
@@ -809,16 +822,29 @@
         }
         html:not(.day-mode) .quote-block-author,
         html:not(.day-mode) .quote-preview-head,
-        html:not(.day-mode) .quote-preview-close,
-        html:not(.day-mode) .quote-message-btn {
+        html:not(.day-mode) .quote-preview-close {
             color: #93a3b8;
         }
         html:not(.day-mode) .quote-message-btn {
-            border-color: #33404e;
+            background: #2f3b4b;
+            color: #9dc0ff;
+            border-color: #4a5f7e;
         }
         html:not(.day-mode) .quote-message-btn:hover {
-            color: #9dc0ff;
+            background: #3a4a5f;
+            color: #cfe0ff;
             border-color: #3b82f6;
+        }
+        /* 黑夜模式下用户气泡是深灰底：引用按钮用淡蓝底 + 浅色字 */
+        html:not(.day-mode) .user-message .quote-message-btn {
+            background: rgba(157,192,255,0.30);
+            color: #dbe8ff;
+            border-color: rgba(157,192,255,0.60);
+        }
+        html:not(.day-mode) .user-message .quote-message-btn:hover {
+            background: rgba(157,192,255,0.42);
+            color: #ffffff;
+            border-color: #9dc0ff;
         }
         html:not(.day-mode) .loading-indicator,
         html:not(.day-mode) .history-tip {
@@ -995,7 +1021,7 @@
                     </div>
                     <button v-if="!aiGenerating&&idx==messages.length-1" class="btn-generate" @click="triggerGenerate" :disabled="!aiConnected" :title="aiConnected ? '按当前对话生成' : '连接断开，暂时无法生成'">生成</button>
                     <div class="message-quote-bar">
-                        <button v-if="messageQuoteText(msg)" class="quote-message-btn" @click="startQuote(msg)" title="引用这条消息">引用</button>
+                        <button v-if="canQuoteMessage(msg, idx)" class="quote-message-btn" @click="startQuote(msg)" title="引用这条消息">引用</button>
                     </div>
                 </div>
 
@@ -1056,7 +1082,7 @@
                     <!-- 本轮配额用量：历史记录随消息下发 token_cost，实时轮次由 done.tokens 补到本条 -->
                     <div v-if="msg.tokenCost > 0" class="turn-tokens" title="本轮对话消耗的配额">本轮配额 {{ formatTurnTokens(msg.tokenCost) }}</div>
                     <div class="message-quote-bar">
-                        <button v-if="messageQuoteText(msg)" class="quote-message-btn" @click="startQuote(msg)" title="引用这条消息">引用</button>
+                        <button v-if="canQuoteMessage(msg, idx)" class="quote-message-btn" @click="startQuote(msg)" title="引用这条消息">引用</button>
                     </div>
                 </div>
             </div>
@@ -1814,6 +1840,12 @@ var main=new Vue({
         // 根据图片ID获取真实URL
         async loadImageById(imageId) {
             return await fetchImageById(imageId, this.conversationId);
+        },
+        // 引用按钮是否显示：消息要有正文；本轮还没生成的用户输入（列表最后一条用户消息）先不显示
+        canQuoteMessage(msg, idx) {
+            if (!this.messageQuoteText(msg)) return false;
+            if (msg.role === 'user' && idx === this.messages.length - 1) return false;
+            return true;
         },
         // 取消息正文（仅文本，忽略图片/工具/已有的引用块），用于引用
         messageQuoteText(msg) {

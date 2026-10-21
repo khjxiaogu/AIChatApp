@@ -160,7 +160,7 @@ public class PainterSession extends WebSocketAISession {
         registerTool(FetchMcp.createMoegirlSearch(par.getPainterStorage()));
         registerTool(DeepseekSearchMcp.createWebSearch());
         // 按需查询角色设定（数据来自人类可读索引 character-list.txt）
-        registerTools(new CharacterSettingMcp(par.getDataFolder()));
+        //registerTools(new CharacterSettingMcp(par.getDataFolder()));
     }
 
     /**

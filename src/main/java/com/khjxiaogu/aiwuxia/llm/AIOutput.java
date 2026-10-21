@@ -28,6 +28,8 @@ import java.io.Reader;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
@@ -135,6 +137,17 @@ public interface AIOutput {
     public List<UsageIntf<?>> getUsages();
 
 	public static class StreamedAIOutput implements AIOutput{
+		/**
+		 * 后台流式请求的任务体，允许抛出任意异常（包括受检异常）。
+		 * <p>
+		 * 与 {@link StreamedAIOutput#runGuarded(ExecutorService, StreamTask)} 配套使用，
+		 * 由后者保证任务体的失败不会丢失、输出流一定会结束。
+		 * </p>
+		 */
+		@FunctionalInterface
+		public interface StreamTask {
+			void run() throws Exception;
+		}
 		public final MessageReader reasoner;
 		public final BlockingReader content;
 		private final List<UsageIntf<?>> usages = new ArrayList<>();
@@ -157,6 +170,44 @@ public interface AIOutput {
 		public void exception(IOException ex) {
 			reasoner.putException(ex);
 			content.putException(ex);
+		}
+		/**
+		 * 以流的形式报告失败：非 {@link IOException} 会被包装成 IOException 保留原始原因。
+		 * <p>
+		 * 读流任务里出现 RuntimeException（例如 NPE、协议解析错误）时同样要让读取方感知到，
+		 * 否则读取方会一直阻塞在 {@code read()} 上。
+		 * </p>
+		 *
+		 * @param ex 失败原因
+		 */
+		public void exception(Throwable ex) {
+			exception(ex instanceof IOException ? (IOException) ex : new IOException(String.valueOf(ex), ex));
+		}
+		/**
+		 * 在后台线程执行一次流式请求任务，并保证这条输出流一定会结束。
+		 * <p>
+		 * 任务体无论是正常返回、抛 IOException 还是抛任何 RuntimeException/Error，
+		 * 本方法都会把失败写入输出流（{@link #exception(Throwable)}）并在最后调用
+		 * {@link #endContent()}。这一点是硬性要求：同步等待模型输出的调用方
+		 * （例如工具内部的 {@code FileUtil.printAndCollectContent}）会一直阻塞在
+		 * {@code BlockingReader.read()} 上，只有结束流才能唤醒它们；否则一次断流、
+		 * 一次读超时或一次解析异常就会让整轮对话永久卡死。
+		 * </p>
+		 *
+		 * @param executor 执行线程池
+		 * @param task     任务体（通常内部调用 {@code readSSE}）
+		 * @return 任务完成信号；任务体失败已转成输出流上的异常，因此该信号不会异常完成
+		 */
+		public CompletableFuture<Void> runGuarded(ExecutorService executor, StreamTask task) {
+			return CompletableFuture.runAsync(() -> {
+				try {
+					task.run();
+				} catch (Throwable t) {
+					exception(t);
+				} finally {
+					endContent();
+				}
+			}, executor);
 		}
 		public boolean isEnded() {
 			return content.isEnded();

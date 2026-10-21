@@ -306,9 +306,10 @@ public abstract class AIApplication {
      * 应用线程同时继续处理正文。
      * </p>
      * <p>
-     * 需要读取推理内容的调用方先 {@code join()} 返回的 Future；写入上下文提交、撤回或关闭时
-     * 也会自动等待它收尾，因此记录定型后不会再有后台写入。推理流已经读完（例如非流式输出）
-     * 时直接同步写入并返回已完成的 Future。
+     * 需要读取推理内容的调用方先 {@code join()} 返回的 Future；不需要读取的调用方把它交给
+     * {@link #observeReasonerWrite(CompletableFuture)} 即可，只在失败时记一条日志。
+     * 写入上下文提交、撤回或关闭时也会自动等待它收尾，因此记录定型后不会再有后台写入。
+     * 推理流已经读完（例如非流式输出）时直接同步写入并返回已完成的 Future。
      * </p>
      *
      * @param output AI输出对象（包含推理内容和最终内容）
@@ -334,6 +335,26 @@ public abstract class AIApplication {
 				throw new UncheckedIOException(e);
 			}
 		},write);
+	}
+
+	/**
+	 * 异步观察后台思维链写入的结果，不阻塞调用方。
+	 * <p>
+	 * 与 {@link #handleReasonerContent} 配套：不需要读取推理内容的调用方把返回的 Future 交给本方法，
+	 * 思维链在自己的后台线程上读完、写完，正文照常处理；读流失败只记一条日志，
+	 * 不再把异常抛回命令线程。写入上下文结束（提交、撤回或关闭）时本来就会等待后台写入收尾，
+	 * 因此不用 Future 也不会留下写到一半的记录。
+	 * </p>
+	 *
+	 * @param reasoner 后台思维链写入任务，为 null 时不做任何事
+	 */
+	protected void observeReasonerWrite(CompletableFuture<Void> reasoner) {
+		if (reasoner == null)
+			return;
+		reasoner.whenComplete((value, error) -> {
+			if (error != null)
+				logger.warning("思维链异步读取失败：" + error);
+		});
 	}
 
 	/**

@@ -27,7 +27,6 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.concurrent.CompletableFuture;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -41,9 +40,6 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
-import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
-import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
-import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -87,8 +83,8 @@ public class AIGroupApplication extends AIApplication {
 		BufferedReader reader=new BufferedReader(resp.getContent());
 		String last;
 		StringBuilder sendContent=new StringBuilder();
-		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
-		CompletableFuture<Void> reasoner=handleReasonerContent(resp,state,write);
+		// 思维链交给后台线程边读边写本轮记录：正文在这里按自己的节奏读，两者互不等待
+		observeReasonerWrite(handleReasonerContent(resp, state, write));
 		while (true) {
 			last=reader.readLine();
 			if(last==null) {
@@ -103,22 +99,9 @@ public class AIGroupApplication extends AIApplication {
 			sendContent.append(last).append("\n");
 		}
 		String msg=sendContent.toString().trim();
-		// 等待后台思维链读完，下面才好在正文为空时回退到推理内容里找回复
-		reasoner.join();
-		if(msg.isEmpty()) {
-			MessageContents content=state.getReasonerContent();
-			if(content!=null) {
-				PlainText lastText=null;
-				for(MessageContent msgBody:content) {
-					if(msgBody instanceof PlainText)
-						lastText=(PlainText) msgBody;
-				}
-				String lastTextStr=lastText.toText();
-				int idx=lastTextStr.lastIndexOf("response");
-				if(idx!=-1) {
-					msg=lastTextStr.substring(idx+8);
-				}
-			}
+		// 回复只取正文：正文为空就是没有回复，不再回头到思维链里找内容
+		if (msg.isEmpty()) {
+			logger.warning("本轮正文为空，没有回复内容");
 		}
 		write.append(msg, true);
 		

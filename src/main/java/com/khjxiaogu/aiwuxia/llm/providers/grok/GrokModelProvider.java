@@ -110,6 +110,11 @@ public class GrokModelProvider implements ModelProvider {
 		return resp;
 	}
 
+	/**
+	 * Grok SSE 的读超时：与火山方舟一致，避免对端挂住连接时长时间停在“生成中”。
+	 */
+	private static final int SSE_READ_TIMEOUT_MS = 5 * 60 * 1000;
+
 	public AIOutput sendAIStreamedRequest(ExecutorService exec, AIRequest request) throws IOException {
 		JsonObject jo = createRequest(request);
 		jo.addProperty("stream", true);
@@ -119,43 +124,36 @@ public class GrokModelProvider implements ModelProvider {
 		StreamedAIOutput readable = new StreamedAIOutput();
 		GrokUsage usage = new GrokUsage();
 		AtomicBoolean isRefused = new AtomicBoolean(false);
+		AtomicBoolean sawDone = new AtomicBoolean(false);
 
-		exec.submit(() -> {
-			try {
-
+		// 与火山方舟一致：任务体交给 runGuarded，任何失败都写进输出流，结束时一定关闭流
+		readable.runGuarded(exec, () -> {
 				HttpRequestBuilder.create("api.x.ai").url("/v1/chat/completions").proxy(px)
 						.header("Content-Type", "application/json")
-						.header("Authorization", "Bearer " + System.getProperty("groktoken")).defUA().post(true)
+						.header("Accept", "text/event-stream")
+						.header("Authorization", "Bearer " + System.getProperty("groktoken")).defUA()
+						.readTimeout(SSE_READ_TIMEOUT_MS).post(true)
 						.send(tosend).readSSE((ev, s) -> {
 							if (readable.isInterrupted()) {
 								logger.info("interrupted generation");
-								try {
-									readable.addUsage(usage);
-								}finally {
-									readable.endContent();
-								}
+								// 用户主动停止：属于正常收尾，不再提示“没有收到 [DONE]”
+								sawDone.set(true);
+								readable.addUsage(usage);
 								return false;
 							}
 							if (s == null || "[DONE]".equals(s)) {
+								sawDone.set(true);
 								System.out.println();
 								logger.info("=================Usage===============\n");
 								logger.info(usage);
 								logger.info("finish generation");
-								try {
-									readable.addUsage(usage);
-								}finally {
-									readable.endContent();
-								}
+								readable.addUsage(usage);
 								return false;
 							}
-							// if(readable.isEnded())
-							// throw new ClientTruncatedException();
 							GrokRespScheme scheme = gs.fromJson(s, GrokRespScheme.class);
-							if (!scheme.choices.isEmpty()) {
+							if (scheme.choices != null && !scheme.choices.isEmpty()) {
 								Message delta = scheme.choices.get(0).delta;
-								if (delta.reasoning_content != null && !delta.reasoning_content.isEmpty()) {
-									readable.putReasoner(new PlainText(delta.reasoning_content));
-								}
+								putReasoner(readable, delta.reasoning_content);
 								if (delta.content != null && !delta.content.isEmpty()) {
 									readable.getReasoner().setEnded();
 									readable.putContent(delta.content);
@@ -171,13 +169,27 @@ public class GrokModelProvider implements ModelProvider {
 								usage.set(scheme.usage);
 							return true;
 						});
-			} catch (IOException e) {
-				e.printStackTrace();
-				readable.exception(e);
-			}
+		}).whenComplete((value, error) -> {
+			if (error != null)
+				logger.severe("Grok 流式请求失败：" + error);
+			else if (!sawDone.get())
+				logger.warning("Grok 流式请求没有收到结束标记 [DONE]，按流结束处理");
 		});
 
 		return readable;
+	}
+
+	/**
+	 * 写入一段推理内容；推理流已经结束时直接丢弃（避免 putCh 抛 IllegalStateException 中断整条流）。
+	 *
+	 * @param output 输出流
+	 * @param text   本次推理内容，可为 null
+	 */
+	private static void putReasoner(StreamedAIOutput output, String text) {
+		if (text == null || text.isEmpty())
+			return;
+		if (!output.getReasoner().isEnded())
+			output.putReasoner(new PlainText(text));
 	}
 
 	@Override
