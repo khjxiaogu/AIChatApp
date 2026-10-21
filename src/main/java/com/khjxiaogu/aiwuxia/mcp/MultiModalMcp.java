@@ -70,7 +70,7 @@ public class MultiModalMcp {
 						inner.addUsageListener(output::addUsage);
 					}
 					FileUtil.printAndCollectContent(inner.getReasoner());
-					caption= FileUtil.printAndCollectContent(inner.getContent());
+					caption= FileUtil.printAndCollectContent(inner.getContent()).toText();
 					if(caption.length()>=100)
 						break;
 				}

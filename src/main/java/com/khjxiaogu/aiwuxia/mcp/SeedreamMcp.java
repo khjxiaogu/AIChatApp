@@ -169,7 +169,7 @@ public class SeedreamMcp {
 						try {
 							AIOutput inner = LLMConnector.call(request);
 							FileUtil.printAndCollectContent(inner.getReasoner());
-							return FileUtil.printAndCollectContent(inner.getContent());
+							return FileUtil.printAndCollectContent(inner.getContent()).toText();
 						} catch (ModelRouteException | IOException e) {
 							e.printStackTrace();
 							throw new RuntimeException("agent调用失败，请重试");

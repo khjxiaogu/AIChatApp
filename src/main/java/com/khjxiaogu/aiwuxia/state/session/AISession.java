@@ -780,7 +780,7 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * 每次调用都会新起一条记录：History 在创建时即分配好标识符，但记录尚未进入历史容器，
 	 * 因此不参与上下文构建、总结清理与历史分页，也不会落盘。应用用 try-with-resources
 	 * 持有该上下文写入本轮内容，块结束时由 {@link HistoryWriteContext#close()} 结算：
-	 * 写过内容就提交进历史，只写了思维链的空记录直接撤回。
+	 * 写过任何内容（正文、上下文内容、思维链或工具调用）就提交进历史，完全空白的记录才撤回。
 	 * </p>
 	 * <p>
 	 * 会话同一时间只保留一个打开的写入上下文：调用本方法时若上一个还没结束，会先按内容结算它。
@@ -870,6 +870,11 @@ public class AISession implements ISaveData,AutoCloseable{
 		// 记录该任务：写入上下文结束与开启下一次写入前都要等它收尾；收尾后自行注销
 		pendingReasonerWrites.add(done);
 		done.whenComplete((value, error) -> onReasonerWriteResolved(done));
+		// 同时登记到写入上下文：本记录提交、撤回或关闭之前必须先等这条后台写入收尾，
+		// 否则记录定型之后才到达的思维链/工具调用（用户中断时由提供者补写）会被丢弃
+		if (write instanceof SessionWriteContext) {
+			((SessionWriteContext) write).registerReasonerWrite(done);
+		}
 		return done;
 	}
 

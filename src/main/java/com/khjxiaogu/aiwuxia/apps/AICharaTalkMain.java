@@ -276,7 +276,7 @@ public class AICharaTalkMain extends AIApplication {
 		boolean isWaiting = true;
 		
 		ApplicationState oldstate = new ApplicationState(state.getState());
-		BufferedReader reader=new BufferedReader(resp.getContent());
+		BufferedReader reader=new BufferedReader(resp.getContentReader());
 		String last;
 		StringBuilder sendContent=new StringBuilder();
 		StringBuilder content=new StringBuilder();

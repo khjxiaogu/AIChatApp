@@ -27,7 +27,7 @@ public class ToolcallTest {
 		AIOutput ao=LLMConnector.call(ar.build());
 		
 		MessageContents reasoner=FileUtil.printAndCollectContent(ao.getReasoner());
-		String content=FileUtil.printAndCollectContent(ao.getContent());
+		String content=FileUtil.printAndCollectContent(ao.getContent()).toText();
 		/*ar.addHistoryItem(new DirectHistoryItem(Role.ASSISTANT,content,reasoner));
 		ar.addHistoryItem(Role.USER,"拍张照片？");
 		ao=LLMConnector.call(ar.build());

@@ -158,7 +158,7 @@ public class AISummary {
 	}
 	public static Map<String,String> splitSections(AIOutput resp) throws IOException {
 		boolean isWaiting = true;
-		BufferedReader reader=new BufferedReader(resp.getContent());
+		BufferedReader reader=new BufferedReader(resp.getContentReader());
 		String last;
 		Map<String,String> section=new LinkedHashMap<>();
 		FileUtil.printAndCollectContent(resp.getReasoner());

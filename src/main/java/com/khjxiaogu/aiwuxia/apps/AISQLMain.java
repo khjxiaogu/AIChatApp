@@ -162,7 +162,7 @@ public class AISQLMain extends AIApplication {
 		boolean isWaiting = true;
 		int status = 0;
 		
-		try(BufferedReader scan=new BufferedReader(op.getContent())){
+		try(BufferedReader scan=new BufferedReader(op.getContentReader())){
 			ApplicationState oldstate = new ApplicationState(state.getState());
 			// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
 			CompletableFuture<Void> reasoner=handleReasonerContent(op,state,write);

@@ -37,12 +37,14 @@ public class MessageReader{
     private IOException sourceException;
     public MessageReader() {}
     public MessageReader(MessageContents messages) {
-    	for(MessageContent msg:messages)
-    		internal.add(msg);
+    	if(messages!=null)
+    		for(MessageContent msg:messages)
+    			internal.add(msg);
     	
     }
     public MessageReader(String content) {
-    	internal.add(new PlainText(content));
+    	if(content!=null)
+    		internal.add(new PlainText(content));
     }
     
     public void setEnded() {
@@ -57,6 +59,10 @@ public class MessageReader{
     }
 
     public void putCh(MessageContent event) {
+        if (event == null) {
+            // null 是“流已结束”的标记，不能作为内容段放进队列，否则读取方会提前收工
+            return;
+        }
         synchronized (lock) {
             if (ended) {
                 throw new IllegalStateException("Reader already closed");

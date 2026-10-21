@@ -249,7 +249,7 @@ public class AITRPGSceneMain extends AIApplication {
 			AIOutput resp=LLMConnector.call(constructSummaryrequest(state,summary));
 			resp.addUsageListener(state::addUsage);
 			printReasonerContent(resp);
-			return FileUtil.readAll(resp.getContent());
+			return FileUtil.readAll(resp.getContentReader());
 
 	}
 	public String constructBackLog(AISession state) {
@@ -279,7 +279,7 @@ public class AITRPGSceneMain extends AIApplication {
 		boolean isWaiting = true;
 		
 		ApplicationState oldstate = new ApplicationState(state.getState());
-		BufferedReader reader=new BufferedReader(resp.getContent());
+		BufferedReader reader=new BufferedReader(resp.getContentReader());
 		String last;
 		String oldchara=state.getCharacter();
 		String oldbg=state.getBackground();

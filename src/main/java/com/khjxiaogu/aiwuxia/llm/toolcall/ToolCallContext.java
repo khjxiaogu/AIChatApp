@@ -5,8 +5,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -36,6 +40,16 @@ import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 public class ToolCallContext {
 
 	/**
+	 * 生成被用户中断时，尚未执行（或还没处理完）的工具调用统一回写的工具结果文本。
+	 * <p>
+	 * 模型可能已经下发了工具调用，但用户在这一轮里主动停止了生成：调用照常记进历史，
+	 * 结果统一写成这句话，保证历史里 {@code tool_calls} 与 {@code tool} 消息成对出现，
+	 * 后续请求不会因为缺少工具结果而失败。
+	 * </p>
+	 */
+	public static final String INTERRUPTED_MESSAGE = "用户已停止生成。";
+
+	/**
 	 * 一轮工具调用的处理结果。
 	 */
 	public static class ProcessResult {
@@ -59,7 +73,11 @@ public class ToolCallContext {
 		}
 
 		/**
-		 * 本次工具调用内容（包含所有工具调用请求）；若在调用前即被中断则为 null。
+		 * 本次工具调用内容（包含所有工具调用请求）；本次没有工具调用时为 null。
+		 * <p>
+		 * 生成被中断时同样会带上模型已经下发的调用，此时
+		 * {@link #getToolResults()} 里的结果统一为“用户已停止生成。”。
+		 * </p>
 		 */
 		public ToolCallContent getToolCallContent() {
 			return toolCallContent;
@@ -130,6 +148,54 @@ public class ToolCallContext {
 	private final AtomicBoolean limitNotified = new AtomicBoolean();
 	/** 本轮是否已有调用因触及次数上限而未执行 */
 	private final AtomicBoolean callLimitExhausted = new AtomicBoolean();
+	/**
+	 * 工具执行线程池。
+	 * <p>
+	 * 一批工具调用默认并发运行，工具本体不再占住模型流读取线程。线程为守护线程，
+	 * 不阻止进程退出。
+	 * </p>
+	 */
+	private static final ExecutorService TOOL_EXECUTOR = Executors.newCachedThreadPool(new ThreadFactory() {
+		private final AtomicInteger sequence = new AtomicInteger();
+
+		@Override
+		public Thread newThread(Runnable runnable) {
+			Thread thread = new Thread(runnable, "tool-call-" + sequence.incrementAndGet());
+			thread.setDaemon(true);
+			return thread;
+		}
+	});
+
+	/**
+	 * 一次工具调用的启动结果。
+	 * <p>
+	 * 要么已经直接得到结果（不存在/超限/无权限/无许可/出错，或异步任务已创建），
+	 * 要么是正在运行的 future，由 {@link #await(Execution)} 取回结果。
+	 * </p>
+	 */
+	private static final class Execution {
+		/** 已直接得到的结果；为 null 时表示工具正在运行 */
+		private final ToolContent immediate;
+		private final ToolCall call;
+		private final ToolCallDisplay display;
+		private final CompletableFuture<ToolResult> future;
+
+		private Execution(ToolContent immediate, ToolCall call, ToolCallDisplay display,
+				CompletableFuture<ToolResult> future) {
+			this.immediate = immediate;
+			this.call = call;
+			this.display = display;
+			this.future = future;
+		}
+
+		static Execution finished(ToolContent result) {
+			return new Execution(result, null, null, null);
+		}
+
+		static Execution running(ToolCall call, ToolCallDisplay display, CompletableFuture<ToolResult> future) {
+			return new Execution(null, call, display, future);
+		}
+	}
 
 	ToolCallContext(ToolCallManager manager, StreamedAIOutput output, ToolCallHistory history) {
 		this.manager = manager;
@@ -199,6 +265,12 @@ public class ToolCallContext {
 	 * 依次完成：计数校验（轮次/总次数/单工具次数/共享组次数）→ 权限判定 → 许可 → 执行
 	 * → 结果推送与历史写入。处理后收集器自动重置，可直接进入下一轮。
 	 * </p>
+	 * <p>
+	 * 执行方式：一批调用默认<b>并发</b>运行（工具本体放到独立线程池，结果的推送与历史写入仍按
+	 * 模型给出的顺序进行）；只要其中有一个工具声明了“顺序重要”，整批改为<b>按顺序逐个</b>执行。
+	 * 顺序执行时每完成一个调用检查一次中断：中断后不再启动后面的调用，已开始的调用等它跑完并
+	 * 保留结果，未执行的调用结果统一写成 {@link #INTERRUPTED_MESSAGE}。
+	 * </p>
 	 *
 	 * @param reasonerText 本轮累积的思维链/正文文本，用于写入助手历史消息，可为 null
 	 * @return 处理结果；本轮没有工具调用时返回 null
@@ -211,10 +283,9 @@ public class ToolCallContext {
 		// 本轮的增量已消费，重置以便下一轮收集
 		collector = new ToolCallCollector();
 
-		// 生成已被中断：不执行工具，也不写入历史，提示提供者结束循环
+		// 生成已被中断：工具不再执行，但调用本身照常写入历史，结果统一写成“用户已停止生成。”
 		if (isInterrupted()) {
-			return new ProcessResult(null, Collections.<ToolContent>emptyList(), rounds.get(), calls.get(), false, true,
-					false);
+			return writeInterrupted(toolCalls, reasonerText);
 		}
 
 		int round = countsRoundLimit(toolCalls) ? rounds.incrementAndGet() : rounds.get();
@@ -224,24 +295,49 @@ public class ToolCallContext {
 		emit(toolCallContent);
 		history.appendAssistantToolCalls(reasonerText, toolCalls);
 
-		boolean limitReached = false;
-		boolean shouldContinue;
-		List<ToolContent> results = new ArrayList<>(toolCalls.size());
-
 		// 轮次超限时只拒绝受轮次限制的调用，声明为不限次的工具仍照常执行
 		boolean roundExceeded = manager.hasRoundLimit() && round > manager.getMaxRounds();
 		callLimitExhausted.set(false);
-		for (int i = 0; i < toolCalls.size(); i++) {
-			ToolCall call = toolCalls.get(i);
-			if (roundExceeded && !manager.isUnlimited(nameOf(call))) {
-				limitReached = true;
-				results.add(notExecuted(call, manager.getLimitMessage(), displays.get(i)));
-			} else {
-				results.add(execute(call, displays.get(i)));
+		AtomicBoolean limitReached = new AtomicBoolean();
+		List<ToolContent> results = new ArrayList<>(Collections.nCopies(toolCalls.size(), null));
+
+		if (isSequential(toolCalls)) {
+			// 顺序重要：按模型给出的顺序逐个执行；每完成一个检查一次中断，
+			// 中断后把还没执行的调用统一标注为“用户已停止生成。”
+			for (int i = 0; i < toolCalls.size(); i++) {
+				if (i > 0 && isInterrupted()) {
+					for (int j = i; j < toolCalls.size(); j++) {
+						results.set(j, notExecuted(toolCalls.get(j), INTERRUPTED_MESSAGE, displays.get(j)));
+					}
+					break;
+				}
+				ToolCall call = toolCalls.get(i);
+				if (roundExceeded && !manager.isUnlimited(nameOf(call))) {
+					limitReached.set(true);
+					results.set(i, notExecuted(call, manager.getLimitMessage(), displays.get(i)));
+				} else {
+					results.set(i, await(start(call, displays.get(i))));
+				}
+			}
+		} else {
+			// 顺序不重要：先按顺序完成各项校验并启动全部调用，再按顺序取回结果
+			List<Execution> executions = new ArrayList<>(toolCalls.size());
+			for (int i = 0; i < toolCalls.size(); i++) {
+				ToolCall call = toolCalls.get(i);
+				if (roundExceeded && !manager.isUnlimited(nameOf(call))) {
+					limitReached.set(true);
+					executions.add(Execution.finished(notExecuted(call, manager.getLimitMessage(), displays.get(i))));
+				} else {
+					executions.add(start(call, displays.get(i)));
+				}
+			}
+			for (int i = 0; i < executions.size(); i++) {
+				results.set(i, await(executions.get(i)));
 			}
 		}
-		limitReached = limitReached || callLimitExhausted.get();
-		shouldContinue = limitReached ? !limitNotified.getAndSet(true) : true;
+
+		boolean limitHit = limitReached.get() || callLimitExhausted.get();
+		boolean shouldContinue = limitHit ? !limitNotified.getAndSet(true) : true;
 
 		for (ToolContent result : results) {
 			emit(result);
@@ -254,40 +350,116 @@ public class ToolCallContext {
 		}
 
 		return new ProcessResult(toolCallContent, Collections.unmodifiableList(results), rounds.get(), calls.get(),
-				limitReached, interrupted, shouldContinue);
+				limitHit, interrupted, shouldContinue);
 	}
 
 	/**
-	 * 执行单个工具调用：查找 → 次数校验 → 权限 → 许可 → 执行，任何一步失败都以工具结果形式回传给模型。
+	 * 本批调用是否需要按顺序逐个执行。
+	 * <p>
+	 * 只要其中有一个工具声明了“顺序重要”，整批都按模型给出的顺序执行，
+	 * 避免并发启动破坏有前后依赖或用户可见副作用的调用顺序。
+	 * </p>
+	 *
+	 * @param toolCalls 本批工具调用
+	 * @return 需要按顺序执行时返回 {@code true}
 	 */
-	private ToolContent execute(ToolCall call, ToolCallDisplay callDisplay) {
+	private boolean isSequential(List<ToolCall> toolCalls) {
+		for (ToolCall call : toolCalls) {
+			if (manager.isOrderSensitive(nameOf(call))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * 生成被中断时，把还留在收集器里、没来得及走完正常处理流程的工具调用写进历史。
+	 * <p>
+	 * 正常中断不会截断模型的输出：模型会把手上的这一轮跑完，工具调用由
+	 * {@link #process(String)} 处理。只有在流没有走到 {@code finish_reason=tool_calls}
+	 * 就结束（例如连接中断、用户关闭页面）时才需要本方法兜底：把已经收集到的调用按
+	 * “已下发但未执行”处理，调用照常推给读取端并写入历史，结果统一为
+	 * {@link #INTERRUPTED_MESSAGE}。
+	 * </p>
+	 *
+	 * @param reasonerText 本轮累积的思维链/正文文本，用于写入助手历史消息，可为 null
+	 * @return 处理结果；没有已收集的工具调用时返回 null
+	 */
+	public ProcessResult flushInterrupted(String reasonerText) {
+		List<ToolCall> toolCalls = collector.build();
+		if (toolCalls.isEmpty()) {
+			return null;
+		}
+		collector = new ToolCallCollector();
+		return writeInterrupted(toolCalls, reasonerText);
+	}
+
+	/**
+	 * 按“调用已下发、工具未执行”的语义写入一批工具调用与结果。
+	 * <p>
+	 * 与正常流程共用同一套输出与历史写入路径，因此前端看到的内容结构完全一致；
+	 * 区别只是工具不会真正执行，结果固定为 {@link #INTERRUPTED_MESSAGE}，
+	 * 且不计入轮次与调用次数。
+	 * </p>
+	 *
+	 * @param toolCalls    模型下发的工具调用
+	 * @param reasonerText 本轮累积的思维链/正文文本
+	 * @return 处理结果（{@code interrupted} 为 true、{@code shouldContinue} 为 false）
+	 */
+	private ProcessResult writeInterrupted(List<ToolCall> toolCalls, String reasonerText) {
+		List<ToolCallDisplay> displays = buildCallDisplays(toolCalls);
+		ToolCallContent toolCallContent = new ToolCallContent(toolCalls, displays);
+		emit(toolCallContent);
+		history.appendAssistantToolCalls(reasonerText, toolCalls);
+
+		List<ToolContent> results = new ArrayList<>(toolCalls.size());
+		for (int i = 0; i < toolCalls.size(); i++) {
+			ToolContent result = notExecuted(toolCalls.get(i), INTERRUPTED_MESSAGE, displays.get(i));
+			results.add(result);
+			emit(result);
+			history.appendToolResult(result);
+		}
+
+		return new ProcessResult(toolCallContent, Collections.unmodifiableList(results), rounds.get(), calls.get(),
+				false, true, false);
+	}
+
+	/**
+	 * 启动单个工具调用：查找 → 次数校验 → 权限 → 许可 → 在工具线程池上开始执行。
+	 * <p>
+	 * 校验失败（不存在/超限/无权限/无许可/内部错误）直接返回带失败结果 {@link Execution#finished}；
+	 * 可执行的调用返回 {@link Execution#running}，由 {@link #await(Execution)} 等待完成。
+	 * 声明为异步的工具在启动后立即登记异步任务并返回“任务已创建”，不在这里等待。
+	 * </p>
+	 */
+	private Execution start(ToolCall call, ToolCallDisplay callDisplay) {
 		if (call.function == null) {
-			return notExecuted(call, manager.getMissingToolMessage(), callDisplay);
+			return Execution.finished(notExecuted(call, manager.getMissingToolMessage(), callDisplay));
 		}
 		ToolRegistration registration = manager.getRegistration(call.function.name);
 		if (registration == null) {
-			return notExecuted(call, manager.getMissingToolMessage(), callDisplay);
+			return Execution.finished(notExecuted(call, manager.getMissingToolMessage(), callDisplay));
 		}
 		ToolData data = registration.getData();
 		// 声明为不限次的工具不参与任何次数校验，也不占用总次数上限的额度
 		boolean unlimited = manager.isUnlimited(call.function.name);
 		if (!unlimited && manager.hasCallLimit() && calls.get() >= manager.getMaxCalls()) {
 			callLimitExhausted.set(true);
-			return notExecuted(call, manager.getLimitMessage(), callDisplay);
+			return Execution.finished(notExecuted(call, manager.getLimitMessage(), callDisplay));
 		}
 		int groupId = registration.getGroupId();
 		if (!unlimited && groupId > 0 && manager.hasGroupLimit(groupId)) {
 			int groupLimit = manager.getGroupMaxCalls(groupId);
 			if (getGroupCallCount(groupId) >= groupLimit) {
 				callLimitExhausted.set(true);
-				return notExecuted(call, manager.getGroupLimitMessage(), callDisplay);
+				return Execution.finished(notExecuted(call, manager.getGroupLimitMessage(), callDisplay));
 			}
 		}
 		// 单个工具的执行次数上限（属于共享组时以组上限为准）
 		if (!unlimited && groupId <= 0 && registration.getMaxCalls() >= 0
 				&& getToolCallCount(call.function.name) >= registration.getMaxCalls()) {
 			callLimitExhausted.set(true);
-			return notExecuted(call, manager.getToolLimitMessage(), callDisplay);
+			return Execution.finished(notExecuted(call, manager.getToolLimitMessage(), callDisplay));
 		}
 
 		// 权限由管理器上的全部监听器合并判定（拒绝 > 询问 > 允许 > 忽略，遇拒绝短路）
@@ -303,7 +475,7 @@ public class ToolCallContext {
 			decision = approved ? ToolCallDecision.ALLOW : ToolCallDecision.deny(manager.getUnapprovedMessage());
 		}
 		if (!decision.isAllowed()) {
-			return notExecuted(call, decision.getReasonOr(ToolCallManager.DEFAULT_DENY_MESSAGE), callDisplay);
+			return Execution.finished(notExecuted(call, decision.getReasonOr(ToolCallManager.DEFAULT_DENY_MESSAGE), callDisplay));
 		}
 
 		if (!unlimited) {
@@ -314,20 +486,53 @@ public class ToolCallContext {
 		if (groupId > 0) {
 			groupCalls.computeIfAbsent(groupId, n -> new AtomicInteger()).incrementAndGet();
 		}
+		if (data.tool == null) {
+			return Execution.finished(notExecuted(call, manager.getToolErrorMessage(), callDisplay));
+		}
+		// 工具本体放到工具线程池上运行：同批调用因此可以并发执行，不再一个个阻塞等待
+		CompletableFuture<ToolResult> future;
 		try {
-			CompletableFuture<ToolResult> future = data.tool == null ? null
-					: data.tool.run(call.function.arguments, output, manager);
-			if (future == null) {
-				return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
-			}
-			if (registration.isAsync()) {
-				ToolTask task = manager.submitTask(call.function.name, call.id, future, callDisplay);
-				if (task == null) {
-					return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
+			future = CompletableFuture.supplyAsync(() -> {
+				try {
+					return data.tool.run(call.function.arguments, output, manager);
+				} catch (Throwable ex) {
+					throw new CompletionException(ex);
 				}
-				return new ToolContent(call.id, manager.asyncReply(task), ToolCallDisplay.of(callDisplay.getBrief()));
+			}, TOOL_EXECUTOR).thenCompose(next -> next == null ? CompletableFuture.<ToolResult>completedFuture(null)
+					: next);
+		} catch (Throwable ex) {
+			ex.printStackTrace();
+			return Execution.finished(notExecuted(call, manager.getToolErrorMessage(), callDisplay));
+		}
+		if (registration.isAsync()) {
+			ToolTask task = manager.submitTask(call.function.name, call.id, future, callDisplay);
+			if (task == null) {
+				return Execution.finished(notExecuted(call, manager.getToolErrorMessage(), callDisplay));
 			}
-			ToolResult result = future.get();
+			return Execution.finished(new ToolContent(call.id, manager.asyncReply(task),
+					ToolCallDisplay.of(callDisplay.getBrief())));
+		}
+		return Execution.running(call, callDisplay, future);
+	}
+
+	/**
+	 * 等待一个已启动的工具调用完成，并把结果转换成回传给模型/history 的工具结果。
+	 * <p>
+	 * 已经直接得出结果的调用原样返回。工具附件在这里交给会话写入当前上下文；
+	 * 等待期间线程被中断、工具执行抛异常或返回 null 时统一转成工具错误结果。
+	 * </p>
+	 *
+	 * @param execution 启动结果
+	 * @return 工具结果，永不为 null
+	 */
+	private ToolContent await(Execution execution) {
+		if (execution.immediate != null) {
+			return execution.immediate;
+		}
+		ToolCall call = execution.call;
+		ToolCallDisplay callDisplay = execution.display;
+		try {
+			ToolResult result = execution.future.get();
 			if (result == null) {
 				return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
 			}

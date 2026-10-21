@@ -53,6 +53,7 @@ public class MusicMcp implements ToolProvider {
 				}).build());
 		tools.add(new ToolData.Builder("send_music", "发送歌曲文件")
 				.putParam("file_name", "要发送的文件名，包含扩展名")
+				.orderSensitive()
 				.tool((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					String fn = jo.get("file_name").getAsString();
@@ -194,6 +195,7 @@ public class MusicMcp implements ToolProvider {
 					}).build());
 			tools.add(new ToolData.Builder("send_net_music", "直接发送音乐平台歌曲。")
 					.putParam("music_id", "歌曲id")
+					.orderSensitive()
 					.tool((data, output, manager) -> {
 						try {
 							System.out.println(data);

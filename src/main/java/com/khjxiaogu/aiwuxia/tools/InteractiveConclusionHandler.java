@@ -54,7 +54,7 @@ public class InteractiveConclusionHandler {
 				FileUtil.printAndCollectContent(ao.getReasoner());
 				System.out.println();
 				System.out.println("==========begin content==========");
-				String last=FileUtil.printAndCollectContent(ao.getContent());
+				String last=FileUtil.printAndCollectContent(ao.getContent()).toText();
 				fos.println();
 				fos.println("=========="+f.getName()+"==========");
 				fos.println(last);

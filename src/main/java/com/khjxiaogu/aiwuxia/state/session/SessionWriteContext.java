@@ -187,20 +187,48 @@ class SessionWriteContext implements HistoryWriteContext {
 	 * 记录定型之后不能再有后台写入，否则内容会写进已经提交或撤回的条目；
 	 * 同时这也让后续的提交、撤回动作独占这条记录。
 	 * </p>
+	 * <p>
+	 * 等待后台写入时<b>不能</b>持有写入锁：后台写入本身要拿写入锁才能完成，
+	 * 持锁等待会与正在等待锁的后台写入互相卡死（用户中断生成时，正文读流结束得比
+	 * 推理流补写工具调用更早，这种情况会真实发生）。
+	 * </p>
 	 *
 	 * @return 调用方可以继续结束流程时返回 {@code true}
 	 */
 	private boolean beginResolve() {
+		awaitReasonerWrites();
 		synchronized (writeLock) {
 			if (resolved)
 				return false;
-			awaitReasonerWrites();
 			resolved = true;
 			return true;
 		}
 	}
 
-	/** 在锁内等待本条记录上的后台思维链写入收尾。 */
+	/**
+	 * 登记一条属于本条记录的后台思维链写入任务。
+	 * <p>
+	 * 会话在 {@link AISession#beginAsyncReasonerWrite(java.util.function.Supplier, HistoryWriteContext)}
+	 * 里调用本方法，使记录在提交、撤回或关闭之前一定等到它收尾：用户中断生成时，
+	 * 提供者可能在正文流结束之后才把已下发的工具调用补写进推理流，若此时记录已经定型，
+	 * 这些内容就会被丢弃。任务收尾后自行注销。
+	 * </p>
+	 *
+	 * @param writeTask 后台写入任务，可为 null
+	 */
+	void registerReasonerWrite(final CompletableFuture<Void> writeTask) {
+		if (writeTask == null)
+			return;
+		pendingReasonerWrites.add(writeTask);
+		writeTask.whenComplete((value, error) -> pendingReasonerWrites.remove(writeTask));
+	}
+
+	/**
+	 * 等待本条记录上的后台思维链写入收尾。
+	 * <p>
+	 * 调用方不得持有写入锁：后台写入需要拿写入锁才能完成。
+	 * </p>
+	 */
 	private void awaitReasonerWrites() {
 		for (CompletableFuture<Void> writeTask : pendingReasonerWrites) {
 			try {
@@ -251,11 +279,15 @@ class SessionWriteContext implements HistoryWriteContext {
 		if (!beginResolve())
 			return;
 		if (pending) {
-			// 新记录按内容结算：写过显示内容或上下文内容就提交，只写了思维链的空记录撤回
+			// 新记录按内容结算：写过任何内容（正文、上下文内容、思维链/工具调用）就提交进历史，
+			// 只有完全空白的记录才撤回
 			synchronized (writeLock) {
 				MessageContents display = item.getDisplayContent();
 				MessageContents context = item.getContextContent();
-				if ((display != null && !display.isEmpty()) || (context != null && !context.isEmpty())) {
+				MessageContents reasoning = item.getReasoningContent();
+				boolean written = (display != null && !display.isEmpty()) || (context != null && !context.isEmpty())
+						|| (reasoning != null && !reasoning.isEmpty());
+				if (written) {
 					if (!published) {
 						published = true;
 						session.postMessage(item.getIdentifier(), item.getRole(), item.getDisplayContent());

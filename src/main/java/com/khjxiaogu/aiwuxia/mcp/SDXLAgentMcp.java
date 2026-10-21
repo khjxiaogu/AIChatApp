@@ -137,7 +137,7 @@ public class SDXLAgentMcp {
 						try {
 							AIOutput inner = LLMConnector.call(request);
 							FileUtil.printAndCollectContent(inner.getReasoner());
-							return ToolResult.text(FileUtil.printAndCollectContent(inner.getContent()));
+							return ToolResult.text(FileUtil.printAndCollectContent(inner.getContent()).toText());
 						} catch (ModelRouteException | IOException e) {
 							e.printStackTrace();
 							return ToolResult.text("agent调用失败");

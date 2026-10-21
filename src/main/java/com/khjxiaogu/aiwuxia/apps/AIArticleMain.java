@@ -90,7 +90,7 @@ public class AIArticleMain extends AIApplication {
 	public ApplicationState sendAndProcessResult(AISession state, HistoryWriteContext write, Builder req) throws IOException {
 		AIOutput resp=LLMConnector.call(req.build());
 		resp.addUsageListener(state::addUsage);
-		try (BufferedReader sc = new BufferedReader(resp.getContent())) {
+		try (BufferedReader sc = new BufferedReader(resp.getContentReader())) {
 			ApplicationState oldstate = precessResponse(sc, state, write);
 			write.setLastState(oldstate);
 			return oldstate;
@@ -100,7 +100,7 @@ public class AIArticleMain extends AIApplication {
 	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, Builder req) throws IOException {
 		AIOutput resp=LLMConnector.call(req.streamed().build());
 		resp.addUsageListener(state::addUsage);
-		try (BufferedReader sc = new BufferedReader(resp.getContent())) {
+		try (BufferedReader sc = new BufferedReader(resp.getContentReader())) {
 			ApplicationState oldstate = precessResponse(sc, state, write);
 			write.setLastState(oldstate);
 			return oldstate;

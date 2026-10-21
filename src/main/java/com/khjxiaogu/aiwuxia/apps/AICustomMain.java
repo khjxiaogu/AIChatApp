@@ -90,6 +90,8 @@ public class AICustomMain extends AIApplication {
 
 	public ApplicationState sendAndProcessResultStreamed(AISession state, HistoryWriteContext write, AIRequest req) throws IOException {
 		AIOutput resp = LLMConnector.call(req);
+		// 记录本次输出：用户停止生成时（{@code AIOutput#interrupt()}）会话据此中断这一轮
+		state.setCurrentOutput(resp);
 		resp.addUsageListener(state::addUsage);
 		ApplicationState oldstate = precessResponse(resp, state, write);
 		write.setLastState(oldstate);
@@ -171,7 +173,7 @@ public class AICustomMain extends AIApplication {
 		boolean nstateModified = false;
 		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
 		CompletableFuture<Void> reasoner=handleReasonerContent(resp,state,write);
-		BufferedReader reader=new BufferedReader(resp.getContent());
+		BufferedReader reader=new BufferedReader(resp.getContentReader());
 		String last;
 		while (true) {
 			last=reader.readLine();

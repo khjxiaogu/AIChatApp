@@ -46,6 +46,7 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
@@ -279,8 +280,8 @@ public abstract class AIApplication {
 				}
 			}
 		} finally {
-			// 本轮的可写入上下文由应用自己用 try-with-resources 结束（写过内容则提交进历史，
-			// 只写了思维链的空记录直接撤回），这里只负责收尾生成状态
+			// 本轮的可写入上下文由应用自己用 try-with-resources 结束（写过任何内容就提交进历史，
+			// 完全空白的记录才撤回），这里只负责收尾生成状态
 			logger.info("message handled "+sid);
 			state.onGenComplete();
 		}
@@ -372,6 +373,31 @@ public abstract class AIApplication {
 				state.onToolcall((ToolCallContent) current);
 			write.appendReasoner(current);
 		}
+	}
+
+	/**
+	 * 去掉正文内容段开头的空行。
+	 * <p>
+	 * 流式输出的首个内容段常常以空行开始（模型先输出一个换行），旧版逐行读取的实现会在
+	 * 第一行非空之前跳过这些空行。正文改为直接写入历史之后，写入前用本方法做同样的处理，
+	 * 避免每条回复都比以前多出几个空行。
+	 * </p>
+	 *
+	 * @param content 模型给出的内容段
+	 * @return 去掉开头空白后的内容段；整段都是空白、应当整段丢弃时返回 {@code null}
+	 */
+	protected static MessageContent skipLeadingBlank(MessageContent content) {
+		if (content == null || !content.isPlainText())
+			return content;
+		String text = content.toText();
+		int index = 0;
+		while (index < text.length() && Character.isWhitespace(text.charAt(index)))
+			index++;
+		if (index == 0)
+			return content;
+		if (index == text.length())
+			return null;
+		return new PlainText(text.substring(index));
 	}
     /**
      * 打印AI输出的推理内容到控制台（标准输出），并同时记录日志。

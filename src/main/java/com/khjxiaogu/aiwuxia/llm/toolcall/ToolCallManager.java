@@ -397,6 +397,21 @@ public class ToolCallManager {
 		return registration != null && registration.isAsync();
 	}
 
+	/**
+	 * 指定工具的调用顺序是否重要。
+	 * <p>
+	 * 同一批工具调用默认并发执行；只要其中含有顺序重要的工具，整批就按模型给出的顺序
+	 * 逐个执行。未注册的工具按“顺序不重要”处理。
+	 * </p>
+	 *
+	 * @param toolName 工具名称
+	 * @return 顺序重要返回 {@code true}
+	 */
+	public boolean isOrderSensitive(String toolName) {
+		ToolRegistration registration = getRegistration(toolName);
+		return registration != null && registration.isOrderSensitive();
+	}
+
 	/** 指定工具所属共享组 ID，0 表示未分组。 */
 	public int getGroupId(String toolName) {
 		ToolRegistration registration = getRegistration(toolName);

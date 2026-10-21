@@ -161,7 +161,7 @@ handlers.add((state, ret) -> {
 ```java
 try (HistoryWriteContext write = state.beginWrite(Role.ASSISTANT)) {
     write.append(text, true);
-}   // close() 时才真正提交；没写过任何内容 → 整条记录被自动撤回
+}   // close() 时才真正提交；完全空白（正文/上下文/思维链都没写）→ 整条记录被自动撤回
 ```
 
 | 方法 | 说明 |
@@ -224,21 +224,50 @@ resp.addUsageListener(state::addUsage);               // ← 计费/用量统计
 
 | 成员 | 说明 |
 |---|---|
-| `Reader getContent()` | 正文流。用 `BufferedReader` 逐行读；**流式时开头可能有空行**，先跳过 |
+| `MessageReader getContent()` | 正文内容流，逐段 `read()` 成 `MessageContent`（纯文本、图片等），可直接 `write.append(content, true)` 写入历史 |
+| `Reader getContentReader()` | 过渡适配器：把正文还原成旧的逐字符/逐行 `Reader`（已有的按字符流处理正文的 app 用这个，行为与旧版一致） |
 | `MessageReader getReasoner()` | 思维链流，逐段 `read()` 成 `MessageContent` |
 | `String getContentText()` | 一次读完全部正文（非流式/摘要场景用） |
 | `boolean isEnded()` | 流是否已结束 |
-| `void interrupt()` | 中断生成 |
+| `void interrupt()` | 中断生成：是否提前结束当前这一轮取决于提供者的计费方式（见下方说明）；工具处理不再发起新轮次 |
+| `boolean isInterrupted()` | 是否已被中断（用于区分"模型正常结束"与"用户停止生成"） |
 | `addUsageListener(Consumer<UsageIntf<?>>)` | 用量回调；会先补发已累计的用量，再持续接收新用量。接 `state::addUsage` 才会计费 |
 | `addUsage(UsageIntf<?>)` | 追加一条用量（模型提供者与工具都调用，用量在输出对象内按列表累计） |
 | `List<UsageIntf<?>> getUsages()` | 当前累计用量的只读快照 |
 | `ToolResult` 附件 | 工具返回图片/音频/视频等附件；`ToolCallManager` 交给会话的 `handleToolAttachments(...)`，由会话写入当前上下文并按需发送 |
 
+**中断（用户停止生成）**：中断的作用范围是"不再继续"，是否截断当前这一轮由提供者的计费方式决定：
+
+- 随分块返回用量的提供者（Volcano、Grok）：**已经收到过用量时允许提前结束**，读到中断就把当前累计的用量
+  记进输出再停读，已生成的内容照常写入历史，计费不会因为提前停止而错账；还没收到用量时继续读下去；
+- 只在整轮执行完成才返回用量的提供者（DeepSeek、MiMo、SiliconFlow）：**等这一轮跑完**再结束，
+  以保证用量完整、计费正确；跑完后内容全部写入历史。
+
+工具处理侧的规则与提供者无关：不再发起新的模型请求；同一批工具里已经开始的调用等它跑完并保留结果，
+还没开始的调用统一回写 `ToolCallContext.INTERRUPTED_MESSAGE`（"用户已停止生成。"）。
+记录关闭时一定会先等后台思维链写入收尾，中断后补写的工具调用不会丢。
+
+**正文直接写历史**（新写法，回复边产生边进历史、边推给前端）：
+
+```java
+observeReasonerWrite(handleReasonerContent(resp, state, write));   // 思维链后台异步写
+MessageReader reader = resp.getContent();
+MessageContent current;
+while ((current = reader.read()) != null)
+    write.append(current, true);                                  // 纯文本/图片原样进入本轮记录
+```
+
+仍按字符流处理正文的 app 用过渡适配器，读取逻辑不用改：
+
+```java
+BufferedReader reader = new BufferedReader(resp.getContentReader());
+```
+
 **思维链必须异步读**，用基类给的方法，别自己另起线程：
 
 ```java
 CompletableFuture<Void> reasoner = handleReasonerContent(resp, state, write); // 边产生边写入
-BufferedReader reader = new BufferedReader(resp.getContent());
+BufferedReader reader = new BufferedReader(resp.getContentReader());
 // ... 处理正文 ...
 reasoner.join();   // 正文处理完再 join，异常会在这里抛出
 ```
@@ -340,6 +369,9 @@ state.registerTool(t);                       // 挂到会话，随后 AIRequest.
 - 工具**不再绑定会话**：同一份 `ToolData` 可以在任意会话、任意一次生成中复用；
 - 一组需要共享配置/状态的工具实现 `ToolProvider`，用 `state.registerTools(provider)` 注册；
 - 异步工具在注册时声明（`async()` 或 `registerTool(tool, true, maxCalls)`），管理器会立即返回任务 ID，完成时通知会话；
+- 同一批工具调用默认**并发**执行（工具本体在独立线程池上运行，结果仍按模型给出的顺序推送）；
+  有前后依赖或用户可见副作用顺序的工具用 `.orderSensitive()` 声明，含该工具的整批调用改为按顺序逐个执行。
+  中断时：已经开始的调用会等它跑完并保留结果，还没开始的调用统一回写“用户已停止生成。”；
 - 注册工具集的共享次数：`state.registerTools(provider, 10)` 让该工具集内所有工具共享 10 次；
   也可以先注册再 `state.bindTools(10, "tool_a", "tool_b")` 把已有工具绑定为共享组（组 ID 自动递增）；
 - 工具产生的用量写入 `output.addUsage(...)`（会话通过 `output.addUsageListener(state::addUsage)` 统一记账）；

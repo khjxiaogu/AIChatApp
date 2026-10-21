@@ -25,7 +25,6 @@ package com.khjxiaogu.aiwuxia.llm;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -36,14 +35,20 @@ import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
-import com.khjxiaogu.aiwuxia.utils.BlockingReader;
-import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.utils.MessageReader;
+import com.khjxiaogu.aiwuxia.utils.MessageReaderAdapter;
 
 /**
  * 表示AI模型输出的接口，提供对模型生成的推理内容和最终内容的读取访问。
- * 该接口支持流式输出，可以通过{@link #getReasoner()}和{@link #getContent()}获取相应的输入流，
+ * 该接口支持流式输出，可以通过{@link #getReasoner()}和{@link #getContent()}获取相应的内容流，
  * 并能够监控输出是否结束、中断输出以及监听使用情况（如token消耗）。
+ * <p>
+ * 正文与思维链一样按 {@link MessageContent} 分段流式给出：内容段可以是纯文本，也可以是图片等
+ * 结构化内容。需要把正文写进历史的应用直接逐段写入即可（见
+ * {@link com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext#append(MessageContent, boolean)}）；
+ * 仍按字符流处理正文的应用用 {@link #getContentReader()} 取得兼容的 {@link Reader}。
+ * </p>
  */
 public interface AIOutput {
 
@@ -51,17 +56,35 @@ public interface AIOutput {
      * 获取推理内容的读取器。
      * 推理内容通常指模型在生成最终答案之前的思考过程、中间步骤或内部推理文本。
      *
-     * @return 用于读取推理内容的{@link Reader}对象
+     * @return 用于读取推理内容的{@link MessageReader}对象
      */
     public MessageReader getReasoner();
 
     /**
      * 获取最终输出内容的读取器。
-     * 这是模型生成的最终回答或结果，通常直接呈现给用户。
+     * <p>
+     * 这是模型生成的最终回答或结果，通常直接呈现给用户。内容按段给出，纯文本段与图片等
+     * 结构化内容段保持模型返回的先后顺序；应用可以把内容段原样写入本轮记录。
+     * </p>
      *
-     * @return 用于读取最终内容的{@link Reader}对象
+     * @return 用于读取最终内容的{@link MessageReader}对象
      */
-    public Reader getContent();
+    public MessageReader getContent();
+
+    /**
+     * 以逐字符读取的方式获取最终输出内容。
+     * <p>
+     * 这是给仍按字符流处理正文的应用准备的过渡适配器：纯文本段按原样展开成字符流，
+     * 图片等非纯文本内容不进入字符流，因此 {@code new BufferedReader(output.getContentReader())}
+     * 可以像旧版一样逐行读取正文。
+     * </p>
+     *
+     * @return 包装正文内容流的{@link Reader}
+     * @see MessageReaderAdapter
+     */
+    public default Reader getContentReader() {
+        return new MessageReaderAdapter(getContent());
+    }
 
     /**
      * 判断输出是否已经结束。
@@ -73,36 +96,68 @@ public interface AIOutput {
 
     /**
      * 中断当前的输出生成过程。
-     * 调用此方法可以提前终止模型的输出，后续的读取操作可能会立即结束或抛出异常。
+     * <p>
+     * 是否截断当前这一轮由提供者的计费方式决定：随分块返回用量的提供者（例如火山方舟、Grok）
+     * 在已经收到过用量时可以提前结束，中断时把当前累计的用量先记进输出，计费不受影响；
+     * 还没收到用量、或只在整轮执行完成才返回用量的提供者（例如 DeepSeek、MiMo、SiliconFlow）
+     * 会等这一轮跑完，以保证用量完整、计费正确。无论哪种方式，已经生成的内容都会保留进历史。
+     * </p>
+     * <p>
+     * 工具处理侧的作用与提供者无关：不再发起新的模型请求；顺序执行的工具不再启动后面的调用
+     * （未执行的统一回写“用户已停止生成。”），已经开始的工具等它跑完并保留结果。
+     * </p>
      */
     public void interrupt();
 
     /**
+     * 生成是否已经被中断。
+     * <p>
+     * 应用据此区分“模型正常结束”和“用户主动停止”：两者的正文都照常写入历史，
+     * 但中断时推理内容里可能带有被补写的工具调用。
+     * </p>
+     *
+     * @return 已被中断返回 {@code true}
+     */
+    public default boolean isInterrupted() {
+        return false;
+    }
+
+    /**
      * 将最终输出内容作为字符串读取。
-     * 这是一个默认方法，内部通过{@link #getContent()}获取Reader并利用{@link FileUtil#readAll(Reader)}读取所有内容。
+     * 这是一个默认方法，内部通过{@link #getContent()}逐段读取内容，并拼接各内容段的文本表示。
+     * 为了与旧版行为保持一致，返回的文本会去掉首尾空白。
      *
      * @return 最终输出内容的完整字符串
      * @throws IOException 如果读取过程中发生I/O错误
      */
     public default String getContentText() throws IOException {
-        return FileUtil.readAll(getContent());
+        MessageReader content = getContent();
+        if (content == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        MessageContent current;
+        while ((current = content.read()) != null) {
+            text.append(current.toText());
+        }
+        return text.toString().trim();
     }
 
     /**
-     * 将推理内容作为字符串读取。
-     * 这是一个默认方法，内部通过{@link #getReasoner()}获取Reader并利用{@link FileUtil#readAll(Reader)}读取所有内容。
+     * 将推理内容整段读取为内容集合。
+     * 这是一个默认方法，内部通过{@link #getReasoner()}逐段读取，直到推理流结束。
      *
-     * @return 推理内容的完整字符串
+     * @return 推理内容的完整内容集合
      * @throws IOException 如果读取过程中发生I/O错误
      */
     public default MessageContents getReasonerText() throws IOException {
     	MessageReader reasoner=getReasoner();
     	MutableMessageContents contents=new MutableMessageContents();
-    	while(!reasoner.isEnded()) {
-    		MessageContent current=reasoner.read();
-    		if(current==null)
-    			break;
-    		contents.add(current);
+    	if(reasoner!=null) {
+    		MessageContent current;
+    		while((current=reasoner.read())!=null) {
+    			contents.add(current);
+    		}
     	}
         return contents;
     }
@@ -149,18 +204,39 @@ public interface AIOutput {
 			void run() throws Exception;
 		}
 		public final MessageReader reasoner;
-		public final BlockingReader content;
+		public final MessageReader content;
 		private final List<UsageIntf<?>> usages = new ArrayList<>();
 		private final List<Consumer<UsageIntf<?>>> usageListener = new ArrayList<>();
-		private boolean interrupted;
+		private volatile boolean interrupted;
 		public StreamedAIOutput() {
 			reasoner=new MessageReader();
-			content=new BlockingReader();
+			content=new MessageReader();
 		}
 		public void putReasoner(MessageContent object) {
 			reasoner.putCh(object);
 		}
+		/**
+		 * 追加一段纯文本正文。
+		 *
+		 * @param object 正文文本，null 忽略
+		 */
 		public void putContent(String object) {
+			if (object == null)
+				return;
+			putContent(new PlainText(object));
+		}
+		/**
+		 * 追加一段正文内容。
+		 * <p>
+		 * 正文与思维链一样可以携带纯文本之外的内容段（例如图片），内容段按追加的先后顺序
+		 * 交给读取方，读取方可以直接把它们写进本轮记录。
+		 * </p>
+		 *
+		 * @param object 正文内容段，null 忽略
+		 */
+		public void putContent(MessageContent object) {
+			if (object == null)
+				return;
 			content.putCh(object);
 		}
 		public void endContent() {
@@ -190,7 +266,7 @@ public interface AIOutput {
 		 * 本方法都会把失败写入输出流（{@link #exception(Throwable)}）并在最后调用
 		 * {@link #endContent()}。这一点是硬性要求：同步等待模型输出的调用方
 		 * （例如工具内部的 {@code FileUtil.printAndCollectContent}）会一直阻塞在
-		 * {@code BlockingReader.read()} 上，只有结束流才能唤醒它们；否则一次断流、
+		 * {@code MessageReader.read()} 上，只有结束流才能唤醒它们；否则一次断流、
 		 * 一次读超时或一次解析异常就会让整轮对话永久卡死。
 		 * </p>
 		 *
@@ -217,7 +293,7 @@ public interface AIOutput {
 			return reasoner;
 		}
 		@Override
-		public Reader getContent() {
+		public MessageReader getContent() {
 			return content;
 		}
 		@Override
@@ -250,23 +326,33 @@ public interface AIOutput {
 				usageListener.add(listener);
 			}
 		}
+		@Override
 		public boolean isInterrupted() {
 			return interrupted;
 		}
 		@Override
 		public void interrupt() {
+			// 只标记中断，不在这里截断正文流：是否提前结束这一轮由提供者按计费方式决定
+			// （随分块返回用量的可以提前停读；只在完成时返回用量的必须等整轮跑完）。
+			// 中断标记本身还会让工具处理不再发起新的轮次、不再启动未开始的工具。
 			interrupted=true;
 		}
 		
 	}
 	public static class FilledAIOutput implements AIOutput{
 		public final MessageReader reasoner;
-		public final Reader content;
+		public final MessageReader content;
 		private final List<UsageIntf<?>> usages = new ArrayList<>();
 		private final List<Consumer<UsageIntf<?>>> usageListener = new ArrayList<>();
 		public FilledAIOutput(MessageContents reasoning,String content,UsageIntf<?> usage) {
+			this(reasoning, new MutableMessageContents(content), usage);
+		}
+		public FilledAIOutput(MessageContents reasoning,MessageContents content,UsageIntf<?> usage) {
 			this.reasoner=new MessageReader(reasoning);
-			this.content=new StringReader(content);
+			this.content=new MessageReader(content);
+			// 内容在构造时就已经全部给出，直接标记结束，读取方读完后能正常收工
+			this.reasoner.setEnded();
+			this.content.setEnded();
 			if (usage != null) {
 				this.usages.add(usage);
 			}
@@ -276,7 +362,7 @@ public interface AIOutput {
 			return reasoner;
 		}
 		@Override
-		public Reader getContent() {
+		public MessageReader getContent() {
 			return content;
 		}
 		public boolean isEnded() {

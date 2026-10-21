@@ -208,7 +208,7 @@ public class AIGalgameMain extends AIApplication {
 		boolean nstateModified = false;
 		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
 		CompletableFuture<Void> reasoner=handleReasonerContent(resp,state,write);
-		BufferedReader reader=new BufferedReader(resp.getContent());
+		BufferedReader reader=new BufferedReader(resp.getContentReader());
 		String last;
 		int orderIndex=1;
 		while (true) {

@@ -41,6 +41,19 @@ public final class ToolRegistration {
 		this.async = async;
 	}
 
+	/**
+	 * 本工具的调用顺序是否重要。
+	 * <p>
+	 * 同一批工具调用默认并发执行；批中含有顺序重要的工具时整批改为按顺序逐个执行。
+	 * 取值来自 {@link ToolData#orderSensitive}。
+	 * </p>
+	 *
+	 * @return 顺序重要返回 {@code true}
+	 */
+	public boolean isOrderSensitive() {
+		return data.orderSensitive;
+	}
+
 	/** 单工具最大调用次数，-1 表示不限；属于共享组时该值不参与执行判断。 */
 	public int getMaxCalls() {
 		return maxCalls;
@@ -61,7 +74,7 @@ public final class ToolRegistration {
 
 	@Override
 	public String toString() {
-		return "ToolRegistration [name=" + data.name + ", async=" + async + ", maxCalls=" + maxCalls + ", groupId="
-				+ groupId + "]";
+		return "ToolRegistration [name=" + data.name + ", async=" + async + ", orderSensitive="
+				+ data.orderSensitive + ", maxCalls=" + maxCalls + ", groupId=" + groupId + "]";
 	}
 }

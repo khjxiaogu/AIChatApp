@@ -23,7 +23,6 @@
  */
 package com.khjxiaogu.aiwuxia.apps;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
@@ -40,10 +39,12 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.HistoryWriteContext;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HistoryCompactor;
+import com.khjxiaogu.aiwuxia.utils.MessageReader;
 
 public class AIGroupApplication extends AIApplication {
 	String name;
@@ -77,34 +78,31 @@ public class AIGroupApplication extends AIApplication {
 		
 	}
 	public ApplicationState precessResponse(AIOutput resp, AISession state, HistoryWriteContext write) throws IOException {
-		boolean isWaiting = true;
-		
 		ApplicationState oldstate = new ApplicationState(state.getState());
-		BufferedReader reader=new BufferedReader(resp.getContent());
-		String last;
-		StringBuilder sendContent=new StringBuilder();
-		// 思维链交给后台线程边读边写本轮记录：正文在这里按自己的节奏读，两者互不等待
+		// 思维链交给后台线程边读边写本轮记录：正文在这里按自己的节奏写，两者互不等待
 		observeReasonerWrite(handleReasonerContent(resp, state, write));
-		while (true) {
-			last=reader.readLine();
-			if(last==null) {
-				break;
+		// 正文按内容段直接写进本轮记录：内容段到达就写，不再先拼成一整个字符串，
+		// 前端因此能随着模型输出逐段看到回复
+		MessageReader reader = resp.getContent();
+		if (reader != null) {
+			MessageContent current;
+			boolean started = false;
+			boolean wrote = false;
+			while ((current = reader.read()) != null) {
+				if (!started) {
+					// 流式输出的开头常常是空行，与旧版逐行读取一致地跳过
+					current = skipLeadingBlank(current);
+					if (current == null)
+						continue;
+					started = true;
+				}
+				write.append(current, true);
+				wrote = true;
 			}
-			if (isWaiting && last.isEmpty()) {
-				continue;
+			if (!wrote) {
+				logger.warning("本轮正文为空，没有回复内容");
 			}
-			if (isWaiting) {
-				isWaiting = false;
-			}
-			sendContent.append(last).append("\n");
 		}
-		String msg=sendContent.toString().trim();
-		// 回复只取正文：正文为空就是没有回复，不再回头到思维链里找内容
-		if (msg.isEmpty()) {
-			logger.warning("本轮正文为空，没有回复内容");
-		}
-		write.append(msg, true);
-		
 		return oldstate;
 	}
 	public void compactHistory(AISession state) throws IOException {

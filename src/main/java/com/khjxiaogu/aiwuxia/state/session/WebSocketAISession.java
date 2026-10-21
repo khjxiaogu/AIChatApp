@@ -46,6 +46,7 @@ import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalManager;
@@ -441,6 +442,18 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		});
 		frameHandlers.put("revert", (jo,state)->state.requestRevert());
 		frameHandlers.put("regen", (jo,state)->state.requestRegen());
+		frameHandlers.put("stop", (jo,state)->{
+			// 用户主动停止生成：中断当前输出。正文流会立即结束，已经生成的内容照常写入历史；
+			// 模型已下发的工具调用会以“用户已停止生成。”的结果补进历史。
+			AIOutput output=state.getCurrentOutput();
+			if(output!=null) {
+				output.interrupt();
+			}else {
+				// 本轮其实已经结束（停止请求来晚了）：回发真实生成状态，让前端退出“停止中”的等待态
+				state.sendGenerationStatus();
+				state.sendNotice("操作太快啦，请稍后再试");
+			}
+		});
 		frameHandlers.put("prompt", (jo,state)->{
 			state.getCommandExec().submit(()->{
 				state.handleUserInput(jo.get("input").getAsString(), jo.get("content").getAsString());

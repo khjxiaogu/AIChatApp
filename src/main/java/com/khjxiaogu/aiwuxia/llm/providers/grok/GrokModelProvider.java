@@ -125,6 +125,8 @@ public class GrokModelProvider implements ModelProvider {
 		GrokUsage usage = new GrokUsage();
 		AtomicBoolean isRefused = new AtomicBoolean(false);
 		AtomicBoolean sawDone = new AtomicBoolean(false);
+		// 是否已经收到过用量：收到过就说明计费数据是完整的，中断时可以提前结束
+		AtomicBoolean usageReported = new AtomicBoolean(false);
 
 		// 与火山方舟一致：任务体交给 runGuarded，任何失败都写进输出流，结束时一定关闭流
 		readable.runGuarded(exec, () -> {
@@ -134,7 +136,11 @@ public class GrokModelProvider implements ModelProvider {
 						.header("Authorization", "Bearer " + System.getProperty("groktoken")).defUA()
 						.readTimeout(SSE_READ_TIMEOUT_MS).post(true)
 						.send(tosend).readSSE((ev, s) -> {
-							if (readable.isInterrupted()) {
+							// Grok 随分块返回用量：已经收到过用量时中断可以提前结束，立即把当前消耗记进输出再停读。
+							// 还没收到过用量就继续读下去，等用量到达（或整轮结束）再收尾，保证计费不错账
+							if (readable.isInterrupted() && usageReported.get()) {
+								logger.info("=================Usage===============\n");
+								logger.info(usage);
 								logger.info("interrupted generation");
 								// 用户主动停止：属于正常收尾，不再提示“没有收到 [DONE]”
 								sawDone.set(true);
@@ -165,8 +171,10 @@ public class GrokModelProvider implements ModelProvider {
 										usage.completion_tokens += 100000;
 								}
 							}
-							if (scheme.usage != null)
+							if (scheme.usage != null) {
 								usage.set(scheme.usage);
+								usageReported.set(true);
+							}
 							return true;
 						});
 		}).whenComplete((value, error) -> {

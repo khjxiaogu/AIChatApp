@@ -256,7 +256,7 @@ public class AIWuxiaMain extends AIApplication {
 		ApplicationState oldstate = new ApplicationState(state.getState());
 		boolean nstateModified = false;
 		boolean isDraft=false;
-		BufferedReader reader=new BufferedReader(op.getContent());
+		BufferedReader reader=new BufferedReader(op.getContentReader());
 		// 思维链改为后台异步读流写入本轮记录，正文可以立刻开始处理
 		CompletableFuture<Void> reasoner=handleReasonerContent(op,state,write);
 		String last;

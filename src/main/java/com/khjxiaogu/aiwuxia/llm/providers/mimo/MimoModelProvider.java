@@ -158,6 +158,12 @@ public class MimoModelProvider implements ModelProvider{
 			try {
 				AtomicBoolean shouldContinueRequest =new AtomicBoolean(true);
 				while(shouldContinueRequest.get()) {
+					// 用户已停止生成：不再发起新的请求。本轮流式输出照常读完，
+					// 已经生成的内容与工具调用都保留进历史
+					if(readable.isInterrupted()) {
+						logger.info("interrupted generation");
+						break;
+					}
 					shouldContinueRequest.set(false);
 
 					//System.out.println(ja);
@@ -199,7 +205,12 @@ public class MimoModelProvider implements ModelProvider{
 										crnusage.set(scheme.usage);
 									return true;
 								});
-						usage.add(crnusage);
+					if(readable.isInterrupted()) {
+						// 中断时流可能没有走到 finish_reason=tool_calls：把已经收到的工具调用补写进历史，
+						// 结果统一为“用户已停止生成。”，保证 tool_calls 与 tool 消息成对
+						toolContext.flushInterrupted(reasoner.toText());
+					}
+					usage.add(crnusage);
 				}
 			} catch (Exception e) {
 				e.printStackTrace();

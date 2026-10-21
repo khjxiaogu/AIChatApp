@@ -199,6 +199,8 @@ public class VolcanoModelProvider implements ModelProvider{
 		String tosend = gs.toJson(jo);
 		StreamedAIOutput readable=new StreamedAIOutput();
 		AtomicBoolean sawDone=new AtomicBoolean(false);
+		// 是否已经收到过用量：火山方舟随分块返回用量，收到过就说明计费数据是完整的，可以提前停
+		AtomicBoolean usageReported=new AtomicBoolean(false);
 		// 任务体交给 runGuarded：断流、读超时、协议解析异常（包括 RuntimeException）都会写进输出流，
 		// 并且结束时一定关闭流，等正文的调用方不会永久阻塞
 		readable.runGuarded(exec, () -> {
@@ -209,7 +211,9 @@ public class VolcanoModelProvider implements ModelProvider{
 					.readTimeout(SSE_READ_TIMEOUT_MS)
 
 					.post(true).send(tosend).readSSE((ev,s)->{
-						if(readable.isInterrupted()) {
+						// 火山方舟随分块返回用量：已经收到过用量时中断可以提前结束，立即把当前消耗记进输出再停读。
+						// 还没收到过用量就继续读下去，等用量到达（或整轮结束）再收尾，保证计费不错账
+						if(readable.isInterrupted() && usageReported.get()) {
 							logger.info("=================Usage===============\n");
 							logger.info(usage);
 							logger.info("interrupted generation");
@@ -244,8 +248,10 @@ public class VolcanoModelProvider implements ModelProvider{
 								readable.putContent("【该回答已被审核截断】");
 							}
 						}
-						if(scheme.usage!=null)
+						if(scheme.usage!=null) {
 							usage.set(scheme.usage);
+							usageReported.set(true);
+						}
 						return true;
 					});
 		}).whenComplete((value,error) -> {

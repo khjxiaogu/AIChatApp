@@ -497,7 +497,7 @@ public class SDXLMcp implements ToolProvider {
 									AIOutput inner=LLMConnector.call(builder.build());
 									if(output!=null)
 										inner.addUsageListener(output::addUsage);
-									caption= FileUtil.printAndCollectContent(inner.getContent());
+									caption= FileUtil.printAndCollectContent(inner.getContent()).toText();
 									break;
 								}catch(Exception err) {
 									err.printStackTrace();
@@ -613,7 +613,7 @@ public class SDXLMcp implements ToolProvider {
 									AIOutput inner=LLMConnector.call(builder.build());
 									if(output!=null)
 										inner.addUsageListener(output::addUsage);
-									caption= FileUtil.printAndCollectContent(inner.getContent());
+									caption= FileUtil.printAndCollectContent(inner.getContent()).toText();
 									break;
 								}catch(Exception err) {
 									err.printStackTrace();
@@ -694,7 +694,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								inner.addUsageListener(output::addUsage);
 							String caption= FileUtil.printAndCollectContent(
-								inner.getContent());
+								inner.getContent()).toText();
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
 							return "生成成功，图片id为："+fn+"。"+caption;

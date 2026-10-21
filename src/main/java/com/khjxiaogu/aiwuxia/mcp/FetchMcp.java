@@ -140,7 +140,7 @@ public class FetchMcp {
 				AIRequest request=b.build();
 				AIOutput inner=LLMConnector.call(request);
 				FileUtil.printAndCollectContent(inner.getReasoner());
-				return FileUtil.printAndCollectContent(inner.getContent());
+				return FileUtil.printAndCollectContent(inner.getContent()).toText();
 			}
 			// 图片类型：只处理 JPEG 和 PNG
 			else if (isImageType(mimeType)) {

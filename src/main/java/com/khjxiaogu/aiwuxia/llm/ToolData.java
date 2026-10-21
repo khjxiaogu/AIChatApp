@@ -16,7 +16,8 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
  * </p>
  * <p>
  * {@link #async} 与 {@link #maxCalls} 是工具的默认注册参数，注册时可被
- * {@code ToolCallManager} 的重载覆盖。
+ * {@code ToolCallManager} 的重载覆盖；{@link #orderSensitive} 声明本工具在同一批调用里
+ * 必须按模型给出的顺序执行（默认整批并发执行）。
  * </p>
  */
 public class ToolData {
@@ -38,6 +39,16 @@ public class ToolData {
 	 * <p>会话专属工具不会通过公共 MCP 服务端暴露给远程用户，例如 QQ/绘画会话的发送图片工具。</p>
 	 */
 	public final boolean sessionOnly;
+	/**
+	 * 调用顺序是否重要。
+	 * <p>
+	 * 一批工具调用默认并发执行（不再一个个阻塞等待）。声明顺序重要的工具不能这样处理：
+	 * 同一批里只要含有本字段为 {@code true} 的调用，整批就按模型给出的顺序逐个执行，
+	 * 后一个工具看得到前一个工具留下的结果。发送图片/语音这类用户可见的副作用、
+	 * 以及“先下载再使用”这类有前后依赖的工具应当声明顺序重要。
+	 * </p>
+	 */
+	public final boolean orderSensitive;
 
 	public ToolData(Tool tool, String name, String description, Map<String, String> params) {
 		this(tool, name, description, params, ToolCallPresenter.defaults());
@@ -45,11 +56,16 @@ public class ToolData {
 
 	public ToolData(Tool tool, String name, String description, Map<String, String> params,
 			ToolCallPresenter presenter) {
-		this(tool, name, description, params, presenter, false, -1, false);
+		this(tool, name, description, params, presenter, false, -1, false, false);
 	}
 
 	public ToolData(Tool tool, String name, String description, Map<String, String> params,
 			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly) {
+		this(tool, name, description, params, presenter, async, maxCalls, sessionOnly, false);
+	}
+
+	public ToolData(Tool tool, String name, String description, Map<String, String> params,
+			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive) {
 		super();
 		this.tool = tool;
 		this.name = name;
@@ -59,6 +75,7 @@ public class ToolData {
 		this.async = async;
 		this.maxCalls = maxCalls;
 		this.sessionOnly = sessionOnly;
+		this.orderSensitive = orderSensitive;
 	}
 
 	/** 三参数、直接返回文本的简单工具实现。 */
@@ -76,6 +93,7 @@ public class ToolData {
 		private boolean async;
 		private int maxCalls = -1;
 		private boolean sessionOnly;
+		private boolean orderSensitive;
 
 		public Builder tool(Tool tool) {
 			this.tool = tool;
@@ -193,6 +211,30 @@ public class ToolData {
 		}
 
 		/**
+		 * 声明本工具的调用顺序重要。
+		 * <p>
+		 * 同一批工具调用默认并发执行；只要其中含有顺序重要的工具，整批就按模型给出的顺序
+		 * 逐个执行。有前后依赖（先下载再使用）或用户可见副作用（发送图片/语音）的工具应声明本项。
+		 * </p>
+		 *
+		 * @return 当前 Builder
+		 */
+		public Builder orderSensitive() {
+			return orderSensitive(true);
+		}
+
+		/**
+		 * 设置调用顺序是否重要。
+		 *
+		 * @param orderSensitive {@code true} 表示同一批工具调用必须按顺序逐个执行
+		 * @return 当前 Builder
+		 */
+		public Builder orderSensitive(boolean orderSensitive) {
+			this.orderSensitive = orderSensitive;
+			return this;
+		}
+
+		/**
 		 * 设置工具调用显示转换器（简述替代工具名称，具体内容用于展示）。
 		 * <p>不设置时使用默认转换器：简述为工具名称、具体内容为空。</p>
 		 *
@@ -219,7 +261,8 @@ public class ToolData {
 		public ToolData build() {
 			// 防御性复制 + 不可变视图，保证外部无法修改 ToolData 内部的 Map
 			Map<String, String> immutableParams = new HashMap<>(params);
-			return new ToolData(tool, name, description, immutableParams, presenter, async, maxCalls, sessionOnly);
+			return new ToolData(tool, name, description, immutableParams, presenter, async, maxCalls, sessionOnly,
+					orderSensitive);
 		}
 
 		public Builder(String name, String description) {
