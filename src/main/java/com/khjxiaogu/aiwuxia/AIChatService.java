@@ -61,6 +61,10 @@ import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
+import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
+import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
+import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
+import com.khjxiaogu.aiwuxia.mcp.PainterMediaMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.mcp.client.McpClientManager;
 import com.khjxiaogu.aiwuxia.mcp.server.McpAccessTokenStore;
@@ -151,6 +155,25 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	protected Map<String, AISession> uidsockets = new ConcurrentHashMap<>();
 	/** 绘画师图片存储，使用DelegatingStorage（本地+TOS）持久化存储 */
 	protected ObjectStorageProvider painterStorage;
+
+	// ==================== 绘画会话共享工具 ====================
+	// 这些工具只依赖服务级配置（图片存储、Lora、角色提示词），与具体会话无关，
+	// 因此在服务启动时创建一次，所有绘画会话复用同一批定义，不再每个会话重复创建。
+
+	/** 图片识别工具（查看图片），所有绘画会话共享 */
+	private ToolData painterImageRecognitionTool;
+	/** 绘画会话的发送图片工具，所有绘画会话共享 */
+	private ToolData painterSendImageTool;
+	/** SDXL 图片生成工具集（文生图/图生图/分区/反推），所有绘画会话共享 */
+	private SDXLMcp painterImageGenerator;
+	/** 角色提示词搜索工具，服务未配置角色列表时为 null */
+	private ToolData painterSearchCharacterTool;
+	/** 网页抓取工具，所有绘画会话共享 */
+	private ToolData painterWebViewTool;
+	/** 萌娘百科搜索工具，所有绘画会话共享 */
+	private ToolData painterMoegirlSearchTool;
+	/** DeepSeek 网页搜索工具，未配置 deepseektoken 时为 null */
+	private ToolData painterWebSearchTool;
 
 	/** 可用的AI应用映射，键为应用ID（如"wuxia"），值为对应的AI应用实例 */
 	private Map<String, ApplicationAttributes> apps = new HashMap<>();
@@ -373,7 +396,51 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			painterStorage = new LocalStorage(new File(parent, "painter_images"));
 			logger.info("绘画图片存储: 仅本地 (TOS初始化失败)");
 		}
+		initPainterTools();
 		reload();
+	}
+
+	/**
+	 * 创建绘画会话使用的共享工具。
+	 * <p>
+	 * 工具定义只依赖服务级配置（图片存储、Lora、角色提示词），不携带任何会话状态，
+	 * 因此在服务启动时创建一次即可，所有绘画会话复用同一批 {@link ToolData}，
+	 * 避免每个会话都重新构建工具、参数表与显示转换器。
+	 * </p>
+	 */
+	private void initPainterTools() {
+		painterImageRecognitionTool = MultiModalMcp.createImageRecognition(painterStorage);
+		painterSendImageTool = PainterMediaMcp.createSendImage(painterStorage);
+		// 图片 id 直接通过 /painter/image 取图，与具体会话无关，因此共享同一个 URL 构造器
+		painterImageGenerator = SDXLMcp.createRemoteLocalModel(painterStorage, lora,
+				(imageId, output) -> urlbase + "/painter/image?image_id=" + imageId, true);
+		painterSearchCharacterTool = chara == null ? null : SDXLMcp.createSearchCharacter(chara);
+		painterWebViewTool = FetchMcp.createWebView(painterStorage);
+		painterMoegirlSearchTool = FetchMcp.createMoegirlSearch(painterStorage);
+		painterWebSearchTool = DeepseekSearchMcp.createWebSearch();
+	}
+
+	/**
+	 * 把绘画会话的共享工具注册到指定会话。
+	 * <p>
+	 * 工具定义由 {@link #initPainterTools()} 在服务启动时创建一次，这里只负责注册到
+	 * 会话自己的工具调用管理器，并沿用原有的调用次数规则：图片识别单次最多 5 次，
+	 * SDXL 图片生成工具共享 5 次，其余工具使用默认规则。
+	 * </p>
+	 *
+	 * @param session 目标会话
+	 */
+	public void registerPainterTools(AISession session) {
+		if (session == null) {
+			return;
+		}
+		session.registerTool(painterImageRecognitionTool, 5);
+		session.registerTool(painterSendImageTool);
+		session.registerTools(painterImageGenerator, 5);
+		session.registerTool(painterSearchCharacterTool);
+		session.registerTool(painterWebViewTool);
+		session.registerTool(painterMoegirlSearchTool);
+		session.registerTool(painterWebSearchTool);
 	}
 
 	/**

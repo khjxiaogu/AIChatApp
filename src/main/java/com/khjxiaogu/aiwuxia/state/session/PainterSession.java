@@ -22,11 +22,8 @@ import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
-import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
-import com.khjxiaogu.aiwuxia.mcp.PainterMediaMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
-import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -125,7 +122,7 @@ public class PainterSession extends WebSocketAISession {
      * 名称与注册时的工具名一致：
      * </p>
      * <ul>
-     *   <li>{@code send_image}（{@link MultiModalMcp} 的发送图片工具）；</li>
+     *   <li>{@code send_image}（绘画会话的发送图片工具）；</li>
      *   <li>{@code search_character}（{@link SDXLMcp} 搜索角色提示词）；</li>
      *   <li>{@code web_view}（{@link FetchMcp} 抓取网页，即“fetch”）；</li>
      *   <li>{@code web_search}（{@link DeepseekSearchMcp} 的 DeepSeek 网页搜索，未配置
@@ -148,19 +145,9 @@ public class PainterSession extends WebSocketAISession {
     public PainterSession(AIChatService par, String uid, String chatid, AIApplication aiapp,
                           ApplicationAttributes attr, File fn, ISaveData data) {
         super(par, uid, chatid, aiapp, attr, fn, data);
-        // 工具直接注册进会话的工具调用管理器，由管理器统一处理调用次数、权限、许可与执行
-        registerTool(MultiModalMcp.createImageRecognition(par.getPainterStorage()),5);
-        registerTool(PainterMediaMcp.createSendImage(par.getPainterStorage()));
-        registerTools(SDXLMcp.createRemoteLocalModel(par.getPainterStorage(), par.lora,
-                (imgid, output) -> par.urlbase + "/painter/image?conversation_id=" + chatid + "&image_id=" + imgid, true),5);
-        if (par.chara != null) {
-            registerTool(SDXLMcp.createSearchCharacter(par.chara));
-        }
-        registerTool(FetchMcp.createWebView(par.getPainterStorage()));
-        registerTool(FetchMcp.createMoegirlSearch(par.getPainterStorage()));
-        registerTool(DeepseekSearchMcp.createWebSearch());
-        // 按需查询角色设定（数据来自人类可读索引 character-list.txt）
-        //registerTools(new CharacterSettingMcp(par.getDataFolder()));
+        // 绘画工具由 AIChatService 统一创建、所有绘画会话共享，这里只注册进本会话的工具调用管理器，
+        // 由管理器统一处理调用次数、权限、许可与执行
+        par.registerPainterTools(this);
     }
 
     /**

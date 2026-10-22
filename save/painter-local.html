@@ -177,6 +177,8 @@
             font-size: 0.95rem;
             line-height: 1.5;
             color: #0f172a;
+            /* 与思维链一致：保留模型输出里的换行与连续空格 */
+            white-space: pre-wrap;
         }
         .message-image {
             margin-top: 8px;
@@ -1041,22 +1043,28 @@ var main=new Vue({
             if (!this.hasToolDetail(seg)) return;
             seg.expanded = !seg.expanded;
         },
+        // 流式内容：服务端每帧都发数组（纯文本 token 也是 [{type:'text',text:'…'}]），
+        // 文本增量必须并入上一段文本，否则每个 token 会成为一个独立 div，变成一行一个 token。
         aiOnContent(frame) {
             const target = this.painterTargetMessage(frame.id);
             const raw = frame.content;
-            const parsed = this.parseContentArray(raw);
             target.contentItems = target.contentItems || [];
-            if (Array.isArray(raw)) {
-                for (const item of parsed.contentItems) {
-                    target.contentItems.push(item);
-                }
-            } else {
+            const appendText = (text) => {
+                if (!text) return;
                 const lastItem = target.contentItems.length ? target.contentItems[target.contentItems.length - 1] : null;
                 if (lastItem && lastItem.type === 'text') {
-                    lastItem.content += raw || '';
+                    lastItem.content += text;
                 } else {
-                    target.contentItems.push({ type: 'text', content: raw || '' });
+                    target.contentItems.push({ type: 'text', content: text });
                 }
+            };
+            if (Array.isArray(raw)) {
+                for (const item of this.parseContentArray(raw).contentItems) {
+                    if (item.type === 'text') appendText(item.content);
+                    else target.contentItems.push(item);
+                }
+            } else {
+                appendText(raw || '');
             }
             this.resolveAllPartUrls();
             this.scrollToBottom();

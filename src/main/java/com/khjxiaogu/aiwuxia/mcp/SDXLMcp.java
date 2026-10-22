@@ -530,8 +530,8 @@ public class SDXLMcp implements ToolProvider {
 					MutableMessageContents content=new MutableMessageContents();
 					content.append("1区正面:"+jo.get("first_positive").getAsString());
 					content.append("\n2区正面:"+jo.get("second_positive").getAsString());
-					content.append("\n共同正面:"+jo.get("common_negative").getAsString());
-					content.append("\n排版:"+("row".equals(jo.get("placement").getAsString())?"左右":"上下"));
+					content.append("\n共同正面:"+jo.get("common_positive").getAsString());
+					content.append("\n排版:"+("row".equals(jo.get("placement").getAsString())?"上下":"左右"));
 					content.append("\n负面:"+jo.get("common_negative").getAsString());
 					content.append("\n区域比例:"+jo.get("area_ratio").getAsString());
 					content.append("\n画面比例:"+jo.get("resolution").getAsString());
