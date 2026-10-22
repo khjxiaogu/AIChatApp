@@ -170,7 +170,7 @@ public class ToolCallContext {
 	 * 一次工具调用的启动结果。
 	 * <p>
 	 * 要么已经直接得到结果（不存在/超限/无权限/无许可/出错，或异步任务已创建），
-	 * 要么是正在运行的 future，由 {@link #await(Execution)} 取回结果。
+	 * 要么是正在运行的 future，由 {@link #awaitExecution(List, List, int)} 取回结果。
 	 * </p>
 	 */
 	private static final class Execution {
@@ -178,7 +178,10 @@ public class ToolCallContext {
 		private final ToolContent immediate;
 		private final ToolCall call;
 		private final ToolCallDisplay display;
+		/** 同步工具的完成信号；异步工具不需要等待完成，为 null */
 		private final CompletableFuture<ToolResult> future;
+		/** 是否已经取过结果 */
+		private boolean awaited;
 
 		private Execution(ToolContent immediate, ToolCall call, ToolCallDisplay display,
 				CompletableFuture<ToolResult> future) {
@@ -267,9 +270,11 @@ public class ToolCallContext {
 	 * </p>
 	 * <p>
 	 * 执行方式：一批调用默认<b>并发</b>运行（工具本体放到独立线程池，结果的推送与历史写入仍按
-	 * 模型给出的顺序进行）；只要其中有一个工具声明了“顺序重要”，整批改为<b>按顺序逐个</b>执行。
-	 * 顺序执行时每完成一个调用检查一次中断：中断后不再启动后面的调用，已开始的调用等它跑完并
-	 * 保留结果，未执行的调用结果统一写成 {@link #INTERRUPTED_MESSAGE}。
+	 * 模型给出的顺序进行）。声明了“顺序重要”的工具是<b>屏障</b>：启动它之前先等此前所有
+	 * <b>同步</b>调用结束，它（若为同步工具）真正执行完成之后才启动后续调用；声明为异步的
+	 * 工具只返回任务回执，不被屏障等待。屏障前后的非顺序敏感调用仍然可以并发执行。
+	 * 等待屏障时检查中断：中断后不再启动后面的调用，已开始的调用等它跑完并保留结果，
+	 * 未执行的调用结果统一写成 {@link #INTERRUPTED_MESSAGE}。
 	 * </p>
 	 *
 	 * @param reasonerText 本轮累积的思维链/正文文本，用于写入助手历史消息，可为 null
@@ -300,41 +305,51 @@ public class ToolCallContext {
 		callLimitExhausted.set(false);
 		AtomicBoolean limitReached = new AtomicBoolean();
 		List<ToolContent> results = new ArrayList<>(Collections.nCopies(toolCalls.size(), null));
+		List<Execution> executions = new ArrayList<>(Collections.nCopies(toolCalls.size(), null));
 
-		if (isSequential(toolCalls)) {
-			// 顺序重要：按模型给出的顺序逐个执行；每完成一个检查一次中断，
-			// 中断后把还没执行的调用统一标注为“用户已停止生成。”
-			for (int i = 0; i < toolCalls.size(); i++) {
-				if (i > 0 && isInterrupted()) {
-					for (int j = i; j < toolCalls.size(); j++) {
-						results.set(j, notExecuted(toolCalls.get(j), INTERRUPTED_MESSAGE, displays.get(j)));
-					}
+		// 默认：同一批调用并发启动。顺序敏感工具是屏障：
+		// 启动它之前先等本批此前所有调用（含异步任务）真正完成；它完成后才启动后续调用。
+		for (int i = 0; i < toolCalls.size(); i++) {
+			if (i > 0 && isInterrupted()) {
+				fillInterrupted(toolCalls, results, displays, i);
+				break;
+			}
+			ToolCall call = toolCalls.get(i);
+			if (roundExceeded && !manager.isUnlimited(nameOf(call))) {
+				limitReached.set(true);
+				Execution execution = Execution.finished(notExecuted(call, manager.getLimitMessage(), displays.get(i)));
+				executions.set(i, execution);
+				results.set(i, execution.immediate);
+				continue;
+			}
+
+			boolean orderSensitive = manager.isOrderSensitive(nameOf(call));
+			if (orderSensitive) {
+				// 屏障前：只等本批此前的同步调用完成；声明为异步的调用不等待实际完成
+				awaitAll(executions, results);
+				if (isInterrupted()) {
+					fillInterrupted(toolCalls, results, displays, i);
 					break;
 				}
-				ToolCall call = toolCalls.get(i);
-				if (roundExceeded && !manager.isUnlimited(nameOf(call))) {
-					limitReached.set(true);
-					results.set(i, notExecuted(call, manager.getLimitMessage(), displays.get(i)));
-				} else {
-					results.set(i, await(start(call, displays.get(i))));
-				}
 			}
-		} else {
-			// 顺序不重要：先按顺序完成各项校验并启动全部调用，再按顺序取回结果
-			List<Execution> executions = new ArrayList<>(toolCalls.size());
-			for (int i = 0; i < toolCalls.size(); i++) {
-				ToolCall call = toolCalls.get(i);
-				if (roundExceeded && !manager.isUnlimited(nameOf(call))) {
-					limitReached.set(true);
-					executions.add(Execution.finished(notExecuted(call, manager.getLimitMessage(), displays.get(i))));
-				} else {
-					executions.add(start(call, displays.get(i)));
-				}
+
+			Execution execution = start(call, displays.get(i));
+			executions.set(i, execution);
+			if (execution.immediate != null) {
+				results.set(i, execution.immediate);
 			}
-			for (int i = 0; i < executions.size(); i++) {
-				results.set(i, await(executions.get(i)));
+
+			if (orderSensitive) {
+				// 屏障后：同步工具完成后才启动后续工具；异步工具只等任务创建，不等实际完成
+				awaitExecution(executions, results, i);
+				if (isInterrupted()) {
+					fillInterrupted(toolCalls, results, displays, i + 1);
+					break;
+				}
 			}
 		}
+		// 末尾非顺序敏感的调用：同步工具取结果，异步工具保持后台执行
+		awaitAll(executions, results);
 
 		boolean limitHit = limitReached.get() || callLimitExhausted.get();
 		boolean shouldContinue = limitHit ? !limitNotified.getAndSet(true) : true;
@@ -354,22 +369,61 @@ public class ToolCallContext {
 	}
 
 	/**
-	 * 本批调用是否需要按顺序逐个执行。
+	 * 等待一组已启动调用完成，并按原位置写入结果。
 	 * <p>
-	 * 只要其中有一个工具声明了“顺序重要”，整批都按模型给出的顺序执行，
-	 * 避免并发启动破坏有前后依赖或用户可见副作用的调用顺序。
+	 * 只等待同步工具；声明为异步的工具已经直接得到“任务已创建”的结果，
+	 * 不会阻塞后续工具。
 	 * </p>
 	 *
-	 * @param toolCalls 本批工具调用
-	 * @return 需要按顺序执行时返回 {@code true}
+	 * @param executions 与调用列表等长的启动记录，未启动处为 null
+	 * @param results    结果列表
 	 */
-	private boolean isSequential(List<ToolCall> toolCalls) {
-		for (ToolCall call : toolCalls) {
-			if (manager.isOrderSensitive(nameOf(call))) {
-				return true;
+	private void awaitAll(List<Execution> executions, List<ToolContent> results) {
+		for (int i = 0; i < executions.size(); i++) {
+			if (executions.get(i) != null) {
+				awaitExecution(executions, results, i);
 			}
 		}
-		return false;
+	}
+
+	/**
+	 * 等待单个调用完成并写入结果。
+	 * <p>
+	 * 异步工具的结果已经是“任务已创建”，这里不再等待其实际完成；只有同步工具会阻塞等待。
+	 * </p>
+	 *
+	 * @param executions 启动记录列表
+	 * @param results    结果列表
+	 * @param index      调用下标
+	 * @return 工具结果，可能为 null（未启动）
+	 */
+	private ToolContent awaitExecution(List<Execution> executions, List<ToolContent> results, int index) {
+		Execution execution = executions.get(index);
+		if (execution == null) {
+			return null;
+		}
+		if (execution.awaited) {
+			return results.get(index);
+		}
+		if (execution.immediate != null) {
+			results.set(index, execution.immediate);
+			execution.awaited = true;
+			return execution.immediate;
+		}
+		execution.awaited = true;
+		ToolContent result = awaitFuture(execution.call, execution.display, execution.future);
+		results.set(index, result);
+		return result;
+	}
+
+	/** 把尚未执行的调用统一写成“用户已停止生成”。 */
+	private static void fillInterrupted(List<ToolCall> toolCalls, List<ToolContent> results,
+			List<ToolCallDisplay> displays, int from) {
+		for (int i = Math.max(0, from); i < toolCalls.size(); i++) {
+			if (results.get(i) == null) {
+				results.set(i, notExecuted(toolCalls.get(i), INTERRUPTED_MESSAGE, displays.get(i)));
+			}
+		}
 	}
 
 	/**
@@ -428,8 +482,8 @@ public class ToolCallContext {
 	 * 启动单个工具调用：查找 → 次数校验 → 权限 → 许可 → 在工具线程池上开始执行。
 	 * <p>
 	 * 校验失败（不存在/超限/无权限/无许可/内部错误）直接返回带失败结果 {@link Execution#finished}；
-	 * 可执行的调用返回 {@link Execution#running}，由 {@link #await(Execution)} 等待完成。
-	 * 声明为异步的工具在启动后立即登记异步任务并返回“任务已创建”，不在这里等待。
+	 * 可执行的调用返回 {@link Execution#running}，由 {@link #awaitExecution(List, List, int)} 等待完成。
+	 * 声明为异步的工具在启动后立即登记异步任务并返回“任务已创建”，不在这里等待，也不阻塞后续工具。
 	 * </p>
 	 */
 	private Execution start(ToolCall call, ToolCallDisplay callDisplay) {
@@ -509,6 +563,7 @@ public class ToolCallContext {
 			if (task == null) {
 				return Execution.finished(notExecuted(call, manager.getToolErrorMessage(), callDisplay));
 			}
+			// 异步工具立即返回任务回复，后续顺序敏感工具也不会等待它真正完成
 			return Execution.finished(new ToolContent(call.id, manager.asyncReply(task),
 					ToolCallDisplay.of(callDisplay.getBrief())));
 		}
@@ -516,23 +571,21 @@ public class ToolCallContext {
 	}
 
 	/**
-	 * 等待一个已启动的工具调用完成，并把结果转换成回传给模型/history 的工具结果。
+	 * 等待同步工具完成，并把结果转换成回传给模型/history 的工具结果。
 	 * <p>
-	 * 已经直接得出结果的调用原样返回。工具附件在这里交给会话写入当前上下文；
-	 * 等待期间线程被中断、工具执行抛异常或返回 null 时统一转成工具错误结果。
+	 * 工具附件在这里交给会话写入当前上下文；等待期间线程被中断、工具执行抛异常
+	 * 或返回 null 时统一转成工具错误结果。
 	 * </p>
 	 *
-	 * @param execution 启动结果
+	 * @param call        原始调用
+	 * @param callDisplay 调用显示
+	 * @param future      完成信号
 	 * @return 工具结果，永不为 null
 	 */
-	private ToolContent await(Execution execution) {
-		if (execution.immediate != null) {
-			return execution.immediate;
-		}
-		ToolCall call = execution.call;
-		ToolCallDisplay callDisplay = execution.display;
+	private ToolContent awaitFuture(ToolCall call, ToolCallDisplay callDisplay,
+			CompletableFuture<ToolResult> future) {
 		try {
-			ToolResult result = execution.future.get();
+			ToolResult result = future == null ? null : future.get();
 			if (result == null) {
 				return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
 			}

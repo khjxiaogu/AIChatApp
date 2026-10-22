@@ -16,8 +16,8 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
  * </p>
  * <p>
  * {@link #async} 与 {@link #maxCalls} 是工具的默认注册参数，注册时可被
- * {@code ToolCallManager} 的重载覆盖；{@link #orderSensitive} 声明本工具在同一批调用里
- * 必须按模型给出的顺序执行（默认整批并发执行）。
+ * {@code ToolCallManager} 的重载覆盖；{@link #orderSensitive} 声明本工具是顺序屏障
+ * （默认整批并发执行）。
  * </p>
  */
 public class ToolData {
@@ -42,10 +42,11 @@ public class ToolData {
 	/**
 	 * 调用顺序是否重要。
 	 * <p>
-	 * 一批工具调用默认并发执行（不再一个个阻塞等待）。声明顺序重要的工具不能这样处理：
-	 * 同一批里只要含有本字段为 {@code true} 的调用，整批就按模型给出的顺序逐个执行，
-	 * 后一个工具看得到前一个工具留下的结果。发送图片/语音这类用户可见的副作用、
-	 * 以及“先下载再使用”这类有前后依赖的工具应当声明顺序重要。
+	 * 一批工具调用默认并发执行。声明顺序重要的工具是<b>屏障</b>：
+	 * 启动它之前先等此前所有同步调用结束，它（若为同步工具）真正执行完成后
+	 * 才启动后续调用；声明为异步的工具只返回任务回执，不会被等待。
+	 * 发送图片/语音这类用户可见的副作用、以及“先下载再使用”这类有前后依赖的
+	 * 工具应当声明顺序重要。
 	 * </p>
 	 */
 	public final boolean orderSensitive;

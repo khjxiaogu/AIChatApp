@@ -34,7 +34,7 @@ public class FetchMcp {
 	 * @return 独立的工具定义
 	 */
 	public static ToolData createWebView(ObjectStorageProvider tos) {
-		return new ToolData.Builder("web_view", "获取链接指定的内容，只支持ftp/http/https链接").putParam("url", "网页链接")
+		return new ToolData.Builder("web_view", "获取链接指定的内容，只支持ftp/http/https链接，对于图片会下载并产生图片id，对于文本或者网页会生成总结").putParam("url", "网页链接")
 				.presenter(ToolCallPresenter.ofArgument("查看网页", "url"))
 				.toolText((data, output, manager) -> {
 					try {
