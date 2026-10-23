@@ -47,44 +47,20 @@ import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 
 public class AIGroupSession extends AISession {
-	public static class CallContext{
-		public final long qq;
-		public final String text;
-		public final boolean important;
-		public final List<Supplier<MessageContent>> getter;
-		CallContext(long qq, String text, List<Supplier<MessageContent>> getter,boolean important) {
-			super();
-			this.qq = qq;
-			this.text = text;
+	/** 待写入对话历史的一条群消息批次。 */
+	private static class QueuedMessage {
+		final boolean important;
+		final List<Supplier<MessageContent>> getter;
+		QueuedMessage(boolean important, List<Supplier<MessageContent>> getter) {
+			this.important = important;
 			this.getter = getter;
-			this.important=important;
 		}
-		@Override
-		public String toString() {
-			return "CallContext [qq=" + qq + ", text=" + text + "]";
-		}
-
-	}
-	public static class CurrentContext{
-		public final CallContext ctx;
-		public final MessageContents content;
-		CurrentContext(CallContext ctx, MessageContents content) {
-			super();
-			this.ctx = ctx;
-			this.content = content;
-		}
-		@Override
-		public String toString() {
-			return "CurrentContext [ctx=" + ctx + "]";
-		}
-		
 	}
 	public JsonObject config;
 	public long groupId;
 	public long botId;
-	public CallContext currentCtx;
-	List<CallContext> important=new ArrayList<>();
-	ArrayDeque<CallContext> messageQueue=new ArrayDeque<>();
+	List<QueuedMessage> important=new ArrayList<>();
+	ArrayDeque<QueuedMessage> messageQueue=new ArrayDeque<>();
 	public StringBuilder lastReasoner;
 	public Consumer<StringBuilder> reasonerConsumer;
 	private StringBuilder lastState=new StringBuilder();
@@ -178,36 +154,34 @@ public class AIGroupSession extends AISession {
         		lastReasoner.append(current.toText());
         }
     }
-	public void addMessage(long qq,String text,List<Supplier<MessageContent>> msg,boolean important) {
+	public void addMessage(List<Supplier<MessageContent>> msg,boolean important) {
 		synchronized(queueLock) {
-			messageQueue.add(new CallContext(qq,text,msg,important));
+			messageQueue.add(new QueuedMessage(important,msg));
 			if(messageQueue.size()>10) {
-				CallContext ctx=messageQueue.pollFirst();
+				QueuedMessage ctx=messageQueue.pollFirst();
 				if(ctx.important)
 					this.important.add(ctx);
 			}
 		}
 	}
-	public CurrentContext getPrompt() {
+	public MessageContents getPrompt() {
 		MutableMessageContents content;
-		CallContext last=null;
 		synchronized(queueLock) {
 	        DateFormat formatter = DateFormat.getDateTimeInstance();
 			content=new MutableMessageContents("<system>当前时间："+formatter.format(new Date())+"，注意遵守系统提示词和系统规则，不要声称自己关机了或者累了，全程使用中文对话。</system>\n");
-			for(CallContext cctx:important) {
+			for(QueuedMessage cctx:important) {
 				for(Supplier<MessageContent> cmsg:cctx.getter)
 					content.add(cmsg.get());
 			}
 			important.clear();
 			while(true) {
-				CallContext msg=messageQueue.pollFirst();
+				QueuedMessage msg=messageQueue.pollFirst();
 				if(msg==null)break;
-				last=msg;
 				for(Supplier<MessageContent> cmsg:msg.getter)
 					content.add(cmsg.get());
 			}
 		}
-		return new CurrentContext(last,content);
+		return content;
 	}
 	public void printReasoning() {
 		if(lastReasoner!=null&&outputReaonser&&reasonerConsumer!=null)

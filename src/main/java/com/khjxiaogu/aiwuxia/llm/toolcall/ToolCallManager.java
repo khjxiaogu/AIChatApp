@@ -1135,27 +1135,6 @@ public class ToolCallManager {
 		return this;
 	}
 
-	// ==================== 会话上下文 ====================
-
-	/** 本次生成相关的会话上下文（例如 QQ 消息上下文），由会话在生成前写入。 */
-	private volatile Object context;
-
-	/**
-	 * 设置本次生成的会话上下文。
-	 *
-	 * @param context 上下文对象，可为 null
-	 * @return 本管理器，便于链式调用
-	 */
-	public ToolCallManager setContext(Object context) {
-		this.context = context;
-		return this;
-	}
-
-	/** 本次生成的会话上下文，未设置时为 null。 */
-	public Object getContext() {
-		return context;
-	}
-
 	@Override
 	public String toString() {
 		return "ToolCallManager [tools=" + registrations.size() + ", maxRounds=" + maxRounds + ", maxCalls="

@@ -13,6 +13,7 @@ save/
 └─ config/
    ├─ object-storage.json       # 对象存储（火山 TOS）凭据
    ├─ image-generation.json     # 图片生成（Seedream）凭据
+   ├─ jimeng-video.txt          # 即梦视频脚本提示词
    ├─ voice-tags.txt            # 语音标签提示词
    ├─ local-voice.json          # 本地语音 bot 映射
    ├─ volcano-voice.json        # 火山语音 bot 映射
@@ -33,6 +34,7 @@ save/
 |---|---|---|
 | `object-storage.json` | 对象存储凭据：`region` / `endpoint` / `bucket` / `accessKey` / `secretKey`。存在则绘画图片转存对象存储，否则只存本地 `painter_images`、`ircimages` | 忽略（含密钥） |
 | `image-generation.json` | 图片/视频生成服务（Seedream）凭据：`accessKey` / `secretKey` | 忽略（含密钥） |
+| `jimeng-video.txt` | 即梦视频脚本提示词：`seedvideo` 工具把它作为视频脚本 agent 的系统提示词（内置参考图名字会追加在后面），agent 产出的整段脚本就是视频生成提示词。内置参考图由脚本 agent 自行挑选并附加，调用者只给想法（可选再补非内置的72位图片id，作为图1开始的外部参考图）。文件不存在时退回工具内置提示词；旧文件名 `jimeng_video.txt` 仍兼容 | 入库 |
 | `voice-tags.txt` | 语音标签提示词。让模型按「谁在说话 + 情感」切分台词，供语音合成使用 | 入库 |
 | `local-voice.json` | 本地语音模型 bot 映射，形如 `{"角色名": "botid"}` | 忽略（部署本地） |
 | `volcano-voice.json` | 火山声音复刻 bot 映射，形如 `{"角色名": "voice_type"}` | 忽略（部署本地） |
@@ -40,7 +42,7 @@ save/
 | `crontab.json` | 定时任务清单 | 忽略（部署本地） |
 | `sdxl/character-tags.txt` | 角色 tag 库（danbooru 风格 tag，一行一个）。生成提示词时按关键词检索，命中就往提示词里补 tag | 入库 |
 | `sdxl/loras.json` | LoRA 配置：`{"触发词": {"key": "文件名", "weight": 0.8}}` | 忽略（部署本地） |
-| `sdxl/reference-images.json` | 参考图：`{"名称": "图片地址"}`，供 Seedream 生图/生视频带参考图 | 忽略（部署本地） |
+| `sdxl/reference-images.json` | 参考图：`{"名称": "图片地址"}`，供 Seedream 生图/生视频带参考图；生视频时这些名字会列进脚本 agent 的提示词，由 agent 自行选用 | 忽略（部署本地） |
 | `sdxl/agent/` | 绘画 agent 提示词：`role.txt`（角色）、`charaset.txt`（设定）、`rules.txt`（规则） | `rules.txt` 入库，`role.txt`、`charaset.txt` 忽略（含个人信息） |
 | `sdxl/agent/character-list.txt` | 角色设定索引：`[work]` 作品、`[public]` 公共设定、`[character]` 角色设定与 `别名：`（人类可读，格式见文件头注释）。角色设定工具的数据来源，不依赖 `charaset.txt` | 入库 |
 

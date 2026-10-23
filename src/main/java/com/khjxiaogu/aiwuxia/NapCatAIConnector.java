@@ -92,11 +92,11 @@ import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
-import com.khjxiaogu.aiwuxia.state.session.AIGroupSession.CurrentContext;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.utils.BotCallback;
 import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
@@ -298,7 +298,7 @@ public class NapCatAIConnector extends WebSocketClient {
 				}
 				String notice = "<tool name=\"" + task.getToolName() + "\" task_id=\"" + task.getId()
 						+ "\" status=\"" + status + "\">" + text + "</tool>";
-				state.addMessage(0, "", Arrays.asList(() -> new PlainText(notice)), true);
+				state.addMessage(Arrays.asList(() -> new PlainText(notice)), true);
 				submitMessage(state);
 			} catch (Throwable ex) {
 				ex.printStackTrace();
@@ -457,8 +457,12 @@ public class NapCatAIConnector extends WebSocketClient {
 					state.getRoleName(Role.ASSISTANT), resourceLock));
 		if (skillSet.contains("seedimage"))
 			state.registerTool(SeedreamMcp.createImage(imgKey, refimage, tos));
-		if (skillSet.contains("seedvideo"))
-			state.registerTool(SeedreamMcp.createVideo(imgKey, refimage, tos));
+		if (skillSet.contains("seedvideo")) {
+			// 即梦视频脚本提示词由 config/jimeng-video.txt 提供，缺失时工具内部退回内置提示词
+			File videoPrompt = ConfigPaths.jimengVideo(dataFolder);
+			state.registerTool(SeedreamMcp.createVideo(imgKey, refimage, tos,
+					videoPrompt.exists() ? FileUtil.readString(videoPrompt) : ""));
+		}
 		state.registerTools(new AgentPingMcp(state.getRoleName(Role.ASSISTANT), state));
 	}
 
@@ -633,7 +637,7 @@ public class NapCatAIConnector extends WebSocketClient {
 								if (hasText) {
 									mes.add(() -> new PlainText("</message>"));
 	
-									state.addMessage(senderid,textContent.toString(),mes,false);
+									state.addMessage(mes,false);
 								}
 								// int hours=new Date().getHours();
 								// if(hours<6)
@@ -659,7 +663,7 @@ public class NapCatAIConnector extends WebSocketClient {
 	public void notifyOtherAgents(AIGroupSession state,String msg,String mid) {
 		for(AIGroupSession sess:states) {
 			if(state!=sess&&state.groupId==sess.groupId)
-				sess.addMessage(state.botId, msg, Arrays.asList(()->new PlainText("<message senderName=\"" + state.getRoleName(Role.ASSISTANT) + "\" id=\"" + mid + "\">"+msg)),true);
+				sess.addMessage(Arrays.asList(()->new PlainText("<message senderName=\"" + state.getRoleName(Role.ASSISTANT) + "\" id=\"" + mid + "\">"+msg)),true);
 		}
 	}
 	public void sendLastMessage(AIGroupSession state,OrderHandle handle,float price) {
@@ -742,7 +746,7 @@ public class NapCatAIConnector extends WebSocketClient {
 		
 	}
 	public void submitMessage(AIGroupSession state) {
-		CurrentContext prompt;
+		MessageContents prompt;
 		prompt=state.getPrompt();
 		
 		
@@ -751,15 +755,9 @@ public class NapCatAIConnector extends WebSocketClient {
 				float priceBefore=state.getTokens();
 				String lst=state.getAndClearStatus();
 				MutableMessageContents mst=new MutableMessageContents(lst);
-				for(MessageContent msg:prompt.content)
+				for(MessageContent msg:prompt)
 					mst.add(msg);
-				if(prompt.ctx.qq!=0) {
-					state.currentCtx=prompt.ctx;
-					state.getToolCallManager().setContext(prompt.ctx);
-				}
 				state.getAiapp().handleSpeech(state, mst);
-				state.currentCtx=null;
-				state.getToolCallManager().setContext(null);
 
 			
 				sendLastMessage(state,handle,state.getTokens()-priceBefore);

@@ -41,6 +41,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * └─ config/
  *    ├─ object-storage.json     对象存储（火山 TOS）凭据
  *    ├─ image-generation.json   图片生成（Seedream）凭据
+ *    ├─ jimeng-video.txt        即梦视频脚本提示词
  *    ├─ voice-tags.txt          语音标签（配音情感标注）提示词
  *    ├─ local-voice.json        本地语音模型 bot 映射
  *    ├─ volcano-voice.json      火山语音 bot 映射
@@ -69,6 +70,8 @@ public final class ConfigPaths {
 	public static final String OBJECT_STORAGE = "object-storage.json";
 	/** 图片生成凭据（原 {@code save/img.json}） */
 	public static final String IMAGE_GENERATION = "image-generation.json";
+	/** 即梦视频脚本提示词 */
+	public static final String JIMENG_VIDEO = "jimeng-video.txt";
 	/** 语音标签提示词（原 {@code save/voicetag.txt}） */
 	public static final String VOICE_TAGS = "voice-tags.txt";
 	/** 本地语音 bot 映射（原 {@code save/localvoice.json}） */
@@ -95,6 +98,8 @@ public final class ConfigPaths {
 	// ---- 旧位置，仅用于平滑升级 ----
 	private static final String LEGACY_OBJECT_STORAGE = "tos.json";
 	private static final String LEGACY_IMAGE_GENERATION = "img.json";
+	/** 即梦视频脚本提示词的旧文件名（同目录下的 {@code jimeng_video.txt}） */
+	private static final String LEGACY_JIMENG_VIDEO = "jimeng_video.txt";
 	private static final String LEGACY_VOICE_TAGS = "voicetag.txt";
 	private static final String LEGACY_LOCAL_VOICE = "localvoice.json";
 	private static final String LEGACY_VOLCANO_VOICE = "volcanovoice.json";
@@ -149,6 +154,30 @@ public final class ConfigPaths {
 	 */
 	public static File imageGeneration(File dataFolder) {
 		return locate(folder(dataFolder), IMAGE_GENERATION, dataFolder, LEGACY_IMAGE_GENERATION);
+	}
+
+	/**
+	 * 即梦视频脚本提示词文件。
+	 * <p>
+	 * 同时兼容同一目录下的旧文件名 {@code jimeng_video.txt}。
+	 * </p>
+	 *
+	 * @param dataFolder 数据目录
+	 * @return {@code config/jimeng-video.txt}
+	 */
+	public static File jimengVideo(File dataFolder) {
+		File target = new File(folder(dataFolder), JIMENG_VIDEO);
+		if (target.exists())
+			return target;
+		File legacy = new File(folder(dataFolder), LEGACY_JIMENG_VIDEO);
+		if (legacy.exists()) {
+			if (LEGACY_NOTICED.add(legacy.getPath())) {
+				System.out.println("[配置] 仍在使用旧文件名 " + legacy.getPath()
+					+ "，建议改名为 " + target.getPath() + "（新文件名生效后旧文件会被忽略）");
+			}
+			return legacy;
+		}
+		return target;
 	}
 
 	/**
