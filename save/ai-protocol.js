@@ -19,7 +19,9 @@
  *
  * 统一下行协议（服务端 -> 浏览器，全部带 type）：
  *   status{generating,[conversation_id,price,tokens,isVoiceEnabled,isVoiceSupported,isVoiceUsable,models,modelTree,model]}
- *   model{model} / voice{isVoiceEnabled?|isVoiceSupported?|isVoiceUsable?} / notice{content} / sendbox{content}
+ *   model{model} / voice{isVoiceEnabled?|isVoiceSupported?|isVoiceUsable?} / notice{content}
+ *   sendResult{msgId,ok,reason}（对某次发送的确认/拒收，只发给发起连接）
+ *   sendbox{action:"refill",content,msgId?,requestId?}（有条件回填，不再表示清空）
  *   message{id,title,content[]} / content{id,content[]} / remove{id} / batch_messages{messages[],prepend,hasMore,oldestId,newestId}
  *   thinking{content} / tool_call{tool_name} / audio{id,audioId} / done{price,tokens} / scene{scene,scene_data}
  *   input{input,prompt} / toolApproval{...} / toolApprovalResult{...} / local_request{...} / pong{id}
@@ -50,6 +52,24 @@
 	var REVEAL_MAX_STEP = 0.1;
 	/** 场景图片槽位：与服务端 scene 值一致，页面模板直接读 aiImages[槽位] */
 	var AI_IMAGE_SLOTS = ['front', 'side', 'back'];
+	/** 等待服务端 sendResult 确认的时间（与心跳超时同量级） */
+	var SEND_ACK_TIMEOUT = 10000;
+	/** 重连后等待历史记录落地再处理 Outbox 的宽限时间 */
+	var OUTBOX_RESOLVE_DELAY = 1500;
+	/** recentSends 的保留上限与有效期：用于匹配迟到的回填帧 */
+	var OUTBOX_RECENT_MAX = 32;
+	var OUTBOX_RECENT_TTL = 10 * 60 * 1000;
+
+	/**
+	 * 生成一个客户端消息标识。
+	 *
+	 * @return {String} 唯一标识
+	 */
+	function newMessageId() {
+		if (global.crypto && typeof global.crypto.randomUUID === 'function')
+			return 'c-' + global.crypto.randomUUID();
+		return 'c-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+	}
 
 	/**
 	 * 把结构化内容数组转成纯文本，供只渲染文本的页面使用。
@@ -174,6 +194,19 @@
 		created: function () {
 			this._aiImageSeq = {};      // 每个槽位的请求序号，用于丢弃过期的加载结果
 			this._aiMsgKeySeq = 0;      // 匿名消息（还没有历史 id）的本地 key 序号
+			// ---- 发送事务（Outbox）：输入框只在发送动作里清空，内容在确认前不丢 ----
+			this._aiOutbox = [];        // 已交给 WebSocket、尚未收到 sendResult 的消息
+			this._aiRecentSends = {};   // 已确认的 msgId -> 快照，用于匹配迟到的回填帧
+			this._aiOutboxLoaded = false;
+			this._aiOutboxKey = null;   // 载入 Outbox 时使用的会话键，切换会话时仍按旧键保存
+			this._aiDraftMsgId = null;  // 从 Outbox 恢复到输入框后，原文重试时沿用原 msgId
+			this._aiDraftText = null;   // 恢复时的原文，用于判断用户是否改过内容
+			this._aiPendingRefill = null;
+			this._aiAppliedRefills = {}; // 已处理过的回填 id，避免断线补发时重复恢复
+			this._aiRequestId = null;   // 最近一次 revert/regen 的请求标识
+			this._aiResolvePending = false;
+			this._aiResolveTimer = null;
+			this._aiRefillChip = null;
 		},
 		mounted: function () {
 			// popstate：全屏看图等覆盖层用后退键关闭（页面实现 aiOnPopState 时生效）
@@ -211,6 +244,14 @@
 		beforeDestroy: function () {
 			if (global.removeEventListener && this._aiOnPopState)
 				global.removeEventListener('popstate', this._aiOnPopState);
+			// 未确认的发送与待恢复内容保留到 sessionStorage，刷新/返回后继续对账
+			this.aiOutboxPersist();
+			if (this._aiResolveTimer) {
+				clearTimeout(this._aiResolveTimer);
+				this._aiResolveTimer = null;
+			}
+			this._aiResolvePending = false;
+			this.aiHideRefillChip();
 			this.aiCancelPipeline();
 			this.aiRevealClear();
 			this.aiDisconnect();
@@ -238,7 +279,7 @@
 			aiOnRemove: function (frame) {},
 			/** 提示消息 */
 			aiOnNotice: function (text) { this.aiToast(text); },
-			/** 输入框回填 */
+			/** 输入框回填后的通知（公共层已按 msgId/草稿状态做过条件恢复，页面一般不需要重写） */
 			aiOnSendbox: function (text) {},
 			/** 模型切换回执 */
 			aiOnModel: function (model) {},
@@ -335,9 +376,640 @@
 				}
 				return this.aiSend(frame);
 			},
-			/** 用户发言 */
-			aiSendMessage: function (text) {
-				return this.aiSendFrame('message', { content: text });
+			/**
+			 * 用户发言：把输入框内容作为一个“待确认的发送事务”交给服务端。
+			 * <p>
+			 * 调用成功（已交给 WebSocket）后立即清空输入框，但整段内容会留在 Outbox 里，
+			 * 直到服务端回 {@code sendResult{ok:true}}（或用历史/实时消息对账确认已送达）才丢弃。
+			 * 断线或超时后保留同一条 {@code msgId}：重连时先与历史对账，仍未送达的内容会按
+			 * “草稿为空才恢复”的规则放回输入框，用户重发时沿用这个 id，服务端据此幂等去重。
+			 * 清空只发生在这一次发送动作里，任何服务端帧都不会再清空输入框。
+			 * </p>
+			 * <p>
+			 * 如果 {@link #aiIsOpen()} 为 false 或帧没有交给 WebSocket，则返回 false 且
+			 * <b>不改动输入框</b>，调用方据此提示用户。
+			 * </p>
+			 *
+			 * @param {String} text    要发送的文本
+			 * @param {Object} [options] {extras: 附件快照（引用消息等）}
+			 * @return {Boolean} 是否已交给 WebSocket
+			 */
+			aiSendMessage: function (text, options) {
+				var content = text == null ? '' : String(text);
+				if (!this.aiIsOpen())
+					return false;
+				var opts = options || {};
+				var extras = opts.extras !== undefined ? opts.extras
+					: (typeof this.aiDraftExtras === 'function' ? this.aiDraftExtras() : null);
+				// 草稿原文与“实际发送文本”分开存：绘画页发送的是带引用标记的完整文本，
+				// 失败恢复时应该还原用户写的正文，而不是把引用格式塞回输入框
+				var draftText = this.aiGetDraft();
+				// 恢复后原样重发：沿用原 msgId，服务端不会重复生成；
+				// 用户改过内容则视为新消息，换新 id，避免服务端按旧 id 去重把新内容吞掉
+				var reuseId = this._aiDraftMsgId && draftText === this._aiDraftText ? this._aiDraftMsgId : null;
+				var msgId = reuseId || newMessageId();
+				if (reuseId) {
+					this.aiOutboxRemove(reuseId);
+				}
+				this._aiDraftMsgId = null;
+				this._aiDraftText = null;
+				var entry = {
+					msgId: msgId,
+					text: content,
+					draftText: draftText,
+					extras: extras,
+					state: 'unacked',
+					time: Date.now(),
+					timer: null,
+				};
+				this._aiOutbox.push(entry);
+				this.aiOutboxPersist();
+				var sent = false;
+				try {
+					sent = this.aiSendFrame('message', { content: content, msgId: msgId });
+				} catch (err) {
+					console.warn('[AI] 发送消息失败', err);
+					sent = false;
+				}
+				if (!sent) {
+					// 交给 WebSocket 之前就失败了：保留内容，不制造“已发送”的假象
+					this.aiOutboxRemove(msgId);
+					this._aiDraftMsgId = msgId;
+					this._aiDraftText = draftText;
+					this.aiOutboxPersist();
+					return false;
+				}
+				// 清空只在这里发生一次；内容已经在 Outbox 里，失败时可以恢复
+				this.aiSetDraft('');
+				if (typeof this.aiClearDraftExtras === 'function')
+					this.aiClearDraftExtras();
+				this.aiOutboxStartTimer(entry);
+				if (typeof this.aiOnSendQueued === 'function')
+					this.aiOnSendQueued(entry);
+				return true;
+			},
+
+			/* ================= 输入框草稿（页面可覆盖） ================= */
+
+			/**
+			 * 读取当前草稿文本。
+			 * <p>对话页用 {@code newMessage}，绘画页用 {@code inputText}；页面有别的字段时可覆盖本方法。</p>
+			 *
+			 * @return {String} 当前草稿
+			 */
+			aiGetDraft: function () {
+				if (this.newMessage !== undefined)
+					return this.newMessage == null ? '' : String(this.newMessage);
+				if (this.inputText !== undefined)
+					return this.inputText == null ? '' : String(this.inputText);
+				return '';
+			},
+			/**
+			 * 写入当前草稿文本。
+			 *
+			 * @param {String} text 新内容
+			 */
+			aiSetDraft: function (text) {
+				var value = text == null ? '' : String(text);
+				if (this.newMessage !== undefined)
+					this.newMessage = value;
+				if (this.inputText !== undefined)
+					this.inputText = value;
+				if (typeof this.aiAfterDraftChange === 'function')
+					this.aiAfterDraftChange();
+			},
+			/**
+			 * 草稿附件快照：引用消息等需要随发送一起暂存、失败时恢复的内容。
+			 * 页面按需覆盖。
+			 *
+			 * @return {Object|null}
+			 */
+			aiDraftExtras: function () {
+				return null;
+			},
+			/** 清空草稿附件，页面按需覆盖 */
+			aiClearDraftExtras: function () {},
+			/**
+			 * 恢复草稿附件。
+			 *
+			 * @param {Object|null} extras 发送时保存的快照
+			 */
+			aiRestoreDraftExtras: function (extras) {},
+			/** 草稿变化后的页面收尾（默认重算 textarea 高度） */
+			aiAfterDraftChange: function () {
+				if (typeof this.adjustTextareaHeight === 'function')
+					this.adjustTextareaHeight();
+			},
+
+			/* ================= 发送事务（Outbox） ================= */
+
+			/** 按 msgId 查找 Outbox 项 */
+			aiFindOutbox: function (msgId) {
+				if (!this._aiOutbox)
+					return null;
+				for (var i = 0; i < this._aiOutbox.length; i++) {
+					if (this._aiOutbox[i].msgId === msgId)
+						return this._aiOutbox[i];
+				}
+				return null;
+			},
+			/** 从 Outbox 移除一项并清理其定时器 */
+			aiOutboxRemove: function (msgId) {
+				if (!this._aiOutbox)
+					return;
+				for (var i = this._aiOutbox.length - 1; i >= 0; i--) {
+					if (this._aiOutbox[i].msgId !== msgId)
+						continue;
+					if (this._aiOutbox[i].timer)
+						clearTimeout(this._aiOutbox[i].timer);
+					this._aiOutbox.splice(i, 1);
+					return;
+				}
+			},
+			/** 为一次发送启动 ACK 超时计时 */
+			aiOutboxStartTimer: function (entry) {
+				if (!entry)
+					return;
+				if (entry.timer)
+					clearTimeout(entry.timer);
+				var self = this;
+				entry.timer = setTimeout(function () {
+					entry.timer = null;
+					self.aiOnSendTimeout(entry);
+				}, SEND_ACK_TIMEOUT);
+			},
+			/**
+			 * 发送成功回执：删除 Outbox 项并记入 recentSends，供迟到的回填帧匹配。
+			 *
+			 * @param {Object} frame sendResult 帧
+			 */
+			aiHandleSendResult: function (frame) {
+				if (!frame || !frame.msgId)
+					return;
+				var entry = this.aiFindOutbox(frame.msgId);
+				if (!entry)
+					return;
+				if (entry.timer) {
+					clearTimeout(entry.timer);
+					entry.timer = null;
+				}
+				if (frame.ok) {
+					this.aiOutboxRemove(frame.msgId);
+					this._aiRecentSends[frame.msgId] = {
+						text: entry.text,
+						draftText: entry.draftText,
+						extras: entry.extras,
+						time: Date.now(),
+					};
+					this.aiPruneRecentSends();
+					this.aiOutboxPersist();
+					if (typeof this.aiOnSendAccepted === 'function')
+						this.aiOnSendAccepted(entry);
+					return;
+				}
+				entry.state = 'failed';
+				this.aiOutboxPersist();
+				if (typeof this.aiOnSendFailed === 'function')
+					this.aiOnSendFailed(entry, frame);
+			},
+			/**
+			 * ACK 超时：消息可能已送达也可能没有。保留 Outbox 项，等重连后先用历史/消息对账；
+			 * 仍未送达的内容会放回输入框，不立即覆盖用户当前草稿。
+			 *
+			 * @param {Object} entry Outbox 项
+			 */
+			aiOnSendTimeout: function (entry) {
+				if (!entry || entry.state === 'failed')
+					return;
+				entry.state = 'uncertain';
+				this.aiOutboxPersist();
+				this.aiToast('消息发送未确认，连接恢复后会核对是否送达', { kind: 'warn' });
+			},
+			/** 发送成功后的页面钩子 */
+			aiOnSendAccepted: function (entry) {},
+			/** 消息交给 WebSocket 后的页面钩子 */
+			aiOnSendQueued: function (entry) {},
+			/**
+			 * 服务端拒收（忙 / 空消息 / 写入失败）。
+			 * <p>本轮没有真正开始，复位页面可能提前置上的“生成中”状态，并把内容还给用户。</p>
+			 */
+			aiOnSendFailed: function (entry, frame) {
+				this.aiGenerating = false;
+				var reason = frame && frame.reason;
+				// 先移出 Outbox：紧随其后的 sendbox 回填帧会按 msgId 找不到项而忽略，避免重复恢复
+				this.aiOutboxRemove(entry.msgId);
+				this.aiOutboxPersist();
+				this.aiToast(reason === 'busy' ? '操作太快啦，请稍后再试' : '消息未发送', { kind: 'warn' });
+				this.aiRestoreOrOffer(entry);
+			},
+			/**
+			 * 把失败的内容还给用户：输入框为空时直接恢复；否则不覆盖，只给“恢复”入口。
+			 *
+			 * @param {Object} entry Outbox 项
+			 */
+			aiRestoreOrOffer: function (entry) {
+				if (!entry)
+					return;
+				var text = entry.draftText != null ? entry.draftText : entry.text;
+				if (this.aiGetDraft() === '') {
+					this.aiRestoreDraft(text, entry.extras, entry.msgId);
+					this.aiToast('已恢复未发送的内容', { kind: 'info' });
+				} else {
+					this._aiPendingRefill = { text: text, extras: entry.extras, msgId: entry.msgId };
+					this.aiOutboxPersist();
+					this.aiShowRefillChip();
+				}
+			},
+			/**
+			 * 恢复一段草稿，并记住 msgId：用户再次发送时沿用同一个 id，服务端不会重复生成。
+			 *
+			 * @param {String} text    草稿文本
+			 * @param {Object} [extras] 附件快照
+			 * @param {String} [msgId]  原消息标识
+			 */
+			aiRestoreDraft: function (text, extras, msgId) {
+				this.aiSetDraft(text);
+				if (typeof this.aiRestoreDraftExtras === 'function')
+					this.aiRestoreDraftExtras(extras);
+				this._aiDraftMsgId = msgId || null;
+				this._aiDraftText = text == null ? '' : String(text);
+			},
+			/**
+			 * 处理服务端回填帧。
+			 * <p>
+			 * 规则：
+			 * </p>
+			 * <ul>
+			 *   <li>空内容一律忽略（旧服务端的“清空”不再生效）；</li>
+			 *   <li>带 msgId 的回填只处理本标签页自己的发送（在 Outbox 或 recentSends 中）；</li>
+			 *   <li>带 requestId 的回填只处理最近一次 revert/regen 的发起方；</li>
+			 *   <li>输入框为空才自动恢复，否则不覆盖，只给“恢复”入口。</li>
+			 * </ul>
+			 *
+			 * @param {Object} frame sendbox 帧
+			 */
+			aiApplySendbox: function (frame) {
+				if (!frame)
+					return;
+				var content = frame.content;
+				var action = frame.action;
+				if (content == null || content === '') {
+					// 旧服务端没有 sendResult，sendbox{content:""} 是它唯一的“已接收”信号：
+					// 只用来确认最早的未确认发送，绝不清空输入框（清空只由发送动作负责）
+					if (!action) {
+						var oldest = null;
+						for (var i = 0; i < this._aiOutbox.length; i++) {
+							var queued = this._aiOutbox[i];
+							if (queued.state !== 'unacked' && queued.state !== 'uncertain')
+								continue;
+							if (!oldest || (queued.time || 0) < (oldest.time || 0))
+								oldest = queued;
+						}
+						if (oldest) {
+							this.aiOutboxRemove(oldest.msgId);
+							this._aiRecentSends[oldest.msgId] = {
+								text: oldest.text,
+								draftText: oldest.draftText,
+								extras: oldest.extras,
+								time: Date.now(),
+							};
+							this.aiPruneRecentSends();
+							this.aiOutboxPersist();
+						}
+					}
+					return;
+				}
+				if (action && action !== 'refill')
+					return;
+				var msgId = frame.msgId || '';
+				var requestId = frame.requestId || '';
+				if (requestId && requestId !== this._aiRequestId)
+					return;
+				var known = null;
+				if (msgId) {
+					known = this.aiFindOutbox(msgId) || this._aiRecentSends[msgId] || null;
+					if (!known)
+						return;   // 别的标签页/别的会话的回填，不处理
+				}
+				// 服务端明确要求回填：这条发送已失败，移出 Outbox，避免重连结算时再次处理
+				if (msgId && this.aiFindOutbox(msgId)) {
+					this.aiOutboxRemove(msgId);
+					this.aiOutboxPersist();
+				}
+				// （下面若因草稿非空而只展示“恢复”入口，也会把待恢复内容持久化）
+				// 断线补发可能把同一条回填发给多个新连接：本标签页只处理一次
+				var refillKey = msgId || requestId;
+				if (refillKey) {
+					if (this._aiAppliedRefills[refillKey])
+						return;
+					this._aiAppliedRefills[refillKey] = Date.now();
+					this.aiPruneAppliedRefills();
+				}
+				// 有本地草稿快照时优先还原用户正文，服务端下发的完整文本作为兜底
+				var restoreText = known && known.draftText != null ? known.draftText : String(content);
+				if (this.aiGetDraft() === '') {
+					this.aiRestoreDraft(restoreText, known && known.extras, msgId || null);
+					this.aiToast('已恢复未发送的内容', { kind: 'info' });
+				} else {
+					this._aiPendingRefill = {
+						text: restoreText,
+						extras: known && known.extras,
+						msgId: msgId || null,
+					};
+					this.aiOutboxPersist();
+					this.aiShowRefillChip();
+				}
+				if (typeof this.aiOnSendbox === 'function')
+					this.aiOnSendbox(String(content));
+			},
+			/** 显示“恢复未发送内容”的浮动提示条 */
+			aiShowRefillChip: function () {
+				if (typeof document === 'undefined' || !document.body)
+					return;
+				this.aiHideRefillChip();
+				var self = this;
+				var chip = document.createElement('div');
+				chip.className = 'ai-refill-chip';
+				var label = document.createElement('span');
+				label.textContent = '上一条内容未发送';
+				var button = document.createElement('button');
+				button.type = 'button';
+				button.textContent = '恢复';
+				button.onclick = function () { self.aiApplyPendingRefill(); };
+				var close = document.createElement('button');
+				close.type = 'button';
+				close.className = 'ai-refill-chip-close';
+				close.title = '忽略';
+				close.textContent = '×';
+				close.onclick = function () {
+					self._aiPendingRefill = null;
+					self.aiOutboxPersist();
+					self.aiHideRefillChip();
+				};
+				chip.appendChild(label);
+				chip.appendChild(button);
+				chip.appendChild(close);
+				document.body.appendChild(chip);
+				this._aiRefillChip = chip;
+			},
+			/** 移除“恢复未发送内容”的浮动提示条 */
+			aiHideRefillChip: function () {
+				if (this._aiRefillChip && this._aiRefillChip.parentNode)
+					this._aiRefillChip.parentNode.removeChild(this._aiRefillChip);
+				this._aiRefillChip = null;
+			},
+			/** 用户点击“恢复”：输入框为空则放入，已有内容则追加，保证两边都不丢 */
+			aiApplyPendingRefill: function () {
+				var pending = this._aiPendingRefill;
+				if (!pending)
+					return;
+				this._aiPendingRefill = null;
+				this.aiOutboxPersist();
+				this.aiHideRefillChip();
+				var current = this.aiGetDraft();
+				if (current === '') {
+					this.aiRestoreDraft(pending.text, pending.extras, pending.msgId);
+				} else {
+					// 追加后内容已经变了，不能沿用原 msgId，否则服务端会把“新内容”当成旧消息去重掉
+					this.aiRestoreDraft(current.replace(/\s+$/, '') + '\n' + pending.text, pending.extras, null);
+				}
+			},
+
+			/* ================= Outbox 持久化 / 对账 / 结算 ================= */
+
+			/** sessionStorage 键：同一标签页、同一会话独立保存 */
+			aiOutboxStorageKey: function () {
+				var id = this.chatId || this.conversationId || '';
+				return 'aiwuxia-outbox:' + location.pathname + ':' + id;
+			},
+			/** 把未确认发送与最近确认记录写入 sessionStorage（失败静默） */
+			aiOutboxPersist: function () {
+				if (typeof sessionStorage === 'undefined')
+					return;
+				// 还没从存储里载入、内存里也没有待发/待恢复内容：不要写空记录覆盖上一次的未发送内容
+				if (!this._aiOutboxLoaded && !(this._aiOutbox && this._aiOutbox.length) && !this._aiPendingRefill)
+					return;
+				try {
+					var data = {
+						outbox: [],
+						recent: this._aiRecentSends || {},
+						pendingRefill: this._aiPendingRefill || null,
+					};
+					for (var i = 0; i < (this._aiOutbox || []).length; i++) {
+						var entry = this._aiOutbox[i];
+						data.outbox.push({
+							msgId: entry.msgId,
+							text: entry.text,
+							draftText: entry.draftText,
+							extras: entry.extras,
+							state: entry.state,
+							time: entry.time,
+						});
+					}
+					// 切换会话时页面可能已经改了 chatId，这里仍写回载入时对应的旧会话
+					var key = this._aiOutboxKey || this.aiOutboxStorageKey();
+					sessionStorage.setItem(key, JSON.stringify(data));
+				} catch (err) {
+					// 隐私模式/配额已满：忽略，内存状态仍然有效
+				}
+			},
+			/** 从 sessionStorage 恢复 Outbox / recentSends（只执行一次） */
+			aiOutboxLoad: function () {
+				if (this._aiOutboxLoaded)
+					return;
+				this._aiOutboxLoaded = true;
+				this._aiOutboxKey = this.aiOutboxStorageKey();
+				if (typeof sessionStorage === 'undefined')
+					return;
+				try {
+					var raw = sessionStorage.getItem(this._aiOutboxKey);
+					if (!raw)
+						return;
+					var data = JSON.parse(raw) || {};
+					if (Array.isArray(data.outbox)) {
+						for (var i = 0; i < data.outbox.length; i++) {
+							var entry = data.outbox[i];
+							if (!entry || !entry.msgId || !entry.text)
+								continue;
+							entry.state = entry.state === 'failed' ? 'uncertain' : (entry.state || 'unacked');
+							entry.timer = null;
+							this._aiOutbox.push(entry);
+						}
+					}
+					if (data.recent && typeof data.recent === 'object')
+						this._aiRecentSends = data.recent;
+					if (data.pendingRefill && data.pendingRefill.text)
+						this._aiPendingRefill = data.pendingRefill;
+					this.aiPruneRecentSends();
+					if (this._aiPendingRefill) {
+						// 上次没来得及恢复的内容：重新展示“恢复”入口（不自动覆盖草稿）
+						var self = this;
+						if (typeof this.$nextTick === 'function')
+							this.$nextTick(function () { self.aiShowRefillChip(); });
+						else
+							this.aiShowRefillChip();
+					}
+				} catch (err) {
+					// 数据损坏：忽略
+				}
+			},
+			/** 清理过期的 recentSends，并限制总数 */
+			aiPruneRecentSends: function () {
+				var now = Date.now();
+				var ids = [];
+				for (var id in this._aiRecentSends) {
+					if (!Object.prototype.hasOwnProperty.call(this._aiRecentSends, id))
+						continue;
+					if (now - (this._aiRecentSends[id].time || 0) > OUTBOX_RECENT_TTL)
+						delete this._aiRecentSends[id];
+					else
+						ids.push(id);
+				}
+				if (ids.length > OUTBOX_RECENT_MAX) {
+					var self = this;
+					ids.sort(function (a, b) {
+						return (self._aiRecentSends[a].time || 0) - (self._aiRecentSends[b].time || 0);
+					});
+					for (var i = 0; i < ids.length - OUTBOX_RECENT_MAX; i++)
+						delete this._aiRecentSends[ids[i]];
+				}
+			},
+			/** 清理已处理回填记录，避免无限增长 */
+			aiPruneAppliedRefills: function () {
+				var now = Date.now();
+				var ids = [];
+				for (var id in this._aiAppliedRefills) {
+					if (!Object.prototype.hasOwnProperty.call(this._aiAppliedRefills, id))
+						continue;
+					if (now - this._aiAppliedRefills[id] > OUTBOX_RECENT_TTL)
+						delete this._aiAppliedRefills[id];
+					else
+						ids.push(id);
+				}
+				if (ids.length > OUTBOX_RECENT_MAX) {
+					var self = this;
+					ids.sort(function (a, b) { return self._aiAppliedRefills[a] - self._aiAppliedRefills[b]; });
+					for (var i = 0; i < ids.length - OUTBOX_RECENT_MAX; i++)
+						delete this._aiAppliedRefills[ids[i]];
+				}
+			},
+			/** 重连后等待历史落地，再安排一次 Outbox 结算 */
+			aiScheduleOutboxResolve: function () {
+				if (this._aiResolveTimer)
+					clearTimeout(this._aiResolveTimer);
+				var self = this;
+				this._aiResolveTimer = setTimeout(function () {
+					self._aiResolveTimer = null;
+					self.aiResolveOutbox();
+				}, OUTBOX_RESOLVE_DELAY);
+			},
+			/**
+			 * 结算所有仍未确认的发送。
+			 * <p>
+			 * 到这里还没被历史对账消掉的条目，说明服务端没有留下这条用户消息：
+			 * 要么根本没收到，要么收到后生成失败/配额不足被回滚。这里不做盲目重发
+			 * （重发可能和刚到达的回填帧竞争，造成重复生成），而是按统一规则把内容还给用户：
+			 * 输入框为空就直接恢复，否则只给“恢复”入口。重试时沿用原 msgId，
+			 * 服务端已回滚的会正常处理，从未收到的也不会被去重误判。
+			 * </p>
+			 */
+			aiResolveOutbox: function () {
+				if (this._aiResolveTimer) {
+					clearTimeout(this._aiResolveTimer);
+					this._aiResolveTimer = null;
+				}
+				this._aiResolvePending = false;
+				if (!this._aiOutbox || !this._aiOutbox.length)
+					return;
+				var resolved = false;
+				for (var i = this._aiOutbox.length - 1; i >= 0; i--) {
+					var entry = this._aiOutbox[i];
+					if (entry.state !== 'unacked' && entry.state !== 'uncertain')
+						continue;
+					this.aiOutboxRemove(entry.msgId);
+					this.aiRestoreOrOffer(entry);
+					resolved = true;
+				}
+				if (resolved)
+					this.aiOutboxPersist();
+			},
+			/**
+			 * 用单条实时 message 帧对账 Outbox：服务端把用户消息写进历史后会推送
+			 * {@code message{role:"user"}}，收到它说明这次发送已经送达，直接消掉 Outbox 项。
+			 *
+			 * @param {Object} frame message 帧
+			 */
+			aiReconcileOutboxMessage: function (frame) {
+				if (!frame || !this._aiOutbox || !this._aiOutbox.length)
+					return;
+				var role = frame.role || (isUserMessage(frame, this.aiUserTitle) ? 'user' : '');
+				if (role !== 'user')
+					return;
+				var text = this.aiNormalizeDraftText(this.aiContentToText(frame.content));
+				for (var i = this._aiOutbox.length - 1; i >= 0; i--) {
+					var entry = this._aiOutbox[i];
+					if (entry.state !== 'unacked' && entry.state !== 'uncertain')
+						continue;
+					if (this.aiNormalizeDraftText(entry.text) !== text)
+						continue;
+					if (entry.timer)
+						clearTimeout(entry.timer);
+					this._aiOutbox.splice(i, 1);
+					this._aiRecentSends[entry.msgId] = {
+						text: entry.text,
+						draftText: entry.draftText,
+						extras: entry.extras,
+						time: Date.now(),
+					};
+				}
+				this.aiPruneRecentSends();
+				this.aiOutboxPersist();
+			},
+			/**
+			 * 用最新一页历史记录对账 Outbox：已经出现在历史里的用户消息视为已送达，
+			 * 避免重连后误把已送达的消息还给用户。
+			 *
+			 * @param {Array} items 标准化后的历史条目
+			 * @param {Object} meta  {prepend, hasMore}
+			 */
+			aiReconcileOutbox: function (items, meta) {
+				if (!items || !this._aiOutbox || !this._aiOutbox.length)
+					return;
+				if (meta && meta.prepend)
+					return;
+				var changed = false;
+				for (var i = this._aiOutbox.length - 1; i >= 0; i--) {
+					var entry = this._aiOutbox[i];
+					if (entry.state !== 'unacked' && entry.state !== 'uncertain')
+						continue;
+					var text = this.aiNormalizeDraftText(entry.text);
+					for (var j = items.length - 1; j >= 0; j--) {
+						var item = items[j];
+						if (!item || item.role !== 'user')
+							continue;
+						if (this.aiNormalizeDraftText(item.text) !== text)
+							continue;
+						if (entry.timer)
+							clearTimeout(entry.timer);
+						this._aiOutbox.splice(i, 1);
+						this._aiRecentSends[entry.msgId] = {
+							text: entry.text,
+							draftText: entry.draftText,
+							extras: entry.extras,
+							time: Date.now(),
+						};
+						changed = true;
+						break;
+					}
+				}
+				if (changed) {
+					this.aiPruneRecentSends();
+					this.aiOutboxPersist();
+				}
+			},
+			/** 对账用的文本归一化 */
+			aiNormalizeDraftText: function (text) {
+				return String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\s+$/, '');
 			},
 			/**
 			 * 构造带引用消息的用户文本。
@@ -424,13 +1096,17 @@
 					this.aiStopping = true;
 				return sent;
 			},
-			/** 撤回最后一轮对话 */
+			/** 撤回最后一轮对话（带请求标识，回填只回到发起标签页） */
 			aiSendRevert: function () {
-				return this.aiSendFrame('revert');
+				var requestId = newMessageId();
+				this._aiRequestId = requestId;
+				return this.aiSendFrame('revert', { requestId: requestId });
 			},
-			/** 重新生成最后一条回复 */
+			/** 重新生成最后一条回复（带请求标识，失败回填只回到发起标签页） */
 			aiSendRegen: function () {
-				return this.aiSendFrame('regen');
+				var requestId = newMessageId();
+				this._aiRequestId = requestId;
+				return this.aiSendFrame('regen', { requestId: requestId });
 			},
 			/** 为最后一条回复生成语音 */
 			aiSendGenVoice: function () {
@@ -946,7 +1622,13 @@
 					var wasDown = this.aiHideConnTip();
 					this.aiStartHeartbeat();
 					this._aiSetConnState('connected', null, 0);
+					// 先恢复上次未确认的发送，再让页面处理连接成功（页面可能立刻发送/读写草稿）
+					this.aiOutboxLoad();
 					this.aiOnSocketOpen();
+					if (this._aiOutbox.length) {
+						this._aiResolvePending = true;
+						this.aiScheduleOutboxResolve();
+					}
 					if (wasDown)
 						this.aiToast('已重新连接');
 				};
@@ -1138,11 +1820,16 @@
 					case 'batch_messages':
 						this.aiHandleBatch(frame);
 						return;
+					case 'sendResult':
+						// 服务端对某次发送的确认/拒收（只发给发起连接）
+						this.aiHandleSendResult(frame);
+						return;
 					case 'notice':
 						this.aiOnNotice(frame.content);
 						return;
 					case 'sendbox':
-						this.aiOnSendbox(frame.content);
+						// 回填请求：带 msgId/requestId，由公共层做条件恢复，不再无条件覆盖输入框
+						this.aiApplySendbox(frame);
 						return;
 					case 'model':
 						this.aiModel = frame.model || '';
@@ -1179,6 +1866,8 @@
 						this.aiOnToolCall(frame);
 						return;
 					case 'message':
+						// 服务端已把这条用户消息写进历史：消掉对应的 Outbox 项
+						this.aiReconcileOutboxMessage(frame);
 						this.aiOnMessage(frame);
 						return;
 					case 'content':
@@ -1308,13 +1997,30 @@
 			},
 			/** 页面重写：返回本地最旧的一条记录 id（无则返回 0） */
 			aiOldestMessageId: function () { return 0; },
-			/** 切换会话时复位分页状态 */
+			/** 切换会话时复位分页状态与未确认发送（Outbox 按会话隔离） */
 			aiResetHistory: function () {
 				this.isLoadingMore = false;
 				this.hasMoreHistory = false;
 				this.historyTopReached = false;
 				this.suppressAutoScroll = false;
 				this._aiAtHistoryTop = false;
+				// 先把当前会话的未确认发送写回旧键，再清空内存；新连接会按新会话的键恢复。
+				// 首次加载时还没从存储里恢复，不能在这里写空记录，否则会把上次未发送的内容抹掉。
+				if (this._aiOutboxLoaded || this._aiOutbox.length)
+					this.aiOutboxPersist();
+				if (this._aiResolveTimer) {
+					clearTimeout(this._aiResolveTimer);
+					this._aiResolveTimer = null;
+				}
+				this._aiResolvePending = false;
+				this._aiOutbox = [];
+				this._aiRecentSends = {};
+				this._aiOutboxLoaded = false;
+				this._aiOutboxKey = null;
+				this._aiDraftMsgId = null;
+				this._aiDraftText = null;
+				this._aiPendingRefill = null;
+				this.aiHideRefillChip();
 			},
 			/**
 			 * 处理一批历史记录：paging 状态在这里收敛，列表变更交给 aiOnBatch，
@@ -1328,6 +2034,9 @@
 				var prevTop = container ? container.scrollTop : 0;
 				this.hasMoreHistory = meta.hasMore;
 				this.isLoadingMore = false;
+				// 先用最新一页历史对账未确认的发送；结算留给定时器，给同一批 in-flight 的
+				// message 帧留出到达时间，避免把刚写入历史的消息又还给用户
+				this.aiReconcileOutbox(items, meta);
 				if (meta.prepend) {
 					this.suppressAutoScroll = true;
 					this.aiOnBatch(items, meta);

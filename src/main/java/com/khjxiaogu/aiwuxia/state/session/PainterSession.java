@@ -71,14 +71,19 @@ public class PainterSession extends WebSocketAISession {
 
 	static {
 		PAINTER_OPERATIONS.put("message", (jo, state, conn) -> {
-			state.addPendingUserMessage(jo.get("content").getAsString());
+			String msgId = optionalString(jo, "msgId");
+			// 重连/超时重放：同一条待生成输入只写一次
+			if (state.isAcceptedMessage(msgId)) {
+				state.acknowledgeMessage(conn, msgId, true, null);
+				return;
+			}
+			state.addPendingUserMessage(jo.get("content").getAsString(), msgId, conn);
 		});
 		PAINTER_OPERATIONS.put("generate", (jo, state, conn) -> {
 			if (state.lock.compareAndSet(false, true)) {
 				state.getCommandExec().submit(() -> {
 					try {
 						state.getAiapp().handleSpeech(state, MessageContents.EMPTY);
-						state.refillChatBox(MessageContents.EMPTY);
 					} finally {
 						state.lock.set(false);
 					}
@@ -105,12 +110,13 @@ public class PainterSession extends WebSocketAISession {
 			state.setModel(jo.has("model") && !jo.get("model").isJsonNull() ? jo.get("model").getAsString() : "");
 		});
 		PAINTER_OPERATIONS.put("revert", (jo, state, conn) -> {
-			// 撤回最后一轮：与对话前端共用父类实现，动作在会话命令线程中执行
-			state.requestRevert();
+			// 撤回最后一轮：与对话前端共用父类实现，动作在会话命令线程中执行；
+			// 回填只发回发起请求的连接，避免多标签页互相覆盖输入框
+			state.requestRevert(optionalString(jo, "requestId"), conn);
 		});
 		PAINTER_OPERATIONS.put("regen", (jo, state, conn) -> {
 			// 重新生成最后一条回复
-			state.requestRegen();
+			state.requestRegen(optionalString(jo, "requestId"), conn);
 		});
 	}
 
@@ -230,12 +236,22 @@ public class PainterSession extends WebSocketAISession {
 	}
 
 	/**
+	 * 记录一条待生成的用户文本输入，并在写入成功后向发起连接回送确认帧。
+	 *
+	 * @param content 用户输入的文本
+	 * @param msgId   客户端消息标识
+	 * @param conn    发起连接
+	 */
+	public void addPendingUserMessage(String content, String msgId, Channel conn) {
+		addPendingUserMessage(new MutableMessageContents(content), msgId, conn);
+	}
+
+	/**
 	 * 记录一条待生成的用户输入（文本、图片等）。
 	 * <p>
 	 * 绘画前端的输入分两步：先落成“待生成”的用户条目，再由 {@code generate} 触发本轮生成。
 	 * 输入可能来自 WebSocket 线程（文本帧），也可能来自 HTTP 线程（图片上传），
-	 * 两者都可能在生成进行中到达，因此统一交给
-	 * {@link #submitHistoryWrite(Runnable, String)} 排到会话命令线程上写入：
+	 * 两者都可能在生成进行中到达，因此统一排到会话命令线程上写入：
 	 * 这样输入按到达顺序排在正在进行的这一轮之后，成为下一轮的待生成输入；
 	 * 若当前没有正在生成的轮次，则与已有输入合并成本轮输入。
 	 * </p>
@@ -256,17 +272,52 @@ public class PainterSession extends WebSocketAISession {
 	 * @param content 用户输入内容，多段内容会写进同一条用户记录
 	 */
 	public void addPendingUserMessage(MessageContents content) {
-		submitHistoryWrite(() -> {
-			try (HistoryWriteContext write = continueWrite(Role.USER)) {
-				for (MessageContent part : content) {
-					// 纯文本按行写入（与对话前端一致，带换行），图片等其它内容按块写入
-					if (part.isPlainText())
-						write.appendLine(part.toText(), true);
-					else
-						write.append(part, true);
+		addPendingUserMessage(content, null, null);
+	}
+
+	/**
+	 * 记录一条待生成的用户输入，并在写入成功后向发起连接回送确认帧。
+	 * <p>
+	 * 绘画页的“发送”只把文本落成待生成条目，不立即触发生成；因此确认帧必须等历史写入
+	 * 真正完成后再发，否则前端会把“写失败”也当成发送成功。写入失败时撤销 msgId 的
+	 * “已接受”标记，让客户端可以用同一个 msgId 重试。
+	 * </p>
+	 *
+	 * @param content 用户输入内容
+	 * @param msgId   客户端消息标识，可为 null（图片上传等非 WebSocket 来源）
+	 * @param conn    发起连接，可为 null
+	 */
+	public void addPendingUserMessage(MessageContents content, String msgId, Channel conn) {
+		if (msgId != null) {
+			markAcceptedMessage(msgId);
+		}
+		try {
+			getCommandExec().submit(() -> {
+				try {
+					try (HistoryWriteContext write = continueWrite(Role.USER)) {
+						for (MessageContent part : content) {
+							// 纯文本按行写入（与对话前端一致，带换行），图片等其它内容按块写入
+							if (part.isPlainText())
+								write.appendLine(part.toText(), true);
+							else
+								write.append(part, true);
+						}
+					}
+					flush();
+					acknowledgeMessage(conn, msgId, true, null);
+				} catch (Throwable t) {
+					parent.getLogger().printStackTrace(t);
+					// 先明确拒收，再把原文还给用户；两步都带同一个 msgId，前端能对上自己的发送
+					acknowledgeMessage(conn, msgId, false, "save_failed");
+					refillChatBoxFor(content, msgId, conn);
+					sendNotice("消息保存失败，请重试");
 				}
-			}
-		}, "消息保存失败，请重试");
+			});
+		} catch (Throwable t) {
+			unmarkAcceptedMessage(msgId);
+			acknowledgeMessage(conn, msgId, false, "rejected");
+			parent.getLogger().printStackTrace(t);
+		}
 	}
 
     /**

@@ -340,9 +340,7 @@
 						}
 					},
 					/* ---- 公共协议层：帧钩子 ---- */
-					aiOnSendbox(text){
-						this.newMessage=text;
-					},
+					// 输入框回填由公共层 aiApplySendbox 做条件恢复（草稿为空才覆盖），页面不再直接赋值
 					aiOnInput(input,promptText){
 						// 统一对话框替代 prompt：取消返回 null（与 prompt 语义一致）
 						this.aiPrompt({
@@ -537,13 +535,14 @@
 							this.aiRequestHistory();
 					 },
 					 sendUserMessage(content){
-						if(!this.aiIsAnyImageLoading()&&!this.aiGenerating){
-							if(this.newMessage!=''&&this.aiIsOpen()){
-								this.aiSendMessage(this.newMessage);
-								this.aiGenerating=true;
-								//this.newMessage='';
-							}
+						if(this.aiIsAnyImageLoading()||this.aiGenerating) return;
+						if(this.newMessage=='') return;
+						// 发送成功（已交给 WebSocket）后由公共层清空输入框；未连接时不清空，提示用户
+						if(!this.aiSendMessage(this.newMessage)){
+							this.aiToast('连接已断开，消息未发送', {kind:'error'});
+							return;
 						}
+						this.aiGenerating=true;
 	 				 },
 		             openHistory() {
 		                 this.showHistory = true;

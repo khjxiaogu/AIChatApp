@@ -398,3 +398,72 @@ html.day-mode .ai-dialog-btn.is-ok.is-danger {
         min-width: 0;
     }
 }
+
+/* ---------- 未发送内容恢复提示条 ---------- */
+.ai-refill-chip {
+    position: fixed;
+    right: 16px;
+    bottom: 92px;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: calc(100vw - 32px);
+    padding: 8px 10px 8px 14px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: #fde68a;
+    background: rgba(51, 32, 6, 0.94);
+    border: 1px solid #a16207;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.ai-refill-chip button {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid #d97706;
+    background: #d97706;
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.ai-refill-chip button:hover {
+    background: #b45309;
+    border-color: #b45309;
+}
+
+.ai-refill-chip .ai-refill-chip-close {
+    padding: 0 4px;
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 1rem;
+    line-height: 1;
+    opacity: 0.7;
+}
+
+.ai-refill-chip .ai-refill-chip-close:hover {
+    background: transparent;
+    opacity: 1;
+}
+
+html.day-mode .ai-refill-chip {
+    color: #7c2d12;
+    background: #fffbeb;
+    border-color: #fbbf24;
+    box-shadow: 0 6px 20px rgba(120, 53, 15, 0.16);
+}
+
+@media (max-width: 480px) {
+    .ai-refill-chip {
+        right: 10px;
+        bottom: 84px;
+    }
+}

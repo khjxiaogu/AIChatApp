@@ -25,6 +25,7 @@ package com.khjxiaogu.aiwuxia.state.session;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -102,6 +103,52 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	ApplicationAttributes attributes;
 
 	/**
+	 * 已接受、尚未被回滚的用户消息 id（有界 LRU）。
+	 * <p>
+	 * 浏览器重连或超时后会带同一个 {@code msgId} 重放同一条消息，这里据此做幂等去重：
+	 * 命中时只补发一次确认帧，不再重复生成。回填（生成失败/配额不足/撤回）时会把对应 id
+	 * 移除，允许用户重试。该状态只存在于会话内存中，不参与历史记录。
+	 * </p>
+	 */
+	private final Map<String,Boolean> acceptedMessageIds = Collections.synchronizedMap(
+			new LinkedHashMap<String,Boolean>(16,0.75f,true) {
+				private static final long serialVersionUID = 1L;
+				@Override
+				protected boolean removeEldestEntry(Map.Entry<String,Boolean> eldest) {
+					return size()>256;
+				}
+			});
+	/** 当前 WebSocket 帧所属连接：帧处理器（如 revert）据此把回填定向回发起方 */
+	private final ThreadLocal<Channel> frameChannel = new ThreadLocal<>();
+	/** 当前命令任务正在处理的发送上下文，供 {@link #refillChatBox(MessageContents)} 取用 */
+	private final ThreadLocal<SendContext> currentSend = new ThreadLocal<>();
+	/**
+	 * 连接全部断开期间产生的回填请求，等下一次建立连接后补发。
+	 * <p>
+	 * 同一会话可能同时有多个标签页；目标标签页断开后，先重连的可能是另一个标签页。
+	 * 因此这里不“取一次就删”，而是最多发给接下来的几个新连接（前端按 msgId/requestId 去重），
+	 * 保证真正的发起方只要回来就能收到，同时用有效期兜底避免无限保留。
+	 * </p>
+	 */
+	private String pendingRefillFrame;
+	private long pendingRefillExpireAt;
+	private int pendingRefillRemaining;
+
+	/**
+	 * 一次用户发送的上下文：消息标识、发起连接、客户端请求标识。
+	 */
+	private static final class SendContext {
+		final String msgId;
+		final Channel channel;
+		final String requestId;
+		SendContext(String msgId,Channel channel,String requestId){
+			this.msgId=msgId;
+			this.channel=channel;
+			this.requestId=requestId;
+		}
+	}
+
+	/**
 	 * 工具调用许可管理器：同一会话的许可请求串行询问，等待方阻塞至用户答复或超时。
 	 * <p>
 	 * 许可请求必须经前端确认，因此只存在于有下行通道的 WebSocket 会话里：
@@ -152,6 +199,36 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("models", buildModelList())
 				.add("modelTree", buildModelTree())
 				.add("model", getModelHint()).end().toString()));
+		// 上次回填时连接已经断开：等这条新连接建立后再补发，避免失败的用户输入永久丢失
+		flushPendingRefill(conn);
+	}
+
+	/**
+	 * 把断线期间暂存的回填请求补发给刚建立的连接。
+	 * <p>
+	 * 不一次用掉：先重连的可能是另一个标签页，因此最多发给接下来的几个新连接，
+	 * 由前端按 msgId/requestId 去重；超过有效期或次数后自动丢弃。
+	 * </p>
+	 *
+	 * @param conn 新建立的连接
+	 */
+	protected void flushPendingRefill(Channel conn) {
+		String frame;
+		synchronized(this) {
+			if(pendingRefillFrame==null)
+				return;
+			if(System.currentTimeMillis()>pendingRefillExpireAt||pendingRefillRemaining<=0) {
+				pendingRefillFrame=null;
+				return;
+			}
+			frame=pendingRefillFrame;
+			// 多标签页场景：先重连的可能是别的标签页，留给接下来几个连接，前端会按 id 去重
+			pendingRefillRemaining--;
+			if(pendingRefillRemaining<=0)
+				pendingRefillFrame=null;
+		}
+		if(frame!=null&&conn!=null)
+			conn.writeAndFlush(new TextWebSocketFrame(frame));
 	}
 
 	/**
@@ -440,8 +517,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 			state.sendFrame(JsonBuilder.object().add("type", "voice").add("isVoiceEnabled",state.getExtraData().isAudioSession).end().toString());
 			state.flush();
 		});
-		frameHandlers.put("revert", (jo,state)->state.requestRevert());
-		frameHandlers.put("regen", (jo,state)->state.requestRegen());
+		frameHandlers.put("revert", (jo,state)->state.requestRevert(optionalString(jo,"requestId")));
+		frameHandlers.put("regen", (jo,state)->state.requestRegen(optionalString(jo,"requestId")));
 		frameHandlers.put("stop", (jo,state)->{
 			// 用户主动停止生成：中断当前输出。正文流会立即结束，已经生成的内容照常写入历史；
 			// 模型已下发的工具调用会以“用户已停止生成。”的结果补进历史。
@@ -512,9 +589,34 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 * </p>
 	 */
 	public void requestRevert() {
+		requestRevert(null);
+	}
+
+	/**
+	 * 请求撤回，并把回填定向回发起请求的标签页。
+	 *
+	 * @param requestId 客户端请求标识，会原样回显在回填帧里
+	 */
+	public void requestRevert(String requestId) {
+		requestRevert(requestId,frameChannel.get());
+	}
+
+	/**
+	 * 请求撤回，回调填只发给指定的连接。
+	 *
+	 * @param requestId 客户端请求标识
+	 * @param target    发起请求的连接
+	 */
+	public void requestRevert(String requestId,Channel target) {
 		getCommandExec().submit(()->{
-			if(!revertPendingUserInput()) {
-				getAiapp().doRevert(this);
+			SendContext previous=currentSend.get();
+			currentSend.set(new SendContext(null,target,requestId));
+			try {
+				if(!revertPendingUserInput()) {
+					getAiapp().doRevert(this);
+				}
+			}finally {
+				currentSend.set(previous);
 			}
 		});
 	}
@@ -557,7 +659,34 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 * </p>
 	 */
 	public void requestRegen() {
-		getCommandExec().submit(()->getAiapp().doRegen(this));
+		requestRegen(null);
+	}
+
+	/**
+	 * 请求重新生成，并把失败回填定向回发起请求的标签页。
+	 *
+	 * @param requestId 客户端请求标识，会原样回显在回填帧里
+	 */
+	public void requestRegen(String requestId) {
+		requestRegen(requestId,frameChannel.get());
+	}
+
+	/**
+	 * 请求重新生成最后一条回复。
+	 *
+	 * @param requestId 客户端请求标识
+	 * @param target    发起请求的连接
+	 */
+	public void requestRegen(String requestId,Channel target) {
+		getCommandExec().submit(()->{
+			SendContext previous=currentSend.get();
+			currentSend.set(new SendContext(null,target,requestId));
+			try {
+				getAiapp().doRegen(this);
+			}finally {
+				currentSend.set(previous);
+			}
+		});
 	}
 
 	public boolean onModifyAttempt() {
@@ -577,21 +706,104 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		if(!jo.has("type")||jo.get("type").isJsonNull())
 			return;
 		String frameType=jo.get("type").getAsString();
-		if("message".equals(frameType)) {
-			handleUserSpeech(conn, jo);
-			return;
+		// 记录本帧所属连接：帧处理器里的回填（如 revert）据此只发回发起标签页
+		frameChannel.set(conn);
+		try {
+			if("message".equals(frameType)) {
+				handleUserSpeech(conn, jo);
+				return;
+			}
+			if("requestBackLog".equals(frameType)) {
+				requireMoreMessages(jo);
+				return;
+			}
+			BiConsumer<JsonObject, WebSocketAISession> handler=frameHandlers.get(frameType);
+			if(handler!=null)
+				handler.accept(jo, this);
+		}finally {
+			frameChannel.remove();
 		}
-		if("requestBackLog".equals(frameType)) {
-			requireMoreMessages(jo);
-			return;
-		}
-		BiConsumer<JsonObject, WebSocketAISession> handler=frameHandlers.get(frameType);
-		if(handler!=null)
-			handler.accept(jo, this);
 	}
 
 	/**
-	 * 处理用户发言（{@code {type:"message",content:"..."}}）。
+	 * 读取上行帧里的字符串字段，空串按未提供处理。
+	 *
+	 * @param jo  上行帧
+	 * @param key 字段名
+	 * @return 非空字符串，未提供时返回 {@code null}
+	 */
+	protected static String optionalString(JsonObject jo,String key) {
+		if(jo==null||!jo.has(key)||jo.get(key).isJsonNull())
+			return null;
+		String value=jo.get(key).getAsString();
+		return value==null||value.isEmpty()?null:value;
+	}
+
+	/**
+	 * 判断一条用户消息是否已经被本会话接受且尚未回滚。
+	 *
+	 * @param msgId 客户端消息标识
+	 * @return 已接受时返回 true
+	 */
+	protected boolean isAcceptedMessage(String msgId) {
+		return msgId!=null&&acceptedMessageIds.containsKey(msgId);
+	}
+
+	/**
+	 * 记住一条已接受的用户消息，用于重连/重试时幂等去重。
+	 *
+	 * @param msgId 客户端消息标识
+	 */
+	protected void markAcceptedMessage(String msgId) {
+		if(msgId!=null)
+			acceptedMessageIds.put(msgId,Boolean.TRUE);
+	}
+
+	/**
+	 * 回滚一条消息的“已接受”标记：回填之后允许客户端用同一个 msgId 重试。
+	 *
+	 * @param msgId 客户端消息标识
+	 */
+	protected void unmarkAcceptedMessage(String msgId) {
+		if(msgId!=null)
+			acceptedMessageIds.remove(msgId);
+	}
+
+	/**
+	 * 向指定的发起连接回送发送结果帧。
+	 * <p>
+	 * 只回给发起连接，不回广播：每条连接（每个标签页）各自维护自己的草稿和发送事务。
+	 * </p>
+	 *
+	 * @param channel 发起连接
+	 * @param msgId   客户端消息标识
+	 * @param ok      是否已接受
+	 * @param reason  拒收原因，可为 null
+	 */
+	protected void acknowledgeMessage(Channel channel,String msgId,boolean ok,String reason) {
+		if(channel==null||msgId==null||msgId.isEmpty()||!channel.isActive())
+			return;
+		channel.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object()
+				.add("type", "sendResult")
+				.add("msgId", msgId)
+				.add("ok", ok)
+				.add("reason", reason==null?"":reason)
+				.end().toString()));
+	}
+
+	/**
+	 * 处理用户发言（{@code {type:"message",content:"...",msgId:"..."}}）。
+	 * <p>
+	 * 协议语义：
+	 * </p>
+	 * <ul>
+	 *   <li>带 {@code msgId} 的新前端：先回 {@code sendResult{ok:true}} 作为“已接受”确认，
+	 *       不再下发清空帧；清空由前端发送动作自己完成，失败时再通过 {@code sendbox action=refill}
+	 *       有条件回填。</li>
+	 *   <li>不带 {@code msgId} 的旧页面：保留旧的 {@code sendbox{content:""}} 清空行为，避免旧标签页
+	 *       发送后输入框不消失。</li>
+	 *   <li>会话锁被占用：带 msgId 时回 {@code ok:false, reason:"busy"}，让前端保留自己的草稿。</li>
+	 * </ul>
 	 * <p>
 	 * 同一时刻只允许一轮生成：会话锁被占用时提示用户稍后再试。
 	 * </p>
@@ -601,27 +813,59 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 */
 	protected void handleUserSpeech(Channel conn, JsonObject jo) {
 		String speech=jo.has("content")&&!jo.get("content").isJsonNull()?jo.get("content").getAsString():null;
-		if(speech==null)
+		String msgId=optionalString(jo,"msgId");
+		if(speech==null) {
+			acknowledgeMessage(conn,msgId,false,"invalid");
 			return;
+		}
+		// 重连/超时重放：同一条消息只接受一次
+		if(isAcceptedMessage(msgId)) {
+			acknowledgeMessage(conn,msgId,true,null);
+			return;
+		}
 		if(lock.compareAndSet(false, true)) {
-			refillChatBox(MessageContents.EMPTY);
-			getCommandExec().submit(()->{
-				try {
-					getAiapp().handleSpeech(this,new MutableMessageContents(speech));
-					boolean hasAudioService=isVoiceUsable();
-					if(hasAudioService&&!super.isAudioSession()) {
-						if(isLocalAudioEnabled!=hasAudioService) {
-							isLocalAudioEnabled=hasAudioService;
-							conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("type", "voice").add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
+			if(msgId!=null) {
+				markAcceptedMessage(msgId);
+				acknowledgeMessage(conn,msgId,true,null);
+			}else {
+				// 兼容未升级的旧页面：它们仍依赖这帧清空输入框（新前端会忽略空内容）。
+				// 直接回给发起连接，不经过 refillChatBox，避免把这条临时清空帧存成待补发回填。
+				conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object()
+						.add("type", "sendbox")
+						.add("content", "")
+						.end().toString()));
+			}
+			try {
+				SendContext context=new SendContext(msgId,conn,null);
+				getCommandExec().submit(()->{
+					SendContext previous=currentSend.get();
+					currentSend.set(context);
+					try {
+						getAiapp().handleSpeech(this,new MutableMessageContents(speech));
+						boolean hasAudioService=isVoiceUsable();
+						if(hasAudioService&&!super.isAudioSession()) {
+							if(isLocalAudioEnabled!=hasAudioService) {
+								isLocalAudioEnabled=hasAudioService;
+								conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("type", "voice").add("isVoiceUsable",isLocalAudioEnabled).end().toString()));
+							}
 						}
+					}finally{
+						lock.set(false);
+						currentSend.set(previous);
 					}
-				}finally{
-					lock.set(false);
-				}
-			});
-			
+				});
+			}catch(Throwable t) {
+				// 命令队列拒绝：撤销“已接受”，让前端保留/恢复草稿
+				lock.set(false);
+				unmarkAcceptedMessage(msgId);
+				acknowledgeMessage(conn,msgId,false,"rejected");
+				parent.getLogger().printStackTrace(t);
+			}
 		}else {
-			sendNotice("操作太快啦，请稍后再试");
+			acknowledgeMessage(conn,msgId,false,"busy");
+			// 新前端会按 reason=busy 自己提示；旧页面没有 sendResult，仍用 notice
+			if(msgId==null)
+				sendNotice("操作太快啦，请稍后再试");
 		}
 	}
 
@@ -891,9 +1135,80 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 			return parent.hasAnyTokenRemaining(user);
 		return true;
 	}
+	/**
+	 * 请求把文本放回前端输入框。
+	 * <p>
+	 * 与旧实现的区别：
+	 * </p>
+	 * <ul>
+	 *   <li>不再表示“清空”，而是 {@code action:"refill"}；清空只由前端发送动作负责；</li>
+	 *   <li>带上当前发送的 {@code msgId}（或 revert/regen 的 {@code requestId}），
+	 *       前端据此只让发起标签页处理，并做“草稿为空才覆盖”的条件回填；</li>
+	 *   <li>生成失败/配额不足等回填会把 {@code msgId} 从“已接受”集合移除，允许用户重试；</li>
+	 *   <li>有明确发起连接时只发给该连接，避免多标签页互相污染；发起连接已断开时广播给
+	 *       当前活跃连接，并暂存一份等下一次建连补发（前端按 id 去重）。</li>
+	 * </ul>
+	 *
+	 * @param text 要回填的文本
+	 */
 	@Override
 	public void refillChatBox(MessageContents text) {
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object().add("type", "sendbox").add("content",text.toText()).end().toString()));
+		SendContext context=currentSend.get();
+		String msgId=context==null?null:context.msgId;
+		String requestId=context==null?null:context.requestId;
+		Channel target=context==null?null:context.channel;
+		if(msgId!=null)
+			unmarkAcceptedMessage(msgId);
+		String frame=JsonBuilder.object()
+				.add("type", "sendbox")
+				.add("action", "refill")
+				.add("content", text==null?"":text.toText())
+				.add("msgId", msgId==null?"":msgId)
+				.add("requestId", requestId==null?"":requestId)
+				.end().toString();
+		// 发起连接还在：只回给发起标签页，避免多标签页互相覆盖
+		if(target!=null&&target.isActive()) {
+			target.writeAndFlush(new TextWebSocketFrame(frame));
+			return;
+		}
+		// 发起连接已经断开（或无法确定）：广播给当前仍活跃的连接，让重连后的同一标签页
+		// 按 msgId/requestId 认领；同时留一份到下一次建连，避免先重连的是别的标签页时把它“吃掉”。
+		// 不能只写到旧的 conn 组里，否则重连后这条回填永远到不了。
+		rememberPendingRefill(frame);
+		for(Channel channel:conn) {
+			if(channel.isActive())
+				channel.writeAndFlush(new TextWebSocketFrame(frame));
+		}
+	}
+
+	/**
+	 * 以指定的发送上下文回填输入框（用于在命令任务之外知道 msgId/连接的场景，例如绘画页写入失败）。
+	 *
+	 * @param text    要回填的文本
+	 * @param msgId   客户端消息标识
+	 * @param channel 发起连接
+	 */
+	protected void refillChatBoxFor(MessageContents text,String msgId,Channel channel) {
+		SendContext previous=currentSend.get();
+		currentSend.set(new SendContext(msgId,channel,null));
+		try {
+			refillChatBox(text);
+		}finally {
+			currentSend.set(previous);
+		}
+	}
+
+	/**
+	 * 暂存断线期间的回填帧，等下一次建立连接后补发。
+	 *
+	 * @param frame 已序列化的回填帧
+	 */
+	protected void rememberPendingRefill(String frame) {
+		synchronized(this) {
+			pendingRefillFrame=frame;
+			pendingRefillExpireAt=System.currentTimeMillis()+10*60*1000L;
+			pendingRefillRemaining=3;
+		}
 	}
 
 	/**

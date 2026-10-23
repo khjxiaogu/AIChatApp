@@ -986,10 +986,7 @@ var main=new Vue({
             // 断线期间不要再显示"思考中"
             if (state !== 'connected') this.aiGenerating = false;
         },
-        // 状态帧：生成状态
-        aiOnSendbox(text) {
-            this.inputText = text || '';
-        },
+        // 输入框回填由公共层 aiApplySendbox 做条件恢复（草稿为空才覆盖），页面不再直接赋值
         aiOnLocalRequest(frame) {
             this.handleLocalRequest(frame);
         },
@@ -1263,7 +1260,18 @@ var main=new Vue({
         cancelQuote() {
             this.quoteMessage = null;
         },
+        // 发送事务的附件快照：引用消息随发送一起暂存，失败时可恢复
+        aiDraftExtras() {
+            return this.quoteMessage ? { quote: this.quoteMessage } : null;
+        },
+        aiClearDraftExtras() {
+            this.quoteMessage = null;
+        },
+        aiRestoreDraftExtras(extras) {
+            if (extras && extras.quote) this.quoteMessage = extras.quote;
+        },
         // 发送文本消息（通过websocket）— 只添加到历史，不触发生成
+        // 发送成功后由公共层清空输入框并暂存到 Outbox；失败/断线时按条件恢复，不再本地无条件清空
         sendTextMessage() {
             if (this.aiGenerationBusy) return;
             const text = this.inputText.trim();
@@ -1274,12 +1282,9 @@ var main=new Vue({
             // 引用正文与用户输入一起作为本轮用户消息发送给模型，格式由公共协议层统一生成
             const content = this.aiBuildQuotedMessage(this.quoteMessage, body);
             if (!this.aiSendMessage(content)) {
-                console.warn("WebSocket未就绪, 重新连接");
-                this.aiConnect();
-                setTimeout(() => this.aiSendMessage(content), 500);
+                this.aiToast('连接已断开，消息未发送', { kind: 'error' });
+                return;
             }
-            this.inputText = '';
-            this.quoteMessage = null;
             this.scrollToBottom();
         },
         // 触发AI生成
