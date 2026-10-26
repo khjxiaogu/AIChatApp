@@ -883,11 +883,18 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 * </p>
 	 */
 	protected void requestToolCallApproval(ToolApprovalRequest request) {
+		// displayArguments 是参数名已换成可读名称的文本；前端可直接展示它，
+		// arguments 保留原始 JSON 以兼容旧前端
+		String displayArguments = request.getDisplayArguments();
+		if (displayArguments == null || displayArguments.trim().isEmpty()) {
+			displayArguments = request.getArguments();
+		}
 		sendFrame(JsonBuilder.object()
 				.add("type", "toolApproval")
 				.add("id", request.getId())
 				.add("tool", request.getToolName())
 				.add("arguments", request.getArguments())
+				.add("displayArguments", displayArguments == null ? "" : displayArguments)
 				.add("reason", request.getReason())
 				.add("timeout", getToolApprovalManager().getTimeoutMillis())
 				.end().toString());

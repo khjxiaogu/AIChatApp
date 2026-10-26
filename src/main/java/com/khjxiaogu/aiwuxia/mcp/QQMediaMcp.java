@@ -33,8 +33,8 @@ public class QQMediaMcp {
 		return new ToolData.Builder("send_image", "发送聊天图片")
 				.sessionOnly()
 				.orderSensitive()
-				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身")
-				.putParam("is_nsfw", "是否不宜内容（NSFW），不宜内容会标记为不宜内容，值范围是true/false字符串。")
+				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身", "图片ID")
+				.putParam("is_nsfw", "是否不宜内容（NSFW），不宜内容会标记为不宜内容，值范围是true/false字符串。", "是否不宜内容")
 				.presenter(ToolCallPresenter.ofBrief(call -> "发送图片"))
 				.tool((data, output, manager) -> {
 					try {
@@ -75,7 +75,7 @@ public class QQMediaMcp {
 		return new ToolData.Builder("send_emoji_image", "发送表情包图片")
 				.sessionOnly()
 				.orderSensitive()
-				.putParam("emoji_id", "表情id")
+				.putParam("emoji_id", "表情id", "表情ID")
 				.presenter(ToolCallPresenter.ofArgument("发送表情包", "emoji_id"))
 				.tool((data, output, manager) -> {
 					try {

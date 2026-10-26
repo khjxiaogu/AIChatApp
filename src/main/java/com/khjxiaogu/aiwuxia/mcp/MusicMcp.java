@@ -52,7 +52,7 @@ public class MusicMcp implements ToolProvider {
 					return files.toString();
 				}).build());
 		tools.add(new ToolData.Builder("send_music", "发送歌曲文件")
-				.putParam("file_name", "要发送的文件名，包含扩展名")
+				.putParam("file_name", "要发送的文件名，包含扩展名", "文件名")
 				.orderSensitive()
 				.tool((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
@@ -73,7 +73,7 @@ public class MusicMcp implements ToolProvider {
 			String regex = "[\\\\/:*?\"<>|\\x00-\\x1F]";
 
 			tools.add(new ToolData.Builder("download_music", "从音乐平台搜索歌曲列表，可用于歌唱。")
-					.putParam("keyword", "歌曲搜索关键词，需要包含歌名，歌手等信息。")
+					.putParam("keyword", "歌曲搜索关键词，需要包含歌名，歌手等信息。", "歌曲关键词")
 					.tool((data) -> {
 
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
@@ -132,7 +132,7 @@ public class MusicMcp implements ToolProvider {
 
 					}).build());
 			tools.add(new ToolData.Builder("sing_music", "从音乐平台下载歌曲，并生成当前角色歌唱版本，放入到歌曲列表。")
-					.putParam("music_id", "歌曲id")
+					.putParam("music_id", "歌曲id", "歌曲ID")
 					.async()
 					.tool((data, output, manager) -> {
 
@@ -194,7 +194,7 @@ public class MusicMcp implements ToolProvider {
 						}
 					}).build());
 			tools.add(new ToolData.Builder("send_net_music", "直接发送音乐平台歌曲。")
-					.putParam("music_id", "歌曲id")
+					.putParam("music_id", "歌曲id", "歌曲ID")
 					.orderSensitive()
 					.tool((data, output, manager) -> {
 						try {

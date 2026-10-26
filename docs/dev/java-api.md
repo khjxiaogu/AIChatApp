@@ -358,7 +358,8 @@ QQ 群侧（`NapCatAIConnector`）会给会话挂工具（`SDXLMcp`、`QQMcp`、
 
 ```java
 ToolData t = new ToolData.Builder("get_weather", "查询城市天气")
-        .putParam("city", "城市名")          // 参数名 → 说明（写进给模型的工具描述）
+        // 参数名 → 说明（写进给模型的工具描述）→ 人可读名称（工具审核等界面显示，可省略）
+        .putParam("city", "城市名", "城市")
         .toolText((paramsJson, output, manager) -> "晴，26℃")  // 直接返回文本
         .build();
 state.registerTool(t);                       // 挂到会话，随后 AIRequest.builder(state) 自动带上
@@ -378,7 +379,9 @@ state.registerTool(t);                       // 挂到会话，随后 AIRequest.
 - 工具产生的用量写入 `output.addUsage(...)`（会话通过 `output.addUsageListener(state::addUsage)` 统一记账）；
   只使用参数的简单工具仍可写单参数 lambda，`ToolData.Builder` 会自动适配；
 - 需要会话级行为时使用传入的 `manager`（例如读取本次生成的上下文、下发图片），不要持有 `AISession`；
-- 审批流由 `ToolApprovalManager` / `ToolCallApprover` 控制；生产环境建议挂审批，见 `ManagedToolCallApprover`；
+- 审批流由 `ToolApprovalManager` / `ToolCallApprover` 控制；生产环境建议挂审批，见 `ManagedToolCallApprover`。
+  审批界面默认展示的是一段人可读参数文本（`ToolApprovalRequest#getDisplayArguments()`）：
+  `putParam` 的第三个参数就是该文本里的参数名，省略时回退为参数名本身；
 - 内置联网工具：`FetchMcp` 提供 `web_view` / `moegirl_search`；`DeepseekSearchMcp` 提供 `web_search`
   （DeepSeek 官方 Search API，需要 `-Ddeepseektoken`，未配置时不注册，见 README「网页搜索」一节）。
   **按次计费**的外部接口要等确认成功后再记账：搜索每次成功请求折算 2500 等效 token（0.005 元），

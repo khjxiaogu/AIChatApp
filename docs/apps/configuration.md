@@ -163,11 +163,11 @@ DELETE FROM permission WHERE uid='12345' AND app='mywuxia';
 ```
 save/config/
 ├─ object-storage.json      火山 TOS 对象存储凭据（有则绘画图片转存对象存储，否则只存本地）
-├─ image-generation.json    图片/视频生成（Seedream）凭据
+├─ image-generation.json    图片（Seedream）/视频（Seedance 2.5）生成凭据
 ├─ voice-tags.txt           语音情感切分提示词（决定"这句用什么情绪读"）
 ├─ local-voice.json         本地语音音色映射 {角色名: botid}
 ├─ volcano-voice.json       火山语音音色映射 {角色名: voice_type}
-├─ agents.json              QQ 群机器人清单（接群时用）
+├─ agents.json              QQ 群机器人清单（含 tools / adminId，接群时用）
 ├─ crontab.json             定时任务
 └─ sdxl/
    ├─ character-tags.txt    角色 tag 库（一行一个，生成绘图提示词时按关键词检索）
@@ -177,6 +177,60 @@ save/config/
 ```
 
 逐字段说明见 [save/config/README.md](../../save/config/README.md)。
+
+### 5.1 Seedance 2.5 视频
+
+QQ 群 agent 的 `tools` 含 `seedvideo` 时注册 `jimeng_video` 工具，后端使用**火山方舟 Seedance 2.5**。
+`save/config/image-generation.json` 除图片的 `accessKey` / `secretKey` 外，还需要视频的 `apiKey`：
+
+```json
+{
+  "accessKey": "...",
+  "secretKey": "...",
+  "apiKey": "火山方舟 API Key",
+  "videoModel": "doubao-seedance-2-5-260628",
+  "videoDuration": 10,
+  "videoResolution": "720p",
+  "videoRatio": "9:16",
+  "videoGenerateAudio": true
+}
+```
+
+`videoDuration` 支持 4-15 秒，默认 10 秒（超过 15 秒按 15 秒处理）；`videoRatio` 默认 `9:16`；
+`videoResolution` 支持 480p/720p/1080p。`jimeng_video` 工具还支持 `duration` 参数（4-15 的整数），
+会覆盖配置默认值，并同时写进脚本要求、提交给视频接口。未配置 `apiKey` 时只有视频工具失败，
+图片工具不受影响。
+
+视频计费按 `视频token = 输出宽 × 输出高 × 输出帧率 × 输出时长 / 1024` 估算，价格
+**70 元/百万视频 token**；本站配额按 2 元/百万等效 token 折算，所以配额扣减 token = 视频 token × 35。
+输出尺寸默认由 `videoResolution` + `videoRatio` 推导，帧率默认 24，可用 `videoWidth` /
+`videoHeight` / `videoFps` 校准。
+
+### 5.2 工具调用审核
+
+在 `save/config/agents.json` 里给机器人配置 `adminId`，并把需要审核的工具写成对象：
+
+```json
+{
+  "botId": 123456,
+  "groupId": 789012,
+  "name": "fengxiirc",
+  "save": "savegroup4-fengxiirc.json",
+  "adminId": 10001,
+  "tools": [
+    "fetch",
+    {"name": "seedvideo", "approval": true}
+  ],
+  "approvalTimeoutMs": 120000
+}
+```
+
+工具执行前会把群号、机器人名、最近发言者、工具名、原因与参数私聊给管理员；管理员回复
+`允许`/`同意`/`1`/`ok` 放行，回复 `拒绝`/`不同意`/`2`/`no` 拒绝，超时按拒绝处理。
+旧的字符串工具项完全兼容；支持 `toolApprovals` 数组/对象集中声明，条目可写技能名
+（`seedvideo` 会展开为 `jimeng_video`）或真实工具名。未配置 `adminId` 时失败关闭，
+需要审核的工具一律拒绝。`adminId` 与超时也可以分别用 `-DadminId=...`、
+`-Dtool_approval_timeout_ms=...` 兜底。
 
 > 🚚 从旧版本升级（文件还散落在 `save/` 根目录）请按 [docs/MIGRATION.md](../MIGRATION.md) 搬迁——
 > 旧位置仍被兼容，不搬也能跑，但日志会提示一次。
@@ -221,6 +275,8 @@ save/config/
 |---|---|
 | `site_host` | 站点对外域名（默认读 `save/site.json`，此项用于临时覆盖） |
 | `napcat_url` / `napcat_token` | QQ 群接入：NapCat 地址与 token |
+| `adminId` | QQ 群工具审核的管理员 QQ（agent 配置里没写时兜底） |
+| `tool_approval_timeout_ms` | QQ 群工具审核等待答复的超时毫秒，默认 120000 |
 | `cdk_secret` | 兑换码签名密钥 |
 
 ---

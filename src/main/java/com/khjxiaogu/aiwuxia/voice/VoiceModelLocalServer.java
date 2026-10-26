@@ -23,6 +23,9 @@
  */
 package com.khjxiaogu.aiwuxia.voice;
 
+import java.io.File;
+import java.io.IOException;
+
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
 import com.khjxiaogu.webserver.annotations.HttpMethod;
@@ -59,6 +62,23 @@ public class VoiceModelLocalServer extends AbstractServiceClass {
     @HttpPath("/kh$localModelDeploy")
     public void voiceWebSocket(Request req, Response res) {
         res.suscribeWebsocketEvents(LocalModel.lhs);
+    }
+
+    /**
+     * 本地模型终端页面：在浏览器里把本机模型服务接入服务器。
+     * <p>
+     * 该服务通常与 {@code /kh$localModelDeploy} 一起挂载在 {@code /aichat} 下，
+     * 因此页面地址是 {@code /aichat/localmodel}。
+     * </p>
+     *
+     * @return 页面文件
+     * @throws IOException 读取页面失败
+     */
+    @HttpMethod("GET")
+    @HttpPath("/localmodel")
+    @Adapter
+    public ResultDTO localModelTerminal() throws IOException {
+        return new ResultDTO(200, new File(new File("save"), "localmodel.html"));
     }
 
     /**

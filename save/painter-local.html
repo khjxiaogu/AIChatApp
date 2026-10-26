@@ -1,1361 +1,1354 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="day-mode">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AI智能绘画 · 本地模式</title>
-    <link rel="stylesheet" href="sidebar.css">
-    <link rel="stylesheet" href="ai-ui.css">
-    <!-- Vue 2 CDN -->
-    <script src="vue.js"></script>
-    <script src="heartbeat.js"></script>
-    <script src="ai-protocol.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地绘画模型接入</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        :root {
+            --bg: #f4f7fb;
+            --panel: #ffffff;
+            --border: #dfe7f1;
+            --text: #182433;
+            --muted: #63758c;
+            --primary: #1e6fdf;
+            --primary-dark: #145bb9;
+            --ok: #16a34a;
+            --warn: #d97706;
+            --err: #dc2626;
+            --shadow: 0 10px 30px rgba(23, 43, 77, 0.08);
+            --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
         }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
+            min-height: 100vh;
             font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-            background: #f5f7fb;
-            height: 100vh;
-            overflow: hidden;
+            background: radial-gradient(1200px 500px at 10% -10%, #e6f0ff 0%, var(--bg) 55%);
+            color: var(--text);
+            line-height: 1.55;
         }
-
-        #app {
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            background: white;
-            max-width: 1000px;
+        .page {
+            max-width: 900px;
             margin: 0 auto;
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.05);
+            padding: 28px 20px 60px;
+        }
+        /* ---------- 顶部 ---------- */
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+        .logo {
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #2b7cff, #1e6fdf);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 6px 16px rgba(30, 111, 223, 0.28);
+            flex-shrink: 0;
+        }
+        .brand h1 {
+            font-size: 1.35rem;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }
+        .brand p {
+            font-size: 0.82rem;
+            color: var(--muted);
+        }
+        .pill {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: #fff;
+            font-size: 0.78rem;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+        .pill .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #94a3b8;
+            flex-shrink: 0;
+        }
+        .pill.online { color: var(--ok); border-color: #b7e4c7; background: #f1fbf4; }
+        .pill.online .dot { background: var(--ok); box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.12); }
+        .pill.checking, .pill.connecting { color: var(--warn); border-color: #f3d9a4; background: #fff9ec; }
+        .pill.checking .dot, .pill.connecting .dot { background: var(--warn); animation: blink 1s infinite; }
+        .pill.degraded { color: var(--warn); border-color: #f3d9a4; background: #fff9ec; }
+        .pill.degraded .dot { background: var(--warn); }
+        .pill.error { color: var(--err); border-color: #f5c2c2; background: #fdf2f2; }
+        .pill.error .dot { background: var(--err); }
+        @keyframes blink { 50% { opacity: 0.35; } }
+
+        .lead {
+            margin: 14px 0 20px;
+            padding: 14px 18px;
+            border-radius: 14px;
+            border: 1px solid #d6e4ff;
+            background: linear-gradient(135deg, #f5f9ff, #eef5ff);
+            color: #33475f;
+            font-size: 0.86rem;
+        }
+        .lead b { color: #14508f; }
+        .lead code {
+            font-family: var(--mono);
+            font-size: 0.82em;
+            background: #e3edff;
+            border-radius: 5px;
+            padding: 1px 5px;
         }
 
-        /* 头部信息 */
-        .chat-header {
-            padding: 16px 20px;
-            background: #ffffff;
-            border-bottom: 1px solid #e9ecef;
+        /* ---------- 卡片 ---------- */
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+            padding: 22px 22px 20px;
+            margin-bottom: 18px;
+        }
+        .card-head {
             display: flex;
             align-items: baseline;
             justify-content: space-between;
-            flex-shrink: 0;
+            gap: 10px;
+            margin-bottom: 16px;
         }
-        .chat-header h2 {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: #1e2a3e;
+        .card-head h2 {
+            font-size: 1rem;
+            font-weight: 700;
         }
-        .chat-header .conv-id {
+        .card-head span {
             font-size: 0.75rem;
-            background: #f1f3f5;
-            padding: 4px 10px;
-            border-radius: 20px;
-            color: #4a627a;
-            font-family: monospace;
+            color: var(--muted);
         }
-
-        /* 消息列表区域 */
-        .messages-container {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px 16px;
-            background: #fafcff;
+        .fields {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px 18px;
+        }
+        .field {
             display: flex;
             flex-direction: column;
-            gap: 18px;
-        }
-
-        /* 消息通用样式 */
-        .message {
-            display: flex;
-            flex-direction: column;
-            max-width: 85%;
-            animation: fadeIn 0.2s ease;
-        }
-        .user-message {
-            align-self: flex-end;
-        }
-        .assistant-message {
-            align-self: flex-start;
-        }
-
-        /* 气泡主体 */
-        .message-bubble {
-            border-radius: 20px;
-            padding: 12px 16px;
-            background: white;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-            word-break: break-word;
-        }
-        .user-message .message-bubble {
-            background: #1e6fdf;
-            color: white;
-            border-bottom-right-radius: 4px;
-        }
-        .assistant-message .message-bubble {
-            background: white;
-            border: 1px solid #e2e8f0;
-            border-bottom-left-radius: 4px;
-        }
-
-        /* 思维链容器 (灰色折叠风格) */
-        .thinking-chain {
-            background: #f8f9fc;
-            border-left: 3px solid #94a3b8;
-            padding: 12px 14px;
-            margin-bottom: 12px;
-            border-radius: 12px;
-            font-size: 0.85rem;
-            color: #334155;
-        }
-        .thinking-text {
-            white-space: pre-wrap;
-            line-height: 1.4;
-        }
-        .tool-call-item {
-            background: #eef2ff;
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 500;
-            color: #1e40af;
-            margin-top: 0px;
-            margin-right: 8px;
-        }
-        .tool-call-label {
-            font-size: 0.7rem;
-            color: #5b6e8c;
-            margin-bottom: 6px;
-            display: flex;
-            align-items: center;
             gap: 6px;
+            min-width: 0;
         }
-        /* 工具详情：无文本的展开/收缩按钮（图标随展开状态旋转） */
-        .tool-detail-toggle {
-            background: transparent;
-            border: none;
-            padding: 0;
-            margin: 0;
-            width: 16px;
-            height: 16px;
-            min-width: 16px;
-            border-radius: 50%;
-            color: #64748b;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
-        }
-        .tool-detail-toggle:hover {
-            background: #e2e8f0;
-            color: #1e40af;
-        }
-        .tool-detail-toggle.is-open {
-            transform: rotate(90deg);
-        }
-        .tool-detail {
-            margin: 0 0 8px 2px;
-            padding: 8px 10px;
-            border-radius: 10px;
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
+        .field.wide { grid-column: 1 / -1; }
+        .field > span {
             font-size: 0.78rem;
-            color: #334155;
-        }
-        .tool-detail-text {
-            white-space: pre-wrap;
-            word-break: break-word;
-            line-height: 1.45;
-        }
-        .final-content {
-            font-size: 0.95rem;
-            line-height: 1.5;
-            color: #0f172a;
-            /* 与思维链一致：保留模型输出里的换行与连续空格 */
-            white-space: pre-wrap;
-        }
-        .message-image {
-            margin-top: 8px;
-            max-width: 200px;
-            border-radius: 12px;
-            border: 1px solid #e2e8f0;
-            background: #f1f5f9;
-            overflow: hidden;
-        }
-        .message-image img {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
-        /* 图片描述：作为网页描述展示在图片下方（来自 send_image 的 description） */
-        .image-caption {
-            padding: 6px 10px;
-            font-size: 0.75rem;
-            line-height: 1.4;
-            color: #5b6e8c;
-            background: #f8fafc;
-            border-top: 1px solid #e2e8f0;
-            word-break: break-word;
-        }
-        .image-placeholder {
-            padding: 20px;
-            text-align: center;
-            color: #5b6e8c;
-            font-size: 0.75rem;
-        }
-        /* ---- 引用消息 ---- */
-        .quote-message-btn {
-            margin-top: 4px;
-            background: transparent;
-            color: #7b8794;
-            border: 1px solid #d7e0ec;
-            padding: 2px 10px;
-            border-radius: 999px;
-            font-size: 0.72rem;
-            line-height: 1.4;
-        }
-        .quote-message-btn:hover {
-            color: #1e6fdf;
-            border-color: #1e6fdf;
-        }
-        .message-quote-bar {
-            display: flex;
-            justify-content: flex-end;
-        }
-        .quote-block {
-            margin: 4px 0 8px;
-            padding: 6px 10px;
-            border-left: 3px solid #94a3b8;
-            border-radius: 6px;
-            background: #f1f5f9;
-            color: #475569;
-            font-size: 0.8rem;
-            line-height: 1.5;
-        }
-        .quote-block-author {
             font-weight: 600;
-            margin-bottom: 2px;
-            color: #64748b;
+            color: #40536b;
         }
-        .quote-block-text {
-            white-space: pre-wrap;
-            word-break: break-word;
+        .field > span em {
+            font-style: normal;
+            font-weight: 400;
+            color: var(--muted);
         }
-        .quote-preview {
-            margin: 0 12px 8px;
-            padding: 8px 10px;
-            border-left: 3px solid #2563eb;
-            border-radius: 6px;
-            background: #f1f5f9;
-            color: #334155;
-            font-size: 0.8rem;
-            line-height: 1.5;
+        .field input {
+            width: 100%;
+            height: 40px;
+            border: 1px solid #cbd8e8;
+            border-radius: 10px;
+            padding: 0 12px;
+            font-size: 0.88rem;
+            font-family: inherit;
+            color: var(--text);
+            background: #fff;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
         }
-        .quote-preview-head {
+        .field input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(30, 111, 223, 0.14);
+        }
+        .field input:disabled {
+            background: #f3f6fa;
+            color: #6b7d93;
+            cursor: not-allowed;
+        }
+        .field input.mono { font-family: var(--mono); font-size: 0.84rem; }
+        .field small {
+            font-size: 0.72rem;
+            color: var(--muted);
+            line-height: 1.4;
+        }
+        .field small.err { color: var(--err); }
+
+        .check-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+            font-size: 0.82rem;
+            color: #40536b;
+            cursor: pointer;
+            user-select: none;
+        }
+        .check-row input { width: 16px; height: 16px; accent-color: var(--primary); }
+
+        /* ---------- 生图尺寸比例（只在本页调整请求参数） ---------- */
+        .scale-box {
+            margin-top: 18px;
+            padding: 14px 16px 12px;
+            border: 1px solid #dbe6f3;
+            border-radius: 14px;
+            background: #f8fbff;
+        }
+        .scale-head {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            color: #64748b;
-            font-weight: 600;
-        }
-        .quote-preview-close {
-            background: transparent;
-            border: none;
-            color: #64748b;
-            font-size: 1rem;
-            line-height: 1;
-            padding: 0 2px;
-            cursor: pointer;
-        }
-        .quote-preview-body {
-            margin-top: 4px;
-            max-height: 72px;
-            overflow: hidden;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-
-        /* 输入区域 */
-        .input-area {
-            background: white;
-            border-top: 1px solid #e9ecef;
-            padding: 12px 16px 20px;
-            display: flex;
-            flex-direction: column;
             gap: 10px;
-            flex-shrink: 0;
+            margin-bottom: 6px;
         }
-        .image-preview-bar {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-        .preview-thumb {
-            width: 60px;
-            height: 60px;
-            object-fit: cover;
-            border-radius: 8px;
-            border: 1px solid #cbd5e1;
-            background: #f8fafc;
-        }
-        .input-row {
-            display: flex;
-            gap: 12px;
-            align-items: flex-end;
-        }
-        .input-row textarea {
-            flex: 1;
-            border: 1px solid #cbd5e6;
-            border-radius: 24px;
-            padding: 10px 16px;
-            font-size: 0.9rem;
-            resize: none;
-            font-family: inherit;
-            background: #ffffff;
-            transition: 0.2s;
-            max-height: 120px;
-        }
-        .input-row textarea:focus {
-            outline: none;
-            border-color: #1e6fdf;
-            box-shadow: 0 0 0 2px rgba(30,111,223,0.2);
-        }
-        button {
-            background: #1e6fdf;
-            border: none;
-            color: white;
+        .scale-head .scale-title {
+            font-size: 0.82rem;
             font-weight: 600;
-            border-radius: 40px;
-            padding: 10px 20px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            transition: 0.2s;
+            color: #40536b;
+        }
+        .scale-head .scale-side {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-        }
-        button:disabled {
-            background: #a0c0e8;
-            cursor: not-allowed;
-        }
-        .upload-btn {
-            background: #f1f3f5;
-            color: #2c3e50;
-            border: 1px solid #d1d9e8;
-            padding: 8px 16px;
-        }
-        .upload-btn:hover:not(:disabled) {
-            background: #e9ecef;
-        }
-        .loading-indicator {
-            font-size: 0.75rem;
-            color: #5b6e8c;
-            padding: 6px 12px;
-            background: #f1f5f9;
-            border-radius: 30px;
-            width: fit-content;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(5px);}
-            to { opacity: 1; transform: translateY(0);}
-        }
-        .scroll-to-bottom {
-            cursor: pointer;
-        }
-        hr {
-            margin: 6px 0;
-        }
-        /* 全屏看图 */
-        .fullscreen-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.85);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10000;
-            cursor: pointer;
-        }
-        .fullscreen-overlay img {
-            max-width: 95vw;
-            max-height: 95vh;
-            object-fit: contain;
-            border-radius: 8px;
-            box-shadow: 0 4px 30px rgba(0,0,0,0.5);
-        }
-        /* 全屏图片的描述与下载：文件名取自图片描述 */
-        .fullscreen-caption {
-            position: fixed;
-            left: 50%;
-            bottom: 24px;
-            transform: translateX(-50%);
-            max-width: 70vw;
-            color: #fff;
-            font-size: 14px;
-            line-height: 1.5;
-            text-align: center;
-            text-shadow: 0 1px 4px rgba(0,0,0,0.8);
-            pointer-events: none;
-        }
-        .fullscreen-download {
-            position: fixed;
-            right: 24px;
-            bottom: 24px;
-            padding: 8px 14px;
-            border-radius: 8px;
-            background: rgba(255,255,255,0.92);
-            color: #1e293b;
-            font-size: 14px;
-            text-decoration: none;
-            cursor: pointer;
-            z-index: 10001;
-        }
-        /* 侧边栏样式见 sidebar.css（custom / painter / painter-local 共用） */
-        /* URL输入弹窗 */
-        .url-modal-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-        }
-        .url-modal {
-            background: white;
-            border-radius: 16px;
-            padding: 28px 32px;
-            width: 90%;
-            max-width: 480px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-        }
-        .url-modal h3 {
-            margin: 0 0 8px;
-            font-size: 1.1rem;
-            color: #1e2a3e;
-        }
-        .url-modal p {
-            margin: 0 0 16px;
-            font-size: 0.85rem;
-            color: #5b6e8c;
-        }
-        .url-modal input {
-            width: 100%;
-            border: 1px solid #cbd5e6;
-            border-radius: 10px;
-            padding: 10px 14px;
-            font-size: 0.9rem;
-            font-family: monospace;
-            outline: none;
-            transition: 0.2s;
-        }
-        .url-modal input:focus {
-            border-color: #1e6fdf;
-            box-shadow: 0 0 0 2px rgba(30,111,223,0.2);
-        }
-        .url-modal .btn-row {
-            display: flex;
-            justify-content: flex-end;
             gap: 10px;
-            margin-top: 16px;
         }
-        .url-modal .btn-cancel {
-            background: #f1f3f5;
-            color: #2c3e50;
-            border: 1px solid #d1d9e8;
+        .scale-value {
+            min-width: 48px;
+            text-align: right;
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--primary);
+            font-variant-numeric: tabular-nums;
         }
-        .url-status {
-            font-size: 0.75rem;
-            margin-top: 8px;
+        .scale-reset {
+            border: 1px solid #cbdaed;
+            background: #fff;
+            color: #33506f;
+            border-radius: 999px;
+            height: 26px;
+            padding: 0 10px;
+            font-size: 0.72rem;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        .scale-reset:hover { background: #eef5ff; border-color: var(--primary); }
+        .scale-box input[type="range"] {
+            width: 100%;
+            margin: 4px 0 2px;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+        .scale-marks {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.68rem;
+            color: var(--muted);
+        }
+        .scale-box small {
+            display: block;
+            margin-top: 7px;
+            font-size: 0.72rem;
+            line-height: 1.45;
+            color: var(--muted);
+        }
+
+        .actions {
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+            padding-top: 18px;
+            border-top: 1px dashed var(--border);
         }
-        .url-status .dot {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            display: inline-block;
+        .btn {
+            border: 1px solid transparent;
+            border-radius: 10px;
+            height: 40px;
+            padding: 0 20px;
+            font-size: 0.86rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
         }
-        .url-status .dot.ok { background: #22c55e; }
-        .url-status .dot.err { background: #ef4444; }
-        .url-status .dot.pending { background: #eab308; }
+        .btn.primary {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 5px 14px rgba(30, 111, 223, 0.24);
+        }
+        .btn.primary:hover:not(:disabled) { background: var(--primary-dark); }
+        .btn.ghost {
+            background: #fff;
+            border-color: #cbdaed;
+            color: #33506f;
+        }
+        .btn.ghost:hover:not(:disabled) { background: #f2f6fc; }
+        .btn:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
+        .actions .spacer { flex: 1; }
+        .actions .hint {
+            font-size: 0.76rem;
+            color: var(--muted);
+        }
+
+        /* ---------- 统计 ---------- */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .stat {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: #fbfdff;
+            padding: 12px 14px;
+        }
+        .stat .label {
+            font-size: 0.72rem;
+            color: var(--muted);
+            margin-bottom: 3px;
+        }
+        .stat .value {
+            font-size: 1.15rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            word-break: break-all;
+        }
+        .stat .value.small { font-size: 0.82rem; font-weight: 600; line-height: 1.4; }
+        .stat .value.err { color: var(--err); }
+        .stat .value.ok { color: var(--ok); }
+        .stat .value.muted { color: var(--muted); font-weight: 500; }
+
+        /* ---------- 日志 ---------- */
+        .console {
+            background: #0f1b2d;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid #22344d;
+            box-shadow: var(--shadow);
+        }
+        .console-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: #16243a;
+            color: #cfe0f5;
+            font-size: 0.78rem;
+        }
+        .console-head .dots { display: inline-flex; gap: 6px; margin-right: 8px; }
+        .console-head .dots i {
+            width: 9px; height: 9px; border-radius: 50%;
+            background: #ef4444; display: inline-block;
+        }
+        .console-head .dots i:nth-child(2) { background: #eab308; }
+        .console-head .dots i:nth-child(3) { background: #22c55e; }
+        .console-head button {
+            background: transparent;
+            border: 1px solid #3a4d68;
+            color: #c4d6ec;
+            border-radius: 7px;
+            font-size: 0.72rem;
+            padding: 3px 10px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .console-head button:hover { background: #22344d; }
+        .log {
+            height: 260px;
+            overflow-y: auto;
+            padding: 12px 14px;
+            font-family: var(--mono);
+            font-size: 0.76rem;
+            line-height: 1.65;
+            color: #c6d6ea;
+        }
+        .log-line { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-word; }
+        .log-time { color: #6f88a8; flex-shrink: 0; }
+        .log-tag { flex-shrink: 0; font-weight: 700; }
+        .log-line.info .log-tag { color: #7fb0ff; }
+        .log-line.ok .log-tag { color: #4ade80; }
+        .log-line.warn .log-tag { color: #fbbf24; }
+        .log-line.err .log-tag { color: #f87171; }
+        .log-line.ok .log-msg { color: #d8f5e2; }
+        .log-line.err .log-msg { color: #ffd9d9; }
+        .log-line.warn .log-msg { color: #ffefc7; }
+        .log-empty { color: #6f88a8; }
+
+        .footnote {
+            margin-top: 16px;
+            font-size: 0.75rem;
+            color: var(--muted);
+            line-height: 1.7;
+        }
+        .footnote code {
+            font-family: var(--mono);
+            background: #e9f0f9;
+            border-radius: 5px;
+            padding: 1px 5px;
+        }
+
+        @media (max-width: 680px) {
+            .page { padding: 20px 14px 44px; }
+            .fields { grid-template-columns: 1fr; }
+            .stats { grid-template-columns: 1fr; }
+            .pill { margin-left: 0; }
+            .brand h1 { font-size: 1.15rem; }
+        }
     </style>
 </head>
 <body>
-<div id="app">
-    <ai-conn-tip></ai-conn-tip>
-    <ai-dialog></ai-dialog>
-    <!-- URL输入弹窗 -->
-    <div class="url-modal-overlay" v-if="showUrlModal">
-        <div class="url-modal">
-            <h3>配置本地服务地址</h3>
-            <p>请输入本地服务器的根URL，用于调用本地Stable Diffusion Webui。</p>
-            <input v-model="localUrlInput" placeholder="http://127.0.0.1:7860" @keydown.enter="confirmLocalUrl" />
-            <div class="url-status" v-if="localUrl">
-                <span class="dot" :class="urlValid === null ? 'pending' : (urlValid ? 'ok' : 'err')"></span>
-                <span v-if="urlValid === null">检测中...</span>
-                <span v-else-if="urlValid">连接正常</span>
-                <span v-else>无法连接</span>
-            </div>
-            <div class="btn-row">
-                <button @click="confirmLocalUrl" :disabled="!localUrlInput.trim()">确认</button>
-            </div>
+<div class="page">
+    <header class="topbar">
+        <div class="logo">🎨</div>
+        <div class="brand">
+            <h1>本地绘画模型接入</h1>
+            <p>把本机的 Stable Diffusion WebUI 接入服务器</p>
         </div>
-    </div>
+        <span class="pill" id="statusPill"><i class="dot"></i><span id="statusText">未接入</span></span>
+    </header>
 
-    <!-- 侧边栏（结构与配色见 sidebar.css，与 custom / painter 统一） -->
-    <div class="sidebar-overlay" v-if="showSidebar" @click="showSidebar = false"></div>
-    <div class="chat-sidebar" :class="{ open: showSidebar }">
-        <div class="sidebar-header">
-            <h3>对话列表</h3>
-            <button class="sidebar-close" @click.stop="showSidebar = false">&times;</button>
+    <p class="lead">
+        接入后，<b>该用户的所有绘画会话</b>都会使用这台机器上的模型生图（包括已经打开的会话）。
+        本地服务离线或断开本页时，会自动回退到服务器共享的本地模型，聊天不会因此中断。
+        接入身份由服务器在生产环境注入，页面接入时先用 <code>undefined</code> 作为占位参数发送；
+        占位值会按共享接入处理，注入真实 uid 后才按用户隔离。
+    </p>
+
+    <section class="card">
+        <div class="card-head">
+            <h2>接入配置</h2>
+            <span>除尺寸比例外，接入期间不可修改</span>
         </div>
-        <div class="sidebar-action-btn" @click="createNewChat">+ 新建对话</div>
-        <div class="chat-list" v-if="chatList.length">
-            <div v-for="chat in chatList" :key="chat.chatid"
-                 class="chat-item" :class="{ active: chat.chatid === conversationId }"
-                 @click="switchChat(chat.chatid)">
-                <div class="chat-info">
-                    <div class="chat-name">{{ chat.name }}</div>
-                    <div class="chat-time">{{ formatTime(chat.time) }}</div>
-                </div>
-                <div class="chat-item-actions">
-                    <button class="chat-action" title="重命名" @click.stop="renameChat(chat)">✎</button>
-                    <button class="chat-action danger" title="归档（归档后不再显示，可在存档管理中恢复）" @click.stop="archiveChat(chat)">⊘</button>
-                </div>
+
+        <div class="fields">
+            <label class="field wide">
+                <span>本地 SD WebUI 地址 <em>必填</em></span>
+                <input type="text" id="localUrlInput" class="mono" spellcheck="false"
+                       placeholder="http://127.0.0.1:7860">
+                <small>需要允许跨域访问，例如 SD WebUI 启动参数加 <code>--cors-allow-origins=*</code>。</small>
+            </label>
+
+            <label class="field wide">
+                <span>健康检查路径</span>
+                <input type="text" id="healthPathInput" class="mono" spellcheck="false"
+                       placeholder="/internal/ping">
+            </label>
+
+            <label class="field">
+                <span>健康检查间隔（秒）</span>
+                <input type="number" id="intervalInput" min="2" step="1" value="10">
+            </label>
+
+            <label class="field">
+                <span>单次生图超时（秒）</span>
+                <input type="number" id="timeoutInput" min="5" step="5" value="120">
+            </label>
+        </div>
+
+        <label class="check-row">
+            <input type="checkbox" id="autoStartInput" checked>
+            打开本页时自动接入（上次处于接入状态时生效）
+        </label>
+
+        <div class="scale-box">
+            <div class="scale-head">
+                <span class="scale-title">生图尺寸比例</span>
+                <span class="scale-side">
+                    <span class="scale-value" id="scaleValue">100%</span>
+                    <button type="button" class="scale-reset" id="btnScaleReset">恢复 100%</button>
+                </span>
             </div>
+            <input type="range" id="scaleInput" min="25" max="125" step="1" value="100"
+                   aria-label="生图尺寸比例">
+            <div class="scale-marks">
+                <span>25%</span><span>50%</span><span>75%</span><span>100%</span><span>125%</span>
+            </div>
+            <small>按百分比缩放实际发给本地模型的 width / height（按 8 的倍数向下取整）；只在本页调整参数，接入期间也可随时修改。</small>
         </div>
-        <div v-else class="chat-empty">暂无对话</div>
-    </div>
 
-    <div class="chat-header">
-        <button class="sidebar-toggle" @click="loadChatList(); showSidebar = true">&#9776;</button>
-        <h2>SD提示词交互式应用</h2>
-        <div class="conv-id">会话ID: {{ conversationId }}</div>
-    </div>
+        <div class="actions">
+            <button type="button" class="btn primary" id="btnStart">开始接入</button>
+            <button type="button" class="btn ghost" id="btnStop" disabled>断开</button>
+            <span class="spacer"></span>
+            <span class="hint" id="actionHint">未接入时，该用户的绘画会话使用服务器共享模型。</span>
+        </div>
+    </section>
 
-    <div class="messages-container" ref="messageContainer">
-        <div v-for="(msg, idx) in messages" :key="msg._key || (msg._id != null ? 'm' + msg._id : 'n' + idx)" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
-            <div class="message-bubble">
-                <!-- 用户消息：支持文本和图片 -->
-                <div v-if="msg.role === 'user'">
-                    <div v-for="(part, pIdx) in msg.contentItems" :key="'u'+pIdx">
-                        <div v-if="part.type === 'quote'" class="quote-block">
-                            <div v-if="part.author" class="quote-block-author">引用{{ part.author }}</div>
-                            <div class="quote-block-text">{{ part.content }}</div>
-                        </div>
-                        <div v-if="part.type === 'text'" style="white-space: pre-wrap;">{{ part.content }}</div>
-                        <div v-if="part.type === 'image'" class="message-image">
-                            <img v-if="part.image_url" :src="part.image_url" :alt="part.description || '用户上传图片'" :title="part.description || ''" @click.stop="openFullscreen(part.image_url, part.description)" style="cursor:pointer" />
-                            <div v-else class="image-placeholder">加载中...</div>
-                            <div v-if="part.description" class="image-caption">{{ part.description }}</div>
-                        </div>
-                        <div v-if="part.type === 'video'" class="message-image">
-                            <video :src="part.video_url" controls style="width:100%;"></video>
-                        </div>
-                    </div>
-                    <button v-if="!aiGenerating&&idx==messages.length-1" @click="triggerGenerate" :disabled="aiGenerating" style="background:#27ae60;margin-top:10px">生成</button>
-                    <div class="message-quote-bar">
-                        <button v-if="messageQuoteText(msg)" class="quote-message-btn" @click="startQuote(msg)" title="引用这条消息">引用</button>
-                    </div>
-                </div>
-
-                <!-- AI 消息：支持思维链 + 按顺序排列的内容 -->
-                <div v-if="msg.role === 'assistant'">
-                    <!-- 思维链区块 (包含思考文本和工具调用) -->
-                    <div v-if="msg.thinkingSegments && msg.thinkingSegments.length" class="thinking-chain">
-                        <div v-for="(seg, sIdx) in msg.thinkingSegments" :key="sIdx">
-                            <div v-if="seg.type === 'text'" class="thinking-text">&#x1F4AD; {{ seg.content }}</div>
-                            <!-- 工具调用：概要 + 详情；仅当工具有详情时才出现无文本的展开/收缩按钮 -->
-                            <div v-if="seg.type === 'tool'" class="tool-call">
-                                <div class="tool-call-label">
-                                    &#x1F527; 调用工具：<span class="tool-call-item">{{ seg.toolName }}</span>
-                                    <button v-if="hasToolDetail(seg)" type="button" class="tool-detail-toggle"
-                                            :class="{ 'is-open': seg.expanded }"
-                                            :title="seg.expanded ? '收起工具详情' : '展开工具详情'"
-                                            :aria-label="seg.expanded ? '收起工具详情' : '展开工具详情'"
-                                            :aria-expanded="seg.expanded ? 'true' : 'false'"
-                                            @click.stop="toggleToolDetail(seg)">
-                                        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor"
-                                             stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                            <polyline points="9 6 15 12 9 18"></polyline>
-                                        </svg>
-                                    </button>
-                                </div>
-                                <div v-if="seg.expanded && hasToolDetail(seg)" class="tool-detail">
-                                    <div v-for="(part, dIdx) in seg.detail" :key="'d' + dIdx">
-                                        <div v-if="part.type === 'text'" class="tool-detail-text">{{ part.content }}</div>
-                                        <div v-else-if="part.type === 'image'" class="message-image">
-                                            <img v-if="part.image_url" :src="part.image_url" :alt="part.description || '工具详情图片'" :title="part.description || ''" @click.stop="openFullscreen(part.image_url, part.description)" style="cursor:pointer" />
-                                            <div v-else class="image-placeholder">加载中...</div>
-                                            <div v-if="part.description" class="image-caption">{{ part.description }}</div>
-                                        </div>
-                                        <div v-else-if="part.type === 'video'" class="message-image">
-                                            <video :src="part.video_url" controls style="width:100%;"></video>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- 按顺序渲染所有内容（文本、图片、视频） -->
-                    <div v-for="(item, cIdx) in msg.contentItems" :key="'c'+cIdx">
-                        <div v-if="item.type === 'quote'" class="quote-block">
-                            <div v-if="item.author" class="quote-block-author">引用{{ item.author }}</div>
-                            <div class="quote-block-text">{{ item.content }}</div>
-                        </div>
-                        <div v-if="item.type === 'text' && item.content" class="final-content">{{ item.content }}</div>
-                        <div v-if="item.type === 'image'" class="message-image">
-                            <img v-if="item.image_url" :src="item.image_url" :alt="item.description || 'AI生成的图片'" :title="item.description || ''" @click.stop="openFullscreen(item.image_url, item.description)" style="cursor:pointer" />
-                            <div v-else class="image-placeholder">加载中...</div>
-                            <div v-if="item.description" class="image-caption">{{ item.description }}</div>
-                        </div>
-                        <div v-if="item.type === 'video'" class="message-image">
-                            <video :src="item.video_url" controls style="width:100%;"></video>
-                        </div>
-                    </div>
-                    <div class="message-quote-bar">
-                        <button v-if="messageQuoteText(msg)" class="quote-message-btn" @click="startQuote(msg)" title="引用这条消息">引用</button>
-                    </div>
-                </div>
+    <section class="card">
+        <div class="card-head">
+            <h2>运行状态</h2>
+            <span>接入期间持续更新</span>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="label">当前状态</div>
+                <div class="value small muted" id="statState">未接入</div>
+            </div>
+            <div class="stat">
+                <div class="label">已处理任务</div>
+                <div class="value" id="statDone">0</div>
+            </div>
+            <div class="stat">
+                <div class="label">最近错误</div>
+                <div class="value small muted" id="statError">无</div>
             </div>
         </div>
+    </section>
 
-        <!-- 加载状态: AI正在思考/调用工具 -->
-        <div v-if="aiGenerating" class="loading-indicator" style="align-self: flex-start; margin-left: 12px;">
-            <span>思考中</span>
+    <section class="console" aria-label="运行日志">
+        <div class="console-head">
+            <span><span class="dots"><i></i><i></i><i></i></span>运行日志</span>
+            <button type="button" id="btnClearLog">清空</button>
         </div>
-        
+        <div class="log" id="log" role="log" aria-live="polite">
+            <div class="log-empty">尚未开始。</div>
+        </div>
+    </section>
+
+    <p class="footnote">
+        说明：健康检查使用 <code>no-cors</code> 请求，只能确认本地端口可达；真正的生图请求由本页转发，
+        因此本地服务必须允许跨域。若本页通过 <code>https</code> 打开，浏览器会拦截对 <code>http://</code>
+        本地服务的请求，请改用内网地址或 <code>http</code> 打开本页。关闭本页或断开后，服务器会立即
+        把该用户的绘画会话切回共享模型。
+    </p>
 </div>
-    <div class="input-area">
-        <div v-if="quoteMessage" class="quote-preview">
-            <div class="quote-preview-head">
-                <span>引用{{ quoteMessage.role === 'assistant' ? '对方' : '我' }}的消息</span>
-                <button class="quote-preview-close" @click="cancelQuote" title="取消引用">×</button>
-            </div>
-            <div class="quote-preview-body">{{ quoteMessage.text }}</div>
-        </div>
-        <div class="input-row">
-            <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
-            <button @click="sendTextMessage" :disabled="aiGenerationBusy || (!inputText.trim() && !uploadedImageId && !quoteMessage)">发送</button>
-            
-            <button class="upload-btn" @click="triggerFileUpload" :disabled="aiGenerationBusy" :title="aiGenerationBusy ? '正在生成，无法上传图片' : '上传图片'">📎 图片</button>
-            <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" :disabled="aiGenerationBusy" @change="onFileSelected" />
-        </div>
-        <div style="font-size: 12px; color:#8196b0; padding-left: 8px;">💡 输入消息后点击"发送"添加到对话，点击"生成"触发AI回复</div>
-    </div>
-    <!-- 全屏看图 -->
-    <div class="fullscreen-overlay" v-if="fullscreenImage" @click="closeFullscreen">
-        <img :src="fullscreenImage" :alt="fullscreenDescription || '图片预览'" :title="fullscreenDescription || ''" />
-        <div v-if="fullscreenDescription" class="fullscreen-caption">{{ fullscreenDescription }}</div>
-        <a class="fullscreen-download" :href="fullscreenImage" :download="imageDownloadName(fullscreenDescription)" @click.prevent.stop="downloadImage(fullscreenImage, fullscreenDescription)">下载图片</a>
-    </div>
-</div>
+
 <script>
+(function () {
+    'use strict';
 
-// 绘画应用ID：本页只管理该应用下的对话
-const PAINTER_APP = 'painterirc';
+    var STORAGE_KEY = 'aiwuxia_painter_local_provider_v1';
+    var LEGACY_LOCAL_URL_KEY = 'painter_local_url';
+    var HEALTH_TIMEOUT_MS = 4000;
+    var RECONNECT_BASE_MS = 3000;
+    var MAX_LOG_LINES = 300;
+    /** 连续健康检查失败多少次后从服务器下线；固定值，不向用户开放 */
+    var HEALTH_FAILURE_THRESHOLD = 2;
+    /**
+     * 接入标识的占位值：页面不向用户收集 uid。
+     * 生产环境由服务器注入真实参数（替换这里的 undefined 即可）。
+     */
+    var PROVIDER_UID = 'undefined';
 
-// 当前用户ID：兼容 uid / userId 两种页面参数写法
-function aiUid() {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('uid') || params.get('userId') || '';
-}
+    /* ===================== 状态 ===================== */
 
-// 从URL获取或者创建对话ID（取该应用下的"当前存档"，没有则新建）
-function getOrCreateConversationId(on_loaded) {
-    const urlParams = new URLSearchParams(window.location.search);
-    let cid = urlParams.get('conversation_id');
-    if (!cid) {
-		fetch("currentChat?appid="+PAINTER_APP+"&uid="+encodeURIComponent(aiUid()))
-		.then(p=>p.json())
-		.then(c=>{
-			if(c&&c.chatid){
-				document.title="AI-"+c.app+"-"+c.name;
-				cid=c.chatid
-				const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
-		        window.history.replaceState({}, '', newUrl);
-		        on_loaded(cid)
-			}else
-				fetch("createid?appid="+PAINTER_APP)
-				.then(p=>p.text())
-				.then(cid=>{
-			        const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
-			        window.history.replaceState({}, '', newUrl);
-			        on_loaded(cid)
-				})
-			
-			
-		})
-        // 更新URL参数但不刷新页面
-
-    }else{
-    	on_loaded(cid)
-    }
-}
-
-// ----------------------------- 后端接口
-
-// WebSocket 连接的建立、重连与心跳由公共协议层（ai-protocol.js + heartbeat.js）负责，
-// 本页只需要提供 aiSocketUrl() 并实现各帧钩子。
-
-// 图片上传 - 调用真实后端接口
-async function realUploadImage(file, conversationId) {
-    const formData = new FormData();
-    formData.append('conversation_id', conversationId);
-    formData.append('image', file);
-    const resp = await fetch('painter/uploadImage', { method: 'POST', body: formData });
-    const data = await resp.json();
-    if (data.code === 0) {
-        const reader = new FileReader();
-        const previewDataUrl = await new Promise((resolve) => {
-            reader.onload = (e) => resolve(e.target.result);
-            reader.readAsDataURL(file);
-        });
-        return { code: 0, imageId: data.imageId, previewDataUrl };
-    }
-    return { code: -1, message: data.message };
-}
-
-// 根据图片ID获取图片URL - 调用真实后端接口
-async function fetchImageById(imageId, conversationId) {
-    return `painter/image?image_id=${encodeURIComponent(imageId)}`;
-}
-
-// Vue 主应用
-var main=new Vue({
-    el: '#app',
-    // 连接/重连/心跳/帧路由/历史分页由公共协议层提供
-    mixins: [AIProtocolMixin],
-    data: {
-        conversationId: '',
-        messages: [],
-        inputText: '',
-        // 待引用的消息：{role:'user'|'assistant', text:'消息正文'}，发送后清空
-        quoteMessage: null,
-        selectedFile: null,
-        uploadedImageId: null,
-        fullscreenImage: null,
-        // 全屏图片的网页描述（同时作为下载文件名来源）
-        fullscreenDescription: '',
-        // 侧边栏
-        showSidebar: false,
-        chatList: [],
-        // 本地代理模式
-        showUrlModal: true,
+    var settings = {
         localUrl: '',
-        localUrlInput: '',
-        urlValid: null,
-        urlCheckTimer: null,
-    },
-    async mounted() {
-        this._onKeydown = (e) => { if (e.key === 'Escape') this.closeFullscreen(); };
-        document.addEventListener('keydown', this._onKeydown);
-        const savedUrl = localStorage.getItem('painter_local_url');
-        if (savedUrl) {
-            this.localUrl = savedUrl;
-            this.localUrlInput = savedUrl;
-            this.showUrlModal = false;
-            await this.checkUrlValidity();
-            
-			if(this.urlValid){
-				this.startUrlCheck();
-            	this.initAfterUrl();
-        	}
+        healthPath: '/internal/ping',
+        intervalMs: 10000,
+        timeoutMs: 120000,
+        autoStart: true,
+        // 生图尺寸比例（%）：只影响本页转发给本地模型的 width/height，不改服务器参数
+        imageScale: 100,
+        running: false
+    };
+
+    var run = {
+        enabled: false,
+        ws: null,
+        status: 'off',
+        statusText: '未接入',
+        failures: 0,
+        lastError: '',
+        requests: 0,
+        active: 0,
+        busyCheck: false,
+        reconnectTimer: null,
+        healthTimer: null,
+        reconnectAttempts: 0
+    };
+
+    var dom = {
+        statusPill: document.getElementById('statusPill'),
+        statusText: document.getElementById('statusText'),
+        localUrlInput: document.getElementById('localUrlInput'),
+        healthPathInput: document.getElementById('healthPathInput'),
+        intervalInput: document.getElementById('intervalInput'),
+        timeoutInput: document.getElementById('timeoutInput'),
+        autoStartInput: document.getElementById('autoStartInput'),
+        scaleInput: document.getElementById('scaleInput'),
+        scaleValue: document.getElementById('scaleValue'),
+        btnScaleReset: document.getElementById('btnScaleReset'),
+        btnStart: document.getElementById('btnStart'),
+        btnStop: document.getElementById('btnStop'),
+        actionHint: document.getElementById('actionHint'),
+        statState: document.getElementById('statState'),
+        statDone: document.getElementById('statDone'),
+        statError: document.getElementById('statError'),
+        log: document.getElementById('log'),
+        btnClearLog: document.getElementById('btnClearLog')
+    };
+
+    /* ===================== 工具函数 ===================== */
+
+    function number(value, fallback) {
+        var n = Number(value);
+        return isFinite(n) && n > 0 ? n : fallback;
+    }
+
+    function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function normalizeBase(raw) {
+        var value = String(raw || '').trim();
+        if (!value) {
+            return '';
         }
-    },
-    beforeDestroy() {
-        document.removeEventListener('keydown', this._onKeydown);
-        if (this.urlCheckTimer) clearInterval(this.urlCheckTimer);
-    },
-    watch: {
-        messages: {
-            handler() { this.scrollToBottom(); },
-            deep: true
+        if (!/^https?:\/\//i.test(value)) {
+            value = 'http://' + value;
         }
-    },
-    methods: {
-        openFullscreen(url, description) {
-            if (!url) return;
-            this.fullscreenImage = url;
-            this.fullscreenDescription = description || '';
-        },
-        closeFullscreen() {
-            if (!this.fullscreenImage) return;
-            this.fullscreenImage = null;
-            this.fullscreenDescription = '';
-        },
-        // 把图片描述转换为安全的下载文件名：去掉路径分隔符等非法字符，限制长度
-        imageDownloadName(description, mime) {
-            const raw = String(description || 'aiwuxia-image')
-                .replace(/[\\/:*?"<>|\r\n\t]+/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-            const base = raw.slice(0, 60) || 'aiwuxia-image';
-            const type = String(mime || '');
-            const ext = type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0 ? '.jpg'
-                : type.indexOf('webp') >= 0 ? '.webp'
-                : type.indexOf('gif') >= 0 ? '.gif'
-                : '.png';
-            return base + ext;
-        },
-        // 用描述作为文件名下载图片；跨域或接口不支持 fetch 时退回打开原图
-        async downloadImage(url, description) {
-            if (!url) return;
+        return value.replace(/\/+$/, '');
+    }
+
+    function joinUrl(base, path) {
+        if (!path) {
+            return base;
+        }
+        return base + (path.charAt(0) === '/' ? path : '/' + path);
+    }
+
+    function defaultServerUrl() {
+        if (location.protocol === 'file:') {
+            return 'ws://127.0.0.1:8999/aichat/painter/localModelDeploy';
+        }
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var path = location.pathname.replace(/\/+$/, '');
+        if (/\/painter-local$/.test(path)) {
+            path = path.slice(0, -'painter-local'.length) + 'painter/localModelDeploy';
+        } else {
+            path = '/aichat/painter/localModelDeploy';
+        }
+        return proto + '//' + location.host + path;
+    }
+
+    /** 结果回传地址：与接入地址同源，走 HTTP POST，避免大结果被 WebSocket 帧截断。 */
+    function defaultResultUrl() {
+        return defaultServerUrl()
+            .replace(/^ws/, 'http')
+            .replace(/localModelDeploy$/, 'localModelResult');
+    }
+
+    function buildWsUrl() {
+        var url = new URL(defaultServerUrl());
+        url.searchParams.set('uid', PROVIDER_UID);
+        url.searchParams.set('model_type', 'sdxl');
+        return url.toString();
+    }
+
+    function isOpen() {
+        return !!run.ws && run.ws.readyState === WebSocket.OPEN;
+    }
+
+    function errorText(error) {
+        return error && error.message ? error.message : String(error);
+    }
+
+    function shortId(id) {
+        var s = String(id == null ? '' : id);
+        return s.length > 12 ? s.slice(0, 8) + '…' : s;
+    }
+
+    function formatBytes(bytes) {
+        var n = Number(bytes) || 0;
+        if (n < 1024) {
+            return n + ' B';
+        }
+        if (n < 1024 * 1024) {
+            return (n / 1024).toFixed(1) + ' KB';
+        }
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+    }
+
+    function timeText(timestamp) {
+        var d = new Date(timestamp);
+        function pad(n) {
+            return n < 10 ? '0' + n : String(n);
+        }
+        return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+
+    /* ===================== 配置读写 ===================== */
+
+    function loadSettings() {
+        var stored = null;
+        try {
+            stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+        } catch (e) {
+            stored = null;
+        }
+        if (stored) {
+            var source = stored.settings || {};
+            for (var key in settings) {
+                if (Object.prototype.hasOwnProperty.call(settings, key)
+                    && source[key] !== undefined && source[key] !== null) {
+                    settings[key] = source[key];
+                }
+            }
+            settings.running = !!stored.running;
+        }
+
+        // 兼容旧版绘画页保存过的本地地址
+        if (!settings.localUrl) {
             try {
-                const resp = await fetch(url, { credentials: 'include' });
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                const blob = await resp.blob();
-                const objectUrl = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = objectUrl;
-                a.download = this.imageDownloadName(description, blob.type);
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+                settings.localUrl = localStorage.getItem(LEGACY_LOCAL_URL_KEY) || '';
             } catch (e) {
-                console.warn('下载图片失败，改为打开原图', e);
-                window.open(url, '_blank');
+                settings.localUrl = '';
             }
-        },
-        async confirmLocalUrl() {
-            const url = this.localUrlInput.trim();
-            if (!url) return;
-            this.localUrl = url.replace(/\/+$/, '');
-            localStorage.setItem('painter_local_url', this.localUrl);
-            this.urlValid = null;
-            await this.checkUrlValidity();
-            if(this.urlValid){
-	            this.startUrlCheck();
-	            this.initAfterUrl();
-            }
-        },
-        initAfterUrl() {
-			if(!this.aiConnected)
-            	getOrCreateConversationId(cid => {
-                this.conversationId = cid;
-                this.aiConnect();
-            });
-        },
-        loadChatList() {
-            fetch("querychat?appid="+PAINTER_APP+"&uid="+encodeURIComponent(aiUid()))
-                .then(p => p.json())
-                .then(list => { this.chatList = Array.isArray(list) ? list : []; });
-        },
-        // 重命名对话：名称保存在 chats.brief，重命名后不再被AI自动改写
-        renameChat(chat) {
-            if (!chat || !chat.chatid) return;
-            const apply = (name) => {
-                if (name == null) return;
-                const body = new URLSearchParams();
-                body.append('chatid', chat.chatid);
-                body.append('name', name);
-                fetch('renameChat?uid=' + encodeURIComponent(aiUid()), { method: 'POST', body: body })
-                    .then(r => r.status === 200 ? r.text() : r.text().then(t => Promise.reject(t)))
-                    .then(saved => {
-                        chat.name = saved;
-                        if (chat.chatid === this.conversationId) document.title = 'AI-' + saved;
-                        this.aiToast('已重命名');
-                    })
-                    .catch(err => this.aiToast('重命名失败：' + err, { kind: 'warn' }));
-            };
-            const ask = this.aiPrompt({
-                title: '重命名对话',
-                message: '请输入新的对话名称',
-                value: chat.name || '',
-                placeholder: '对话名称',
-            });
-            if (ask && typeof ask.then === 'function') ask.then(apply);
-            else apply(window.prompt('请输入新的对话名称', chat.name || ''));
-        },
-        // 归档对话：归档后不再出现在本页列表，可在存档管理页的"已归档"中恢复
-        archiveChat(chat) {
-            if (!chat || !chat.chatid) return;
-            const run = () => {
-                const body = new URLSearchParams();
-                body.append('chatid', chat.chatid);
-                fetch('archiveChat?uid=' + encodeURIComponent(aiUid()), { method: 'POST', body: body })
-                    .then(r => r.status === 200 ? r.text() : r.text().then(t => Promise.reject(t)))
-                    .then(() => {
-                        this.aiToast('已归档');
-                        const wasCurrent = chat.chatid === this.conversationId;
-                        this.loadChatList();
-                        if (wasCurrent) {
-                            // 归档的是当前对话：切到剩余对话，没有就开一个全新的
-                            const next = this.chatList.find(c => c.chatid !== chat.chatid);
-                            if (next) this.switchChat(next.chatid);
-                            else this.createNewChat();
-                        }
-                    })
-                    .catch(err => this.aiToast('归档失败：' + err, { kind: 'warn' }));
-            };
-            const ask = this.aiConfirm({
-                title: '归档对话',
-                message: '归档后该对话不再出现在聊天列表中，可在存档管理中恢复。确定归档吗？',
-                kind: 'danger',
-            });
-            if (ask && typeof ask.then === 'function') ask.then(ok => { if (ok) run(); });
-            else if (window.confirm('归档后该对话不再出现在聊天列表中，可在存档管理中恢复。确定归档吗？')) run();
-        },
-        switchChat(chatid) {
-            if (chatid === this.conversationId) { this.showSidebar = false; return; }
-            this.showSidebar = false;
-            this.messages = [];
-            this.quoteMessage = null;
-            this.aiResetHistory();
-            this.conversationId = chatid;
-            const newUrl = `${window.location.pathname}?conversation_id=${chatid}`;
-            window.history.replaceState({}, '', newUrl);
-            // aiConnect 会先主动断开旧连接（不会触发自动重连），再连到新会话
-            this.aiConnect();
-        },
-        createNewChat() {
-            this.showSidebar = false;
-            fetch("createid?appid="+PAINTER_APP)
-                .then(p => p.text())
-                .then(cid => {
-                    this.messages = [];
-                    this.quoteMessage = null;
-                    this.aiResetHistory();
-                    this.conversationId = cid;
-                    const newUrl = `${window.location.pathname}?conversation_id=${cid}`;
-                    window.history.replaceState({}, '', newUrl);
-                    this.aiConnect();
-                    this.loadChatList();
-                });
-        },
-        formatTime(ts) {
-            if (!ts) return '';
-            try {
-                const d = new Date(parseInt(ts));
-                return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-            } catch(e) { return ts; }
-        },
-        async checkUrlValidity() {
-            if (!this.localUrl) return;
-            await fetch(this.localUrl, { method: 'HEAD', mode: 'no-cors' })
-                .then(() => { this.urlValid = true;this.showUrlModal=false })
-                .catch(() => { this.urlValid = false;this.showUrlModal=true;clearInterval(this.urlCheckTimer); });
-        },
-        startUrlCheck() {
-            if (this.urlCheckTimer) clearInterval(this.urlCheckTimer);
-            this.urlCheckTimer = setInterval(() => this.checkUrlValidity(), 10000);
-        },
-        async handleLocalRequest(msg) {
-            const requestId = msg.request_id;
-            const path = msg.path || '';
-            const body = msg.body || '';
-            const targetUrl = this.localUrl + path;
-            try {
-                const resp = await fetch(targetUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json; utf-8', "Accept": "application/json" },
-                    body: body,
-                });
-                const data = await resp.json();
-                this.sendLocalResponse(requestId, { code: resp.status, data: data });
-            } catch (err) {
-                this.sendLocalResponse(requestId, { code: -1, data: { message: err.message || String(err)} });
-            }
-        },
-        sendLocalResponse(requestId, result) {
-            fetch('painter/localResponse?conversation_id='+this.conversationId+'&request_id='+requestId, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(result),
-            }).catch(err => console.error("发送local_response失败", err));
-        },
-        /* ================= 公共协议层（ai-protocol.js）：连接与帧钩子 ================= */
-        // 连接地址（本地模式与普通绘画页共用同一后端）
-        aiSocketUrl() {
-            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            return `${protocol}//${location.host}/aichat/chatsocket?chatid=${encodeURIComponent(this.conversationId)}&app=${PAINTER_APP}&userId=${encodeURIComponent(aiUid())}`;
-        },
-        aiOnSocketOpen() {
-            console.log('WebSocket 已连接, 会话ID:', this.conversationId);
-            this.scrollToBottom(true);
-        },
-        aiOnConnState(state) {
-            // 断线期间不要再显示"思考中"
-            if (state !== 'connected') this.aiGenerating = false;
-        },
-        // 输入框回填由公共层 aiApplySendbox 做条件恢复（草稿为空才覆盖），页面不再直接赋值
-        aiOnLocalRequest(frame) {
-            this.handleLocalRequest(frame);
-        },
-        // 找到（必要时新建）当前流式输出的助手消息
-        // _key 在创建时固定：之后服务端补上历史 id 只改 _id，节点不会被重建（否则 AI 框会闪一下）
-        painterTargetMessage(id) {
-            let target = id ? this.messages.find(m => m._id === id) : null;
-            if (!target) {
-                const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
-                if (last && last.role === 'assistant') target = last;
-            }
-            if (!target) {
-                target = { _id: id || null, _key: this.aiMessageKey(id), role: 'assistant', thinkingSegments: [], contentItems: [] };
-                this.messages.push(target);
-            } else if (id && !target._id) {
-                target._id = id;
-            }
-            return target;
-        },
-        aiOnThinking(frame) {
-            const target = this.painterTargetMessage(frame.id);
-            target.thinkingSegments = target.thinkingSegments || [];
-            const lastSeg = target.thinkingSegments.length ? target.thinkingSegments[target.thinkingSegments.length - 1] : null;
-            if (lastSeg && lastSeg.type === 'text') {
-                lastSeg.content += frame.content;
-            } else {
-                target.thinkingSegments.push({ type: 'text', content: frame.content });
-            }
-            this.scrollToBottom();
-        },
-        // 工具调用提示：概要与详情（详情仅在有内容时下发，没有详情就不给展开按钮）
-        aiOnToolCall(frame) {
-            const target = this.painterTargetMessage(frame.id);
-            target.thinkingSegments = target.thinkingSegments || [];
-            target.thinkingSegments.push({
-                type: 'tool',
-                toolName: frame.tool_name,
-                tool: frame.tool || '',
-                detail: this.parseContentArray(frame.content).contentItems,
-                expanded: false
-            });
-            this.resolveAllPartUrls();
-            this.scrollToBottom();
-        },
-        // 工具是否有可展开的详情（无详情时不显示按钮）
-        hasToolDetail(seg) {
-            return !!(seg && seg.detail && seg.detail.length);
-        },
-        // 展开/收缩工具详情（按钮只有图标，无文本）
-        toggleToolDetail(seg) {
-            if (!this.hasToolDetail(seg)) return;
-            seg.expanded = !seg.expanded;
-        },
-        // 流式内容：服务端每帧都发数组（纯文本 token 也是 [{type:'text',text:'…'}]），
-        // 文本增量必须并入上一段文本，否则每个 token 会成为一个独立 div，变成一行一个 token。
-        aiOnContent(frame) {
-            const target = this.painterTargetMessage(frame.id);
-            const raw = frame.content;
-            target.contentItems = target.contentItems || [];
-            const appendText = (text) => {
-                if (!text) return;
-                const lastItem = target.contentItems.length ? target.contentItems[target.contentItems.length - 1] : null;
-                if (lastItem && lastItem.type === 'text') {
-                    lastItem.content += text;
-                } else {
-                    target.contentItems.push({ type: 'text', content: text });
-                }
-            };
-            if (Array.isArray(raw)) {
-                for (const item of this.parseContentArray(raw).contentItems) {
-                    if (item.type === 'text') appendText(item.content);
-                    else target.contentItems.push(item);
-                }
-            } else {
-                appendText(raw || '');
-            }
-            this.resolveAllPartUrls();
-            this.scrollToBottom();
-        },
-        aiOnMessage(frame) {
-            const parsed = this.parseContentArray(frame.content);
-            const isUser = this.aiIsUserMessage(frame);
-            let existing = this.messages.find(m => m._id === frame.id);
-            if (!existing && !isUser) {
-                const last = this.messages.length ? this.messages[this.messages.length - 1] : null;
-                if (last && last.role === 'assistant' && !last._id) existing = last;
-            }
-            if (existing) {
-                if (!isUser) {
-                    existing._id = frame.id;
-                    existing.contentItems = parsed.contentItems;
-                }
-            } else {
-                this.messages.push({
-                    _id: frame.id,
-                    _key: this.aiMessageKey(frame.id),
-                    role: isUser ? 'user' : 'assistant',
-                    thinkingSegments: [],
-                    contentItems: parsed.contentItems
-                });
-            }
-            this.resolveAllPartUrls();
-            this.scrollToBottom();
-        },
-        aiOnRemove(frame) {
-            const removedId = frame.id;
-            const ridx = this.messages.findIndex(m => m._id === removedId);
-            if (ridx >= 0) {
-                this.messages.splice(ridx, 1);
-            } else {
-                this.messages = this.messages.filter((m, idx) => idx !== removedId);
-            }
-        },
-        // 历史记录分页落地（视口锚定与分页状态由公共层负责）
-        aiOnBatch(items, meta) {
-            const toMessage = (item) => {
-                const isUser = this.aiIsUserMessage(item);
-                const thinkingSegs = [];
-                if (!isUser && Array.isArray(item.thinking)) {
-                    for (const seg of item.thinking) {
-                        if (typeof seg === 'string') {
-                            thinkingSegs.push({ type: 'text', content: seg });
-                        } else if (seg && seg.type === 'tool_call') {
-                            // 详情（工具参数等）随历史一起下发，没有内容时不给展开按钮
-                            thinkingSegs.push({
-                                type: 'tool',
-                                toolName: seg.tool_name || seg.toolName || '',
-                                tool: seg.tool || '',
-                                detail: this.parseContentArray(seg.content).contentItems,
-                                expanded: false
-                            });
-                        } else if (seg && seg.type === 'tool_result') {
-                            // 工具结果同样按“工具 + 可展开详情”展示，默认收起
-                            thinkingSegs.push({
-                                type: 'tool',
-                                toolName: seg.tool_name || seg.toolName || '',
-                                tool: seg.tool || '',
-                                detail: this.parseContentArray(seg.content).contentItems,
-                                expanded: false
-                            });
-                        } else if (seg && seg.content != null) {
-                            thinkingSegs.push({ type: 'text', content: this.aiContentToText(seg.content) });
-                        }
-                    }
-                }
-                return {
-                    _id: item.id,
-                    _key: this.aiMessageKey(item.id),
-                    role: isUser ? 'user' : 'assistant',
-                    thinkingSegments: thinkingSegs,
-                    contentItems: this.parseContentArray(item.content).contentItems
-                };
-            };
-            if (meta.prepend) {
-                const known = new Set();
-                for (const m of this.messages) {
-                    if (m._id != null) known.add(m._id);
-                }
-                const incoming = [];
-                for (const item of items) {
-                    if (item.id != null) {
-                        if (known.has(item.id)) continue;
-                        known.add(item.id);
-                    }
-                    incoming.push(toMessage(item));
-                }
-                if (incoming.length) this.messages.unshift(...incoming);
-            } else {
-                // 连接/重连下发最新一页
-                this.messages = items.map(toMessage);
-                this.scrollToBottom(true);
-            }
-            this.resolveAllPartUrls();
-        },
-        // 分页游标：本地最旧的一条记录
-        aiOldestMessageId() {
-            let oldest = null;
-            for (const m of this.messages) {
-                if (m._id != null && (oldest === null || m._id < oldest)) oldest = m._id;
-            }
-            return oldest === null ? 0 : oldest;
-        },
-        aiHistoryContainer() {
-            return this.$refs.messageContainer;
-        },
-        // 把一段文本加入内容列表：引用格式拆成引用块 + 正文，其它按普通文本处理
-        pushTextPart(result, text) {
-            const parsed = this.aiParseQuotedMessage(text);
-            if (parsed) {
-                result.contentItems.push({ type: 'quote', author: parsed.author, content: parsed.quoted });
-                if (parsed.body) result.contentItems.push({ type: 'text', content: parsed.body });
-            } else if (text) {
-                result.contentItems.push({ type: 'text', content: text });
-            }
-        },
-        parseContentArray(content) {
-            const result = { contentItems: [] };
-            if (!content) return result;
-            const items = Array.isArray(content) ? content : (typeof content === 'string' ? [{ type: 'text', text: content }] : []);
-            for (const item of items) {
-                if (typeof item === 'string') {
-                    this.pushTextPart(result, item);
-                } else if (item.type === 'text') {
-                    this.pushTextPart(result, item.text || '');
-                } else if (item.type === 'image') {
-                    const p = { type: 'image', image_id: item.image_url, image_url: null, description: item.description || '' };
-                    result.contentItems.push(p);
-                } else if (item.type === 'video') {
-                    const p = { type: 'video', video_url: item.video_url, description: item.description || '' };
-                    result.contentItems.push(p);
-                } else {
-                    const t = item.description || item.result || '';
-                    this.pushTextPart(result, t);
-                }
-            }
-            return result;
-        },
-        async resolvePartUrls(parts) {
-            if (!parts) return;
-            for (const part of parts) {
-                if (part.type === 'image' && part.image_id && !part.image_url) {
-                    try {
-                        part.image_url = await fetchImageById(part.image_id, this.conversationId);
-                    } catch(e) {
-                        console.error("加载图片失败", e);
-                        part.image_url = '';
-                    }
-                }
-            }
-            this.$forceUpdate();
-        },
-        resolveAllPartUrls() {
-            for (const msg of this.messages) {
-                if (msg.contentItems && msg.contentItems.length) {
-                    this.resolvePartUrls(msg.contentItems);
-                }
-                // 工具详情里也可能有图片，同样要换成可访问的地址
-                if (msg.thinkingSegments && msg.thinkingSegments.length) {
-                    for (const seg of msg.thinkingSegments) {
-                        if (seg.detail && seg.detail.length) {
-                            this.resolvePartUrls(seg.detail);
-                        }
-                    }
-                }
-            }
-        },
-        // 根据图片ID获取真实URL
-        async loadImageById(imageId) {
-            return await fetchImageById(imageId, this.conversationId);
-        },
-        // 取消息正文（仅文本，忽略图片/工具/已有的引用块），用于引用
-        messageQuoteText(msg) {
-            if (!msg || !msg.contentItems) return '';
-            const parts = [];
-            for (let i = 0; i < msg.contentItems.length; i++) {
-                const part = msg.contentItems[i];
-                if (part.type === 'text' && part.content) parts.push(part.content);
-            }
-            return this.aiTruncateQuote(parts.join('\n'), 2000);
-        },
-        // 引用这条消息：记录快照并在输入框上方展示引用预览
-        startQuote(msg) {
-            const text = this.messageQuoteText(msg);
-            if (!text) return;
-            this.quoteMessage = { role: msg.role, text: text };
-            this.$nextTick(function () {
-                const input = document.querySelector('.input-area textarea');
-                if (input) input.focus();
-            });
-        },
-        cancelQuote() {
-            this.quoteMessage = null;
-        },
-        // 发送事务的附件快照：引用消息随发送一起暂存，失败时可恢复
-        aiDraftExtras() {
-            return this.quoteMessage ? { quote: this.quoteMessage } : null;
-        },
-        aiClearDraftExtras() {
-            this.quoteMessage = null;
-        },
-        aiRestoreDraftExtras(extras) {
-            if (extras && extras.quote) this.quoteMessage = extras.quote;
-        },
-        // 发送文本消息（通过websocket）— 只添加到历史，不触发生成
-        // 发送成功后由公共层清空输入框并暂存到 Outbox；失败/断线时按条件恢复，不再本地无条件清空
-        sendTextMessage() {
-            if (this.aiGenerationBusy) return;
-            const text = this.inputText.trim();
-            if (!text && !this.uploadedImageId && !this.quoteMessage) {
-                return;
-            }
-            const body = text || (this.uploadedImageId ? "（附带图片消息）" : "（引用上述消息）");
-            // 引用正文与用户输入一起作为本轮用户消息发送给模型，格式由公共协议层统一生成
-            const content = this.aiBuildQuotedMessage(this.quoteMessage, body);
-            if (!this.aiSendMessage(content)) {
-                this.aiToast('连接已断开，消息未发送', { kind: 'error' });
-                return;
-            }
-            this.scrollToBottom();
-        },
-        // 触发AI生成
-        triggerGenerate() {
-            if (this.aiGenerationBusy) return;
-            if (this.aiSendGenerate()) {
-                this.aiGenerating = true;
-                this.messages.push({
-                    _id: null,
-                    _key: this.aiMessageKey(),
-                    role: 'assistant',
-                    thinkingSegments: [],
-                    contentItems: []
-                });
-                this.scrollToBottom();
-            }
-        },
-        // 触发文件选择（本轮生成/停止中一律禁止上传）
-        triggerFileUpload() {
-            if (this.aiGenerationBusy) {
-                this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
-                return;
-            }
-            this.$refs.fileInput.click();
-        },
-        async onFileSelected(e) {
-            const file = e.target.files[0];
-            // 选择文件期间可能已经开始生成，这里再挡一次
-            if (this.aiGenerationBusy) {
-                this.$refs.fileInput.value = '';
-                this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
-                return;
-            }
-            if (!file) return;
-            if (!file.type.startsWith('image/')) {
-                this.aiToast("请选择图片文件", { kind: 'warn' });
-                return;
-            }
-            // 显示本地预览
-            const reader = new FileReader();
-            reader.onload = async (ev) => {
-                    // 调用图片上传接口（独立接口，不通过websocket），携带对话ID
-                    try {
-                        const res = await realUploadImage(file, this.conversationId);
-                    if (res.code === 0) {
-                        this.uploadedImageId = res.imageId;
-                        // 可选在聊天记录里单独展示一条图片消息？已在上传后自动添加上下文，不需要额外动作，但为了交互体验，显示一个系统提示
-                        // 但需求未强制，不过为了用户清楚，提醒图片已加入上下文，并且不影响聊天界面原有的消息，我这里不冗余插入消息，但预览保留
-                        // 同时此图片会加入服务端上下文，下次AI回复会理解该图片 (模拟代码已经支持上下文概念)
-                        // 展示一个临时toast风格
-                        this.aiToast("图片已上传，已加入对话上下文，可继续发送文字提问");
-                    } else {
-                        this.aiToast("图片上传失败", { kind: 'error' });
-                    }
-                } catch (err) {
-                    console.error("上传异常", err);
-                    this.aiToast("图片上传失败", { kind: 'error' });
-                }
-            };
-            reader.readAsDataURL(file);
-            // 清空input value 以便重新选择同一文件可触发
-            this.$refs.fileInput.value = '';
-        },
-        scrollToBottom() {
-            this.$nextTick(() => {
-                const container = this.$refs.messageContainer;
-                if (container) container.scrollTop = container.scrollHeight;
-            });
+        }
+
+        settings.localUrl = normalizeBase(settings.localUrl);
+        settings.healthPath = String(settings.healthPath || '/internal/ping').trim() || '/internal/ping';
+        settings.intervalMs = clamp(number(settings.intervalMs, 10000), 2000, 3600000);
+        settings.timeoutMs = clamp(number(settings.timeoutMs, 120000), 5000, 1800000);
+        settings.imageScale = clamp(Math.round(number(settings.imageScale, 100)), 25, 125);
+        settings.autoStart = settings.autoStart !== false;
+    }
+
+    function saveSettings() {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                settings: {
+                    localUrl: settings.localUrl,
+                    healthPath: settings.healthPath,
+                    intervalMs: settings.intervalMs,
+                    timeoutMs: settings.timeoutMs,
+                    imageScale: settings.imageScale,
+                    autoStart: settings.autoStart
+                },
+                running: settings.running
+            }));
+        } catch (e) {
+            // 隐私模式或存储已满时忽略，页面仍可正常使用
         }
     }
-});
+
+    function syncFormFromSettings() {
+        dom.localUrlInput.value = settings.localUrl || '';
+        dom.healthPathInput.value = settings.healthPath;
+        dom.intervalInput.value = Math.round(settings.intervalMs / 1000);
+        dom.timeoutInput.value = Math.round(settings.timeoutMs / 1000);
+        dom.scaleInput.value = settings.imageScale;
+        dom.scaleValue.textContent = settings.imageScale + '%';
+        dom.autoStartInput.checked = settings.autoStart;
+    }
+
+    function readSettingsFromForm() {
+        settings.localUrl = normalizeBase(dom.localUrlInput.value);
+        settings.healthPath = dom.healthPathInput.value.trim() || '/internal/ping';
+        settings.intervalMs = clamp(Math.round(number(dom.intervalInput.value, 10) * 1000), 2000, 3600000);
+        settings.timeoutMs = clamp(Math.round(number(dom.timeoutInput.value, 120) * 1000), 5000, 1800000);
+        settings.imageScale = clamp(Math.round(number(dom.scaleInput.value, 100)), 25, 125);
+        settings.autoStart = dom.autoStartInput.checked;
+    }
+
+    /** 同步滑条与百分比文字，返回当前比例。 */
+    function updateScaleLabel() {
+        var percent = clamp(Math.round(number(dom.scaleInput.value, 100)), 25, 125);
+        settings.imageScale = percent;
+        dom.scaleValue.textContent = percent + '%';
+        return percent;
+    }
+
+    /* ===================== 界面 ===================== */
+
+    function setStatus(status, text) {
+        run.status = status;
+        run.statusText = text;
+        dom.statusPill.className = 'pill ' + status;
+        dom.statusText.textContent = text;
+        dom.statState.textContent = text;
+        dom.statState.className = 'value small ' + (status === 'online' ? 'ok' : (status === 'error' ? 'err' : 'muted'));
+        dom.actionHint.textContent = status === 'online'
+            ? '已接入：该用户的所有绘画会话正在使用本机模型。'
+            : (run.enabled
+                ? '接入中：等待本地服务与服务器连接可用。'
+                : '未接入时，该用户的绘画会话使用服务器共享模型。');
+        syncButtons();
+    }
+
+    function syncButtons() {
+        var running = !!run.enabled;
+        dom.btnStart.disabled = running;
+        dom.btnStop.disabled = !running;
+        dom.localUrlInput.disabled = running;
+        dom.healthPathInput.disabled = running;
+        dom.intervalInput.disabled = running;
+        dom.timeoutInput.disabled = running;
+        dom.autoStartInput.disabled = running;
+    }
+
+    function renderStats() {
+        dom.statDone.textContent = String(run.requests);
+        dom.statError.textContent = run.lastError || '无';
+        dom.statError.className = 'value small ' + (run.lastError ? 'err' : 'muted');
+    }
+
+    function log(level, message) {
+        var line = document.createElement('div');
+        line.className = 'log-line ' + level;
+
+        var time = document.createElement('span');
+        time.className = 'log-time';
+        time.textContent = timeText(Date.now());
+
+        var tag = document.createElement('span');
+        tag.className = 'log-tag';
+        tag.textContent = level === 'ok' ? 'OK' : (level === 'warn' ? 'WARN' : (level === 'err' ? 'ERR' : 'INFO'));
+
+        var text = document.createElement('span');
+        text.className = 'log-msg';
+        text.textContent = message;
+
+        line.appendChild(time);
+        line.appendChild(tag);
+        line.appendChild(text);
+
+        var empty = dom.log.querySelector('.log-empty');
+        if (empty) {
+            empty.remove();
+        }
+        var stick = dom.log.scrollTop + dom.log.clientHeight >= dom.log.scrollHeight - 24;
+        dom.log.appendChild(line);
+        while (dom.log.childElementCount > MAX_LOG_LINES) {
+            dom.log.removeChild(dom.log.firstElementChild);
+        }
+        if (stick) {
+            dom.log.scrollTop = dom.log.scrollHeight;
+        }
+    }
+
+    /* ===================== 健康检查 ===================== */
+
+    function probe() {
+        var base = normalizeBase(settings.localUrl);
+        if (!base) {
+            return Promise.resolve({ ok: false, error: '请先填写本地 SD WebUI 地址' });
+        }
+        var url = joinUrl(base, settings.healthPath || '/internal/ping');
+        var controller = new AbortController();
+        var timer = setTimeout(function () {
+            controller.abort();
+        }, HEALTH_TIMEOUT_MS);
+        return fetch(url, {
+            method: 'GET',
+            mode: 'no-cors',
+            cache: 'no-store',
+            signal: controller.signal
+        }).then(function () {
+            return { ok: true };
+        }).catch(function (e) {
+            if (e && e.name === 'AbortError') {
+                return { ok: false, error: '健康检查超时（' + (HEALTH_TIMEOUT_MS / 1000) + ' 秒）' };
+            }
+            return { ok: false, error: '无法连接本地服务：' + errorText(e) };
+        }).finally(function () {
+            clearTimeout(timer);
+        });
+    }
+
+    function onHealthFailure(error) {
+        run.failures += 1;
+        run.lastError = error || '健康检查未通过';
+        renderStats();
+        if (run.failures >= HEALTH_FAILURE_THRESHOLD) {
+            if (isOpen()) {
+                log('warn', '连续 ' + run.failures + ' 次健康检查失败，已断开服务器连接；该用户的绘画会话回退到共享模型');
+                closeSocket();
+            }
+            setStatus('error', '本地服务异常，已断开');
+        } else {
+            setStatus(isOpen() ? 'degraded' : 'error',
+                '健康检查失败 ' + run.failures + '/' + HEALTH_FAILURE_THRESHOLD);
+            log('warn', '健康检查失败（' + run.failures + '/' + HEALTH_FAILURE_THRESHOLD + '）：' + run.lastError);
+        }
+    }
+
+    async function tickHealth() {
+        if (!run.enabled || run.busyCheck) {
+            return;
+        }
+        // 本地服务正在处理任务时跳过本轮检查，避免长任务被误判成掉线
+        if (run.active > 0) {
+            return;
+        }
+        if (!isOpen()) {
+            // 断线重连由 scheduleReconnect 负责，这里不重复发起
+            if (run.reconnectTimer) {
+                return;
+            }
+            var health = await probe();
+            if (!run.enabled) {
+                return;
+            }
+            if (health.ok) {
+                run.failures = 0;
+                run.lastError = '';
+                renderStats();
+                openSocket();
+            } else {
+                onHealthFailure(health.error);
+            }
+            return;
+        }
+        run.busyCheck = true;
+        var result;
+        try {
+            result = await probe();
+        } finally {
+            run.busyCheck = false;
+        }
+        if (result.ok) {
+            if (run.failures > 0) {
+                log('ok', '本地服务已恢复');
+            }
+            run.failures = 0;
+            run.lastError = '';
+            renderStats();
+            if (isOpen()) {
+                setStatus('online', '已接入');
+            }
+        } else {
+            onHealthFailure(result.error);
+        }
+    }
+
+    function startHealthLoop() {
+        stopHealthLoop();
+        run.healthTimer = setInterval(tickHealth, Math.max(2000, settings.intervalMs));
+    }
+
+    function stopHealthLoop() {
+        if (run.healthTimer) {
+            clearInterval(run.healthTimer);
+            run.healthTimer = null;
+        }
+    }
+
+    /* ===================== 连接管理 ===================== */
+
+    async function start() {
+        if (run.enabled) {
+            return;
+        }
+        readSettingsFromForm();
+        if (!settings.localUrl) {
+            log('warn', '请先填写本地 SD WebUI 地址');
+            dom.localUrlInput.focus();
+            return;
+        }
+        if (run.reconnectTimer) {
+            clearTimeout(run.reconnectTimer);
+            run.reconnectTimer = null;
+        }
+        run.enabled = true;
+        settings.running = true;
+        run.failures = 0;
+        run.lastError = '';
+        run.reconnectAttempts = 0;
+        saveSettings();
+        syncButtons();
+        setStatus('checking', '检查本地服务');
+        log('info', '检查本地服务：' + joinUrl(settings.localUrl, settings.healthPath));
+
+        var health = await probe();
+        if (!run.enabled) {
+            return;
+        }
+        if (!health.ok) {
+            run.enabled = false;
+            settings.running = false;
+            saveSettings();
+            syncButtons();
+            setStatus('error', '本地服务不可用');
+            run.lastError = health.error || '健康检查未通过';
+            renderStats();
+            log('err', '健康检查未通过，未接入服务器（' + run.lastError + '）');
+            return;
+        }
+        log('ok', '健康检查通过，开始连接服务器');
+        startHealthLoop();
+        openSocket();
+    }
+
+    function stop() {
+        run.enabled = false;
+        settings.running = false;
+        saveSettings();
+        clearReconnect();
+        closeSocket();
+        stopHealthLoop();
+        setStatus('off', '未接入');
+        syncButtons();
+        log('info', '已断开并回到服务器共享模型');
+    }
+
+    function openSocket() {
+        if (!run.enabled || run.ws) {
+            return;
+        }
+        var url;
+        try {
+            url = buildWsUrl();
+        } catch (e) {
+            setStatus('error', '接入地址无效');
+            run.lastError = '接入地址无效：' + errorText(e);
+            renderStats();
+            log('err', run.lastError);
+            return;
+        }
+        setStatus('connecting', '连接服务器');
+        log('info', '连接 ' + url);
+
+        var ws;
+        try {
+            ws = new WebSocket(url);
+        } catch (e) {
+            setStatus('error', '无法连接服务器');
+            log('err', '创建连接失败（' + errorText(e) + '）');
+            scheduleReconnect();
+            return;
+        }
+
+        run.ws = ws;
+        ws.onopen = function () {
+            if (run.ws !== ws) {
+                return;
+            }
+            run.failures = 0;
+            run.lastError = '';
+            run.reconnectAttempts = 0;
+            renderStats();
+            setStatus('online', '已接入');
+            log('ok', '已接入服务器：绘画会话将使用本机模型');
+        };
+
+        ws.onmessage = function (event) {
+            if (run.ws !== ws) {
+                return;
+            }
+            handleServerRequest(event.data);
+        };
+
+        ws.onerror = function () {
+            // 浏览器不暴露错误细节，统一交给 onclose 处理
+        };
+
+        ws.onclose = function (event) {
+            if (run.ws !== ws) {
+                return;
+            }
+            run.ws = null;
+            if (!run.enabled) {
+                setStatus('off', '未接入');
+                return;
+            }
+            var reason = event.code === 1006
+                ? '连接被服务器拒绝或网络不可达'
+                : ('连接已断开（code ' + event.code + '）');
+            setStatus('error', '已断开，等待重连');
+            log('warn', reason + '，该用户的绘画会话暂时回退到共享模型');
+            scheduleReconnect();
+        };
+    }
+
+    function closeSocket() {
+        var ws = run.ws;
+        run.ws = null;
+        if (ws) {
+            try {
+                ws.onclose = null;
+                ws.close();
+            } catch (e) {
+                // 已经断开时忽略
+            }
+        }
+    }
+
+    function scheduleReconnect() {
+        if (!run.enabled || run.reconnectTimer) {
+            return;
+        }
+        run.reconnectAttempts += 1;
+        var delay = Math.min(30000, RECONNECT_BASE_MS * run.reconnectAttempts);
+        run.reconnectTimer = setTimeout(async function () {
+            run.reconnectTimer = null;
+            if (!run.enabled || isOpen()) {
+                return;
+            }
+            var health = await probe();
+            if (!run.enabled) {
+                return;
+            }
+            if (health.ok) {
+                run.failures = 0;
+                run.lastError = '';
+                renderStats();
+                openSocket();
+            } else {
+                onHealthFailure(health.error);
+                scheduleReconnect();
+            }
+        }, delay);
+    }
+
+    function clearReconnect() {
+        if (run.reconnectTimer) {
+            clearTimeout(run.reconnectTimer);
+            run.reconnectTimer = null;
+        }
+    }
+
+    /* ===================== 请求转发 ===================== */
+
+    async function handleServerRequest(raw) {
+        var req;
+        try {
+            req = JSON.parse(raw);
+        } catch (e) {
+            log('warn', '收到无法解析的服务器消息');
+            return;
+        }
+        if (!req || !req.reqid) {
+            log('warn', '服务器消息缺少 reqid');
+            return;
+        }
+        var reqid = String(req.reqid);
+        run.requests += 1;
+        run.active += 1;
+        renderStats();
+        log('info', '收到任务 ' + shortId(reqid) + (req.path ? '（' + req.path + '）' : ''));
+
+        var started = Date.now();
+        try {
+            if (!isOpen()) {
+                throw new Error('连接已断开');
+            }
+            var out = await relay(req);
+            if (!isOpen()) {
+                throw new Error('连接已断开，结果未回传');
+            }
+            // 结果走 HTTP POST：大图 JSON 不再塞进 WebSocket 文本帧
+            await postResult(reqid, out.buffer);
+            log('ok', '任务 ' + shortId(reqid) + ' 已回传（' + (Date.now() - started) + 'ms，'
+                + formatBytes(out.size) + '）');
+        } catch (e) {
+            var message = errorText(e);
+            if (isOpen()) {
+                try {
+                    run.ws.send(JSON.stringify({ reqid: reqid, error: message }));
+                } catch (ignore) {
+                    // 回传失败时只记录日志
+                }
+            }
+            run.lastError = message;
+            renderStats();
+            log('err', '任务 ' + shortId(reqid) + ' 失败：' + message);
+            if (e && e.networkFailure) {
+                onHealthFailure(message);
+            }
+        } finally {
+            run.active -= 1;
+            renderStats();
+        }
+    }
+
+    /**
+     * 按“生图尺寸比例”缩放请求 JSON 里的 width/height。
+     * <p>
+     * 只修改发往本地模型的这一份请求参数，服务器与对话历史里的设置不变；
+     * 没有 width/height 的请求（例如反推提示词）原样转发。
+     * </p>
+     */
+    function applyImageScale(rawBody) {
+        var percent = clamp(Math.round(number(settings.imageScale, 100)), 25, 125);
+        if (percent === 100 || typeof rawBody !== 'string' || !rawBody.trim()) {
+            return { body: rawBody, note: '' };
+        }
+        var payload;
+        try {
+            payload = JSON.parse(rawBody);
+        } catch (e) {
+            return { body: rawBody, note: '' };
+        }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            return { body: rawBody, note: '' };
+        }
+        var width = Number(payload.width);
+        var height = Number(payload.height);
+        if (!isFinite(width) || !isFinite(height) || width <= 0 || height <= 0) {
+            return { body: rawBody, note: '' };
+        }
+        var scaledWidth = scaleImageSize(width, percent);
+        var scaledHeight = scaleImageSize(height, percent);
+        if (scaledWidth === width && scaledHeight === height) {
+            return { body: rawBody, note: '' };
+        }
+        payload.width = scaledWidth;
+        payload.height = scaledHeight;
+        return {
+            body: JSON.stringify(payload),
+            note: '生图尺寸按 ' + percent + '% 调整：' + Math.round(width) + '×' + Math.round(height)
+                + ' → ' + scaledWidth + '×' + scaledHeight
+        };
+    }
+
+    /** 本地模型要求宽高为 8 的倍数：按比例缩放后向下取最近的 8 的倍数，最小 8。 */
+    function scaleImageSize(value, percent) {
+        var scaled = Math.floor(value * percent / 100);
+        return Math.max(8, scaled - (scaled % 8));
+    }
+
+    async function relay(req) {
+        var base = normalizeBase(settings.localUrl);
+        if (!base) {
+            throw new Error('未配置本地 SD WebUI 地址');
+        }
+        var path = typeof req.path === 'string' && req.path ? req.path : '/sdapi/v1/txt2img';
+        var url = base + (path.charAt(0) === '/' ? path : '/' + path);
+        var body = typeof req.data === 'string' ? req.data : JSON.stringify(req.data == null ? {} : req.data);
+        // 只在本页缩放请求参数：把发给本地模型的 width/height 按滑条比例调整
+        var scaled = applyImageScale(body);
+        if (scaled.note) {
+            log('info', scaled.note);
+        }
+        body = scaled.body;
+
+        var controller = new AbortController();
+        var timer = setTimeout(function () {
+            controller.abort();
+        }, Math.max(5000, settings.timeoutMs));
+
+        var resp;
+        try {
+            resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json; charset=utf-8',
+                    'Accept': 'application/json'
+                },
+                body: body,
+                signal: controller.signal
+            });
+        } catch (e) {
+            var err = new Error(e && e.name === 'AbortError'
+                ? '请求本地服务超时（' + Math.round(settings.timeoutMs / 1000) + ' 秒）'
+                : ('无法连接本地服务：' + errorText(e)));
+            err.networkFailure = true;
+            throw err;
+        } finally {
+            clearTimeout(timer);
+        }
+
+        if (!resp.ok) {
+            var text = await safeText(resp);
+            throw new Error('本地服务返回 HTTP ' + resp.status + (text ? '：' + text.slice(0, 200) : ''));
+        }
+        var buffer = await resp.arrayBuffer();
+        if (!buffer.byteLength) {
+            throw new Error('本地服务返回空响应');
+        }
+        // 服务器会把结果当成 JSON 解析：先在这里挡掉 HTML 错误页，避免回传不可读的报错
+        var decoded;
+        try {
+            decoded = new TextDecoder('utf-8').decode(buffer);
+            JSON.parse(decoded);
+        } catch (e) {
+            throw new Error('本地服务返回的不是 JSON，请确认地址指向 SD WebUI 的 API');
+        }
+        return { buffer: buffer, size: buffer.byteLength };
+    }
+
+    /**
+     * 把本地服务的原始响应体 POST 回服务器。
+     * <p>
+     * 服务器通过 reqid 找到等待中的请求并完成它；这里不再经过 base64 和 WebSocket 文本帧，
+     * 因此不受 WebSocket 帧大小限制。
+     * </p>
+     */
+    async function postResult(reqid, buffer) {
+        var url = defaultResultUrl() + '?reqid=' + encodeURIComponent(reqid) + '&format=json';
+        var resp;
+        try {
+            resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json; charset=utf-8'
+                },
+                body: buffer
+            });
+        } catch (e) {
+            var err = new Error('回传结果失败：' + errorText(e));
+            err.networkFailure = true;
+            throw err;
+        }
+        if (!resp.ok) {
+            var text = await safeText(resp);
+            throw new Error('回传结果失败 HTTP ' + resp.status + (text ? '：' + text.slice(0, 200) : ''));
+        }
+    }
+
+    async function safeText(resp) {
+        try {
+            return (await resp.text()).trim();
+        } catch (e) {
+            return '';
+        }
+    }
+
+    /* ===================== 事件绑定 ===================== */
+
+    dom.btnStart.addEventListener('click', start);
+    dom.btnStop.addEventListener('click', stop);
+    dom.btnClearLog.addEventListener('click', function () {
+        dom.log.innerHTML = '<div class="log-empty">日志已清空。</div>';
+    });
+    dom.autoStartInput.addEventListener('change', saveSettings);
+    dom.scaleInput.addEventListener('input', function () {
+        updateScaleLabel();
+    });
+    dom.scaleInput.addEventListener('change', function () {
+        var percent = updateScaleLabel();
+        saveSettings();
+        log('info', '生图尺寸比例已设为 ' + percent + '%'
+            + (percent === 100 ? '（按原始尺寸）' : '（只影响之后发给本地模型的请求）'));
+    });
+    dom.btnScaleReset.addEventListener('click', function () {
+        dom.scaleInput.value = 100;
+        updateScaleLabel();
+        saveSettings();
+        log('info', '生图尺寸比例已恢复 100%');
+    });
+
+    window.addEventListener('pagehide', function () {
+        closeSocket();
+    });
+
+    /* ===================== 启动 ===================== */
+
+    loadSettings();
+    syncFormFromSettings();
+    setStatus('off', '未接入');
+    syncButtons();
+    renderStats();
+
+    if (settings.autoStart && settings.running && settings.localUrl) {
+        log('info', '检测到上次处于接入状态，正在自动恢复');
+        start();
+    }
+})();
 </script>
 </body>
 </html>

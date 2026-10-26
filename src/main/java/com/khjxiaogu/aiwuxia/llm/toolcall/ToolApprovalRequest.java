@@ -21,6 +21,7 @@ public class ToolApprovalRequest {
 	private final String userId;
 	private final String toolName;
 	private final String arguments;
+	private final String displayArguments;
 	private final String reason;
 	private final long createTime = System.currentTimeMillis();
 	private final CompletableFuture<Boolean> future = new CompletableFuture<>();
@@ -32,9 +33,22 @@ public class ToolApprovalRequest {
 	 * @param reason    需要许可的原因，可为 null
 	 */
 	public ToolApprovalRequest(String userId, String toolName, String arguments, String reason) {
+		this(userId, toolName, arguments, null, reason);
+	}
+
+	/**
+	 * @param userId           发起请求的会话/用户标识，用于按用户串行化
+	 * @param toolName         待执行的工具名称
+	 * @param arguments        模型给出的原始参数（JSON 字符串）
+	 * @param displayArguments 面向用户的参数文本（参数名已换成可读名称），可为 null
+	 * @param reason           需要许可的原因，可为 null
+	 */
+	public ToolApprovalRequest(String userId, String toolName, String arguments, String displayArguments,
+			String reason) {
 		this.userId = userId;
 		this.toolName = toolName;
 		this.arguments = arguments;
+		this.displayArguments = displayArguments;
 		this.reason = reason;
 	}
 
@@ -53,6 +67,16 @@ public class ToolApprovalRequest {
 
 	public String getArguments() {
 		return arguments;
+	}
+
+	/**
+	 * 面向用户的参数文本：参数名已换成工具声明的可读名称，每行一个参数。
+	 * <p>工具未声明可读名称或没有可读参数时为 null，调用方应回退到 {@link #getArguments()}。</p>
+	 *
+	 * @return 可读参数文本，可能为 null
+	 */
+	public String getDisplayArguments() {
+		return displayArguments;
 	}
 
 	/** 需要许可的原因，可能为 null。 */

@@ -502,11 +502,14 @@ public class AISession implements ISaveData,AutoCloseable{
 
 	/**
 	 * 异步任务创建时的会话钩子。
+	 * <p>
+	 * 默认不写任何状态：{@link ToolCallManager} 已经把“任务已创建，任务ID：…”作为
+	 * 工具调用结果返回给模型，再往会话状态里追加一条会重复提示。子类如有额外需要可覆盖。
+	 * </p>
 	 *
 	 * @param task 新任务
 	 */
 	protected void handleToolTaskCreated(ToolTask task) {
-		notifyToolStatus(task.getToolName(), "任务已创建：" + task.getId(), true);
 	}
 
 	/**

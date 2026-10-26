@@ -233,8 +233,8 @@ public class CrontabMcp implements ToolProvider {
 	public Collection<ToolData> getTools() {
 		return Collections.singletonList(new ToolData.Builder("timed_trigger",
 				"创建一个定时触发器，达到设定的时间时会触发，可用于定时提醒或定时任务。")
-				.putParam("alert_time", "触发时间，格式是yyyy-mm-dd HH:MM:SS，系统本地时间")
-				.putParam("note", "触发器事项，在触发时会写入到上下文，需要详细描述任务内容。")
+				.putParam("alert_time", "触发时间，格式是yyyy-mm-dd HH:MM:SS，系统本地时间", "触发时间")
+				.putParam("note", "触发器事项，在触发时会写入到上下文，需要详细描述任务内容。", "事项")
 				.tool((data) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");

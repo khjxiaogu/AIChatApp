@@ -1,0 +1,1838 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本地模型终端 · AIWuxia</title>
+<style>
+    :root {
+        --bg: #f5f7fb;
+        --panel: #ffffff;
+        --text: #1e2a3e;
+        --muted: #5b6e8c;
+        --line: #e2e8f0;
+        --blue: #1e6fdf;
+        --blue-dark: #1558b8;
+        --green: #16a34a;
+        --amber: #b45309;
+        --red: #dc2626;
+        --radius: 16px;
+        --shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 10px 30px rgba(15, 23, 42, .06);
+    }
+
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body {
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+    }
+
+    button,
+    input {
+        font-family: inherit;
+    }
+
+    .page {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 24px 20px 56px;
+    }
+
+    /* ---------- 顶栏 ---------- */
+    .topbar {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 18px 22px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        flex-wrap: wrap;
+    }
+
+    .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        flex: 1;
+    }
+
+    .logo {
+        width: 44px;
+        height: 44px;
+        flex-shrink: 0;
+        border-radius: 13px;
+        background: linear-gradient(135deg, #1e6fdf, #4f46e5);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 21px;
+        box-shadow: 0 6px 16px rgba(30, 111, 223, .3);
+    }
+
+    .brand h1 {
+        font-size: 1.18rem;
+        font-weight: 650;
+        letter-spacing: .2px;
+        white-space: nowrap;
+    }
+
+    .brand p {
+        font-size: .78rem;
+        color: var(--muted);
+        margin-top: 3px;
+    }
+
+    .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 13px;
+        border-radius: 999px;
+        background: #f1f5f9;
+        color: var(--muted);
+        font-size: .78rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .pill::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #94a3b8;
+    }
+
+    .pill.ok {
+        background: #ecfdf3;
+        color: #15803d;
+    }
+
+    .pill.ok::before {
+        background: #22c55e;
+    }
+
+    .pill.warn {
+        background: #fffbeb;
+        color: #b45309;
+    }
+
+    .pill.warn::before {
+        background: #f59e0b;
+    }
+
+    .server-endpoint {
+        font-size: .76rem;
+        color: var(--muted);
+        max-width: 310px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .server-endpoint b {
+        color: #334155;
+        font-weight: 600;
+    }
+
+    /* ---------- 按钮 ---------- */
+    .btn {
+        border: none;
+        border-radius: 10px;
+        padding: 9px 15px;
+        font-size: .82rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background .16s ease, color .16s ease, border-color .16s ease, transform .06s ease;
+        white-space: nowrap;
+    }
+
+    .btn:active {
+        transform: translateY(1px);
+    }
+
+    .btn.primary {
+        background: var(--blue);
+        color: #fff;
+    }
+
+    .btn.primary:hover {
+        background: var(--blue-dark);
+    }
+
+    .btn.ghost {
+        background: #fff;
+        color: #334155;
+        border: 1px solid var(--line);
+    }
+
+    .btn.ghost:hover {
+        border-color: #cbd5e1;
+        background: #f8fafc;
+    }
+
+    .btn.subtle {
+        background: #f1f5f9;
+        color: #334155;
+        border: 1px solid #e2e8f0;
+    }
+
+    .btn.subtle:hover:not(:disabled) {
+        background: #e9eef5;
+    }
+
+    .btn.tiny {
+        padding: 5px 10px;
+        font-size: .72rem;
+        border-radius: 8px;
+    }
+
+    .btn:disabled {
+        opacity: .55;
+        cursor: not-allowed;
+    }
+
+    .btn.ghost-dark {
+        background: rgba(255, 255, 255, .06);
+        color: #cbd5e1;
+        border: 1px solid rgba(255, 255, 255, .14);
+    }
+
+    .btn.ghost-dark:hover {
+        background: rgba(255, 255, 255, .12);
+    }
+
+    /* ---------- 说明与卡片 ---------- */
+    .lead {
+        margin: 18px 2px 14px;
+        font-size: .82rem;
+        line-height: 1.7;
+        color: var(--muted);
+    }
+
+    .lead b {
+        color: var(--text);
+    }
+
+    .services {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+        gap: 16px;
+    }
+
+    .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 18px 18px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        transition: border-color .18s ease, box-shadow .18s ease;
+    }
+
+    .card.is-enabled {
+        border-color: rgba(30, 111, 223, .35);
+        box-shadow: 0 0 0 3px rgba(30, 111, 223, .06), var(--shadow);
+    }
+
+    .card-top {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .svc-icon {
+        width: 40px;
+        height: 40px;
+        flex-shrink: 0;
+        border-radius: 12px;
+        background: #f1f5f9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 19px;
+    }
+
+    .svc-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .svc-info h2 {
+        font-size: 1rem;
+        font-weight: 650;
+    }
+
+    .svc-info p {
+        margin-top: 3px;
+        font-size: .76rem;
+        line-height: 1.5;
+        color: var(--muted);
+    }
+
+    /* 开关 */
+    .switch {
+        position: relative;
+        display: inline-flex;
+        width: 46px;
+        height: 26px;
+        flex-shrink: 0;
+        margin-top: 2px;
+        cursor: pointer;
+    }
+
+    .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .switch .slider {
+        position: absolute;
+        inset: 0;
+        background: #cbd5e1;
+        border-radius: 999px;
+        transition: background .18s ease;
+    }
+
+    .switch .slider::before {
+        content: '';
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        left: 3px;
+        top: 3px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, .25);
+        transition: transform .18s ease;
+    }
+
+    .switch input:checked + .slider {
+        background: var(--blue);
+    }
+
+    .switch input:checked + .slider::before {
+        transform: translateX(20px);
+    }
+
+    .switch input:focus-visible + .slider {
+        box-shadow: 0 0 0 3px rgba(30, 111, 223, .25);
+    }
+
+    .card-badges {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: .72rem;
+        font-weight: 600;
+        background: #f1f5f9;
+        color: #64748b;
+    }
+
+    .badge::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: .8;
+    }
+
+    .badge.checking,
+    .badge.connecting {
+        background: #fffbeb;
+        color: #b45309;
+    }
+
+    .badge.online {
+        background: #ecfdf3;
+        color: #15803d;
+    }
+
+    .badge.degraded {
+        background: #fff7ed;
+        color: #c2410c;
+    }
+
+    .badge.error {
+        background: #fef2f2;
+        color: #b91c1c;
+    }
+
+    .type-tag {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: .68rem;
+        color: #8196b0;
+        background: #f8fafc;
+        border: 1px solid #eef2f7;
+        border-radius: 6px;
+        padding: 3px 7px;
+    }
+
+    .fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .field {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+    }
+
+    .field.wide {
+        grid-column: 1 / -1;
+    }
+
+    .field span {
+        font-size: .72rem;
+        font-weight: 600;
+        color: #64748b;
+    }
+
+    .field input {
+        width: 100%;
+        border: 1px solid #d7e0ec;
+        border-radius: 9px;
+        padding: 8px 10px;
+        font-size: .8rem;
+        color: var(--text);
+        background: #fff;
+        outline: none;
+        transition: border-color .16s ease, box-shadow .16s ease;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .field input:focus {
+        border-color: var(--blue);
+        box-shadow: 0 0 0 2px rgba(30, 111, 223, .18);
+    }
+
+    .field input::placeholder {
+        color: #a8b6c8;
+    }
+
+    .card-note {
+        font-size: .72rem;
+        line-height: 1.55;
+        color: #64748b;
+        background: #f8fafc;
+        border: 1px dashed #e2e8f0;
+        border-radius: 9px;
+        padding: 8px 10px;
+    }
+
+    .card-foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        justify-content: space-between;
+        padding-top: 4px;
+        border-top: 1px solid #f1f5f9;
+    }
+
+    .hint {
+        font-size: .72rem;
+        line-height: 1.45;
+        color: #8196b0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+    }
+
+    .hint.ok {
+        color: #15803d;
+    }
+
+    .hint.err {
+        color: #b91c1c;
+        white-space: normal;
+    }
+
+    /* ---------- 终端日志 ---------- */
+    .console {
+        margin-top: 18px;
+        background: #0b1220;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        border: 1px solid #1e293b;
+    }
+
+    .console-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        background: #111c30;
+        border-bottom: 1px solid #1e293b;
+        color: #cbd5e1;
+        font-size: .78rem;
+        font-weight: 600;
+        letter-spacing: .4px;
+    }
+
+    .console-head .dots {
+        display: inline-flex;
+        gap: 6px;
+        margin-right: 10px;
+    }
+
+    .console-head .dots i {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #334155;
+        display: inline-block;
+    }
+
+    .console-head .dots i:nth-child(1) { background: #ef4444; }
+    .console-head .dots i:nth-child(2) { background: #f59e0b; }
+    .console-head .dots i:nth-child(3) { background: #22c55e; }
+
+    .console-title {
+        display: flex;
+        align-items: center;
+        flex: 1;
+    }
+
+    .log {
+        height: 240px;
+        overflow-y: auto;
+        padding: 10px 14px 14px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: .76rem;
+        line-height: 1.75;
+        scrollbar-width: thin;
+        scrollbar-color: #334155 transparent;
+    }
+
+    .log-line {
+        display: flex;
+        gap: 9px;
+        align-items: baseline;
+        word-break: break-word;
+    }
+
+    .log-time {
+        color: #64748b;
+        flex-shrink: 0;
+    }
+
+    .log-tag {
+        flex-shrink: 0;
+        width: 34px;
+        font-weight: 700;
+        color: #7dd3fc;
+    }
+
+    .log-line.ok .log-tag { color: #4ade80; }
+    .log-line.warn .log-tag { color: #fbbf24; }
+    .log-line.err .log-tag { color: #f87171; }
+
+    .log-msg {
+        color: #dbe7f7;
+        min-width: 0;
+    }
+
+    .log-line.ok .log-msg { color: #bbf7d0; }
+    .log-line.warn .log-msg { color: #fde68a; }
+    .log-line.err .log-msg { color: #fecaca; }
+
+    .footnote {
+        margin-top: 16px;
+        font-size: .72rem;
+        line-height: 1.7;
+        color: #8196b0;
+    }
+
+    /* ---------- 设置弹窗 ---------- */
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, .5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        z-index: 100;
+    }
+
+    .modal-overlay[hidden] {
+        display: none;
+    }
+
+    .modal {
+        width: 100%;
+        max-width: 560px;
+        max-height: 90vh;
+        overflow-y: auto;
+        background: #fff;
+        border-radius: 18px;
+        padding: 24px 26px;
+        box-shadow: 0 24px 70px rgba(15, 23, 42, .3);
+    }
+
+    .modal h3 {
+        font-size: 1.1rem;
+        font-weight: 650;
+    }
+
+    .modal-desc {
+        margin-top: 6px;
+        margin-bottom: 16px;
+        font-size: .78rem;
+        line-height: 1.65;
+        color: var(--muted);
+    }
+
+    .modal .fields {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .settings-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        margin-top: 12px;
+    }
+
+    .check-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 14px;
+        font-size: .8rem;
+        color: #334155;
+        cursor: pointer;
+    }
+
+    .check-row input {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--blue);
+    }
+
+    .modal-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 20px;
+    }
+
+    .modal-actions .spacer {
+        flex: 1;
+    }
+
+    .modal-note {
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #f8fafc;
+        border: 1px solid #eef2f7;
+        font-size: .72rem;
+        line-height: 1.65;
+        color: #64748b;
+    }
+
+    .modal-note code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #334155;
+    }
+
+    @media (max-width: 620px) {
+        .page {
+            padding: 14px 12px 40px;
+        }
+
+        .topbar {
+            padding: 14px;
+            gap: 12px;
+        }
+
+        .server-endpoint {
+            max-width: 100%;
+            width: 100%;
+            order: 5;
+        }
+
+        .fields,
+        .modal .fields {
+            grid-template-columns: 1fr;
+        }
+
+        .settings-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .services {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+</head>
+<body>
+<div class="page">
+    <header class="topbar">
+        <div class="brand">
+            <div class="logo">◈</div>
+            <div>
+                <h1>本地模型终端</h1>
+                <p>把本机的语音、绘画、歌声服务接入 AIWuxia 服务器</p>
+            </div>
+        </div>
+        <span class="pill" id="serverPill">0/0 个服务在线</span>
+        <div class="server-endpoint">服务器 <b id="serverUrlText">-</b></div>
+        <button type="button" class="btn ghost" id="btnSettings">⚙ 服务器设置</button>
+    </header>
+
+    <p class="lead">
+        开启服务前会先做<b>健康检查</b>，通过后才连接服务器；上线后按设定间隔<b>定期复查</b>，
+        连续失败会自动从服务器下线，恢复后重新上线。本地服务忙碌时不会误判掉线。
+    </p>
+
+    <section class="services" id="services" aria-label="本地服务列表"></section>
+
+    <section class="console" aria-label="运行日志">
+        <div class="console-head">
+            <span class="console-title">
+                <span class="dots"><i></i><i></i><i></i></span>
+                运行日志
+            </span>
+            <button type="button" class="btn tiny ghost-dark" id="btnClearLog">清空</button>
+        </div>
+        <div class="log" id="log" role="log" aria-live="polite"></div>
+    </section>
+
+    <p class="footnote">
+        提示：浏览器无法读取跨域本地服务的响应状态，健康检查只能验证端口可达；请求转发需要本地服务允许跨域
+        （例如 SD WebUI 启动参数 <code>--cors-allow-origins=*</code>）。Token 会作为 WebSocket 查询参数发送，
+        请只在可信网络中使用。
+    </p>
+</div>
+
+<!-- 服务器设置 -->
+<div class="modal-overlay" id="settingsModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <h3 id="settingsTitle">服务器设置</h3>
+        <p class="modal-desc">
+            这里配置要接入的 AIWuxia 服务器和健康检查节奏。浏览器无法为 WebSocket 设置 Authorization 请求头，
+            因此 Token 会拼在连接地址的查询参数里。
+        </p>
+        <div class="fields">
+            <label class="field wide">
+                <span>WebSocket 地址</span>
+                <input type="text" id="setServerUrl" spellcheck="false" placeholder="ws://127.0.0.1:8999/aichat/kh$localModelDeploy">
+            </label>
+            <label class="field wide">
+                <span>Token（服务器 localVoiceToken）</span>
+                <input type="password" id="setToken" spellcheck="false" autocomplete="off" placeholder="与服务端启动参数 localVoiceToken 一致">
+            </label>
+        </div>
+        <div class="settings-grid">
+            <label class="field">
+                <span>健康检查间隔（秒）</span>
+                <input type="number" id="setInterval" min="2" step="1" value="10">
+            </label>
+            <label class="field">
+                <span>连续失败次数</span>
+                <input type="number" id="setThreshold" min="1" max="20" step="1" value="2">
+            </label>
+            <label class="field">
+                <span>请求超时（秒）</span>
+                <input type="number" id="setTimeout" min="5" step="5" value="120">
+            </label>
+        </div>
+        <label class="check-row">
+            <input type="checkbox" id="setAutoReconnect" checked>
+            连接断开或服务恢复后自动重连（重连前仍会先做健康检查）
+        </label>
+        <div class="modal-note">
+            默认地址由当前页面推断：<code id="defaultUrlHint">-</code>。健康检查使用
+            <code>no-cors</code> 请求，只能判断本地端口是否可达；请求转发则要求本地服务返回 CORS 头。
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn ghost" id="btnResetServerUrl">恢复默认地址</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn ghost" id="btnCancelSettings">取消</button>
+            <button type="button" class="btn primary" id="btnSaveSettings">保存并重连</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+
+    var STORAGE_KEY = 'aiwuxia_local_model_terminal_v1';
+    var HEALTH_TIMEOUT_MS = 4000;
+    var RECONNECT_DELAY_MS = 3000;
+    var MAX_LOG_LINES = 400;
+    var AUDIO_FIELDS = ['data', 'audio', 'audio_base64', 'audioBase64', 'base64'];
+
+    var SERVICE_DEFS = [
+        {
+            key: 'audio',
+            type: 'audio',
+            name: '语音合成',
+            icon: '🔊',
+            desc: '把服务器下发的朗读请求转发到本机 TTS 服务',
+            placeholder: 'http://127.0.0.1:9880',
+            defaultHealth: '/',
+            hasPath: true,
+            defaultPath: '/',
+            hasFormat: true,
+            defaultFormat: 'mp3'
+        },
+        {
+            key: 'sdxl',
+            type: 'sdxl',
+            name: '图像生成',
+            icon: '🎨',
+            desc: '把 SD WebUI 的 API 请求转发到本机绘画服务',
+            placeholder: 'http://127.0.0.1:7860',
+            defaultHealth: '/internal/ping',
+            hasPath: false,
+            hasFormat: false,
+            defaultFormat: 'json'
+        },
+        {
+            key: 'svs',
+            type: 'svs',
+            name: '歌声合成',
+            icon: '🎤',
+            desc: '把歌声合成请求转发到本机 SVS 服务',
+            placeholder: 'http://127.0.0.1:9881',
+            defaultHealth: '/',
+            hasPath: true,
+            defaultPath: '/svs',
+            hasFormat: true,
+            defaultFormat: 'wav'
+        }
+    ];
+
+    var settings = {
+        serverUrl: '',
+        token: '',
+        intervalMs: 10000,
+        threshold: 2,
+        requestTimeoutMs: 120000,
+        autoReconnect: true
+    };
+    var services = {};
+    var cards = {};
+    var healthTimer = null;
+    var saveTimer = null;
+
+    var dom = {
+        serverPill: document.getElementById('serverPill'),
+        serverUrlText: document.getElementById('serverUrlText'),
+        services: document.getElementById('services'),
+        log: document.getElementById('log'),
+        btnSettings: document.getElementById('btnSettings'),
+        btnClearLog: document.getElementById('btnClearLog'),
+        settingsModal: document.getElementById('settingsModal'),
+        setServerUrl: document.getElementById('setServerUrl'),
+        setToken: document.getElementById('setToken'),
+        setInterval: document.getElementById('setInterval'),
+        setThreshold: document.getElementById('setThreshold'),
+        setTimeout: document.getElementById('setTimeout'),
+        setAutoReconnect: document.getElementById('setAutoReconnect'),
+        defaultUrlHint: document.getElementById('defaultUrlHint'),
+        btnResetServerUrl: document.getElementById('btnResetServerUrl'),
+        btnCancelSettings: document.getElementById('btnCancelSettings'),
+        btnSaveSettings: document.getElementById('btnSaveSettings')
+    };
+
+    /* ===================== 配置读写 ===================== */
+
+    function createService(def) {
+        return {
+            key: def.key,
+            type: def.type,
+            def: def,
+            enabled: false,
+            baseUrl: '',
+            healthPath: def.defaultHealth,
+            path: def.defaultPath || '/',
+            format: def.defaultFormat || 'mp3',
+            status: 'off',
+            statusText: '未启用',
+            failures: 0,
+            lastCheck: 0,
+            lastError: '',
+            requests: 0,
+            activeRequests: 0,
+            ws: null,
+            busyCheck: false,
+            reconnectTimer: null,
+            reconnectAttempts: 0
+        };
+    }
+
+    function loadState() {
+        var stored = null;
+        try {
+            stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+        } catch (e) {
+            stored = null;
+        }
+        if (stored && stored.settings) {
+            for (var key in settings) {
+                if (Object.prototype.hasOwnProperty.call(settings, key)
+                    && stored.settings[key] !== undefined && stored.settings[key] !== null) {
+                    settings[key] = stored.settings[key];
+                }
+            }
+        }
+        SERVICE_DEFS.forEach(function (def) {
+            var svc = createService(def);
+            var saved = stored && stored.services ? stored.services[def.key] : null;
+            if (saved) {
+                svc.enabled = !!saved.enabled;
+                svc.baseUrl = saved.baseUrl || '';
+                svc.healthPath = saved.healthPath || def.defaultHealth;
+                svc.path = saved.path || def.defaultPath || '/';
+                svc.format = saved.format || def.defaultFormat || 'mp3';
+            }
+            services[def.key] = svc;
+        });
+        if (!settings.serverUrl) {
+            settings.serverUrl = defaultServerUrl();
+        }
+        settings.intervalMs = clamp(number(settings.intervalMs, 10000), 2000, 3600000);
+        settings.threshold = clamp(Math.round(number(settings.threshold, 2)), 1, 20);
+        settings.requestTimeoutMs = clamp(number(settings.requestTimeoutMs, 120000), 5000, 1800000);
+        settings.autoReconnect = settings.autoReconnect !== false;
+    }
+
+    function saveState() {
+        var payload = { settings: settings, services: {} };
+        SERVICE_DEFS.forEach(function (def) {
+            var svc = services[def.key];
+            payload.services[def.key] = {
+                enabled: svc.enabled,
+                baseUrl: svc.baseUrl,
+                healthPath: svc.healthPath,
+                path: svc.path,
+                format: svc.format
+            };
+        });
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        } catch (e) {
+            // 隐私模式或存储已满时忽略，页面仍可正常使用
+        }
+    }
+
+    function saveSoon() {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveState, 300);
+    }
+
+    /* ===================== 工具函数 ===================== */
+
+    function number(value, fallback) {
+        var n = Number(value);
+        return isFinite(n) && n > 0 ? n : fallback;
+    }
+
+    function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function defaultServerUrl() {
+        if (location.protocol === 'file:') {
+            return 'ws://127.0.0.1:8999/aichat/kh$localModelDeploy';
+        }
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return proto + '//' + location.host + '/aichat/kh$localModelDeploy';
+    }
+
+    function normalizeWsUrl(raw) {
+        var value = String(raw || '').trim();
+        if (!value) {
+            value = defaultServerUrl();
+        }
+        if (!/^wss?:\/\//i.test(value)) {
+            if (/^https?:\/\//i.test(value)) {
+                value = value.replace(/^http/i, 'ws');
+            } else {
+                value = (location.protocol === 'https:' ? 'wss://' : 'ws://') + value.replace(/^\/+/, '');
+            }
+        }
+        return value;
+    }
+
+    function buildWsUrl(type) {
+        var url = new URL(normalizeWsUrl(settings.serverUrl));
+        url.searchParams.set('model_type', type);
+        if (settings.token) {
+            url.searchParams.set('token', settings.token);
+        } else {
+            url.searchParams.delete('token');
+        }
+        return url.toString();
+    }
+
+    function maskToken(url) {
+        return String(url || '').replace(/([?&]token=)[^&]*/g, '$1***');
+    }
+
+    function normalizeBase(raw) {
+        var value = String(raw || '').trim();
+        if (!value) {
+            return '';
+        }
+        if (!/^https?:\/\//i.test(value)) {
+            value = 'http://' + value;
+        }
+        return value.replace(/\/+$/, '');
+    }
+
+    function joinUrl(base, path) {
+        if (!path) {
+            return base;
+        }
+        return base + (path.charAt(0) === '/' ? path : '/' + path);
+    }
+
+    function endpointLabel() {
+        try {
+            return new URL(normalizeWsUrl(settings.serverUrl)).host;
+        } catch (e) {
+            return '未配置';
+        }
+    }
+
+    function timeText(timestamp) {
+        var d = new Date(timestamp);
+        function pad(n) {
+            return n < 10 ? '0' + n : String(n);
+        }
+        return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+
+    function shortId(id) {
+        var s = String(id == null ? '' : id);
+        return s.length > 12 ? s.slice(0, 8) + '…' : s;
+    }
+
+    function formatBytes(bytes) {
+        var n = Number(bytes) || 0;
+        if (n < 1024) {
+            return n + ' B';
+        }
+        if (n < 1024 * 1024) {
+            return (n / 1024).toFixed(1) + ' KB';
+        }
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+    }
+
+    function errorText(error) {
+        return error && error.message ? error.message : String(error);
+    }
+
+    function isOpen(svc) {
+        return !!svc.ws && svc.ws.readyState === WebSocket.OPEN;
+    }
+
+    function toBase64(buffer) {
+        var bytes = new Uint8Array(buffer);
+        var binary = '';
+        var chunk = 0x8000;
+        for (var i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+    }
+
+    /* ===================== 日志 ===================== */
+
+    function log(level, message) {
+        var line = document.createElement('div');
+        line.className = 'log-line ' + level;
+
+        var time = document.createElement('span');
+        time.className = 'log-time';
+        time.textContent = timeText(Date.now());
+
+        var tag = document.createElement('span');
+        tag.className = 'log-tag';
+        tag.textContent = level === 'ok' ? 'OK' : (level === 'warn' ? 'WARN' : (level === 'err' ? 'ERR' : 'INFO'));
+
+        var text = document.createElement('span');
+        text.className = 'log-msg';
+        text.textContent = message;
+
+        line.appendChild(time);
+        line.appendChild(tag);
+        line.appendChild(text);
+
+        var stick = dom.log.scrollTop + dom.log.clientHeight >= dom.log.scrollHeight - 24;
+        dom.log.appendChild(line);
+        while (dom.log.childElementCount > MAX_LOG_LINES) {
+            dom.log.removeChild(dom.log.firstElementChild);
+        }
+        if (stick) {
+            dom.log.scrollTop = dom.log.scrollHeight;
+        }
+    }
+
+    /* ===================== 卡片渲染 ===================== */
+
+    function buildCards() {
+        dom.services.innerHTML = '';
+        SERVICE_DEFS.forEach(function (def) {
+            var card = document.createElement('article');
+            card.className = 'card';
+            card.setAttribute('data-svc', def.key);
+
+            var html = ''
+                + '<div class="card-top">'
+                + '  <div class="svc-icon">' + def.icon + '</div>'
+                + '  <div class="svc-info"><h2>' + def.name + '</h2><p>' + def.desc + '</p></div>'
+                + '  <label class="switch" title="启用或停用该服务">'
+                + '    <input type="checkbox" data-role="toggle">'
+                + '    <span class="slider"></span>'
+                + '  </label>'
+                + '</div>'
+                + '<div class="card-badges">'
+                + '  <span class="badge off" data-role="badge">未启用</span>'
+                + '  <span class="type-tag">model_type: ' + def.type + '</span>'
+                + '</div>'
+                + '<div class="fields">'
+                + '  <label class="field wide"><span>本地服务地址</span>'
+                + '    <input type="text" data-field="baseUrl" placeholder="' + def.placeholder + '" spellcheck="false"></label>'
+                + '  <label class="field"><span>健康检查路径</span>'
+                + '    <input type="text" data-field="healthPath" spellcheck="false"></label>';
+
+            if (def.hasPath) {
+                html += ''
+                    + '  <label class="field"><span>请求路径</span>'
+                    + '    <input type="text" data-field="path" spellcheck="false"></label>';
+            }
+            if (def.hasFormat) {
+                html += ''
+                    + '  <label class="field"><span>返回格式</span>'
+                    + '    <input type="text" data-field="format" spellcheck="false"></label>';
+            }
+
+            html += '</div>';
+
+            if (!def.hasPath) {
+                html += '<div class="card-note">请求路径与参数由服务器下发，页面直接转发到'
+                    + def.name + '服务（例如 SD WebUI 的 /sdapi/v1/txt2img）。</div>';
+            } else {
+                html += '<div class="card-note">请求体是服务器下发的原始 JSON；响应可以是音频二进制，'
+                    + '也可以是包含 data / audio 字段（Base64）的 JSON。</div>';
+            }
+
+            html += ''
+                + '<div class="card-foot">'
+                + '  <span class="hint" data-role="hint">尚未检查</span>'
+                + '  <button type="button" class="btn subtle" data-role="test">测试连接</button>'
+                + '</div>';
+
+            card.innerHTML = html;
+            dom.services.appendChild(card);
+            cards[def.key] = card;
+
+            var svc = services[def.key];
+            setInput(card, 'baseUrl', svc.baseUrl);
+            setInput(card, 'healthPath', svc.healthPath);
+            if (def.hasPath) {
+                setInput(card, 'path', svc.path);
+            }
+            if (def.hasFormat) {
+                setInput(card, 'format', svc.format);
+            }
+            card.querySelector('[data-role="toggle"]').checked = svc.enabled;
+        });
+        syncAll();
+    }
+
+    function setInput(card, field, value) {
+        var input = card.querySelector('[data-field="' + field + '"]');
+        if (input) {
+            input.value = value;
+        }
+    }
+
+    function syncAll() {
+        SERVICE_DEFS.forEach(function (def) {
+            syncCard(def.key);
+        });
+    }
+
+    function syncCard(key) {
+        var svc = services[key];
+        var card = cards[key];
+        if (!card) {
+            return;
+        }
+        var badge = card.querySelector('[data-role="badge"]');
+        badge.className = 'badge ' + svc.status;
+        badge.textContent = svc.statusText;
+        badge.title = svc.lastError || svc.statusText;
+
+        var hint = card.querySelector('[data-role="hint"]');
+        if (svc.status === 'online') {
+            hint.textContent = svc.activeRequests > 0
+                ? '处理中 ' + svc.activeRequests + ' 个任务 · 累计 ' + svc.requests + ' 个'
+                : '已上线 · 已处理 ' + svc.requests + ' 个任务';
+            hint.className = 'hint ok';
+        } else if (svc.lastError) {
+            hint.textContent = svc.lastError;
+            hint.className = 'hint err';
+        } else if (svc.lastCheck) {
+            hint.textContent = '上次检查：' + timeText(svc.lastCheck);
+            hint.className = 'hint';
+        } else {
+            hint.textContent = '尚未检查';
+            hint.className = 'hint';
+        }
+
+        card.classList.toggle('is-enabled', svc.enabled);
+        card.querySelector('[data-role="toggle"]').checked = svc.enabled;
+        updateServerPill();
+    }
+
+    function setStatus(svc, status, text) {
+        svc.status = status;
+        svc.statusText = text;
+        syncCard(svc.key);
+    }
+
+    function updateServerPill() {
+        var list = SERVICE_DEFS.map(function (def) {
+            return services[def.key];
+        });
+        var enabled = list.filter(function (svc) {
+            return svc.enabled;
+        });
+        var online = list.filter(isOpen);
+        dom.serverPill.textContent = online.length + '/' + enabled.length + ' 个服务在线';
+        dom.serverPill.className = 'pill ' + (online.length > 0 ? 'ok' : (enabled.length > 0 ? 'warn' : ''));
+    }
+
+    /* ===================== 健康检查 ===================== */
+
+    async function probe(svc) {
+        var base = normalizeBase(svc.baseUrl);
+        if (!base) {
+            return { ok: false, error: '未配置本地服务地址' };
+        }
+        var url = joinUrl(base, svc.healthPath || '/');
+        var controller = new AbortController();
+        var timer = setTimeout(function () {
+            controller.abort();
+        }, HEALTH_TIMEOUT_MS);
+        try {
+            // 跨域读取不到状态码，no-cors 只能确认端口可达；这是浏览器能做的最大程度探活
+            await fetch(url, {
+                method: 'GET',
+                mode: 'no-cors',
+                cache: 'no-store',
+                signal: controller.signal
+            });
+            return { ok: true };
+        } catch (e) {
+            if (e && e.name === 'AbortError') {
+                return { ok: false, error: '健康检查超时' };
+            }
+            return { ok: false, error: '无法连接：' + (e && e.message ? e.message : String(e)) };
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    async function checkAndConnect(svc, forceConnect) {
+        if (!svc.enabled || svc.ws || svc.busyCheck) {
+            return;
+        }
+        // 本地服务正在处理任务时跳过本轮检查，避免长任务被误判成掉线
+        if (svc.activeRequests > 0) {
+            return;
+        }
+        if (!normalizeBase(svc.baseUrl)) {
+            setStatus(svc, 'error', '未配置本地地址');
+            return;
+        }
+        svc.busyCheck = true;
+        var health;
+        try {
+            health = await probe(svc);
+        } finally {
+            svc.busyCheck = false;
+        }
+        svc.lastCheck = Date.now();
+        if (health.ok) {
+            svc.failures = 0;
+            svc.lastError = '';
+            if (svc.enabled && !svc.ws && (forceConnect || settings.autoReconnect)) {
+                openSocket(svc);
+            } else if (svc.ws) {
+                if (svc.status === 'error' || svc.status === 'degraded' || svc.status === 'checking') {
+                    setStatus(svc, 'online', '已上线');
+                } else {
+                    syncCard(svc.key);
+                }
+            } else {
+                setStatus(svc, 'error', '本地服务已恢复，自动重连已关闭');
+            }
+        } else {
+            onHealthFailure(svc, health.error);
+        }
+    }
+
+    function onHealthFailure(svc, error) {
+        svc.failures += 1;
+        svc.lastError = error || '健康检查未通过';
+        svc.lastCheck = Date.now();
+        if (svc.failures >= settings.threshold) {
+            if (svc.ws) {
+                closeSocket(svc);
+                log('warn', svc.def.name + '：连续 ' + svc.failures + ' 次健康检查失败，已从服务器下线');
+            }
+            setStatus(svc, 'error', '本地服务异常，已下线');
+        } else {
+            setStatus(svc, svc.ws ? 'degraded' : 'error', '健康检查失败 ' + svc.failures + '/' + settings.threshold);
+            log('warn', svc.def.name + '：健康检查失败（' + svc.failures + '/' + settings.threshold + '）：' + svc.lastError);
+        }
+        syncCard(svc.key);
+    }
+
+    function tickHealth() {
+        SERVICE_DEFS.forEach(function (def) {
+            var svc = services[def.key];
+            if (svc.enabled) {
+                checkAndConnect(svc, false);
+            }
+        });
+    }
+
+    function startHealthLoop() {
+        if (healthTimer) {
+            clearInterval(healthTimer);
+        }
+        healthTimer = setInterval(tickHealth, Math.max(2000, settings.intervalMs));
+    }
+
+    /* ===================== 连接管理 ===================== */
+
+    async function startService(key) {
+        var svc = services[key];
+        if (svc.enabled) {
+            return;
+        }
+        var base = normalizeBase(svc.baseUrl);
+        if (!base) {
+            log('warn', svc.def.name + '：请先填写本地服务地址');
+            syncCard(key);
+            return;
+        }
+        svc.baseUrl = base;
+        setInput(cards[key], 'baseUrl', base);
+        svc.enabled = true;
+        svc.failures = 0;
+        svc.lastError = '';
+        svc.reconnectAttempts = 0;
+        saveState();
+        setStatus(svc, 'checking', '检查本地服务');
+        log('info', svc.def.name + '：启用前健康检查 ' + joinUrl(base, svc.healthPath || '/'));
+
+        var health = await probe(svc);
+        svc.lastCheck = Date.now();
+        if (!health.ok) {
+            svc.enabled = false;
+            svc.lastError = health.error || '健康检查未通过';
+            setStatus(svc, 'error', '健康检查未通过');
+            log('err', svc.def.name + '：健康检查未通过，未连接服务器（' + svc.lastError + '）');
+            saveState();
+            return;
+        }
+        log('ok', svc.def.name + '：健康检查通过，开始连接服务器');
+        openSocket(svc);
+    }
+
+    function stopService(key) {
+        var svc = services[key];
+        svc.enabled = false;
+        svc.failures = 0;
+        svc.lastError = '';
+        if (svc.reconnectTimer) {
+            clearTimeout(svc.reconnectTimer);
+            svc.reconnectTimer = null;
+        }
+        closeSocket(svc);
+        setStatus(svc, 'off', '未启用');
+        saveState();
+        log('info', svc.def.name + '：已停用并从服务器下线');
+    }
+
+    function closeSocket(svc) {
+        var ws = svc.ws;
+        svc.ws = null;
+        if (ws) {
+            try {
+                ws.close();
+            } catch (e) {
+                // 已经断开时忽略
+            }
+        }
+        updateServerPill();
+    }
+
+    function openSocket(svc) {
+        if (!svc.enabled || svc.ws) {
+            return;
+        }
+        var url;
+        try {
+            url = buildWsUrl(svc.type);
+        } catch (e) {
+            setStatus(svc, 'error', '服务器地址无效');
+            log('err', 'WebSocket 地址无效：' + e.message);
+            return;
+        }
+        setStatus(svc, 'connecting', '连接服务器');
+        log('info', svc.def.name + '：连接 ' + maskToken(url));
+
+        var ws;
+        try {
+            ws = new WebSocket(url);
+        } catch (e) {
+            setStatus(svc, 'error', '无法连接服务器');
+            log('err', svc.def.name + '：创建连接失败（' + e.message + '）');
+            scheduleReconnect(svc);
+            return;
+        }
+
+        svc.ws = ws;
+        updateServerPill();
+
+        ws.onopen = function () {
+            if (svc.ws !== ws) {
+                return;
+            }
+            svc.failures = 0;
+            svc.lastError = '';
+            svc.reconnectAttempts = 0;
+            setStatus(svc, 'online', '已上线');
+            log('ok', svc.def.name + '：已上线（model_type=' + svc.type + '）');
+        };
+
+        ws.onmessage = function (event) {
+            if (svc.ws !== ws) {
+                return;
+            }
+            handleServerRequest(svc, event.data);
+        };
+
+        ws.onerror = function () {
+            // 浏览器不暴露错误细节，统一交给 onclose 处理
+        };
+
+        ws.onclose = function (event) {
+            if (svc.ws !== ws) {
+                return;
+            }
+            svc.ws = null;
+            updateServerPill();
+            if (!svc.enabled) {
+                setStatus(svc, 'off', '未启用');
+                return;
+            }
+            var reason = event.code === 1006
+                ? '连接被服务器拒绝或网络不可达（请检查地址与 Token）'
+                : ('连接已断开（code ' + event.code + '）');
+            svc.lastError = reason;
+            setStatus(svc, 'error', settings.autoReconnect ? '已离线，等待重连' : '已离线（自动重连已关闭）');
+            log('warn', svc.def.name + '：' + reason);
+            scheduleReconnect(svc);
+        };
+    }
+
+    function scheduleReconnect(svc) {
+        if (!svc.enabled || !settings.autoReconnect) {
+            return;
+        }
+        if (svc.reconnectTimer) {
+            return;
+        }
+        svc.reconnectAttempts += 1;
+        var delay = Math.min(30000, RECONNECT_DELAY_MS * svc.reconnectAttempts);
+        svc.reconnectTimer = setTimeout(function () {
+            svc.reconnectTimer = null;
+            checkAndConnect(svc, false);
+        }, delay);
+    }
+
+    /* ===================== 请求转发 ===================== */
+
+    async function handleServerRequest(svc, raw) {
+        var req;
+        try {
+            req = JSON.parse(raw);
+        } catch (e) {
+            log('warn', svc.def.name + '：收到无法解析的服务器消息');
+            return;
+        }
+        if (!req || !req.reqid) {
+            log('warn', svc.def.name + '：服务器消息缺少 reqid');
+            return;
+        }
+        var reqid = String(req.reqid);
+        svc.requests += 1;
+        svc.activeRequests += 1;
+        syncCard(svc.key);
+        log('info', svc.def.name + '：收到任务 ' + shortId(reqid) + '（type=' + (req.type || svc.type) + '）');
+
+        var started = Date.now();
+        try {
+            if (!isOpen(svc)) {
+                throw new Error('连接已断开');
+            }
+            var out = await relay(svc, req);
+            if (!isOpen(svc)) {
+                throw new Error('连接已断开，结果未回传');
+            }
+            svc.ws.send(JSON.stringify({ reqid: reqid, data: out.data, format: out.format }));
+            log('ok', svc.def.name + '：任务 ' + shortId(reqid) + ' 已回传（' + out.format + '，'
+                + formatBytes(out.size) + '，' + (Date.now() - started) + 'ms）');
+        } catch (e) {
+            var message = errorText(e);
+            if (isOpen(svc)) {
+                try {
+                    svc.ws.send(JSON.stringify({ reqid: reqid, error: message }));
+                } catch (ignore) {
+                    // 回传失败时只记录日志
+                }
+            }
+            log('err', svc.def.name + '：任务 ' + shortId(reqid) + ' 失败：' + message);
+            if (e && e.networkFailure) {
+                onHealthFailure(svc, message);
+            }
+        } finally {
+            svc.activeRequests -= 1;
+            syncCard(svc.key);
+        }
+    }
+
+    async function relay(svc, req) {
+        var base = normalizeBase(svc.baseUrl);
+        if (!base) {
+            throw new Error('未配置本地服务地址');
+        }
+        var url;
+        var body;
+        if (svc.type === 'sdxl') {
+            var path = typeof req.path === 'string' && req.path ? req.path : '/sdapi/v1/txt2img';
+            url = base + (path.charAt(0) === '/' ? path : '/' + path);
+            body = typeof req.data === 'string' ? req.data : JSON.stringify(req.data == null ? {} : req.data);
+        } else {
+            url = joinUrl(base, svc.path || '/');
+            body = JSON.stringify(req);
+        }
+
+        var controller = new AbortController();
+        var timer = setTimeout(function () {
+            controller.abort();
+        }, Math.max(5000, settings.requestTimeoutMs));
+
+        var resp;
+        try {
+            resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json; charset=utf-8',
+                    'Accept': '*/*'
+                },
+                body: body,
+                signal: controller.signal
+            });
+        } catch (e) {
+            var err = new Error(e && e.name === 'AbortError'
+                ? '请求本地服务超时（' + Math.round(settings.requestTimeoutMs / 1000) + ' 秒）'
+                : ('无法连接本地服务：' + (e && e.message ? e.message : String(e))));
+            err.networkFailure = true;
+            throw err;
+        } finally {
+            clearTimeout(timer);
+        }
+
+        if (!resp.ok) {
+            var text = await safeText(resp);
+            throw new Error('本地服务返回 HTTP ' + resp.status + (text ? '：' + text.slice(0, 200) : ''));
+        }
+
+        if (svc.type === 'sdxl') {
+            var sdxlBuffer = await resp.arrayBuffer();
+            if (!sdxlBuffer.byteLength) {
+                throw new Error('本地服务返回空响应');
+            }
+            return { data: toBase64(sdxlBuffer), format: 'json', size: sdxlBuffer.byteLength };
+        }
+
+        var contentType = (resp.headers.get('content-type') || '').toLowerCase();
+        if (contentType.indexOf('json') >= 0) {
+            var json;
+            try {
+                json = await resp.json();
+            } catch (e) {
+                throw new Error('本地服务返回的 JSON 无法解析');
+            }
+            return decodeAudioJson(json, svc.format);
+        }
+
+        var buffer = await resp.arrayBuffer();
+        if (!buffer.byteLength) {
+            throw new Error('本地服务返回空响应');
+        }
+        return { data: toBase64(buffer), format: svc.format || 'mp3', size: buffer.byteLength };
+    }
+
+    function decodeAudioJson(json, fallbackFormat) {
+        if (!json || typeof json !== 'object') {
+            throw new Error('本地服务返回空 JSON');
+        }
+        var candidates = [json];
+        if (json.data && typeof json.data === 'object') {
+            candidates.push(json.data);
+        }
+        for (var i = 0; i < candidates.length; i++) {
+            var obj = candidates[i];
+            for (var j = 0; j < AUDIO_FIELDS.length; j++) {
+                var value = obj[AUDIO_FIELDS[j]];
+                if (typeof value !== 'string' || !value.trim()) {
+                    continue;
+                }
+                var format = typeof obj.format === 'string' && obj.format ? obj.format : fallbackFormat;
+                var data = value.trim();
+                var match = /^data:audio\/([a-z0-9.+-]+);base64,(.*)$/i.exec(data);
+                if (match) {
+                    format = match[1];
+                    data = match[2];
+                }
+                data = data.replace(/\s+/g, '');
+                return { data: data, format: format || 'mp3', size: Math.floor(data.length * 3 / 4) };
+            }
+        }
+        throw new Error('本地服务返回的 JSON 中没有音频数据（支持字段：' + AUDIO_FIELDS.join(' / ') + '）');
+    }
+
+    async function safeText(resp) {
+        try {
+            return (await resp.text()).trim();
+        } catch (e) {
+            return '';
+        }
+    }
+
+    /* ===================== 设置弹窗 ===================== */
+
+    function openSettings() {
+        dom.setServerUrl.value = settings.serverUrl || defaultServerUrl();
+        dom.setToken.value = settings.token || '';
+        dom.setInterval.value = Math.round(settings.intervalMs / 1000);
+        dom.setThreshold.value = settings.threshold;
+        dom.setTimeout.value = Math.round(settings.requestTimeoutMs / 1000);
+        dom.setAutoReconnect.checked = !!settings.autoReconnect;
+        dom.defaultUrlHint.textContent = defaultServerUrl();
+        dom.settingsModal.hidden = false;
+        dom.setServerUrl.focus();
+    }
+
+    function closeSettings() {
+        dom.settingsModal.hidden = true;
+    }
+
+    function saveSettings() {
+        var rawUrl = dom.setServerUrl.value.trim() || defaultServerUrl();
+        var parsed;
+        try {
+            parsed = new URL(normalizeWsUrl(rawUrl));
+        } catch (e) {
+            alert('WebSocket 地址格式不正确，请检查。');
+            return;
+        }
+        settings.serverUrl = parsed.toString();
+        settings.token = dom.setToken.value.trim();
+        settings.intervalMs = clamp(Math.round(number(dom.setInterval.value, 10) * 1000), 2000, 3600000);
+        settings.threshold = clamp(Math.round(number(dom.setThreshold.value, 2)), 1, 20);
+        settings.requestTimeoutMs = clamp(Math.round(number(dom.setTimeout.value, 120) * 1000), 5000, 1800000);
+        settings.autoReconnect = dom.setAutoReconnect.checked;
+        saveState();
+        closeSettings();
+        startHealthLoop();
+        dom.serverUrlText.textContent = endpointLabel();
+        log('info', '服务器设置已保存：' + maskToken(settings.serverUrl));
+
+        SERVICE_DEFS.forEach(function (def) {
+            var svc = services[def.key];
+            if (!svc.enabled) {
+                return;
+            }
+            closeSocket(svc);
+            svc.failures = 0;
+            svc.lastError = '';
+            svc.reconnectAttempts = 0;
+            setStatus(svc, 'checking', '等待重新连接');
+            checkAndConnect(svc, true);
+        });
+    }
+
+    /* ===================== 事件绑定与启动 ===================== */
+
+    function bindEvents() {
+        dom.btnSettings.addEventListener('click', openSettings);
+        dom.btnCancelSettings.addEventListener('click', closeSettings);
+        dom.btnSaveSettings.addEventListener('click', saveSettings);
+        dom.btnResetServerUrl.addEventListener('click', function () {
+            dom.setServerUrl.value = defaultServerUrl();
+        });
+        dom.btnClearLog.addEventListener('click', function () {
+            dom.log.innerHTML = '';
+        });
+        dom.settingsModal.addEventListener('click', function (event) {
+            if (event.target === dom.settingsModal) {
+                closeSettings();
+            }
+        });
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && !dom.settingsModal.hidden) {
+                closeSettings();
+            }
+        });
+        document.addEventListener('visibilitychange', function () {
+            if (!document.hidden) {
+                tickHealth();
+            }
+        });
+
+        dom.services.addEventListener('change', function (event) {
+            var toggle = event.target.closest('[data-role="toggle"]');
+            if (!toggle) {
+                return;
+            }
+            var card = event.target.closest('[data-svc]');
+            if (!card) {
+                return;
+            }
+            var key = card.getAttribute('data-svc');
+            if (toggle.checked) {
+                startService(key);
+            } else {
+                stopService(key);
+            }
+        });
+
+        dom.services.addEventListener('input', function (event) {
+            var field = event.target.getAttribute('data-field');
+            if (!field) {
+                return;
+            }
+            var card = event.target.closest('[data-svc]');
+            if (!card) {
+                return;
+            }
+            var svc = services[card.getAttribute('data-svc')];
+            svc[field] = event.target.value;
+            saveSoon();
+            var hint = card.querySelector('[data-role="hint"]');
+            hint.textContent = svc.enabled ? '配置已保存，重新上线后生效' : '配置已保存';
+            hint.className = 'hint';
+        });
+
+        dom.services.addEventListener('click', async function (event) {
+            var button = event.target.closest('[data-role="test"]');
+            if (!button) {
+                return;
+            }
+            var card = event.target.closest('[data-svc]');
+            if (!card) {
+                return;
+            }
+            var svc = services[card.getAttribute('data-svc')];
+            var original = button.textContent;
+            button.disabled = true;
+            button.textContent = '检查中…';
+            var health = await probe(svc);
+            svc.lastCheck = Date.now();
+            button.disabled = false;
+            button.textContent = original;
+
+            var hint = card.querySelector('[data-role="hint"]');
+            if (health.ok) {
+                svc.lastError = '';
+                var target = joinUrl(normalizeBase(svc.baseUrl), svc.healthPath || '/');
+                hint.textContent = '连接正常（' + target + '）';
+                hint.className = 'hint ok';
+                log('ok', svc.def.name + '：健康检查正常');
+            } else {
+                svc.lastError = health.error || '健康检查未通过';
+                hint.textContent = svc.lastError;
+                hint.className = 'hint err';
+                log('warn', svc.def.name + '：健康检查失败（' + svc.lastError + '）');
+            }
+        });
+    }
+
+    function init() {
+        loadState();
+        buildCards();
+        bindEvents();
+        dom.serverUrlText.textContent = endpointLabel();
+        startHealthLoop();
+        log('info', '本地模型终端已就绪，服务器：' + maskToken(normalizeWsUrl(settings.serverUrl)));
+        log('info', '上线前先健康检查；每 ' + Math.round(settings.intervalMs / 1000) + ' 秒复查一次，连续失败 '
+            + settings.threshold + ' 次自动下线。');
+
+        SERVICE_DEFS.forEach(function (def) {
+            var svc = services[def.key];
+            if (!svc.enabled) {
+                return;
+            }
+            if (!normalizeBase(svc.baseUrl)) {
+                svc.enabled = false;
+                setStatus(svc, 'off', '未启用');
+                saveState();
+                return;
+            }
+            setStatus(svc, 'checking', '检查本地服务');
+            checkAndConnect(svc, true);
+        });
+        updateServerPill();
+    }
+
+    init();
+})();
+</script>
+</body>
+</html>

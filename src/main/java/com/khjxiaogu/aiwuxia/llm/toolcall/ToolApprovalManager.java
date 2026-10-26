@@ -69,7 +69,23 @@ public class ToolApprovalManager {
 	 */
 	public boolean request(String userId, String toolName, String arguments, String reason)
 			throws InterruptedException {
-		RequestContext ctx = new RequestContext(userId, toolName, arguments, reason);
+		return request(userId, toolName, arguments, null, reason);
+	}
+
+	/**
+	 * 请求一次工具调用许可，并附带面向用户的参数文本（参数名已换成可读名称）。
+	 *
+	 * @param userId           会话/用户标识，同一标识的请求串行执行
+	 * @param toolName         工具名称
+	 * @param arguments        模型给出的原始参数
+	 * @param displayArguments 面向用户的参数文本，可为 null（此时界面回退到原始参数）
+	 * @param reason           需要许可的原因，可为 null
+	 * @return 许可返回 true；用户拒绝、超时或线程被中断返回 false
+	 * @throws InterruptedException 等待过程中线程被中断（此时该请求按拒绝收敛）
+	 */
+	public boolean request(String userId, String toolName, String arguments, String displayArguments, String reason)
+			throws InterruptedException {
+		RequestContext ctx = new RequestContext(userId, toolName, arguments, displayArguments, reason);
 		session(userId).execute(ctx);
 		return await(ctx);
 	}
@@ -173,15 +189,17 @@ public class ToolApprovalManager {
 		final String userId;
 		final String toolName;
 		final String arguments;
+		final String displayArguments;
 		final String reason;
 		final CompletableFuture<Boolean> future = new CompletableFuture<>();
 		volatile boolean cancelled;
 		volatile ToolApprovalRequest current;
 
-		RequestContext(String userId, String toolName, String arguments, String reason) {
+		RequestContext(String userId, String toolName, String arguments, String displayArguments, String reason) {
 			this.userId = userId;
 			this.toolName = toolName;
 			this.arguments = arguments;
+			this.displayArguments = displayArguments;
 			this.reason = reason;
 		}
 	}
@@ -216,7 +234,8 @@ public class ToolApprovalManager {
 
 		/** 在持锁状态下启动一个请求，返回需要通知请求方的记录。 */
 		private ToolApprovalRequest start(RequestContext ctx) {
-			ToolApprovalRequest request = new ToolApprovalRequest(ctx.userId, ctx.toolName, ctx.arguments, ctx.reason);
+			ToolApprovalRequest request = new ToolApprovalRequest(ctx.userId, ctx.toolName, ctx.arguments,
+					ctx.displayArguments, ctx.reason);
 			ctx.current = request;
 			currentCtx = ctx;
 			pending.put(request.getId(), request);

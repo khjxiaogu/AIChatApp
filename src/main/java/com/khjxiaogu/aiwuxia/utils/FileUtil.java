@@ -261,12 +261,12 @@ public class FileUtil {
 
 	public static MutableMessageContents printAndCollectContent(MessageReader output) throws IOException {
 		MutableMessageContents sb=new MutableMessageContents();
-		while(!output.isEnded()) {
-			MessageContent content=output.read();
-			if(content!=null) {
-				System.out.print(content.toText());
-				sb.add(content);
-			}
+		// 不能用 isEnded() 做循环条件：模型返回后 reader 可能已经 setEnded，
+		// 但缓冲区里仍有未读内容。read() 自己会在“缓冲区为空且已结束”时返回 null。
+		MessageContent content;
+		while((content=output.read())!=null) {
+			System.out.print(content.toText());
+			sb.add(content);
 		}
 		System.out.println();
 		return sb;

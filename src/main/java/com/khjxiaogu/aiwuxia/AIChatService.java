@@ -90,6 +90,7 @@ import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
+import com.khjxiaogu.aiwuxia.voice.LocalModelHandshaker;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
@@ -164,8 +165,15 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private ToolData painterImageRecognitionTool;
 	/** 绘画会话的发送图片工具，所有绘画会话共享 */
 	private ToolData painterSendImageTool;
-	/** SDXL 图片生成工具集（文生图/图生图/分区/反推），所有绘画会话共享 */
-	private SDXLMcp painterImageGenerator;
+	/**
+	 * 按用户缓存的 SDXL 图片生成工具集（文生图/图生图/分区/反推）。
+	 * <p>
+	 * 工具与用户的本地模型绑定：用户通过 {@code /painter-local} 页面接入自己的 SD WebUI 后，
+	 * 该用户的绘画会话优先使用用户自己的模型，未接入或离线时回退到服务器共享模型。
+	 * 同一用户的多个会话共用同一份工具定义，因此模型切换对已打开的会话同样立即生效。
+	 * </p>
+	 */
+	private final Map<String, SDXLMcp> painterImageGenerators = new ConcurrentHashMap<>();
 	/** 角色提示词搜索工具，服务未配置角色列表时为 null */
 	private ToolData painterSearchCharacterTool;
 	/** 网页抓取工具，所有绘画会话共享 */
@@ -411,9 +419,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private void initPainterTools() {
 		painterImageRecognitionTool = MultiModalMcp.createImageRecognition(painterStorage);
 		painterSendImageTool = PainterMediaMcp.createSendImage(painterStorage);
-		// 图片 id 直接通过 /painter/image 取图，与具体会话无关，因此共享同一个 URL 构造器
-		painterImageGenerator = SDXLMcp.createRemoteLocalModel(painterStorage, lora,
-				(imageId, output) -> urlbase + "/painter/image?image_id=" + imageId, true);
+		// SDXL 图片工具按用户创建（见 painterImageGeneratorFor），这里不再创建全局实例：
+		// 图片 id 直接通过 /painter/image 取图，与具体会话无关，URL 构造器在各用户的工具里共用
 		painterSearchCharacterTool = chara == null ? null : SDXLMcp.createSearchCharacter(chara);
 		painterWebViewTool = FetchMcp.createWebView(painterStorage);
 		painterMoegirlSearchTool = FetchMcp.createMoegirlSearch(painterStorage);
@@ -421,11 +428,30 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
+	 * 取指定用户的 SDXL 图片工具集（不存在时创建并缓存）。
+	 * <p>
+	 * 工具只依赖服务级配置与用户标识，因此每个用户创建一次即可，该用户的所有绘画会话复用同一份定义。
+	 * 工具内部的本地模型调用会在每次执行时按用户选择连接，用户的本地模型上线或离线都会立即生效。
+	 * </p>
+	 *
+	 * @param uid 用户标识，可为 null 或空（使用共享本地模型池）
+	 * @return 该用户的 SDXL 图片工具集
+	 */
+	private SDXLMcp painterImageGeneratorFor(String uid) {
+		String key = uid == null ? "" : uid;
+		return painterImageGenerators.computeIfAbsent(key, k -> SDXLMcp.createRemoteLocalModel(
+				k.isEmpty() ? null : k, painterStorage, lora,
+				(imageId, output) -> urlbase + "/painter/image?image_id=" + imageId, true));
+	}
+
+	/**
 	 * 把绘画会话的共享工具注册到指定会话。
 	 * <p>
-	 * 工具定义由 {@link #initPainterTools()} 在服务启动时创建一次，这里只负责注册到
-	 * 会话自己的工具调用管理器，并沿用原有的调用次数规则：图片识别单次最多 5 次，
-	 * SDXL 图片生成工具共享 5 次，其余工具使用默认规则。
+	 * 除 SDXL 图片工具外的工具定义由 {@link #initPainterTools()} 在服务启动时创建一次；
+	 * SDXL 图片工具按会话所属用户取用（见 {@link #painterImageGeneratorFor(String)}），
+	 * 这样用户接入自己的本地绘画模型后，其所有绘画会话都会改用用户的模型。
+	 * 调用次数规则沿用原有设置：图片识别单次最多 5 次，SDXL 图片生成工具共享 5 次，
+	 * 其余工具使用默认规则。
 	 * </p>
 	 *
 	 * @param session 目标会话
@@ -436,7 +462,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		session.registerTool(painterImageRecognitionTool, 5);
 		session.registerTool(painterSendImageTool);
-		session.registerTools(painterImageGenerator, 5);
+		session.registerTools(painterImageGeneratorFor(session.user), 5);
 		session.registerTool(painterSearchCharacterTool);
 		session.registerTool(painterWebViewTool);
 		session.registerTool(painterMoegirlSearchTool);
@@ -1476,6 +1502,18 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return new ResultDTO(200, new File(parent, "painter.html"));
 	}
 
+	/**
+	 * HTTP GET端点：返回本地绘画模型接入页面（{@code painter-local.html}）。
+	 * <p>
+	 * 该页面不再提供对话，只负责把用户本机的 Stable Diffusion WebUI 接入服务器：
+	 * 在页面里配置本地地址并接入后，页面用浏览器 WebSocket 连接
+	 * {@link #painterLocalModelDeploy(Request, Response)}，把服务器下发的生图请求转发到本机服务。
+	 * 该用户的所有绘画会话都会优先使用这台机器上的模型，离线时回退到服务器共享模型。
+	 * </p>
+	 *
+	 * @return 包含 painter-local.html 的 ResultDTO
+	 * @throws IOException 如果文件读取失败
+	 */
 	@HttpMethod("GET")
 	@HttpPath("/painter-local")
 	@Adapter
@@ -1483,26 +1521,122 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return new ResultDTO(200, new File(parent, "painter-local.html"));
 	}
 
-	@HttpPath("/painter/localResponse")
+	/**
+	 * WebSocket端点：用户把自己的本地绘画模型（Stable Diffusion WebUI）接入服务器。
+	 * <p>
+	 * 页面用浏览器 WebSocket 连接本端点，查询参数必须带 {@code uid}（用户标识）与
+	 * {@code model_type=sdxl}。{@link LocalModelHandshaker} 会把这连接登记为该用户专属的
+	 * SDXL 连接：该用户的所有绘画会话在生图时优先使用它，连接断开或本地服务离线时自动回退到
+	 * 服务器共享的本地模型。
+	 * </p>
+	 * <p>
+	 * 与面向运维的 {@code /kh$localModelDeploy} 不同，本端点不要求 {@code localVoiceToken}：
+	 * 它面向普通用户，身份与聊天页一致，来自页面地址里的 {@code uid}。因此这里只允许接入
+	 * {@code sdxl} 类型，避免用户连接被登记成其它模型类型。
+	 * </p>
+	 *
+	 * @param req 请求对象
+	 * @param res 响应对象
+	 */
+	@HttpPath("/painter/localModelDeploy")
+	public void painterLocalModelDeploy(Request req, Response res) {
+		Map<String, String> query = req.getQuery();
+		String uid = resolveInjectedUid(query);
+		if (uid == null) {
+			res.write(400, "Missing uid");
+			return;
+		}
+		String modelType = query.get("model_type");
+		if (modelType == null || !"sdxl".equalsIgnoreCase(modelType.trim())) {
+			res.write(400, "Only model_type=sdxl is supported");
+			return;
+		}
+		// 把入口 Request 上取到的 uid 交给握手器，连接按它登记（握手 URL 里可能仍是占位值）
+		System.err.println("[PainterLocal] connect uid=" + uid);
+		res.suscribeWebsocketEvents(LocalModel.lhs.boundTo(uid));
+	}
+
+	/**
+	 * 从入口 Request 的查询参数里取服务端注入的 uid。
+	 * <p>
+	 * 页面固定发送 {@code uid=undefined} 作为占位；生产环境可能以 {@code uid} 或
+	 * {@code userId} 注入真实值。这里优先返回非占位值，只有全部缺失或都是占位值时才回退到
+	 * 占位值（交给握手器按共享连接处理）。
+	 * </p>
+	 *
+	 * @param query 入口 Request 的查询参数
+	 * @return 注入的 uid；没有可用值时返回 null
+	 */
+	private static String resolveInjectedUid(Map<String, String> query) {
+		if (query == null) {
+			return null;
+		}
+		String[] candidates = { query.get("uid"), query.get("userId") };
+		for (String candidate : candidates) {
+			if (candidate == null) {
+				continue;
+			}
+			String value = candidate.trim();
+			if (!value.isEmpty() && !"undefined".equalsIgnoreCase(value) && !"null".equalsIgnoreCase(value)) {
+				return value;
+			}
+		}
+		for (String candidate : candidates) {
+			if (candidate != null && !candidate.trim().isEmpty()) {
+				return candidate.trim();
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * HTTP POST端点：接收用户接入页回传的本地模型结果。
+	 * <p>
+	 * 浏览器通过 WebSocket 收到生图请求后，把本地服务的响应体直接 POST 到这里，
+	 * 由 {@link LocalModelHandshaker#onMessage(String, byte[], String)} 唤醒等待中的请求。
+	 * 结果走 HTTP 而不是 WebSocket 文本帧，避免大图 JSON 被 WebSocket 帧大小或压缩链路截断。
+	 * </p>
+	 *
+	 * @param reqid  请求ID（WebSocket 下发请求时携带）
+	 * @param format 数据格式，默认 json
+	 * @param data   本地服务返回的原始响应体
+	 * @return 成功返回 200；请求不存在返回 404
+	 */
+	@HttpPath("/painter/localModelResult")
 	@Adapter
 	@HttpMethod("POST")
-	public ResultDTO painterLocalResponse(@Query("conversation_id") String cid,
-		@Query("request_id") String requestId,
-		@GetBy(JsonIn.class) JsonObject result) {
-		try {
-			if (cid == null || cid.isEmpty() || requestId == null || requestId.isEmpty()) {
-				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "missing parameters").end());
-			}
-			AISession session = uidsockets.get(cid);
-			if (session != null&&session instanceof PainterSession) {
-				((PainterSession) session).completeLocalRequest(requestId, result);
-				return new ResultDTO(200, JsonBuilder.object().add("code", 0).end());
-			}
-			return new ResultDTO(404, JsonBuilder.object().add("code", -1).add("message", "session not found").end());
-		} catch (Exception e) {
-			getLogger().printStackTrace(e);
-			return new ResultDTO(500, JsonBuilder.object().add("code", -1).add("message", "internal error").end());
+	public ResultDTO painterLocalModelResult(@Query("reqid") String reqid,
+		@Query("format") String format,
+		@GetBy(DataIn.class) byte[] data) {
+		if (reqid == null || reqid.isEmpty()) {
+			return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "missing reqid").end());
 		}
+		if (data == null || data.length == 0) {
+			return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "empty result").end());
+		}
+		String fmt = format == null || format.isEmpty() ? "json" : format;
+		System.err.println("[PainterLocal] result reqid=" + reqid + " bytes=" + data.length + " format=" + fmt);
+		if (LocalModel.lhs.onMessage(reqid, data, fmt)) {
+			return new ResultDTO(200, JsonBuilder.object().add("code", 0).end());
+		}
+		return new ResultDTO(404, JsonBuilder.object().add("code", -1).add("message", "request not found").end());
+	}
+
+	/**
+	 * WebSocket端点：本地模型终端页面（运维用）把本机的语音、绘画、歌声服务接入服务器。
+	 * <p>
+	 * 页面用浏览器 WebSocket 连接 {@code /kh$localModelDeploy}，并把服务器下发的
+	 * 生成请求转发到本机服务；连接前与运行期间都会做健康检查。
+	 * </p>
+	 *
+	 * @return 包含 localmodel.html 的 ResultDTO
+	 * @throws IOException 如果文件读取失败
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/localmodel")
+	@Adapter
+	public ResultDTO localModelTerminal() throws IOException {
+		return new ResultDTO(200, new File(parent, "localmodel.html"));
 	}
 
 	public ObjectStorageProvider getPainterStorage() {
@@ -1747,6 +1881,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/**
 	 * WebSocket端点：用于本地语音模型的部署（私有化部署）。 需要提供Bearer
 	 * Token进行认证，Token通过系统属性"localVoiceToken"配置。
+	 * <p>
+	 * 浏览器无法为 WebSocket 设置 {@code Authorization} 请求头，因此除了标准请求头外，
+	 * 也接受 {@code ?token=...} 查询参数（本地模型终端页面使用这种方式）。
+	 * </p>
 	 *
 	 * @param req 请求对象
 	 * @param res 响应对象
@@ -1754,10 +1892,36 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@HttpPath("/kh$localModelDeploy")
 	public void voiceWebSocket(Request req, Response res) {
 		String auth = req.getHeaders().get(HttpHeaderNames.AUTHORIZATION);
-		if (auth != null && auth.startsWith("Bearer ") && System.getProperty("localVoiceToken", "").equals(auth.split(" ")[1]))
+		Map<String, String> query = req.getQuery();
+		String queryToken = query == null ? null : query.get("token");
+		if (isLocalVoiceAuthorized(auth, queryToken))
 			res.suscribeWebsocketEvents(LocalModel.lhs);
 		else
 			res.write(404);
+	}
+
+	/**
+	 * 校验本地模型 WebSocket 的访问令牌。
+	 * <p>
+	 * 优先使用 {@code Authorization: Bearer ...}；没有该请求头时回退到
+	 * {@code ?token=...}，供浏览器端使用。未配置 {@code localVoiceToken} 时一律拒绝，
+	 * 避免该端点在没有鉴权的情况下被任意注册假服务。
+	 * </p>
+	 *
+	 * @param authorization Authorization 请求头，可为 null
+	 * @param queryToken    查询参数里的 token，可为 null
+	 * @return 令牌正确时返回 true
+	 */
+	private static boolean isLocalVoiceAuthorized(String authorization, String queryToken) {
+		String expected = System.getProperty("localVoiceToken", "");
+		if (expected == null || expected.isEmpty())
+			return false;
+		String provided = null;
+		if (authorization != null && authorization.startsWith("Bearer "))
+			provided = authorization.substring("Bearer ".length()).trim();
+		if (provided == null && queryToken != null)
+			provided = queryToken.trim();
+		return provided != null && expected.equals(provided);
 	}
 
 	/**

@@ -41,7 +41,7 @@ public final class McpBuiltinTools {
      */
     public static ToolData echo() {
         return new ToolData.Builder("mcp_echo", "回显工具：把 text 参数原样返回，可用于测试 MCP 连接与调用是否正常。")
-                .putParam("text", "要回显的文本")
+                .putParam("text", "要回显的文本", "文本")
                 .tool(arguments -> {
                     try {
                         JsonObject json = JsonParser.parseString(arguments).getAsJsonObject();

@@ -8,9 +8,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import com.google.gson.JsonObject;
@@ -33,7 +30,6 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
-import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
@@ -120,8 +116,6 @@ public class PainterSession extends WebSocketAISession {
 		});
 	}
 
-	private static final AtomicLong LOCAL_REQUEST_ID = new AtomicLong(0);
-
     /**
      * 绘画会话中不受调用次数与轮次上限约束的工具。
      * <p>
@@ -146,12 +140,10 @@ public class PainterSession extends WebSocketAISession {
         new LinkedHashSet<>(Arrays.asList("send_image", "search_character", "web_view", "web_search", "moegirl_search",
                 "list_characters", "search_characters", "get_character_setting")));
 
-    private final ConcurrentHashMap<String, BotCallbackPromise> pendingLocalRequests = new ConcurrentHashMap<>();
-
     public PainterSession(AIChatService par, String uid, String chatid, AIApplication aiapp,
                           ApplicationAttributes attr, File fn, ISaveData data) {
         super(par, uid, chatid, aiapp, attr, fn, data);
-        // 绘画工具由 AIChatService 统一创建、所有绘画会话共享，这里只注册进本会话的工具调用管理器，
+        // 绘画工具由 AIChatService 统一创建，SDXL 工具按用户取用，这里只注册进本会话的工具调用管理器，
         // 由管理器统一处理调用次数、权限、许可与执行
         par.registerPainterTools(this);
     }
@@ -208,10 +200,22 @@ public class PainterSession extends WebSocketAISession {
         super.onMessage(conn, message);
     }
 
+    /**
+     * 绘画会话是否可用。
+     * <p>
+     * 用户通过 {@code /painter-local} 页面接入了自己的本地绘画模型时，即使服务器没有共享的
+     * SDXL 服务，该用户的绘画会话也可用；两者都没有时才判定为不可用。这与工具执行时的
+     * 取用顺序一致（用户模型优先，离线回退共享模型）。
+     * </p>
+     */
     @Override
 	public boolean isAvailable() {
-		//return true;
-    	return LocalModel.hasOnlineService(ModelType.SDXL);
+		boolean available = LocalModel.hasOnlineService(user, ModelType.SDXL);
+		if (!available) {
+			// 打印 session 所属用户，便于和本地模型接入日志里的 uid 对比
+			System.err.println("[Painter] local SDXL unavailable for session user=" + user);
+		}
+		return available;
 	}
 
 	/**
@@ -431,30 +435,5 @@ public class PainterSession extends WebSocketAISession {
             .add("type", "content")
             .add("content", contentsToJson(new MutableMessageContents(content)))
             .end().toString());
-    }
-
-    public CompletableFuture<JsonObject> requestLocal(String path, String body) {
-        String requestId = String.valueOf(LOCAL_REQUEST_ID.incrementAndGet());
-        BotCallbackPromise promise = new BotCallbackPromise(5);
-        pendingLocalRequests.put(requestId, promise);
-        sendFrame(JsonBuilder.object()
-            .add("type", "local_request")
-            .add("request_id", requestId)
-            .add("path", path)
-            .add("body", body)
-            .end().toString());
-        return promise.getFuture();
-    }
-
-    public void completeLocalRequest(String requestId, JsonObject result) {
-        BotCallbackPromise pending = pendingLocalRequests.remove(requestId);
-        if (pending != null) {
-        	if(result!=null&&result.has("code")&&result.has("data")) {
-        		int code=result.get("code").getAsInt();
-        	
-        		pending.getBotCallback().call(code==200?0:code, result.get("data").getAsJsonObject());
-        	}else
-                pending.getBotCallback().call(-1, new JsonObject());
-        }
     }
 }

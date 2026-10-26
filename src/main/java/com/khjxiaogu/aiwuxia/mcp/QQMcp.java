@@ -26,7 +26,7 @@ public class QQMcp {
 	 */
 	public static ToolData createAvatarFetch(ObjectStorageProvider tos) {
 		return new ToolData.Builder("avatar_fetch", "获取用户头像的图片id以便后续处理。")
-				.putParam("user_id", "用户的id，可以从消息的senderId中取得。").toolText((data, output, manager) -> {
+				.putParam("user_id", "用户的id，可以从消息的senderId中取得。", "用户QQ").toolText((data, output, manager) -> {
 					Pattern patt = Pattern.compile("\"user_id\"\\s*:\\s*\"([0-9]+)\"");
 					Matcher mtch = patt.matcher(data);
 					if (mtch.find()) {

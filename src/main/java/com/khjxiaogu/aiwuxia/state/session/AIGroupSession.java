@@ -67,6 +67,10 @@ public class AIGroupSession extends AISession {
 	public File saveData;
 	public boolean outputReaonser;
 	public boolean outputPrice;
+	/** 最近一条有效群消息的发送者 QQ，用于工具审核时告诉管理员是谁触发的。 */
+	public volatile long lastSpeakerId;
+	/** 最近一条有效群消息的发送者昵称/群名片，可能为空。 */
+	public volatile String lastSpeakerName = "";
 	/** 会话处理工具附件的入口，由 QQ 连接器注入；工具本身不直接发送消息。 */
 	private volatile Consumer<MessageContent> toolAttachmentHandler;
 	/** 异步工具任务完成后的会话入口，由 QQ 连接器注入，用于写入通知并触发下一轮。 */

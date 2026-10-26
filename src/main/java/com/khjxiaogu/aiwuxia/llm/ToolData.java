@@ -1,10 +1,15 @@
 package com.khjxiaogu.aiwuxia.llm;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 
@@ -25,6 +30,14 @@ public class ToolData {
 	public final String name;
 	public final String description;
 	public final Map<String, String> params;
+	/**
+	 * 参数的人可读显示名：参数名 → 显示名。
+	 * <p>
+	 * 面向用户的界面（例如工具调用审核）用它替代机器参数名；未声明显示名的参数
+	 * 回退为参数名本身，见 {@link #getParamLabel(String)}。
+	 * </p>
+	 */
+	public final Map<String, String> paramLabels;
 	/**
 	 * 工具调用显示转换器：把原始调用信息转换为用户友好的简述与具体内容。
 	 * <p>默认转换器随工具一起创建：简述为工具名称、具体内容为空。</p>
@@ -67,16 +80,113 @@ public class ToolData {
 
 	public ToolData(Tool tool, String name, String description, Map<String, String> params,
 			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive) {
+		this(tool, name, description, params, presenter, async, maxCalls, sessionOnly, orderSensitive,
+				Collections.emptyMap());
+	}
+
+	/**
+	 * @param paramLabels 参数的人可读显示名（参数名 → 显示名），可为 null
+	 */
+	public ToolData(Tool tool, String name, String description, Map<String, String> params,
+			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive,
+			Map<String, String> paramLabels) {
 		super();
 		this.tool = tool;
 		this.name = name;
 		this.description = description;
 		this.params = params;
+		this.paramLabels = paramLabels == null ? Collections.emptyMap() : paramLabels;
 		this.presenter = presenter == null ? ToolCallPresenter.defaults() : presenter;
 		this.async = async;
 		this.maxCalls = maxCalls;
 		this.sessionOnly = sessionOnly;
 		this.orderSensitive = orderSensitive;
+	}
+
+	/**
+	 * 取参数的人可读显示名，未声明时回退为参数名本身。
+	 *
+	 * @param paramName 参数名（JSON 字段名）
+	 * @return 人可读显示名
+	 */
+	public String getParamLabel(String paramName) {
+		if (paramName == null) {
+			return "";
+		}
+		String label = paramLabels.get(paramName);
+		return label == null || label.isEmpty() ? paramName : label;
+	}
+
+	/**
+	 * 把模型给出的 JSON 参数整理成面向用户的文本，用于工具调用审核等界面。
+	 * <p>
+	 * 参数名按 {@link #getParamLabel(String)} 换成可读名称，每行一个参数，例如：
+	 * </p>
+	 * <pre>
+	 * 提示词：一个女孩站在海边
+	 * 参考图：图1、图2
+	 * </pre>
+	 * <p>
+	 * 无法解析为 JSON 对象（空串、数组、解析失败）时原样返回，保证审核界面至少能看到原始参数。
+	 * </p>
+	 *
+	 * @param arguments 模型给出的原始参数（JSON 字符串），可为 null
+	 * @return 面向用户的参数文本；没有参数时返回空串
+	 */
+	public String formatArguments(String arguments) {
+		if (arguments == null || arguments.trim().isEmpty()) {
+			return "";
+		}
+		JsonObject json;
+		try {
+			JsonElement parsed = JsonParser.parseString(arguments);
+			if (!parsed.isJsonObject()) {
+				return arguments.trim();
+			}
+			json = parsed.getAsJsonObject();
+		} catch (RuntimeException ex) {
+			return arguments.trim();
+		}
+		StringBuilder sb = new StringBuilder();
+		for (Map.Entry<String, JsonElement> entry : json.entrySet()) {
+			if (sb.length() > 0) {
+				sb.append('\n');
+			}
+			sb.append(getParamLabel(entry.getKey())).append('：').append(formatParamValue(entry.getValue()));
+		}
+		return sb.toString();
+	}
+
+	/** 把单个参数值整理成一行可读文本；数组用顿号连接，嵌套结构保留 JSON。 */
+	private static String formatParamValue(JsonElement value) {
+		if (value == null || value.isJsonNull()) {
+			return "（空）";
+		}
+		if (value.isJsonArray()) {
+			JsonArray array = value.getAsJsonArray();
+			if (array.size() == 0) {
+				return "（空）";
+			}
+			StringBuilder sb = new StringBuilder();
+			for (JsonElement item : array) {
+				if (sb.length() > 0) {
+					sb.append('、');
+				}
+				if (item == null || item.isJsonNull()) {
+					sb.append("（空）");
+				} else if (item.isJsonPrimitive()) {
+					sb.append(item.getAsString());
+				} else {
+					sb.append(item);
+				}
+			}
+			return sb.toString();
+		}
+		if (value.isJsonPrimitive()) {
+			String text = value.getAsString();
+			return text == null || text.isEmpty() ? "（空）" : text;
+		}
+		return value.toString();
 	}
 
 	/** 三参数、直接返回文本的简单工具实现。 */
@@ -90,6 +200,7 @@ public class ToolData {
 		private String name;
 		private String description;
 		private Map<String, String> params = new HashMap<>();
+		private Map<String, String> paramLabels = new HashMap<>();
 		private ToolCallPresenter presenter;
 		private boolean async;
 		private int maxCalls = -1;
@@ -247,9 +358,37 @@ public class ToolData {
 			return this;
 		}
 
-		// 添加单个参数
+		/**
+		 * 添加一个参数（未声明人可读名称，审核等界面显示参数名本身）。
+		 *
+		 * @param key   参数名（给模型看的 JSON 字段名）
+		 * @param value 参数说明（写进给模型的工具描述）
+		 * @return 当前 Builder
+		 */
 		public Builder putParam(String key, String value) {
+			return putParam(key, value, null);
+		}
+
+		/**
+		 * 添加一个参数，并声明它在审核等界面中的人可读名称。
+		 * <p>
+		 * 参数名（{@code key}）是模型看到的 JSON 字段名，只用于机器交互；
+		 * {@code label} 是给人看的名称（例如“提示词”“参考图”），仅在工具调用审核、
+		 * 前端确认框等界面替代参数名显示。
+		 * </p>
+		 *
+		 * @param key   参数名（给模型看的 JSON 字段名）
+		 * @param value 参数说明（写进给模型的工具描述）
+		 * @param label 人可读名称；为 null 或空时回退为参数名
+		 * @return 当前 Builder
+		 */
+		public Builder putParam(String key, String value, String label) {
 			this.params.put(key, value);
+			if (label != null && !label.trim().isEmpty()) {
+				this.paramLabels.put(key, label.trim());
+			} else {
+				this.paramLabels.remove(key);
+			}
 			return this;
 		}
 
@@ -262,8 +401,9 @@ public class ToolData {
 		public ToolData build() {
 			// 防御性复制 + 不可变视图，保证外部无法修改 ToolData 内部的 Map
 			Map<String, String> immutableParams = new HashMap<>(params);
+			Map<String, String> immutableLabels = new HashMap<>(paramLabels);
 			return new ToolData(tool, name, description, immutableParams, presenter, async, maxCalls, sessionOnly,
-					orderSensitive);
+					orderSensitive, immutableLabels);
 		}
 
 		public Builder(String name, String description) {

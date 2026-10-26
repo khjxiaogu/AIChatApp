@@ -15,6 +15,7 @@ import java.util.function.Consumer;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
@@ -26,6 +27,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.vision.SeedanceVideoUsage;
 
 /**
  * 即梦视频工具测试。
@@ -48,6 +50,8 @@ public class SeedreamMcpVideoTest {
 	 */
 	public static void main(String[] args) throws Exception {
 		testInput();
+		testDurationValidation();
+		testUsageReporting();
 		testSystemPrompt();
 		testAttachReference();
 		testExternalReference();
@@ -55,14 +59,62 @@ public class SeedreamMcpVideoTest {
 		System.out.println("SeedreamMcpVideoTest: 全部用例通过");
 	}
 
-	/** 输入：想法必填，另外允许补充非内置的72位图片id。 */
+	/** 输入：想法必填，另外允许补充非内置的72位图片id和视频时长。 */
 	private static void testInput() {
 		ToolData video = SeedreamMcp.createVideo(jimengConfig(), refImages(), new FakeStorage(), "测试提示词");
 		check("jimeng_video".equals(video.name), "工具名应为 jimeng_video，实际：" + video.name);
-		check(video.params.keySet().equals(Set.of("prompt", "reference")),
-				"输入参数应为 prompt 加可选的 reference，实际：" + video.params.keySet());
+		check(video.params.keySet().equals(Set.of("prompt", "reference", "duration")),
+				"输入参数应为 prompt、可选的 reference 和 duration，实际：" + video.params.keySet());
 		check(video.async, "视频工具应当声明为异步");
 		check(video.description.contains("72位图片id"), "工具描述应说明调用者只能补充72位图片id的外部参考图");
+		check(video.description.contains("4-15"), "工具描述应说明可指定4-15秒时长");
+	}
+
+	/** 时长参数：缺省用默认值，4-15 的整数合法，其余拒绝。 */
+	private static void testDurationValidation() {
+		int[] captured = new int[] { -1 };
+		ToolData video = SeedreamMcp.createVideo(refImages(), new FakeStorage(), "测试提示词", 10,
+				request -> CompletableFuture.completedFuture("测试脚本"),
+				(links, prompt, duration, usage) -> {
+					captured[0] = duration;
+					return CompletableFuture.completedFuture("https://video.example/test.mp4");
+				});
+		check("视频生成成功".equals(run(video, "{\"prompt\":\"测试\"}")), "缺省时长应使用默认值");
+		check(captured[0] == 10, "默认时长应为10秒，实际：" + captured[0]);
+		check("视频生成成功".equals(run(video, "{\"prompt\":\"测试\",\"duration\":4}")), "4秒应合法");
+		check(captured[0] == 4, "4秒应传给视频生成器，实际：" + captured[0]);
+		check("视频生成成功".equals(run(video, "{\"prompt\":\"测试\",\"duration\":\"10\"}")), "字符串10秒应合法");
+		check(captured[0] == 10, "10秒应传给视频生成器，实际：" + captured[0]);
+		check("视频生成成功".equals(run(video, "{\"prompt\":\"测试\",\"duration\":11}")), "11秒应合法");
+		check(captured[0] == 11, "11秒应传给视频生成器，实际：" + captured[0]);
+		check("视频生成成功".equals(run(video, "{\"prompt\":\"测试\",\"duration\":15}")), "15秒应合法");
+		check(captured[0] == 15, "15秒应传给视频生成器，实际：" + captured[0]);
+		check("视频生成成功".equals(run(video, "{\"prompt\":\"测试\",\"duration\":\"8秒\"}")), "带单位的8秒应合法");
+		check(captured[0] == 8, "8秒应传给视频生成器，实际：" + captured[0]);
+		check(run(video, "{\"prompt\":\"测试\",\"duration\":3}").contains("4-15"), "3秒应被拒绝");
+		check(run(video, "{\"prompt\":\"测试\",\"duration\":16}").contains("4-15"), "16秒应被拒绝");
+		check(run(video, "{\"prompt\":\"测试\",\"duration\":\"abc\"}").contains("4-15"), "非数字应被拒绝");
+		check(run(video, "{\"prompt\":\"测试\",\"duration\":8.5}").contains("4-15"), "非整数应被拒绝");
+	}
+
+	/** 视频生成成功后，用量应回报给 AIOutput。 */
+	private static void testUsageReporting() {
+		List<UsageIntf<?>> collected = new ArrayList<>();
+		AIOutput.StreamedAIOutput output = new AIOutput.StreamedAIOutput();
+		output.addUsageListener(collected::add);
+		ToolData video = SeedreamMcp.createVideo(refImages(), new FakeStorage(), "测试提示词", 10,
+				request -> CompletableFuture.completedFuture("测试脚本"),
+				(links, prompt, duration, usage) -> {
+					if (usage != null)
+						usage.accept(new SeedanceVideoUsage(720, 1280, 24, duration));
+					return CompletableFuture.completedFuture("https://video.example/test.mp4");
+				});
+		video.tool.run("{\"prompt\":\"测试\",\"duration\":8}", output, new ToolCallManager()).join();
+		check(collected.size() == 1, "应回报1条视频用量，实际：" + collected.size());
+		check(collected.get(0) instanceof SeedanceVideoUsage, "用量类型应为 SeedanceVideoUsage，实际：" + collected.get(0));
+		SeedanceVideoUsage usage = (SeedanceVideoUsage) collected.get(0);
+		check(usage.getVideoTokens() == 172800d, "720p 9:16 8秒视频token应为172800，实际：" + usage.getVideoTokens());
+		check(usage.getEquivantTokens() == 172800d * 35d, "配额token应为视频token×35");
 	}
 
 	/** 系统提示词由配置的即梦视频提示词加内置参考图清单组成。 */
@@ -207,6 +259,7 @@ public class SeedreamMcpVideoTest {
 		String[] capturedUser = new String[1];
 		List<String> submittedLinks = new ArrayList<>();
 		String[] submittedPrompt = new String[1];
+		int[] submittedDuration = new int[] { -1 };
 
 		ToolData video = SeedreamMcp.createVideo(refs, new FakeStorage().put(externalId, externalUrl), systemPrompt,
 				// 真实脚本 agent：先记录请求内容，再交给模型
@@ -219,15 +272,17 @@ public class SeedreamMcpVideoTest {
 					return SeedreamMcp.callScriptAgent(request);
 				},
 				// 假视频生成器：只记录，不请求即梦
-				(links, prompt) -> {
+				(links, prompt, duration, usage) -> {
 					submittedLinks.addAll(links);
 					submittedPrompt[0] = prompt;
+					submittedDuration[0] = duration;
 					return CompletableFuture.completedFuture(videoUrl);
 				});
 
 		JsonObject params = new JsonObject();
 		params.addProperty("prompt", "小明在雨夜的霓虹街头奔跑，8秒，9:16竖版");
 		params.addProperty("reference", externalId);
+		params.addProperty("duration", 8);
 
 		ToolResult result;
 		try {
@@ -261,9 +316,11 @@ public class SeedreamMcpVideoTest {
 				"大模型应生成一段完整的视频提示词，实际：" + submittedPrompt[0]);
 		check(!submittedLinks.isEmpty() && externalUrl.equals(submittedLinks.get(0)),
 				"外部参考图应排在图1，实际：" + submittedLinks);
+		check(submittedDuration[0] == 8, "视频生成器应收到本次调用的8秒时长，实际：" + submittedDuration[0]);
 		check(submittedLinks.size() <= 14, "参考图数量不应超过上限，实际：" + submittedLinks.size());
 		check(capturedSystem[0].contains("即梦") || capturedSystem[0].contains("视频"),
 				"系统提示词应带上即梦视频提示词，实际：" + capturedSystem[0]);
+		check(capturedUser[0].contains("本次视频时长：8 秒"), "用户消息应把本次时长告诉脚本 agent");
 		check(capturedUser[0].contains("调用者已附加1张外部参考图"), "用户消息应说明已附加的外部参考图");
 		check(capturedUser[0].contains(externalId), "用户消息应给出外部参考图id，便于脚本 agent 查看");
 		check(capturedUser[0].contains("女孩") || capturedUser[0].contains("小明"), "用户消息应包含用户想法");

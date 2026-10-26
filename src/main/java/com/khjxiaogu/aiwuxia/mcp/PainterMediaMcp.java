@@ -32,8 +32,8 @@ public class PainterMediaMcp {
 		return new ToolData.Builder("send_image", "发送聊天图片")
 				.sessionOnly()
 				.orderSensitive()
-				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身")
-				.putParam("description", "图片的简短描述，用作网页描述（alt）与下载文件名；建议 20 字以内，可为空字符串。")
+				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身", "图片ID")
+				.putParam("description", "图片的简短描述，用作网页描述（alt）与下载文件名；建议 20 字以内，可为空字符串。", "图片描述")
 				.presenter(ToolCallPresenter.ofBrief(call -> "发送图片"))
 				.tool((data, output, manager) -> {
 					try {

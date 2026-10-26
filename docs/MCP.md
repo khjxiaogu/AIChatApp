@@ -99,7 +99,7 @@ MCP 服务端由 `AIChatService#mcp` 转发到 `/aichat/mcp`（不再在 `AIServ
 McpToolRegistry registry = chatService.getMcpEndpoint().getRegistry();
 
 registry.register(new ToolData.Builder("my_search", "搜索内部资料")
-        .putParam("keyword", "关键词")
+        .putParam("keyword", "关键词", "关键词")   // 第三个参数是人可读名称，仅用于本地审核界面
         .tool((arguments, output, manager) -> {
             // arguments 是 JSON 文本，例如 {"keyword":"xxx"}
             // 工具不绑定会话：需要记账时写 output.addUsage(...)，需要会话上下文时读 manager

@@ -27,6 +27,24 @@ public interface ToolCallApprover {
 	 */
 	boolean approve(String toolName, String arguments, String reason);
 
+	/**
+	 * 请求许可，并附带面向用户的参数文本（参数名已换成工具声明的可读名称）。
+	 * <p>
+	 * 默认实现忽略 {@code displayArguments} 并委托给
+	 * {@link #approve(String, String, String)}，已有实现无需修改；
+	 * 需要在审核界面展示可读参数的实现（例如 {@link ManagedToolCallApprover}）可覆盖本方法。
+	 * </p>
+	 *
+	 * @param toolName         工具名称
+	 * @param arguments        模型给出的原始参数（JSON 字符串）
+	 * @param displayArguments 面向用户的参数文本，可能为 null
+	 * @param reason           需要许可的原因，可能为 null
+	 * @return 取得许可返回 true，否则 false
+	 */
+	default boolean approve(String toolName, String arguments, String displayArguments, String reason) {
+		return approve(toolName, arguments, reason);
+	}
+
 	/** 自动许可（默认策略：不打断流程）。 */
 	public static ToolCallApprover autoApprove() {
 		return (name, args, reason) -> true;

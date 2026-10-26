@@ -63,6 +63,12 @@ import io.netty.util.AttributeKey;
  * 内置类型包括 {@link ModelType#AUDIO}（语音合成）、{@link ModelType#SDXL}（图像生成）
  * 与 {@link ModelType#SVS}（歌声合成，参数见 {@link SvsOptions}）。
  * 内部维护按模型类型分组的连接池，支持多路复用；每个请求通过唯一的请求 ID 关联，并支持超时等待。
+ * <p>
+ * 连接还可以通过 URL 参数 {@code uid} 声明归属用户：带 {@code uid} 的连接只服务该用户，
+ * 不进入共享连接池；调用时传入用户标识，会优先使用该用户自己的连接，用户没有可用连接时
+ * 才回退到共享连接池。这样用户把自己的本地模型接入服务器后，其所有会话都会改用该模型，
+ * 连接断开或模型离线时又能自动回退到服务器原有的共享模型。
+ * </p>
  */
 public class LocalModelHandshaker implements WebsocketEvents {
 
@@ -76,12 +82,18 @@ public class LocalModelHandshaker implements WebsocketEvents {
         return t;
     });
 
-    /** 按模型类型分组的连接池 */
+    /** 按模型类型分组的共享连接池（未声明 {@code uid} 的连接） */
     private final Map<ModelType, BlockingQueue<Channel>> typedPools = new ConcurrentHashMap<>();
-    /** 每个模型类型的在线连接数（不因连接被占用而减少） */
+    /** 每个模型类型的共享在线连接数（不因连接被占用而减少） */
     private final Map<ModelType, Integer> typedCounts = new ConcurrentHashMap<>();
+    /** 按用户分组的连接池：用户标识 → 模型类型 → 连接池 */
+    private final Map<String, Map<ModelType, BlockingQueue<Channel>>> userPools = new ConcurrentHashMap<>();
+    /** 按用户分组的在线连接数：用户标识 → 模型类型 → 连接数 */
+    private final Map<String, Map<ModelType, Integer>> userCounts = new ConcurrentHashMap<>();
     /** 每个连接支持的模型类型集合 */
     private final Map<Channel, Set<ModelType>> channelModelTypes = new ConcurrentHashMap<>();
+    /** 每个连接归属的用户，共享连接不在该表中 */
+    private final Map<Channel, String> channelUsers = new ConcurrentHashMap<>();
     /** 请求 ID 到 Future 的映射，用于在收到响应时完成 Future */
     private final Map<String, CompletableFuture<ModelGenerationResult>> ars = new ConcurrentHashMap<>();
     /** 全局在线连接计数 */
@@ -120,15 +132,130 @@ public class LocalModelHandshaker implements WebsocketEvents {
         return Collections.singleton(ModelType.AUDIO);
     }
 
+    /**
+     * 未绑定用户的占位标识。
+     * <p>
+     * 用户的接入页在服务器注入真实 uid 之前固定发送 {@code uid=undefined}。它不代表任何真实用户，
+     * 因此这类连接按共享连接处理：任何会话没有自己的本地模型时都能回退使用它。
+     * 服务器注入真实 uid 后，连接才会进入该用户的专属连接池。
+     * </p>
+     */
+    public static final String UNBOUND_UID = "undefined";
+
+    /**
+     * 读取 WebSocket URL 中客户端发送的原始 uid 参数（不做过虑，占位符原样返回）。
+     * <p>
+     * 参数名兼容 {@code uid} 与 {@code userId} 两种写法；未提供时返回 {@code null}。
+     * </p>
+     */
+    private static String parseRawUid(String uri) {
+        try {
+            QueryStringDecoder decoder = new QueryStringDecoder(uri);
+            Map<String, List<String>> params = decoder.parameters();
+            List<String> values = params.get("uid");
+            if (values == null || values.isEmpty()) {
+                values = params.get("userId");
+            }
+            if (values != null && !values.isEmpty()) {
+                String uid = values.get(0);
+                if (uid != null) {
+                    uid = uid.trim();
+                    if (!uid.isEmpty()) {
+                        return uid;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // 解析失败时视为没有提供 uid
+        }
+        return null;
+    }
+
+    /**
+     * 把原始 uid 归一化为连接归属用户：占位符 {@link #UNBOUND_UID}、{@code null} 或空值
+     * 都视为未绑定用户（共享连接），其它值原样返回。
+     */
+    private static String normalizeUid(String rawUid) {
+        if (rawUid == null || rawUid.isEmpty()) {
+            return null;
+        }
+        if (UNBOUND_UID.equalsIgnoreCase(rawUid) || "null".equalsIgnoreCase(rawUid)) {
+            return null;
+        }
+        return rawUid;
+    }
+
+    /**
+     * 创建一个把连接绑定到指定 uid 的 WebSocket 事件处理器。
+     * <p>
+     * 服务端注入的 uid 只存在于 {@code AIChatService} 入口拿到的 {@code Request} 上，
+     * WebSocket 握手请求里可能仍是占位值。入口从 {@code Request} 取出 uid 后通过本方法传入，
+     * 连接就会按入口的 uid 登记，而不是重新解析握手 URL。
+     * </p>
+     *
+     * @param uid 入口取到的 uid，可为 null 或占位值（仍按共享连接处理）
+     * @return 绑定该 uid 的 WebSocket 事件处理器
+     */
+    public WebsocketEvents boundTo(String uid) {
+        final String boundUid = uid;
+        return new WebsocketEvents() {
+            @Override
+            public void onOpen(Channel conn, FullHttpRequest handshake) {
+                LocalModelHandshaker.this.onOpen(conn, handshake, boundUid);
+            }
+
+            @Override
+            public void onClose(Channel conn) {
+                LocalModelHandshaker.this.onClose(conn);
+            }
+
+            @Override
+            public void onMessage(Channel conn, String message) {
+                LocalModelHandshaker.this.onMessage(conn, message);
+            }
+        };
+    }
+
     @Override
     public void onOpen(Channel conn, FullHttpRequest handshake) {
+        onOpen(conn, handshake, null);
+    }
 
+    /**
+     * 建立连接。
+     *
+     * @param conn        连接
+     * @param handshake   握手请求
+     * @param injectedUid {@code AIChatService} 入口从 {@code Request} 取到的 uid；非空时优先使用，
+     *                    为空时回退到解析握手 URL 里的 uid
+     */
+    public void onOpen(Channel conn, FullHttpRequest handshake, String injectedUid) {
         Set<ModelType> modelTypes = parseModelTypes(handshake.uri());
-        System.err.println("[LocalModel] connected from "+conn.remoteAddress().toString()+" provider: " + Arrays.toString(modelTypes.toArray()));
+        String rawUid = injectedUid == null ? null : injectedUid.trim();
+        if (rawUid == null || rawUid.isEmpty()) {
+            rawUid = parseRawUid(handshake.uri());
+        }
+        String uid = normalizeUid(rawUid);
+        // 打印实际接入的 uid，便于核对接入用户与 session 用户是否一致
+        System.err.println("[LocalModel] connected from " + conn.remoteAddress().toString()
+                + " uid=" + (rawUid == null ? "(none)" : rawUid)
+                + (uid == null ? " (shared)" : " (user-bound)")
+                + " provider: " + Arrays.toString(modelTypes.toArray()));
         channelModelTypes.put(conn, modelTypes);
-        for (ModelType type : modelTypes) {
-            typedPools.computeIfAbsent(type, k -> new LinkedBlockingQueue<>()).offer(conn);
-            typedCounts.merge(type, 1, Integer::sum);
+        if (uid == null) {
+            for (ModelType type : modelTypes) {
+                typedPools.computeIfAbsent(type, k -> new LinkedBlockingQueue<>()).offer(conn);
+                typedCounts.merge(type, 1, Integer::sum);
+            }
+        } else {
+            channelUsers.put(conn, uid);
+            Map<ModelType, BlockingQueue<Channel>> pools = userPools.computeIfAbsent(uid,
+                    k -> new ConcurrentHashMap<>());
+            Map<ModelType, Integer> counts = userCounts.computeIfAbsent(uid, k -> new ConcurrentHashMap<>());
+            for (ModelType type : modelTypes) {
+                pools.computeIfAbsent(type, k -> new LinkedBlockingQueue<>()).offer(conn);
+                counts.merge(type, 1, Integer::sum);
+            }
         }
         totalConnections++;
     }
@@ -141,12 +268,25 @@ public class LocalModelHandshaker implements WebsocketEvents {
                 f.completeExceptionally(new IOException("connection closed"));
             }
         }
+        String uid = channelUsers.remove(conn);
         Set<ModelType> types = channelModelTypes.remove(conn);
         if (types != null) {
-            for (ModelType type : types) {
-                BlockingQueue<Channel> pool = typedPools.get(type);
-                if (pool != null) pool.remove(conn);
-                typedCounts.merge(type, -1, Integer::sum);
+            if (uid == null) {
+                for (ModelType type : types) {
+                    BlockingQueue<Channel> pool = typedPools.get(type);
+                    if (pool != null) pool.remove(conn);
+                    typedCounts.merge(type, -1, Integer::sum);
+                }
+            } else {
+                Map<ModelType, BlockingQueue<Channel>> pools = userPools.get(uid);
+                Map<ModelType, Integer> counts = userCounts.get(uid);
+                for (ModelType type : types) {
+                    if (pools != null) {
+                        BlockingQueue<Channel> pool = pools.get(type);
+                        if (pool != null) pool.remove(conn);
+                    }
+                    if (counts != null) counts.merge(type, -1, Integer::sum);
+                }
             }
         }
         totalConnections--;
@@ -198,8 +338,49 @@ public class LocalModelHandshaker implements WebsocketEvents {
         return future;
     }
 
+    /**
+     * 判断共享连接池里是否有支持指定模型类型的在线服务。
+     * <p>
+     * 用户专属连接不计入共享连接池，因此这里只反映“服务器自己提供的共享模型”。
+     * </p>
+     *
+     * @param modelType 模型类型
+     * @return 共享连接池中存在该类型的在线连接时返回 true
+     */
     public boolean hasOnlineService(ModelType modelType) {
         Integer count = typedCounts.get(modelType);
+        return count != null && count > 0;
+    }
+
+    /**
+     * 判断指定用户是否能用上支持该模型类型的本地服务。
+     * <p>
+     * 用户自己的连接优先：用户接入了本地模型就用用户的；用户没有可用连接时回退到共享连接池。
+     * 这与 {@link #require(String, ModelType, String, JsonObject)} 的取用顺序一致。
+     * </p>
+     *
+     * @param uid       用户标识，可为 null 或空（此时只检查共享连接池）
+     * @param modelType 模型类型
+     * @return 用户专属连接或共享连接任一在线时返回 true
+     */
+    public boolean hasOnlineService(String uid, ModelType modelType) {
+        return hasUserService(uid, modelType) || hasOnlineService(modelType);
+    }
+
+    /**
+     * 判断指定用户是否有自己接入的、支持指定模型类型的在线连接。
+     *
+     * @param uid       用户标识
+     * @param modelType 模型类型
+     * @return 用户专属连接在线时返回 true
+     */
+    public boolean hasUserService(String uid, ModelType modelType) {
+        if (uid == null || uid.isEmpty())
+            return false;
+        Map<ModelType, Integer> counts = userCounts.get(uid);
+        if (counts == null)
+            return false;
+        Integer count = counts.get(modelType);
         return count != null && count > 0;
     }
 
@@ -207,20 +388,57 @@ public class LocalModelHandshaker implements WebsocketEvents {
         return totalConnections > 0;
     }
 
-    private Channel acquireChannel(ModelType modelType) throws InterruptedException {
-        BlockingQueue<Channel> pool = typedPools.get(modelType);
+    /**
+     * 取一条连接：用户专属优先，用户没有可用连接时回退到共享连接池。
+     *
+     * @param uid       用户标识，可为 null 或空
+     * @param modelType 模型类型
+     * @return 取到的连接，等待超时或没有可用连接时返回 null
+     */
+    private Channel acquireChannel(String uid, ModelType modelType) throws InterruptedException {
+        BlockingQueue<Channel> pool;
+        if (hasUserService(uid, modelType)) {
+            Map<ModelType, BlockingQueue<Channel>> pools = userPools.get(uid);
+            pool = pools == null ? null : pools.get(modelType);
+        } else {
+            pool = typedPools.get(modelType);
+        }
         if (pool == null) return null;
         return pool.poll(5, TimeUnit.SECONDS);
     }
 
+    /**
+     * 归还连接：按连接自身的归属放回对应用户的连接池或共享连接池。
+     * <p>
+     * 连接在请求期间可能已经关闭：关闭时 {@link #onClose(Channel)} 会把它从池中移除并清空归属，
+     * 这里必须先确认连接仍然活跃且仍登记在池中，避免把已关闭的连接塞回池里（尤其是不能把
+     * 用户的连接误放回共享池）。
+     * </p>
+     *
+     * @param ch 连接
+     */
     private void releaseChannel(Channel ch) {
+        if (ch == null || !ch.isOpen() || !ch.isActive())
+            return;
         Set<ModelType> types = channelModelTypes.get(ch);
-        if (types != null) {
+        if (types == null)
+            return;
+        String uid = channelUsers.get(ch);
+        if (uid == null) {
             for (ModelType type : types) {
                 BlockingQueue<Channel> pool = typedPools.get(type);
                 if (pool != null) {
                     pool.offer(ch);
                 }
+            }
+            return;
+        }
+        Map<ModelType, BlockingQueue<Channel>> pools = userPools.get(uid);
+        if (pools == null) return;
+        for (ModelType type : types) {
+            BlockingQueue<Channel> pool = pools.get(type);
+            if (pool != null) {
+                pool.offer(ch);
             }
         }
     }
@@ -240,7 +458,11 @@ public class LocalModelHandshaker implements WebsocketEvents {
     }
 
     /**
-     * 通用模型请求方法。调用者指定模型类型，由系统选择支持该类型的连接发送请求。
+     * 通用模型请求方法。调用者指定模型类型，由系统选择支持该类型的共享连接发送请求。
+     * <p>
+     * 这是不带用户的旧入口，只使用共享连接池；需要优先使用某个用户自己的本地模型时，
+     * 使用 {@link #require(String, ModelType, String, JsonObject)}。
+     * </p>
      *
      * @param modelType 请求的模型类型
      * @param reqid     请求唯一 ID
@@ -248,7 +470,27 @@ public class LocalModelHandshaker implements WebsocketEvents {
      * @return 包含响应数据的 {@link CompletableFuture}
      */
     public CompletableFuture<ModelGenerationResult> require(ModelType modelType, String reqid, JsonObject request) {
-        if (!hasOnlineService(modelType))
+        return require(null, modelType, reqid, request);
+    }
+
+    /**
+     * 通用模型请求方法，支持按用户取用本地模型。
+     * <p>
+     * 取用顺序：该用户自己的在线连接优先；用户没有在线连接（例如没接入、已关闭页面或本地服务离线）
+     * 时回退到共享连接池。用户在请求过程中接入或断开本地模型时，下一次取用就会按最新状态选择，
+     * 因此已打开的会话也会立即改用用户的模型，无需重连。
+     * </p>
+     *
+     * @param uid       用户标识，可为 null 或空（只使用共享连接池）
+     * @param modelType 请求的模型类型
+     * @param reqid     请求唯一 ID
+     * @param request   完整的请求 JSON 对象
+     * @return 包含响应数据的 {@link CompletableFuture}
+     */
+    public CompletableFuture<ModelGenerationResult> require(String uid, ModelType modelType, String reqid,
+            JsonObject request) {
+        final String targetUser = uid == null || uid.isEmpty() ? null : uid;
+        if (!hasOnlineService(targetUser, modelType))
             return CompletableFuture.failedFuture(new IOException("no local model found for type: " + modelType));
 
         request.addProperty("reqid", reqid);
@@ -261,11 +503,13 @@ public class LocalModelHandshaker implements WebsocketEvents {
                 Channel ch = null;
                 CompletableFuture<ModelGenerationResult> future = null;
                 try {
-                    if (!hasOnlineService(modelType))
+                    if (!hasOnlineService(targetUser, modelType))
                         throw new IOException("no local model found for type: " + modelType);
 
-                    ch = acquireChannel(modelType);
+                    ch = acquireChannel(targetUser, modelType);
                     if (ch == null) continue;
+                    // 取到的连接可能已经关闭而尚未从池中移除，跳过它重新取
+                    if (!ch.isOpen() || !ch.isActive()) continue;
 
                     future = new CompletableFuture<>();
                     ars.put(reqid, future);

@@ -51,6 +51,32 @@ public class LocalModel {
     }
 
     /**
+     * 检查指定用户是否能用上支持该模型类型的本地服务。
+     * <p>
+     * 用户自己接入的本地模型优先，用户没有可用连接时回退到服务器共享连接池。
+     * 调用 {@link #require(String, ModelType, String, JsonObject)} 时按同样的顺序取用。
+     * </p>
+     *
+     * @param uid       用户标识，可为 null 或空（只检查共享连接池）
+     * @param modelType 模型类型
+     * @return 用户专属连接或共享连接任一在线时返回 true
+     */
+    public static boolean hasOnlineService(String uid, ModelType modelType) {
+        return lhs.hasOnlineService(uid, modelType);
+    }
+
+    /**
+     * 判断指定用户是否有自己接入的、支持该模型类型的在线连接。
+     *
+     * @param uid       用户标识
+     * @param modelType 模型类型
+     * @return 用户专属连接在线时返回 true
+     */
+    public static boolean hasUserService(String uid, ModelType modelType) {
+        return lhs.hasUserService(uid, modelType);
+    }
+
+    /**
      * 检查是否有任何在线可用的连接。
      *
      * @return 如果至少有一个活跃的 WebSocket 连接则返回 true
@@ -69,6 +95,23 @@ public class LocalModel {
      */
     public static CompletableFuture<ModelGenerationResult> require(ModelType modelType, String reqid, JsonObject request) {
         return lhs.require(modelType, reqid, request);
+    }
+
+    /**
+     * 通用模型请求方法，支持按用户取用本地模型。
+     * <p>
+     * 用户自己接入的本地模型优先；用户没有在线连接时回退到共享连接池。
+     * </p>
+     *
+     * @param uid       用户标识，可为 null 或空（只使用共享连接池）
+     * @param modelType 请求的模型类型
+     * @param reqid     请求唯一 ID
+     * @param request   完整的请求 JSON 对象
+     * @return 包含响应数据的 CompletableFuture
+     */
+    public static CompletableFuture<ModelGenerationResult> require(String uid, ModelType modelType, String reqid,
+            JsonObject request) {
+        return lhs.require(uid, modelType, reqid, request);
     }
 
     /**

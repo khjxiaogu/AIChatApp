@@ -121,12 +121,11 @@ public class HistoryCompacter {
 	}
 	public static String printAndCollectContent(MessageReader output) throws IOException {
 		StringBuilder sb=new StringBuilder();
-		while(!output.isEnded()) {
-			MessageContent content=output.read();
-			if(content!=null) {
-				System.out.print(content.toText());
-				sb.append(content.toText());
-			}
+		// 同 FileUtil：reader 可能已经结束但缓冲区仍有内容，必须读到 read() 返回 null
+		MessageContent content;
+		while((content=output.read())!=null) {
+			System.out.print(content.toText());
+			sb.append(content.toText());
 		}
 		System.out.println();
 		return sb.toString();

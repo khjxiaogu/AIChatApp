@@ -81,9 +81,14 @@ public class AppAISession extends AISession {
 	 * @param request 许可请求记录
 	 */
 	protected void requestToolCallApproval(ToolApprovalRequest request) {
+		// 优先展示工具声明的人可读参数，未声明时回退到原始 JSON
+		String arguments = request.getDisplayArguments();
+		if (arguments == null || arguments.trim().isEmpty()) {
+			arguments = request.getArguments();
+		}
 		request.setResult(window.confirm("模型请求执行工具（" + request.getToolName() + "），是否允许？\n"
 				+ (request.getReason() == null ? "" : "原因：" + request.getReason() + "\n")
-				+ "参数：" + request.getArguments()));
+				+ "参数：\n" + arguments));
 	}
 
 	/**

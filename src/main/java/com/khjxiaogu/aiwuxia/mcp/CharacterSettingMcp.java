@@ -94,15 +94,15 @@ public class CharacterSettingMcp implements ToolProvider {
         tools.add(new ToolData.Builder("search_characters",
                 "按角色名字、别名（支持拼音、外号）或作品名模糊搜索角色，返回匹配的角色及所属作品。"
                         + "需要确认某个角色是否存在、同名角色属于哪部作品时使用；拿到完整角色名后再用 get_character_setting 获取设定。")
-                .putParam("query", "角色名字、别名（拼音/外号）或作品名，支持部分匹配。")
+                .putParam("query", "角色名字、别名（拼音/外号）或作品名，支持部分匹配。", "查询内容")
                 .presenter(ToolCallPresenter.ofArgument("搜索角色", "query"))
                 .tool(arguments -> runSearch(folder, arguments))
                 .build());
         tools.add(new ToolData.Builder("get_character_setting",
                 "获取指定角色的完整设定，并同时返回其所属作品的公共设定（校服、世界观等）。"
                         + "character 支持模糊匹配与别名；同名角色（如归海枫）需要用 work 指定作品。")
-                .putParam("character", "角色名字，支持模糊匹配与别名，例如“枫茜”或“fengxi”。")
-                .putParam("work", "作品名，用于区分同名角色（例如“雾之本境”“雪之本境”）；只有一个匹配时填空字符串。")
+                .putParam("character", "角色名字，支持模糊匹配与别名，例如“枫茜”或“fengxi”。", "角色")
+                .putParam("work", "作品名，用于区分同名角色（例如“雾之本境”“雪之本境”）；只有一个匹配时填空字符串。", "作品")
                 .presenter(ToolCallPresenter.ofArgument("获取角色设定", "character"))
                 .tool(arguments -> runSetting(folder, arguments))
                 .build());

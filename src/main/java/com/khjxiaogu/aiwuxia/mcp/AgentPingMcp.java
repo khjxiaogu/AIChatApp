@@ -81,8 +81,8 @@ public class AgentPingMcp implements ToolProvider {
 					return ret.toString();
 				}).build());
 		tools.add(new ToolData.Builder("ping_character", "呼叫其他角色。")
-				.putParam("character", "角色全名，要与online_character里的一致。")
-				.putParam("message", "给对应角色发送的信息，包含呼叫原因等内容。")
+				.putParam("character", "角色全名，要与online_character里的一致。", "角色")
+				.putParam("message", "给对应角色发送的信息，包含呼叫原因等内容。", "消息")
 				.orderSensitive()
 				.tool((data) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();

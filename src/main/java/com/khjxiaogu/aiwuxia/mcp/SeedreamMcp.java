@@ -5,7 +5,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -17,28 +19,30 @@ import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
+import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.vision.JimengImageGenerator;
-import com.khjxiaogu.aiwuxia.vision.JimengVideoGenerator;
+import com.khjxiaogu.aiwuxia.vision.SeedanceVideoGenerator;
 
 /**
  * 即梦图片/视频生成工具。
  * <p>
  * 两个工具各自独立注册，不建 Provider 类。两者都声明为异步：工具直接返回生成 future，
- * 由 {@code ToolCallManager} 创建任务并通知会话。
+ * 由 {@code ToolCallManager} 创建任务并通知会话。视频生成使用即梦 Seedance 2.5
+ * （火山方舟 Ark API），图片生成仍走原有的即梦图片接口。
  * </p>
  */
 public class SeedreamMcp {
-	/** 即梦视频接口允许的参考图数量上限。 */
+	/** 即梦 Seedance 视频接口允许的参考图数量上限（工具侧保持 14 张，避免一次请求过大）。 */
 	private static final int MAX_VIDEO_REFERENCE_IMAGES = 14;
 	/** 视频脚本 agent 的工具调用轮次上限。 */
 	private static final int VIDEO_AGENT_MAX_ROUNDS = 8;
 	/** 未配置即梦视频提示词（{@code config/jimeng-video.txt}）时使用的兜底系统提示词。 */
-	private static final String DEFAULT_VIDEO_SYSTEM_PROMPT = "你是一名演出设计师，请根据用户输入写一份15秒的AI视频剧本，使用“图一”“图二”等引用参考图，开头说明每个参考图的指代哪个人物，描述人物时请写全名或者图片编号，禁止使用一切其他代称。输出不含markdown格式，不包含具体时间。视频为日系萌系圆润画风视频，视频对话为全中文，无字幕。输出需要包含”视频风格“、”参考图说明“、”场景“、”剧本“。剧本需要扩写至500字左右，你需要发挥想象力。注意需要删除发型等人物特征，保留服饰等特征。";
+	private static final String DEFAULT_VIDEO_SYSTEM_PROMPT = "你是一名演出设计师，请根据用户输入写一份不超过15秒（默认10秒）的AI视频剧本，画幅默认9:16，使用“图一”“图二”等引用参考图，开头说明每个参考图的指代哪个人物，描述人物时请写全名或者图片编号，禁止使用一切其他代称。输出不含markdown格式，不包含具体时间。视频为日系萌系圆润画风视频，视频对话为全中文，无字幕。输出需要包含”视频风格“、”参考图说明“、”场景“、”剧本“。剧本需要扩写至500字左右，你需要发挥想象力。如果没有额外参考图，按现有参考图的大致意图推测补全；不要虚构图片编号，也不要提问。注意需要删除发型等人物特征，保留服饰等特征。";
 
 	/**
 	 * 创建即梦图片生成工具。
@@ -52,8 +56,8 @@ public class SeedreamMcp {
 		JimengImageGenerator jig = new JimengImageGenerator(config);
 		return new ToolData.Builder("jimeng_image",
 				"使用即梦AI生成图片，注意参考图的图片id或名称不会被传递给模型，因此只能用从1开始的顺序索引指代图片。")
-				.putParam("reference", "参考图列表，以英文逗号,分隔后给出，参考图可以是图片id或者系统提供的内置参考图文本，同一个人仅使用一张参考图，参考图数量越少越好。")
-				.putParam("prompt", "提示词，使用中文自然语言详细描述整个画面的细节，不包含参考图的人物特征，使用“图一”“图二”等引用参考图，不得包含图片id，必须说明每个参考图的作用，描述人物时请写全名或者图片编号，禁止使用一切其他代称。比如“画面参考图2，图1角色身着图3所示服装。”")
+				.putParam("reference", "参考图列表，以英文逗号,分隔后给出，参考图可以是图片id或者系统提供的内置参考图文本，同一个人仅使用一张参考图，参考图数量越少越好。", "参考图")
+				.putParam("prompt", "提示词，使用中文自然语言详细描述整个画面的细节，不包含参考图的人物特征，使用“图一”“图二”等引用参考图，不得包含图片id，必须说明每个参考图的作用，描述人物时请写全名或者图片编号，禁止使用一切其他代称。比如“画面参考图2，图1角色身着图3所示服装。”", "提示词")
 				.async()
 				.tool((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
@@ -107,7 +111,8 @@ public class SeedreamMcp {
 	/**
 	 * 创建即梦视频生成工具。
 	 * <p>
-	 * 工具接收用户的想法，可选接收非内置的72位图片id；视频脚本交给一个带工具的脚本 agent 产出：
+	 * 视频生成接入即梦 Seedance 2.5（火山方舟 Ark API），工具名保持 {@code jimeng_video}
+	 * 以兼容既有提示词与配置。工具接收用户的想法，可选接收非内置的72位图片id；视频脚本交给一个带工具的脚本 agent 产出：
 	 * </p>
 	 * <ul>
 	 *   <li>系统提示词取 {@code config/jimeng-video.txt}（即梦视频提示词），末尾追加内置参考图清单；</li>
@@ -126,16 +131,23 @@ public class SeedreamMcp {
 	 */
 	public static ToolData createVideo(JsonObject config, Map<String, String> refImages, ObjectStorageProvider tos,
 			String systemPrompt) {
-		JimengVideoGenerator jig = new JimengVideoGenerator(config);
-		return createVideo(refImages, tos, systemPrompt, SeedreamMcp::callScriptAgent, jig::generateImage);
+		SeedanceVideoGenerator generator = new SeedanceVideoGenerator(config);
+		String system = buildVideoSystemPrompt(systemPrompt, refImages);
+		System.out.println(system);
+		if (!generator.isConfigured()) {
+			System.out.println("[即梦视频] 未配置 Seedance apiKey，jimeng_video 调用时会失败；"
+					+ "请在 config/image-generation.json 中配置 apiKey（火山方舟 API Key）。");
+		}
+		return createVideo(refImages, tos, systemPrompt, generator.getDuration(), SeedreamMcp::callScriptAgent,
+				generator::generateVideo);
 	}
 
 	/**
-	 * 可替换脚本生成与视频生成的可测重载。
+	 * 可替换脚本生成与视频生成的可测重载（默认时长 10 秒）。
 	 * <p>
 	 * 除两个网络边界（模型接口、即梦视频接口）由调用方注入外，行为与
 	 * {@link #createVideo(JsonObject, Map, ObjectStorageProvider, String)} 完全一致：
-	 * 输入解析、外部参考图附加、脚本 agent 请求构造、编号与最终提交都不变。
+	 * 输入解析、时长校验、外部参考图附加、脚本 agent 请求构造、编号与最终提交都不变。
 	 * </p>
 	 *
 	 * @param refImages       内置参考图
@@ -147,12 +159,32 @@ public class SeedreamMcp {
 	 */
 	static ToolData createVideo(Map<String, String> refImages, ObjectStorageProvider tos, String systemPrompt,
 			ScriptGenerator scriptGenerator, VideoGenerator videoGenerator) {
+		return createVideo(refImages, tos, systemPrompt, 10, scriptGenerator, videoGenerator);
+	}
+
+	/**
+	 * 可替换脚本生成与视频生成、并指定默认时长的可测重载。
+	 *
+	 * @param refImages       内置参考图
+	 * @param tos             对象存储
+	 * @param systemPrompt    即梦视频提示词，为空时使用内置兜底提示词
+	 * @param defaultDuration 调用者未指定 duration 时使用的默认秒数
+	 * @param scriptGenerator 脚本生成器
+	 * @param videoGenerator  视频生成器
+	 * @return 独立的工具定义
+	 */
+	static ToolData createVideo(Map<String, String> refImages, ObjectStorageProvider tos, String systemPrompt,
+			int defaultDuration, ScriptGenerator scriptGenerator, VideoGenerator videoGenerator) {
+		final int fallbackDuration = Math.max(4, Math.min(15, defaultDuration > 0 ? defaultDuration : 10));
 		String system = buildVideoSystemPrompt(systemPrompt, refImages);
 		return new ToolData.Builder("jimeng_video",
-				"使用即梦AI生成视频发送。工具会把视频想法交给视频脚本 agent，由它自行挑选并附加内置参考图、写即梦视频脚本并据此生成视频；调用者只需给想法，最多再补充非内置的72位图片id参考图。")
-				.putParam("prompt", "用简略清晰的语言描述整个视频的内容梗概，无需详细描述动作场景和角色特征，也不要写参考图。")
+				"使用即梦 Seedance 2.5 生成视频发送。工具会把视频想法交给视频脚本 agent，由它自行挑选并附加内置参考图、写即梦视频脚本并据此生成视频；调用者只需给想法，最多再补充非内置的72位图片id参考图，并可指定 4-15 秒的视频时长。")
+				.putParam("prompt", "用简略清晰的语言描述整个视频的内容梗概，无需详细描述动作场景和角色特征，也不要写参考图。", "视频想法")
 				.putParam("reference",
-						"可选：对话里出现、且不在内置参考图中的非内置参考图，只填72位图片id，以英文逗号,分隔。这些图会直接附加为图1开始的参考图；内置参考图不用填，由脚本 agent 自行选用。")
+						"可选：对话里出现、且不在内置参考图中的非内置参考图，只填72位图片id，以英文逗号,分隔。这些图会直接附加为图1开始的参考图；内置参考图不用填，由脚本 agent 自行选用。",
+						"参考图")
+				.putParam("duration", "可选：视频时长（秒），4-15 的整数，默认 " + fallbackDuration
+						+ " 秒；这个时长会写进脚本要求并提交给视频接口。", "视频时长")
 				.async()
 				.tool((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
@@ -162,6 +194,10 @@ public class SeedreamMcp {
 							: "";
 					if (promptText.isEmpty())
 						return CompletableFuture.completedFuture(ToolResult.text("参数错误：缺少提示词prompt。"));
+					int duration = readDuration(jo, fallbackDuration);
+					if (duration < 0)
+						return CompletableFuture.completedFuture(
+								ToolResult.text("参数错误：duration 必须是 4-15 的整数（秒）。"));
 					// 本次请求已附加的参考图，顺序即脚本里的图1、图2：外部参考图在前，脚本 agent 附加的内置参考图在后
 					List<String> links = new ArrayList<>();
 					String externalRefs = jo.has("reference") && !jo.get("reference").isJsonNull()
@@ -171,6 +207,8 @@ public class SeedreamMcp {
 					if (referenceError != null)
 						return CompletableFuture.completedFuture(ToolResult.text(referenceError));
 					StringBuilder user = new StringBuilder();
+					user.append("本次视频时长：").append(duration).append(" 秒；脚本必须按这个时长写，时间戳不要超过 ")
+							.append(duration).append(" 秒。\n");
 					if (!links.isEmpty()) {
 						user.append("调用者已附加").append(links.size()).append("张外部参考图，编号为@图片1到@图片").append(links.size())
 								.append("，它们已经在参考图列表里，不需要重复附加，可以用 image_recognition 查看：\n");
@@ -188,7 +226,7 @@ public class SeedreamMcp {
 					subManager.registerTool(MultiModalMcp.createImageRecognition(tos));
 					subManager.registerTool(createAttachReference(refImages, tos, links));
 					Builder b = AIRequest.builder("videoAgent").modelHint("deepseek/pro").taskType(TaskType.STORY)
-							.strength(ReasoningStrength.MEDIUM).temperature(0.2f).maxTokens(16384);
+							.strength(ReasoningStrength.MEDIUM).temperature(0.2f).maxTokens(384000);
 					b.addHistoryItem(Role.SYSTEM, system);
 					b.addHistoryItem(Role.USER, user.toString());
 					b.toolCallManager(subManager);
@@ -198,8 +236,10 @@ public class SeedreamMcp {
 						synchronized (links) {
 							requestLinks = new ArrayList<>(links);
 						}
-						// 整段脚本就是视频生成提示词，已附加的参考图按附加顺序提交
-						return videoGenerator.generate(requestLinks, script)
+						// 整段脚本就是视频生成提示词，已附加的参考图按附加顺序提交，时长用本次调用校验过的值；
+						// 成功生成后由视频客户端回报 Seedance 视频用量，计入当前 AIOutput 的配额
+						return videoGenerator.generate(requestLinks, script, duration,
+								output == null ? null : output::addUsage)
 								.thenApply(url -> ToolResult.of("视频生成成功", new VideoContent(url)));
 					});
 				}).build();
@@ -253,13 +293,15 @@ public class SeedreamMcp {
 			sb.append(DEFAULT_VIDEO_SYSTEM_PROMPT);
 		else
 			sb.append(systemPrompt.trim());
-		// 视频工具是一次性调用：没有人会回答脚本 agent 的追问，必须直接给出脚本
-		sb.append("\n\n本次调用是单向的：没有人会回答你的追问，请直接输出最终脚本，不要提问。");
+		// 视频工具是一次性调用：没有人会回答脚本 agent 的追问，必须自行推测并直接给出脚本
+		sb.append("\n\n本次调用是单向的：没有人会回答你的追问，请根据现有信息自行推测"
+				+ "（参考图不足时按现有参考图的大致意图补全），直接输出最终脚本，不要提问。");
 		if (!refImages.isEmpty()) {
 			sb.append("\n\n## 可用的内置参考图（使用前必须先用 attach_reference 附加，图片id也可以用 image_recognition 查看）\n");
 			for (String name : refImages.keySet()) {
 				sb.append("- ").append(name).append("\n");
 			}
+			sb.append("\n只要涉及到参考图中的人物或者服装，就要选择对应参考图并提供说明\n");
 		}
 		return sb.toString();
 	}
@@ -280,13 +322,15 @@ public class SeedreamMcp {
 			List<String> links) {
 		return new ToolData.Builder("attach_reference",
 				"把参考图加入本次视频生成的参考图列表。成功返回参考图编号（从1开始，脚本里用“图1”“图2”引用），失败返回原因。已附加的参考图会随视频请求一起发送。")
-				.putParam("reference", "要附加的图片：系统提示词里列出的内置参考图名字，或者72位图片id")
+				.putParam("reference", "要附加的图片：系统提示词里列出的内置参考图名字，或者72位图片id", "参考图")
+				.putParam("description", "参考图的用途说明", "参考图用途")
 				.maxCalls(MAX_VIDEO_REFERENCE_IMAGES)
 				.toolText((data, output, manager) -> {
 					String name = readReference(data);
 					if (name.isEmpty())
 						return "参数错误：缺少reference。";
 					String link = refImages.get(name);
+					System.out.println(readDescription(data));
 					if (link == null) {
 						if (name.length() != 72)
 							return "参数错误：参考图“" + name + "”不是内置参考图，也不是72位图片id。";
@@ -314,10 +358,11 @@ public class SeedreamMcp {
 		CompletableFuture<String> generate(AIRequest request);
 	}
 
-	/** 视频生成器：用最终提示词和已附加的参考图链接调用即梦视频接口。 */
+	/** 视频生成器：用最终提示词、已附加的参考图链接、本次时长调用即梦视频接口，并回报用量。 */
 	@FunctionalInterface
 	interface VideoGenerator {
-		CompletableFuture<String> generate(List<String> referenceLinks, String prompt);
+		CompletableFuture<String> generate(List<String> referenceLinks, String prompt, int duration,
+				Consumer<UsageIntf<?>> usage);
 	}
 
 	/**
@@ -333,16 +378,24 @@ public class SeedreamMcp {
 		return CompletableFuture.supplyAsync(() -> {
 			try {
 				AIOutput inner = LLMConnector.call(request);
-				FileUtil.printAndCollectContent(inner.getReasoner());
+				String reasoning = FileUtil.printAndCollectContent(inner.getReasoner()).toText().trim();
 				String script = FileUtil.printAndCollectContent(inner.getContent()).toText().trim();
 				if (script.isEmpty())
-					throw new RuntimeException("视频脚本为空");
+					throw new RuntimeException("视频脚本为空（模型 " + modelName(request)
+							+ "，maxTokens " + request.maxToken + "，思维链 " + reasoning.length() + " 字，用量 "
+							+ inner.getUsages() + "）；模型调用已结束但正文为空");
 				return script;
 			} catch (ModelRouteException | IOException e) {
 				e.printStackTrace();
 				throw new RuntimeException("agent调用失败，请重试", e);
 			}
 		});
+	}
+
+	/** 请求里声明的模型名，用于空正文诊断。 */
+	private static String modelName(AIRequest request) {
+		return request.modelHint == null || request.modelHint.length == 0 ? "默认"
+				: String.join("/", request.modelHint);
 	}
 
 	/**
@@ -356,6 +409,48 @@ public class SeedreamMcp {
 			JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 			if (jo.has("reference") && !jo.get("reference").isJsonNull())
 				return jo.get("reference").getAsString().trim();
+		} catch (RuntimeException e) {
+			// 参数不是合法 JSON 时按缺少参数处理
+		}
+		return "";
+	}
+	/**
+	 * 读取并校验工具参数里的视频时长。
+	 * <p>
+	 * 缺失或空串使用默认时长；非数字、非整数、超出 4-15 秒返回 -1。
+	 * </p>
+	 *
+	 * @param jo       工具参数
+	 * @param fallback 默认时长
+	 * @return 校验后的秒数；非法返回 -1
+	 */
+	static int readDuration(JsonObject jo, int fallback) {
+		if (jo == null || !jo.has("duration") || jo.get("duration").isJsonNull())
+			return fallback;
+		JsonElement element = jo.get("duration");
+		if (!element.isJsonPrimitive())
+			return -1;
+		try {
+			String raw = element.getAsString().trim();
+			// 兼容模型把时长写成“8秒”“8s”这种带单位的文本
+			raw = raw.replaceFirst("(?i)(秒|s)$", "").trim();
+			if (raw.isEmpty())
+				return fallback;
+			double parsed = Double.parseDouble(raw);
+			int value = (int) parsed;
+			if (parsed != value || value < 4 || value > 15)
+				return -1;
+			return value;
+		} catch (RuntimeException e) {
+			return -1;
+		}
+	}
+
+	private static String readDescription(String data) {
+		try {
+			JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
+			if (jo.has("description") && !jo.get("description").isJsonNull())
+				return jo.get("description").getAsString().trim();
 		} catch (RuntimeException e) {
 			// 参数不是合法 JSON 时按缺少参数处理
 		}

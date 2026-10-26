@@ -24,8 +24,13 @@ public class ManagedToolCallApprover implements ToolCallApprover {
 
 	@Override
 	public boolean approve(String toolName, String arguments, String reason) {
+		return approve(toolName, arguments, null, reason);
+	}
+
+	@Override
+	public boolean approve(String toolName, String arguments, String displayArguments, String reason) {
 		try {
-			return manager.request(userId, toolName, arguments, reason);
+			return manager.request(userId, toolName, arguments, displayArguments, reason);
 		} catch (InterruptedException e) {
 			// 等待被中断：恢复中断标记并按拒绝处理
 			Thread.currentThread().interrupt();

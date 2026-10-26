@@ -1274,12 +1274,6 @@ var main=new Vue({
         // 侧边栏
         showSidebar: false,
         chatList: [],
-        // 本地代理模式
-        showUrlModal: false,
-        localUrl: '',
-        localUrlInput: '',
-        urlValid: null,
-        urlCheckTimer: null,
         pinnedToBottom: true,      // 用户当前是否停留在底部（不在底部时不自动滚动，避免翻阅历史时被拽回）
         // 设置弹窗：模型 / 主题 / 图片安全
         showSettings: false,       // 设置弹窗显隐
@@ -1299,7 +1293,6 @@ var main=new Vue({
     },
     beforeDestroy() {
         document.removeEventListener('keydown', this._onKeydown);
-        if (this.urlCheckTimer) clearInterval(this.urlCheckTimer);
     },
     watch: {
         messages: {
@@ -1308,18 +1301,6 @@ var main=new Vue({
         }
     },
     methods: {
-        async confirmLocalUrl() {
-            const url = this.localUrlInput.trim();
-            if (!url) return;
-            this.localUrl = url.replace(/\/+$/, '');
-            localStorage.setItem('painter_local_url', this.localUrl);
-            this.urlValid = null;
-            await this.checkUrlValidity();
-            if(this.urlValid){
-	            this.startUrlCheck();
-	            this.initAfterUrl();
-            }
-        },
         initAfterUrl() {
 			if(!this.aiConnected)
             	getOrCreateConversationId(cid => {
@@ -1420,34 +1401,6 @@ var main=new Vue({
                 const d = new Date(parseInt(ts));
                 return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
             } catch(e) { return ts; }
-        },
-        async checkUrlValidity() {
-        },
-        startUrlCheck() {
-        },
-        async handleLocalRequest(msg) {
-            const requestId = msg.request_id;
-            const path = msg.path || '';
-            const body = msg.body || '';
-            const targetUrl = this.localUrl + path;
-            try {
-                const resp = await fetch(targetUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json; utf-8', "Accept": "application/json" },
-                    body: body,
-                });
-                const data = await resp.json();
-                this.sendLocalResponse(requestId, { code: resp.status, data: data });
-            } catch (err) {
-                this.sendLocalResponse(requestId, { code: -1, data: { message: err.message || String(err)} });
-            }
-        },
-        sendLocalResponse(requestId, result) {
-            fetch('painter/localResponse?conversation_id='+this.conversationId+'&request_id='+requestId, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(result),
-            }).catch(err => console.error("发送local_response失败", err));
         },
         /* ================= 公共协议层：连接相关 ================= */
         // 绘画前端的连接地址（站点地址来自 site-config.js，未配置时跟随当前页面）
@@ -1559,9 +1512,6 @@ var main=new Vue({
         },
         /* ================= 公共协议层：下行帧钩子 ================= */
         // 输入框回填由公共层 aiApplySendbox 做条件恢复（草稿为空才覆盖），页面不再直接赋值
-        aiOnLocalRequest(frame) {
-            this.handleLocalRequest(frame);
-        },
         // 找到（必要时新建）当前流式输出的助手消息
         // _key 在创建时固定：之后服务端补上历史 id 只改 _id，节点不会被重建（否则 AI 框会闪一下）
         painterTargetMessage(id) {

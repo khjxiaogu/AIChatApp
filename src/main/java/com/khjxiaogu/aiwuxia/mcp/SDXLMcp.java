@@ -250,10 +250,44 @@ public class SDXLMcp implements ToolProvider {
 		sb.deleteCharAt(sb.length()-1);
 		return sb.toString();
     }
+    /**
+     * 创建使用共享本地模型池的 SDXL 图片工具集。
+     * <p>
+     * 这是不带用户的旧入口，只使用服务器共享的本地模型；
+     * 需要让某个用户的绘画会话优先使用该用户自己接入的本地模型时，
+     * 使用 {@link #createRemoteLocalModel(String, ObjectStorageProvider, Map, BiFunction, boolean)}。
+     * </p>
+     *
+     * @param tos       对象存储
+     * @param lora      Lora 配置
+     * @param urlGetter 图片 id → 图片内容
+     * @param isNsfw    是否允许不宜内容
+     * @return 工具集
+     */
     public static SDXLMcp createRemoteLocalModel(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,BiFunction<String,AIOutput,String> urlGetter,boolean isNsfw) {
-		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,data)->LocalModel.require(ModelType.SDXL,UUID.randomUUID().toString(), JsonBuilder.object().add("path", url).add("data", data).end()).thenApply(t->JsonParser.parseString(new String(t.bodyData,StandardCharsets.UTF_8)).getAsJsonObject());
-		return create(tos,lora,isNsfw,urlGetter,func);
-	}
+        return createRemoteLocalModel(null, tos, lora, urlGetter, isNsfw);
+    }
+
+    /**
+     * 创建绑定到指定用户的 SDXL 图片工具集。
+     * <p>
+     * 工具执行时会把用户标识一起交给本地模型握手器：该用户接入了自己的本地绘画模型就用用户的，
+     * 用户没有在线连接时自动回退到服务器共享的本地模型。用户接入或断开本地模型都会在下次调用时
+     * 立刻生效，因此同一个用户的所有绘画会话（包括已经打开的会话）都会使用同一份模型选择。
+     * </p>
+     *
+     * @param uid       用户标识，可为 null 或空（等价于共享池）
+     * @param tos       对象存储
+     * @param lora      Lora 配置
+     * @param urlGetter 图片 id → 图片内容
+     * @param isNsfw    是否允许不宜内容
+     * @return 绑定该用户的工具集
+     */
+    public static SDXLMcp createRemoteLocalModel(String uid, ObjectStorageProvider tos,
+            Map<String, LoraConfigurations> lora, BiFunction<String, AIOutput, String> urlGetter, boolean isNsfw) {
+        BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,data)->LocalModel.require(uid,ModelType.SDXL,UUID.randomUUID().toString(), JsonBuilder.object().add("path", url).add("data", data).end()).thenApply(t->JsonParser.parseString(new String(t.bodyData,StandardCharsets.UTF_8)).getAsJsonObject());
+        return create(tos,lora,isNsfw,urlGetter,func);
+    }
 	public static SDXLMcp createLocal(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,ResourceLock lock) {
 		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,payload)->CompletableFuture.supplyAsync(()->{
 			try(ResourcePermit l=lock.acquire(12))  {
@@ -363,7 +397,7 @@ public class SDXLMcp implements ToolProvider {
 	 */
 	public static ToolData createSearchCharacter(List<String> charas) {
 		return new ToolData.Builder("search_character", "通过关键词搜索特定角色的提示词，返回相符的提示词，以,隔开")
-				.putParam("keyword", "角色英文名")
+				.putParam("keyword", "角色英文名", "角色关键词")
 				.presenter(ToolCallPresenter.ofArgument("搜索角色", "keyword"))
 				.tool((data) -> {
 					try {
@@ -412,7 +446,7 @@ public class SDXLMcp implements ToolProvider {
 		}
 
 		tools.add(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
-				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
+				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容", "图片ID")
 				.presenter(ToolCallPresenter.ofName("反推提示词"))
 				.toolText((data, output, manager) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
@@ -439,9 +473,9 @@ public class SDXLMcp implements ToolProvider {
 		
 		tools.add(new ToolData.Builder("sdxl_gen_image",
 				"使用Stable Diffusion XL生成图片，生成后需要使用其他工具发送。")
-				.putParam("positive", "正面提示词，必须是纯英文，不需要包含画质提示词。")
-				.putParam("negative", "负面提示词，必须是纯英文，不需要包含画质提示词。")
-				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
+				.putParam("positive", "正面提示词，必须是纯英文，不需要包含画质提示词。", "正面提示词")
+				.putParam("negative", "负面提示词，必须是纯英文，不需要包含画质提示词。", "负面提示词")
+				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一", "画面比例")
 				.presenter(call->{
 					JsonObject jo=JsonParser.parseString(call.function.arguments).getAsJsonObject();
 					MutableMessageContents content=new MutableMessageContents();
@@ -516,15 +550,15 @@ public class SDXLMcp implements ToolProvider {
 				}).build());
 		tools.add(new ToolData.Builder("regional_image",
 				"使用Stable Diffusion XL搭配分区提示词生成图片，不需要包含画质提示词，提示词必须是纯英文，生成后需要使用其他工具发送。")
-				.putParam("picture_id", "如果要使用图生图，务必在这里填上图片ID，否则不填或留空")
-				.putParam("strength", "如果不使用图生图，该参数无效。重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。")
-				.putParam("common_positive", "共用正面提示词")
-				.putParam("first_positive", "第一区域提示词，必须是纯英文，不需要包含画质提示词。")
-				.putParam("second_positive", "第二区域提示词，必须是纯英文，不需要包含画质提示词。")
-				.putParam("common_negative", "共用负面提示词，必须是纯英文，不需要包含画质提示词。")
-				.putParam("placement", "区域排布，必须是row/col之一，col表示两个区域呈现左右结构，row表示两个区域呈现上下结构")
-				.putParam("area_ratio", "区域比例，必须是以x:y的格式，其中x是第一区域面积占比，y是第二区域面积占比，x和y必须为整数。例如1:1")
-				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
+				.putParam("picture_id", "如果要使用图生图，务必在这里填上图片ID，否则不填或留空", "图片ID")
+				.putParam("strength", "如果不使用图生图，该参数无效。重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。", "重绘幅度")
+				.putParam("common_positive", "共用正面提示词", "共用正面提示词")
+				.putParam("first_positive", "第一区域提示词，必须是纯英文，不需要包含画质提示词。", "第一区域正面提示词")
+				.putParam("second_positive", "第二区域提示词，必须是纯英文，不需要包含画质提示词。", "第二区域正面提示词")
+				.putParam("common_negative", "共用负面提示词，必须是纯英文，不需要包含画质提示词。", "共用负面提示词")
+				.putParam("placement", "区域排布，必须是row/col之一，col表示两个区域呈现左右结构，row表示两个区域呈现上下结构", "区域排布")
+				.putParam("area_ratio", "区域比例，必须是以x:y的格式，其中x是第一区域面积占比，y是第二区域面积占比，x和y必须为整数。例如1:1", "区域比例")
+				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一", "画面比例")
 				.presenter(call->{
 					JsonObject jo=JsonParser.parseString(call.function.arguments).getAsJsonObject();
 					MutableMessageContents content=new MutableMessageContents();
@@ -632,11 +666,11 @@ public class SDXLMcp implements ToolProvider {
 				}).build());
 		tools.add(new ToolData.Builder("image_to_image",
 				"使用Stable Diffusion XL的图生图功能，生成后需要使用其他工具发送。")
-				.putParam("positive", "正面提示词，必须是纯英文。")
-				.putParam("negative", "负面提示词，必须是纯英文。")
-				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一")
-				.putParam("strength", "重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。")
-				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容")
+				.putParam("positive", "正面提示词，必须是纯英文。", "正面提示词")
+				.putParam("negative", "负面提示词，必须是纯英文。", "负面提示词")
+				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一", "画面比例")
+				.putParam("strength", "重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。", "重绘幅度")
+				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容", "图片ID")
 
 				.presenter(call->{
 					JsonObject jo=JsonParser.parseString(call.function.arguments).getAsJsonObject();

@@ -301,7 +301,7 @@
 			},
 			/** 需要用户补充输入 */
 			aiOnInput: function (input, prompt) {},
-			/** 工具调用许可请求 */
+			/** 工具调用许可请求（frame.displayArguments 为参数名已换成可读名称的文本，展示优先用它） */
 			aiOnToolApproval: function (frame) {},
 			/** 工具调用许可结果 */
 			aiOnToolApprovalResult: function (frame) {},

@@ -98,9 +98,9 @@ write.setLastState(snapshot);
 ## 配方 4：给 app 加一个工具（如查天气）
 
 ```java
-// 1) 描述工具：名字、描述、参数（名称 → 说明），回调拿到的是参数 JSON 字符串
+// 1) 描述工具：名字、描述、参数（名称 → 说明 → 人可读名称），回调拿到的是参数 JSON 字符串
 ToolData weather = new ToolData.Builder("get_weather", "查询城市天气")
-        .putParam("city", "城市名，例如：北京")
+        .putParam("city", "城市名，例如：北京", "城市")   // 第三个参数只用于审核界面显示
         .toolText((paramsJson, output, manager) -> {   // 直接返回文本的便捷写法
             JsonObject args = JsonParser.parseString(paramsJson).getAsJsonObject();
             // output.addUsage(...) 可写入本次工具产生的用量；不需要时忽略

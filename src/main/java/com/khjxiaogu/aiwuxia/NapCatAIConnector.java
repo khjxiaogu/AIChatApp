@@ -37,10 +37,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -69,6 +71,8 @@ import com.khjxiaogu.aiwuxia.apps.AIGroupApplication;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPermission;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
 import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
@@ -97,7 +101,9 @@ import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
+import com.khjxiaogu.aiwuxia.tools.QqToolApprovalManager;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
+import com.khjxiaogu.aiwuxia.tools.ToolSettings;
 import com.khjxiaogu.aiwuxia.utils.BotCallback;
 import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
@@ -132,6 +138,8 @@ public class NapCatAIConnector extends WebSocketClient {
 	JsonObject imgKey = new JsonObject();
 	ExecutorService sendMessage=Executors.newFixedThreadPool(3);
 	private final ResourceLock resourceLock = new ResourceLock(12);
+	/** 工具调用审核：需要审核的工具私聊管理员确认。 */
+	private final QqToolApprovalManager toolApproval;
 	public NapCatAIConnector(File dataFolder, String url,
 			String token, AIGroupSession... states) throws JsonSyntaxException, IOException, InterruptedException {
 		super(URI.create("ws://" + url), Map.of("Authorization", "Bearer " + token));
@@ -155,6 +163,8 @@ public class NapCatAIConnector extends WebSocketClient {
 			System.out.println("绘画图片存储: 仅本地 (TOS初始化失败)");
 		}
 		imgKey = JsonParser.parseString(FileUtil.readString(ConfigPaths.imageGeneration(dataFolder))).getAsJsonObject();
+		this.toolApproval = new QqToolApprovalManager(this::sendPrivateText,
+				QqToolApprovalManager.DEFAULT_TIMEOUT_MILLIS);
 		connectBlocking();
 		for(AIGroupSession sess:states) {
 
@@ -372,12 +382,7 @@ public class NapCatAIConnector extends WebSocketClient {
 		return "发送音频消息id：" + jo.get("message_id").getAsString();
 	}
 	public void registerSkills(AIGroupSession state,File dataFolder,JsonObject config) throws IOException {
-		Set<String> skillSet=new HashSet<>();
-		if(config.has("tools")) {
-			for(JsonElement je:config.get("tools").getAsJsonArray()) {
-				skillSet.add(je.getAsString());
-			}
-		}
+		ToolSettings toolSettings = ToolSettings.parse(config);
 		Map<String, LoraConfigurations> lora = new LinkedHashMap<>();
 		File lfn=ConfigPaths.sdxlLoras(dataFolder);
 		if(lfn.exists()) {
@@ -410,60 +415,221 @@ public class NapCatAIConnector extends WebSocketClient {
 		state.setToolAttachmentHandler(content -> sendToolAttachment(state, content));
 		state.setToolTaskCompletionHandler(task -> handleToolTaskCompletion(state, task));
 		List<String> charas = SDXLMcp.readLinesFromFile(ConfigPaths.sdxlCharacterTags(dataFolder));
-		if (skillSet.contains("fetch")) {
-			state.registerTool(FetchMcp.createWebView(tos));
-			state.registerTool(FetchMcp.createMoegirlSearch(tos));
+		// 技能名 -> 实际注册的工具名。工具的审核配置写在技能条目上（例如 seedvideo），
+		// 但权限判定用的是真实工具名（jimeng_video），这里顺手把对应关系记下来。
+		Map<String, Set<String>> toolNamesBySkill = new LinkedHashMap<>();
+		if (toolSettings.isEnabled("fetch")) {
+			ToolData webView = FetchMcp.createWebView(tos);
+			state.registerTool(webView);
+			recordTool(toolNamesBySkill, "fetch", webView);
+			ToolData moegirl = FetchMcp.createMoegirlSearch(tos);
+			state.registerTool(moegirl);
+			recordTool(toolNamesBySkill, "fetch", moegirl);
 			// DeepSeek Search API：仅在配置了 deepseektoken 时才会真正注册 web_search
 			ToolData webSearch = DeepseekSearchMcp.createWebSearch();
 			if (webSearch != null) {
 				state.registerTool(webSearch);
+				recordTool(toolNamesBySkill, "fetch", webSearch);
 			}
 		}
 
-		if (skillSet.contains("multimodal"))
-			state.registerTool(MultiModalMcp.createImageRecognition(tos));
-
-		if (skillSet.contains("qq")) {
-			state.registerTool(QQMcp.createAvatarFetch(tos));
-			state.registerTool(QQMcp.createAvatarGroupRecognition("" + state.groupId, tos));
-			state.registerTool(QQMediaMcp.createSendImage(tos));
-			state.registerTool(QQMediaMcp.createSendEmojiImage(tos, emojis));
+		if (toolSettings.isEnabled("multimodal")) {
+			ToolData recognition = MultiModalMcp.createImageRecognition(tos);
+			state.registerTool(recognition);
+			recordTool(toolNamesBySkill, "multimodal", recognition);
 		}
 
-		if (skillSet.contains("sdxl")) {
-			state.registerTools(SDXLMcp.createLocal(tos, lora, false, resourceLock));
+		if (toolSettings.isEnabled("qq")) {
+			ToolData avatar = QQMcp.createAvatarFetch(tos);
+			state.registerTool(avatar);
+			recordTool(toolNamesBySkill, "qq", avatar);
+			ToolData groupAvatar = QQMcp.createAvatarGroupRecognition("" + state.groupId, tos);
+			state.registerTool(groupAvatar);
+			recordTool(toolNamesBySkill, "qq", groupAvatar);
+			ToolData sendImage = QQMediaMcp.createSendImage(tos);
+			state.registerTool(sendImage);
+			recordTool(toolNamesBySkill, "qq", sendImage);
+			ToolData sendEmoji = QQMediaMcp.createSendEmojiImage(tos, emojis);
+			state.registerTool(sendEmoji);
+			recordTool(toolNamesBySkill, "qq", sendEmoji);
+		}
+
+		if (toolSettings.isEnabled("sdxl")) {
+			SDXLMcp sdxl = SDXLMcp.createLocal(tos, lora, false, resourceLock);
+			state.registerTools(sdxl);
+			recordTools(toolNamesBySkill, "sdxl", sdxl.getTools());
 			if (charas != null) {
-				state.registerTool(SDXLMcp.createSearchCharacter(charas));
+				ToolData searchCharacter = SDXLMcp.createSearchCharacter(charas);
+				state.registerTool(searchCharacter);
+				recordTool(toolNamesBySkill, "sdxl", searchCharacter);
 			}
 		}
-		if (skillSet.contains("sdxl-nsfw")) {
-			state.registerTools(SDXLMcp.createLocal(tos, lora, true, resourceLock));
+		if (toolSettings.isEnabled("sdxl-nsfw")) {
+			SDXLMcp sdxl = SDXLMcp.createLocal(tos, lora, true, resourceLock);
+			state.registerTools(sdxl);
+			recordTools(toolNamesBySkill, "sdxl-nsfw", sdxl.getTools());
 			if (charas != null) {
-				state.registerTool(SDXLMcp.createSearchCharacter(charas));
+				ToolData searchCharacter = SDXLMcp.createSearchCharacter(charas);
+				state.registerTool(searchCharacter);
+				recordTool(toolNamesBySkill, "sdxl-nsfw", searchCharacter);
 			}
 		}
 
-		if (skillSet.contains("sdxl-agent"))
-			state.registerTool(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, false,
-					resourceLock));
-		if (skillSet.contains("sdxl-agent-nsfw"))
-			state.registerTool(SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, true,
-					resourceLock));
+		if (toolSettings.isEnabled("sdxl-agent")) {
+			ToolData agent = SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, false,
+					resourceLock);
+			state.registerTool(agent);
+			recordTool(toolNamesBySkill, "sdxl-agent", agent);
+		}
+		if (toolSettings.isEnabled("sdxl-agent-nsfw")) {
+			ToolData agent = SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, true,
+					resourceLock);
+			state.registerTool(agent);
+			recordTool(toolNamesBySkill, "sdxl-agent-nsfw", agent);
+		}
 		CrontabMcp.setPath(ConfigPaths.crontab(dataFolder));
-		if (skillSet.contains("cron"))
-			state.registerTools(new CrontabMcp(state.botId, state));
-		if (skillSet.contains("music"))
-			state.registerTools(new MusicMcp(new File(dataFolder, "music"), config.get("voice").getAsString(),
-					state.getRoleName(Role.ASSISTANT), resourceLock));
-		if (skillSet.contains("seedimage"))
-			state.registerTool(SeedreamMcp.createImage(imgKey, refimage, tos));
-		if (skillSet.contains("seedvideo")) {
+		if (toolSettings.isEnabled("cron")) {
+			CrontabMcp cron = new CrontabMcp(state.botId, state);
+			state.registerTools(cron);
+			recordTools(toolNamesBySkill, "cron", cron.getTools());
+		}
+		if (toolSettings.isEnabled("music")) {
+			MusicMcp music = new MusicMcp(new File(dataFolder, "music"), config.get("voice").getAsString(),
+					state.getRoleName(Role.ASSISTANT), resourceLock);
+			state.registerTools(music);
+			recordTools(toolNamesBySkill, "music", music.getTools());
+		}
+		if (toolSettings.isEnabled("seedimage")) {
+			ToolData image = SeedreamMcp.createImage(imgKey, refimage, tos);
+			state.registerTool(image);
+			recordTool(toolNamesBySkill, "seedimage", image);
+		}
+		if (toolSettings.isEnabled("seedvideo")) {
 			// 即梦视频脚本提示词由 config/jimeng-video.txt 提供，缺失时工具内部退回内置提示词
 			File videoPrompt = ConfigPaths.jimengVideo(dataFolder);
-			state.registerTool(SeedreamMcp.createVideo(imgKey, refimage, tos,
-					videoPrompt.exists() ? FileUtil.readString(videoPrompt) : ""));
+			ToolData video = SeedreamMcp.createVideo(imgKey, refimage, tos,
+					videoPrompt.exists() ? FileUtil.readString(videoPrompt) : "");
+			state.registerTool(video);
+			recordTool(toolNamesBySkill, "seedvideo", video);
 		}
-		state.registerTools(new AgentPingMcp(state.getRoleName(Role.ASSISTANT), state));
+		AgentPingMcp ping = new AgentPingMcp(state.getRoleName(Role.ASSISTANT), state);
+		state.registerTools(ping);
+		recordTools(toolNamesBySkill, "agent-ping", ping.getTools());
+		applyToolApproval(state, config, toolSettings, toolNamesBySkill);
+	}
+
+	/** 记录技能注册出来的一个工具。 */
+	private static void recordTool(Map<String, Set<String>> toolNamesBySkill, String skill, ToolData tool) {
+		if (tool == null || tool.name == null) {
+			return;
+		}
+		Set<String> names = toolNamesBySkill.get(skill);
+		if (names == null) {
+			names = new LinkedHashSet<>();
+			toolNamesBySkill.put(skill, names);
+		}
+		names.add(tool.name);
+	}
+
+	/** 记录技能注册出来的一组工具。 */
+	private static void recordTools(Map<String, Set<String>> toolNamesBySkill, String skill,
+			Collection<ToolData> tools) {
+		if (tools == null) {
+			return;
+		}
+		for (ToolData tool : tools) {
+			recordTool(toolNamesBySkill, skill, tool);
+		}
+	}
+
+	/**
+	 * 按工具配置接入审核：{@code tools} 里带 {@code approval:true} 的工具在真正执行前私聊管理员确认。
+	 * <p>
+	 * 配置里写的是技能名（{@code seedvideo}）或真实工具名（{@code jimeng_video}）都可以：
+	 * 技能名会展开成该技能实际注册的全部工具名。没有配置 {@code adminId} 时失败关闭：
+	 * 需要审核的工具一律拒绝，并回传给模型明确原因。
+	 * </p>
+	 *
+	 * @param state            会话
+	 * @param config           agent 配置
+	 * @param toolSettings     已解析的工具配置
+	 * @param toolNamesBySkill 技能名到实际工具名的映射
+	 */
+	private void applyToolApproval(AIGroupSession state, JsonObject config, ToolSettings toolSettings,
+			Map<String, Set<String>> toolNamesBySkill) {
+		// 审核名单里可能写技能名，也可能直接写工具名；统一展开成真实工具名
+		Set<String> needApproval = new LinkedHashSet<>();
+		for (String configured : toolSettings.getApproval()) {
+			Set<String> names = toolNamesBySkill.get(configured);
+			if (names != null && !names.isEmpty()) {
+				needApproval.addAll(names);
+			} else if (state.getToolCallManager().hasTool(configured)) {
+				needApproval.add(configured);
+			}
+		}
+		if (needApproval.isEmpty()) {
+			if (!toolSettings.getApproval().isEmpty()) {
+				System.out.println("[QQ] 工具审核配置未匹配到已注册工具：" + toolSettings.getApproval());
+			}
+			return;
+		}
+		long adminId = readAdminId(config);
+		state.getToolCallManager().addPermissionListener(ToolCallPermission.requireApproval(needApproval,
+				"该工具会产生外部副作用或消耗额度，需要管理员审核"));
+		// 统一未批准时回传给模型的文案，避免落到 ToolCallManager 的默认提示
+		state.getToolCallManager().setUnapprovedMessage(
+				"管理员未批准本次工具调用，请改用其它方式或先询问用户。");
+		if (adminId <= 0) {
+			state.getToolCallManager().setApprover(ToolCallApprover.denyAll());
+			state.getToolCallManager().setUnapprovedMessage(
+					"需要审核的工具未配置管理员（adminId），已拒绝执行。");
+			System.out.println("[QQ] 工具审核已启用，但未配置 adminId，需要审核的工具将被拒绝：" + needApproval);
+			return;
+		}
+		long timeout = readApprovalTimeout(config);
+		state.getToolCallManager().setApprover(toolApproval.approverFor(state, adminId, timeout));
+		System.out.println("[QQ] 工具审核已启用：管理员 QQ " + adminId + "，超时 " + timeout + "ms，工具 " + needApproval);
+	}
+
+	/** 读取 agent 配置里的管理员 QQ；缺省时回退到 {@code -DadminId=...}。 */
+	private static long readAdminId(JsonObject config) {
+		JsonElement configured = config == null ? null : config.get("adminId");
+		if (configured != null && !configured.isJsonNull() && configured.isJsonPrimitive()) {
+			try {
+				String raw = configured.getAsString().trim();
+				if (!raw.isEmpty()) {
+					return Math.max(0, Long.parseLong(raw));
+				}
+			} catch (RuntimeException e) {
+				// 配置写错时继续尝试系统属性
+			}
+		}
+		try {
+			return Math.max(0, Long.parseLong(System.getProperty("adminId", "0").trim()));
+		} catch (RuntimeException e) {
+			return 0;
+		}
+	}
+
+	/** 读取审核超时：agent 配置 {@code approvalTimeoutMs} 优先，其次 {@code -Dtool_approval_timeout_ms}。 */
+	private static long readApprovalTimeout(JsonObject config) {
+		JsonElement configured = config == null ? null : config.get("approvalTimeoutMs");
+		if (configured != null && !configured.isJsonNull() && configured.isJsonPrimitive()) {
+			try {
+				String raw = configured.getAsString().trim();
+				if (!raw.isEmpty()) {
+					return Math.max(5000, Long.parseLong(raw));
+				}
+			} catch (RuntimeException e) {
+				// 配置写错时继续尝试系统属性
+			}
+		}
+		try {
+			long value = Long.parseLong(System.getProperty("tool_approval_timeout_ms", "120000").trim());
+			return Math.max(5000, value);
+		} catch (RuntimeException e) {
+			return QqToolApprovalManager.DEFAULT_TIMEOUT_MILLIS;
+		}
 	}
 
 	@Override
@@ -478,6 +644,105 @@ public class NapCatAIConnector extends WebSocketClient {
 	public byte[] getImageBytes(String fileId) throws Exception {
 		// 1. 构造请求 JSON：{"file_id":urls "..."}
 		return FileUtil.readAll(FileUtil.fetch(fileId));
+	}
+
+	/**
+	 * 发送私聊文本消息（不等待回执）。
+	 * <p>
+	 * 工具审核的问题与结果都走私聊。这里刻意不注册回执回调，因为管理员答复是在
+	 * WebSocket 读线程上处理的，如果在读线程里同步等待回执会卡死自己。
+	 * </p>
+	 *
+	 * @param qq   QQ 号
+	 * @param text 文本
+	 * @throws Exception 连接不可用等发送失败
+	 */
+	public void sendPrivateText(long qq, String text) throws Exception {
+		if (text == null || text.isEmpty()) {
+			return;
+		}
+		JsonObject message = JsonBuilder.object().add("action", "send_private_msg").object("params")
+				.add("user_id", qq).object("message").add("type", "text").object("data").add("text", text)
+				.end().end().end().end();
+		this.send(message.toString());
+	}
+
+	/**
+	 * 处理私聊事件：只有管理员对工具审核的「允许/拒绝」会被消费，其它私聊一律忽略。
+	 *
+	 * @param msg OneBot 私聊事件
+	 */
+	private void handlePrivateMessage(JsonObject msg) {
+		// 忽略机器人自己发出的私聊事件，避免把自己的消息当成管理员答复
+		if (msg.has("post_type") && !msg.get("post_type").isJsonNull()
+				&& "message_sent".equals(msg.get("post_type").getAsString())) {
+			return;
+		}
+		long selfId = 0;
+		if (msg.has("self_id") && !msg.get("self_id").isJsonNull()) {
+			try {
+				selfId = msg.get("self_id").getAsLong();
+			} catch (RuntimeException e) {
+				selfId = 0;
+			}
+		}
+		long userId = 0;
+		if (msg.has("user_id") && !msg.get("user_id").isJsonNull()) {
+			try {
+				userId = msg.get("user_id").getAsLong();
+			} catch (RuntimeException e) {
+				userId = 0;
+			}
+		}
+		if (userId == 0 && msg.has("sender") && msg.get("sender").isJsonObject()) {
+			JsonObject sender = msg.getAsJsonObject("sender");
+			if (sender.has("user_id") && !sender.get("user_id").isJsonNull()) {
+				try {
+					userId = sender.get("user_id").getAsLong();
+				} catch (RuntimeException e) {
+					userId = 0;
+				}
+			}
+		}
+		String text = extractPrivateText(msg);
+		if (text.isEmpty()) {
+			return;
+		}
+		toolApproval.answer(selfId, userId, text);
+	}
+
+	/** 从私聊事件里取出纯文本内容。 */
+	private static String extractPrivateText(JsonObject msg) {
+		if (msg.has("message") && msg.get("message").isJsonArray()) {
+			StringBuilder builder = new StringBuilder();
+			for (JsonElement element : msg.getAsJsonArray("message")) {
+				if (element == null || !element.isJsonObject()) {
+					continue;
+				}
+				JsonObject block = element.getAsJsonObject();
+				String type = block.has("type") ? block.get("type").getAsString() : "";
+				if (!"text".equals(type)) {
+					continue;
+				}
+				if (block.has("data") && block.get("data").isJsonObject()) {
+					JsonObject data = block.getAsJsonObject("data");
+					if (data.has("text") && !data.get("text").isJsonNull()) {
+						builder.append(data.get("text").getAsString());
+					}
+				}
+			}
+			if (builder.length() > 0) {
+				return builder.toString();
+			}
+		}
+		if (msg.has("raw_message") && !msg.get("raw_message").isJsonNull()) {
+			try {
+				return msg.get("raw_message").getAsString();
+			} catch (RuntimeException e) {
+				// 忽略无法读取的私聊
+			}
+		}
+		return "";
 	}
 	Object lock = new Object();
 	@Override
@@ -503,6 +768,13 @@ public class NapCatAIConnector extends WebSocketClient {
 				if(!msg.has("message_type"))
 					return;
 				String evt=msg.get("message_type").getAsString();
+				// 私聊只用于管理员答复工具审核；其它私聊消息一律不处理
+				if ("private".equals(evt)) {
+					handlePrivateMessage(msg);
+					return;
+				}
+				if (!"group".equals(evt))
+					return;
 				/*if ("message_sent".equals(evt)) {
 					
 				}*/
@@ -562,7 +834,6 @@ public class NapCatAIConnector extends WebSocketClient {
 							long senderid = senderObj.get("user_id").getAsLong();
 							StringBuilder textContent=new StringBuilder();
 							if (senderid != state.botId) {
-								
 								JsonArray ja = msg.get("raw").getAsJsonObject().get("elements").getAsJsonArray();
 								
 								List<Supplier<MessageContent>> mes = new ArrayList<>();
@@ -643,7 +914,9 @@ public class NapCatAIConnector extends WebSocketClient {
 								// if(hours<6)
 								// containsAtMe=false;
 								if (containsAtMe) {
-									
+									// 记录本轮触发者，工具审核时告诉管理员是谁发起的
+									state.lastSpeakerId = senderid;
+									state.lastSpeakerName = sender;
 	
 									this.send(JsonBuilder.object().add("action", "set_msg_emoji_like").object("params")
 											.add("message_id", msg.get("message_id").getAsString()).add("emoji_id", "424").add("set", true).end().end().toString());

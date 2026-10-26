@@ -191,11 +191,11 @@ save/
 ├─ site.json                     # 站点域名（见上一节）
 └─ config/
    ├─ object-storage.json        # 对象存储（火山 TOS）凭据：region / endpoint / bucket / accessKey / secretKey
-   ├─ image-generation.json      # 图片/视频生成（Seedream）凭据：accessKey / secretKey
+   ├─ image-generation.json      # 图片（Seedream）/视频（Seedance 2.5）生成凭据：accessKey/secretKey + apiKey
    ├─ voice-tags.txt             # 语音标签提示词（按情感切分台词，供语音合成）
    ├─ local-voice.json           # 本地语音模型 bot 映射 {角色名: botid}
    ├─ volcano-voice.json         # 火山语音复刻 bot 映射 {角色名: voice_type}
-   ├─ agents.json                # QQ 群 agent 清单（name / save / voice …）
+   ├─ agents.json                # QQ 群 agent 清单（name / save / voice / tools / adminId …）
    ├─ crontab.json               # 定时任务
    └─ sdxl/                      # 生图相关
       ├─ character-tags.txt      #   角色 tag 库（一行一个，生成提示词时按关键词检索）
@@ -364,6 +364,64 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话与 web_search
 ```
 
+### 即梦 Seedance 2.5 视频与工具审核
+
+`seedvideo` 工具（`jimeng_video`）已接入**火山方舟 Seedance 2.5**：视频脚本 agent 产出脚本后，
+通过 `POST /api/v3/contents/generations/tasks` 提交、轮询 `/contents/generations/tasks/{id}` 取回
+`content.video_url`，参考图以 `reference_image` 内容块提交。凭据仍然放在
+`save/config/image-generation.json`：
+
+```json
+{
+  "accessKey": "Seedream/即梦图片仍用这一对",
+  "secretKey": "Seedream/即梦图片仍用这一对",
+  "apiKey": "火山方舟 API Key（视频必填）",
+  "videoModel": "doubao-seedance-2-5-260628",
+  "videoDuration": 10,
+  "videoResolution": "720p",
+  "videoRatio": "9:16",
+  "videoGenerateAudio": true
+}
+```
+
+可选的 `videoDuration`（4-15 秒，默认 10 秒，超过 15 秒按 15 秒处理）、
+`videoResolution`（480p/720p/1080p）、`videoRatio`（默认 9:16）、
+`videoBaseUrl`、`videoPollIntervalMs`、`videoMaxPollAttempts` 见 `save/config/README.md`。
+`videoDuration` 是默认时长；`jimeng_video` 工具支持 `duration` 参数（4-15 秒），会覆盖该默认值，
+并同时写进脚本要求和提交给视频接口。未配置 `apiKey` 时视频工具返回明确错误，不影响图片工具。
+
+视频计费按 `视频token = 输出宽 × 输出高 × 输出帧率 × 输出时长 / 1024` 估算，官方价格
+**70 元/百万视频 token**。本站配额统一按 2 元/百万等效 token 折算，因此计入配额的扣减 token
+为视频 token 的 **35 倍**；输出尺寸默认从 `videoResolution` + `videoRatio` 推导，帧率默认 24，
+可用 `videoWidth` / `videoHeight` / `videoFps` 校准。
+
+工具调用审核写在 `save/config/agents.json` 的机器人配置里：
+
+```json
+{
+  "botId": 123456,
+  "groupId": 789012,
+  "name": "fengxiirc",
+  "adminId": 10001,
+  "tools": [
+    "fetch",
+    {"name": "seedvideo", "approval": true}
+  ],
+  "approvalTimeoutMs": 120000
+}
+```
+
+- `adminId` 也可以由启动参数 `-DadminId=...` 兜底；`approvalTimeoutMs` 对应
+  `-Dtool_approval_timeout_ms=...`。
+- 需要审核的工具在真正执行前，把群号、机器人名、最近发言者、工具名、原因与参数**私聊给管理员**；
+  管理员回复 `允许` / `同意` / `1` / `ok` 放行，回复 `拒绝` / `不同意` / `2` / `no` 拒绝，
+  超时按拒绝处理。只有管理员本人的私聊答复有效。
+- 旧的字符串形式 `"tools": ["fetch", "seedvideo"]` 完全兼容，只有写成对象或放进
+  `toolApprovals` 的工具才需要审核；条目写技能名（`seedvideo` → `jimeng_video`）或真实工具名
+  都可以。没配置 `adminId` 时按失败关闭处理，不会擅自执行。
+- 审核流程复用 `ToolApprovalManager` / `ToolCallApprover`，与 WebSocket 会话的授权弹窗、
+  `DeepseekHarnessConnector` 的私聊审批保持同一套语义。
+
 ### 数据库
 
 服务启动时会自动在数据目录下创建 `messages.db`。核心表：
@@ -452,11 +510,15 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 | `/exportChat`          | POST | `uid`, `chatid`                  | 导出对话历史为 UTF-8 文本文件          |
 | `/exportMemory`        | POST | `uid`, `chatid`                  | 导出对话记忆为 UTF-8 文本文件          |
 | `/useToday`, `/useHistory`, `/checkin`, `/redeem` 等 | GET | `uid` 等 | 额度查询、签到与 CDK 兑换             |
-| `/kh$localModelDeploy` | WS   | 需 `Authorization: Bearer token` | 本地语音模型 WebSocket 连接端点       |
-| `/kh$localModelDeployData` | POST | `reqid`, `type`, 二进制数据        | 本地语音模型回调，接收音频数据             |
+| `/kh$localModelDeploy` | WS   | 需 `Authorization: Bearer token` 或 `?token=` | 本地模型 WebSocket 连接端点（共享连接，可带 `uid` 表示仅服务该用户） |
+| `/kh$localModelDeployData` | POST | `reqid`, `type`, 二进制数据        | 本地模型回调，接收音频数据             |
+| `/painter/localModelDeploy` | WS | `uid`, `model_type=sdxl`           | 用户自带绘画模型的接入端点（无需 Token）     |
+| `/painter/localModelResult` | POST | `reqid`, `format`，原始响应体       | 用户接入页回传生图结果（不经过 WebSocket 帧）  |
 | `/resource/*`          | GET  | -                                | 静态资源文件（图片、CSS 等）            |
 | `/voice/*`             | GET  | -                                | 语音资源文件                       |
 | `/index`, `/aichat`, `/painter`, `/archive` 等 | GET  | -                    | 返回对应的 HTML 页面                |
+| `/localmodel`          | GET  | -                                | 本地模型终端页面（浏览器接入本地服务）        |
+| `/painter-local`       | GET  | -                                | 用户本地绘画模型接入页（只做反向代理，无对话）   |
 
 #### 对话列表与"当前存档"约定
 
@@ -567,6 +629,53 @@ SceneSelector selector = builder.build();
 | `audio` | 语音合成 | `chara`, `content`                                       |
 | `sdxl`  | 图像生成 | `path`, `data`                                           |
 | `svs`   | 歌声合成 | `url`, `name`, `pitch`, `separate`, `timbre`, `filter`, `strength` |
+
+### 本地模型终端页面
+
+除了让独立进程连接 WebSocket，也可以用浏览器直接充当本地模型客户端：打开
+`/aichat/localmodel`。页面提供：
+
+- 服务器 WebSocket 地址与 Token 配置；
+- 语音 / 绘画 / 歌声三个服务的开关、本地地址、健康检查路径、请求路径与返回格式；
+- 每个服务**上线前先做健康检查**，上线后按设定间隔**定期复查**，连续失败自动从服务器下线，
+  恢复后重新上线（可在设置里关闭自动重连）；
+- 运行日志。
+
+浏览器无法为 WebSocket 设置 `Authorization` 请求头，因此页面把 Token 作为 `?token=`
+查询参数发送，服务端同时接受请求头与查询参数两种鉴权方式。健康检查使用 `no-cors` 请求，
+只能验证本地端口可达；请求转发要求本地服务允许跨域（例如 SD WebUI 启动参数
+`--cors-allow-origins=*`）。
+
+### 用户自带绘画模型（painter-local）
+
+`/aichat/painter-local` 是面向普通用户的接入页：它不再提供对话，只负责把用户本机的
+Stable Diffusion WebUI 反向代理到服务器。页面不向用户收集 uid，固定发送 `uid=undefined`
+作为占位参数；生产环境由服务器注入对应参数（例如替换页面里的占位值）。占位值会被服务器当作
+共享接入（任何没有自己本地模型的会话都可以回退使用），注入真实 uid 后才按用户隔离。页面会先检查本地服务，
+通过后用浏览器 WebSocket 连接 `/painter/localModelDeploy`（查询参数 `uid` 与 `model_type=sdxl`），
+把服务器下发的生图请求转发到本地。生图结果不再走 WebSocket 文本帧，而是把本地服务的原始响应体
+直接 POST 到 `/painter/localModelResult?reqid=<请求ID>&format=json`，由服务器用 reqid 唤醒等待中的
+请求；这样大图 JSON 不会受 WebSocket 帧大小或压缩链路影响。要点：
+
+- 该用户接入本地模型后，其**所有绘画会话**（包括已经打开的会话）都优先使用这台机器上的模型；
+- 本地服务离线、断开本页或关闭浏览器时，服务器自动回退到共享的本地模型池，生成不中断；
+- 带真实 uid 的连接只进入该用户的连接池，不会被其他用户取用；`undefined` 占位连接按共享接入处理；
+- 接入页提供 **25%–125% 的生图尺寸比例**滑条：只在本页把发给本地模型的 `width` / `height`
+  按比例缩放（按 8 的倍数向下取整），用于适配显存；服务器侧参数与对话记录不受影响；
+- 服务器接入地址按当前页面推断，连续失败次数固定为 2，均不向用户开放修改；
+- 该端点面向普通用户，不要求 `localVoiceToken`，并且只接受 `model_type=sdxl`。
+
+运维如果想给所有用户提供共享模型，仍使用 `/aichat/localmodel`（`/kh$localModelDeploy`，需 Token）。
+共享连接也可以带 `uid` 参数接入，此时该连接只服务指定用户。
+
+排查接入问题时，服务端日志会打印实际接入的 uid：
+
+```
+[LocalModel] connected from ... uid=<客户端发送的值> (shared|user-bound) provider: [sdxl]
+[Painter] local SDXL unavailable for session user=<session 用户>
+```
+
+`shared` 表示占位值/未提供 uid，按共享连接处理；`user-bound` 表示已绑定到该用户。
 
 ### SVS 歌声合成
 
