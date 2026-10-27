@@ -9,6 +9,8 @@ import java.util.concurrent.CompletableFuture;
  * 由 {@link ToolApprovalManager} 创建并交给 {@link ToolApprovalRequester}；
  * 请求方（用户界面 / 上层业务）在得到用户答复后调用 {@link #setResult(boolean)}
  * （或 {@link #approve()}/{@link #deny()}）解除等待线程的阻塞。
+ * 拒绝时可用 {@link #deny(String)} / {@link #setResult(boolean, String)} 附带原因，
+ * 该原因会作为工具结果回传给模型。
  * </p>
  * <p>
  * 与常见实现不同的是：重复设置结果、超时后再收到答复等竞态不会抛异常，
@@ -24,7 +26,7 @@ public class ToolApprovalRequest {
 	private final String displayArguments;
 	private final String reason;
 	private final long createTime = System.currentTimeMillis();
-	private final CompletableFuture<Boolean> future = new CompletableFuture<>();
+	private final CompletableFuture<ToolApprovalResult> future = new CompletableFuture<>();
 
 	/**
 	 * @param userId    发起请求的会话/用户标识，用于按用户串行化
@@ -97,17 +99,47 @@ public class ToolApprovalRequest {
 	 *         且不会改变已有结果
 	 */
 	public boolean setResult(boolean result) {
-		return future.complete(result);
+		return setResult(result, null);
+	}
+
+	/**
+	 * 设置许可结果，并可在拒绝时附带原因。
+	 *
+	 * @param result    true 许可，false 拒绝
+	 * @param denyReason 拒绝原因，会作为工具结果回传给模型；许可或留空时忽略
+	 * @return 本次调用是否被接受；若结果已设置过（超时、断线取消或重复答复）返回 false
+	 */
+	public boolean setResult(boolean result, String denyReason) {
+		return setResult(ToolApprovalResult.of(result, denyReason));
+	}
+
+	/**
+	 * 直接设置许可结果对象。
+	 *
+	 * @param result 许可结果，null 按“拒绝且无原因”处理
+	 * @return 本次调用是否被接受；若结果已设置过（超时、断线取消或重复答复）返回 false
+	 */
+	public boolean setResult(ToolApprovalResult result) {
+		return future.complete(result == null ? ToolApprovalResult.DENY : result);
 	}
 
 	/** 便捷方法：许可本次调用。 */
 	public boolean approve() {
-		return setResult(true);
+		return setResult(ToolApprovalResult.ALLOW);
 	}
 
-	/** 便捷方法：拒绝本次调用。 */
+	/** 便捷方法：拒绝本次调用（不附带原因）。 */
 	public boolean deny() {
-		return setResult(false);
+		return setResult(ToolApprovalResult.DENY);
+	}
+
+	/**
+	 * 便捷方法：拒绝本次调用并附带会回传给模型的原因。
+	 *
+	 * @param reason 拒绝原因，可为 null/空白（表示使用默认提示）
+	 */
+	public boolean deny(String reason) {
+		return setResult(ToolApprovalResult.deny(reason));
 	}
 
 	/** 是否已有结果。 */
@@ -116,11 +148,18 @@ public class ToolApprovalRequest {
 	}
 
 	/**
+	 * 当前结果；尚未答复时返回 null。
+	 */
+	public ToolApprovalResult getResult() {
+		return future.getNow(null);
+	}
+
+	/**
 	 * 注册结果回调（供管理器内部使用）：结果到达时触发，若已结束则立即触发。
 	 *
 	 * @param action 结果消费者，第一个参数为许可结果
 	 */
-	void whenComplete(java.util.function.BiConsumer<Boolean, Throwable> action) {
+	void whenComplete(java.util.function.BiConsumer<ToolApprovalResult, Throwable> action) {
 		future.whenComplete(action);
 	}
 

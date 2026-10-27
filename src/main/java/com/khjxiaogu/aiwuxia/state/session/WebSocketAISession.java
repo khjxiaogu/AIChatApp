@@ -543,11 +543,14 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				return;
 			String id=jo.get("id").getAsString();
 			boolean approved=jo.has("approved")&&jo.get("approved").getAsBoolean();
-			boolean accepted=state.completeToolApproval(id, approved);
+			// 前端拒绝时可附带原因，该原因会作为工具结果回传给模型
+			String denyReason=optionalString(jo,"reason");
+			boolean accepted=state.completeToolApproval(id, approved, denyReason);
 			state.sendFrame(JsonBuilder.object()
 					.add("type", "toolApprovalResult")
 					.add("id", id)
 					.add("approved", approved)
+					.add("reason", denyReason)
 					.add("accepted", accepted)
 					.end().toString());
 		});
@@ -930,6 +933,22 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 */
 	public boolean completeToolApproval(String requestId, boolean approved) {
 		return toolApprovalManager.complete(requestId, approved);
+	}
+
+	/**
+	 * 回填一次工具调用许可答复，并可在拒绝时附带原因。
+	 * <p>
+	 * 该方法必须在发起工具调用的线程之外的线程上调用，否则等待方无法被唤醒。
+	 * 拒绝原因会作为工具结果回传给模型。
+	 * </p>
+	 *
+	 * @param requestId  请求 id
+	 * @param approved   是否许可
+	 * @param denyReason 拒绝原因，许可或留空时忽略
+	 * @return 答复是否被接受（请求不存在、已超时或重复答复时返回 false）
+	 */
+	public boolean completeToolApproval(String requestId, boolean approved, String denyReason) {
+		return toolApprovalManager.complete(requestId, approved, denyReason);
 	}
 
 	/**

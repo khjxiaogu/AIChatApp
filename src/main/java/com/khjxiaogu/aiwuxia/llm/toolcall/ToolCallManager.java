@@ -1120,7 +1120,7 @@ public class ToolCallManager {
 		return this;
 	}
 
-	/** 权限要求许可但未获许可时回传给模型的内容。 */
+	/** 权限要求许可但未获许可（且未附带拒绝原因）时回传给模型的内容。 */
 	public String getUnapprovedMessage() {
 		return unapprovedMessage;
 	}

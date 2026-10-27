@@ -24,8 +24,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * 结果通过两种方式回填，二者等价：</p>
  * <ul>
  *   <li>{@link ToolApprovalRequester} 拿到 {@link ToolApprovalRequest} 后调用其
- *       {@code setResult/approve/deny}；</li>
- *   <li>会话收到用户答复（例如 WebSocket 帧）后调用 {@link #complete(String, boolean)}。</li>
+ *       {@code setResult/approve/deny}；拒绝时可用 {@code deny(原因)} 让原因回传给模型；</li>
+ *   <li>会话收到用户答复（例如 WebSocket 帧）后调用 {@link #complete(String, boolean, String)}。</li>
  * </ul>
  * <p>
  * 为避免无人值守时永久阻塞，默认带超时（{@link #DEFAULT_TIMEOUT_MILLIS}），超时按<b>拒绝</b>处理
@@ -69,7 +69,22 @@ public class ToolApprovalManager {
 	 */
 	public boolean request(String userId, String toolName, String arguments, String reason)
 			throws InterruptedException {
-		return request(userId, toolName, arguments, null, reason);
+		return requestResult(userId, toolName, arguments, null, reason).isApproved();
+	}
+
+	/**
+	 * 请求一次工具调用许可，并返回可能附带拒绝原因的结果。
+	 *
+	 * @param userId    会话/用户标识，同一标识的请求串行执行
+	 * @param toolName  工具名称
+	 * @param arguments 模型给出的原始参数
+	 * @param reason    需要许可的原因，可为 null
+	 * @return 许可结果；用户拒绝时可能带原因，超时/中断时按拒绝且无原因处理
+	 * @throws InterruptedException 等待过程中线程被中断（此时该请求按拒绝收敛）
+	 */
+	public ToolApprovalResult requestResult(String userId, String toolName, String arguments, String reason)
+			throws InterruptedException {
+		return requestResult(userId, toolName, arguments, null, reason);
 	}
 
 	/**
@@ -85,6 +100,22 @@ public class ToolApprovalManager {
 	 */
 	public boolean request(String userId, String toolName, String arguments, String displayArguments, String reason)
 			throws InterruptedException {
+		return requestResult(userId, toolName, arguments, displayArguments, reason).isApproved();
+	}
+
+	/**
+	 * 请求一次工具调用许可，并返回可能附带拒绝原因的结果。
+	 *
+	 * @param userId           会话/用户标识，同一标识的请求串行执行
+	 * @param toolName         工具名称
+	 * @param arguments        模型给出的原始参数
+	 * @param displayArguments 面向用户的参数文本，可为 null（此时界面回退到原始参数）
+	 * @param reason           需要许可的原因，可为 null
+	 * @return 许可结果；用户拒绝时可能带原因，超时/中断时按拒绝且无原因处理
+	 * @throws InterruptedException 等待过程中线程被中断（此时该请求按拒绝收敛）
+	 */
+	public ToolApprovalResult requestResult(String userId, String toolName, String arguments,
+			String displayArguments, String reason) throws InterruptedException {
 		RequestContext ctx = new RequestContext(userId, toolName, arguments, displayArguments, reason);
 		session(userId).execute(ctx);
 		return await(ctx);
@@ -108,11 +139,23 @@ public class ToolApprovalManager {
 	 * @return 答复是否被接受；请求不存在或已有结果（超时、断线取消、重复答复）返回 false
 	 */
 	public boolean complete(String requestId, boolean approved) {
+		return complete(requestId, approved, null);
+	}
+
+	/**
+	 * 按请求 id 回填用户答复，并可在拒绝时附带原因。
+	 *
+	 * @param requestId  请求 id
+	 * @param approved   是否许可
+	 * @param denyReason 拒绝原因（会回传给模型），许可或留空时忽略
+	 * @return 答复是否被接受；请求不存在或已有结果（超时、断线取消、重复答复）返回 false
+	 */
+	public boolean complete(String requestId, boolean approved, String denyReason) {
 		if (requestId == null) {
 			return false;
 		}
 		ToolApprovalRequest request = pending.get(requestId);
-		return request != null && request.setResult(approved);
+		return request != null && request.setResult(approved, denyReason);
 	}
 
 	/**
@@ -146,15 +189,15 @@ public class ToolApprovalManager {
 	}
 
 	/** 阻塞等待结果；超时/异常/中断时按拒绝收敛，保证队列不会卡住。 */
-	private boolean await(RequestContext ctx) throws InterruptedException {
+	private ToolApprovalResult await(RequestContext ctx) throws InterruptedException {
 		try {
 			return timeoutMillis <= 0 ? ctx.future.get() : ctx.future.get(timeoutMillis, TimeUnit.MILLISECONDS);
 		} catch (TimeoutException e) {
 			cancel(ctx);
-			return false;
+			return ToolApprovalResult.DENY;
 		} catch (ExecutionException e) {
 			cancel(ctx);
-			return false;
+			return ToolApprovalResult.DENY;
 		} catch (InterruptedException e) {
 			cancel(ctx);
 			throw e;
@@ -164,7 +207,7 @@ public class ToolApprovalManager {
 	/** 放弃一个请求：标记取消、按拒绝完成调用方 future，并解除正在等待答复的请求。 */
 	private void cancel(RequestContext ctx) {
 		ctx.cancelled = true;
-		ctx.future.complete(false);
+		ctx.future.complete(ToolApprovalResult.DENY);
 		ToolApprovalRequest current = ctx.current;
 		if (current != null) {
 			// 触发 whenComplete：完成 future 并处理队列中的下一个请求
@@ -191,7 +234,7 @@ public class ToolApprovalManager {
 		final String arguments;
 		final String displayArguments;
 		final String reason;
-		final CompletableFuture<Boolean> future = new CompletableFuture<>();
+		final CompletableFuture<ToolApprovalResult> future = new CompletableFuture<>();
 		volatile boolean cancelled;
 		volatile ToolApprovalRequest current;
 
@@ -242,7 +285,7 @@ public class ToolApprovalManager {
 			request.whenComplete((result, ex) -> {
 				pending.remove(request.getId());
 				ctx.current = null;
-				ctx.future.complete(ex != null ? false : result);
+				ctx.future.complete(ex != null || result == null ? ToolApprovalResult.DENY : result);
 				processNextRequest();
 			});
 			return request;
@@ -263,7 +306,7 @@ public class ToolApprovalManager {
 					}
 					if (next.cancelled) {
 						// 等待期间已被调用方放弃，直接按拒绝收敛
-						next.future.complete(false);
+						next.future.complete(ToolApprovalResult.DENY);
 						continue;
 					}
 					toNotify = start(next);
@@ -283,12 +326,12 @@ public class ToolApprovalManager {
 				RequestContext next;
 				while ((next = waitingQueue.poll()) != null) {
 					next.cancelled = true;
-					next.future.complete(false);
+					next.future.complete(ToolApprovalResult.DENY);
 				}
 				RequestContext current = currentCtx;
 				if (current != null) {
 					current.cancelled = true;
-					current.future.complete(false);
+					current.future.complete(ToolApprovalResult.DENY);
 					if (current.current != null) {
 						toDeny.add(current.current);
 					}

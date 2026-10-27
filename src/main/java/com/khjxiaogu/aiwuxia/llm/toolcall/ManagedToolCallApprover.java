@@ -8,6 +8,10 @@ package com.khjxiaogu.aiwuxia.llm.toolcall;
  * 并在当前线程上等待答复；同一会话（userId）的请求被串行化，超时或等待被中断时按拒绝处理。
  * </p>
  * <p>
+ * 用户拒绝时若在 {@link ToolApprovalRequest} 上回填了原因（{@link ToolApprovalRequest#deny(String)}），
+ * 本类会把原因原样带回 {@link ToolCallContext}，最终作为工具结果回传给模型。
+ * </p>
+ * <p>
  * 使用前提：答复必须来自另一个线程（例如 WebSocket 收到用户消息的处理线程），
  * 且该线程不能阻塞在发起工具调用的线程所占用的事件循环上，否则会死锁。
  * </p>
@@ -29,12 +33,17 @@ public class ManagedToolCallApprover implements ToolCallApprover {
 
 	@Override
 	public boolean approve(String toolName, String arguments, String displayArguments, String reason) {
+		return decide(toolName, arguments, displayArguments, reason).isApproved();
+	}
+
+	@Override
+	public ToolApprovalResult decide(String toolName, String arguments, String displayArguments, String reason) {
 		try {
-			return manager.request(userId, toolName, arguments, displayArguments, reason);
+			return manager.requestResult(userId, toolName, arguments, displayArguments, reason);
 		} catch (InterruptedException e) {
 			// 等待被中断：恢复中断标记并按拒绝处理
 			Thread.currentThread().interrupt();
-			return false;
+			return ToolApprovalResult.DENY;
 		}
 	}
 

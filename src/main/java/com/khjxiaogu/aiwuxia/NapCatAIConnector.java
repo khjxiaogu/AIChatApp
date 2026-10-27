@@ -580,9 +580,10 @@ public class NapCatAIConnector extends WebSocketClient {
 		state.getToolCallManager().setUnapprovedMessage(
 				"管理员未批准本次工具调用，请改用其它方式或先询问用户。");
 		if (adminId <= 0) {
-			state.getToolCallManager().setApprover(ToolCallApprover.denyAll());
-			state.getToolCallManager().setUnapprovedMessage(
-					"需要审核的工具未配置管理员（adminId），已拒绝执行。");
+			String denyReason = "需要审核的工具未配置管理员（adminId），已拒绝执行。";
+			// 用带原因的失败关闭：拒绝原因会直接回传给模型，而不是只落在通用提示里
+			state.getToolCallManager().setApprover(ToolCallApprover.denyAll(denyReason));
+			state.getToolCallManager().setUnapprovedMessage(denyReason);
 			System.out.println("[QQ] 工具审核已启用，但未配置 adminId，需要审核的工具将被拒绝：" + needApproval);
 			return;
 		}

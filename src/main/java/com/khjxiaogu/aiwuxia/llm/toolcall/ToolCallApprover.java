@@ -45,6 +45,37 @@ public interface ToolCallApprover {
 		return approve(toolName, arguments, reason);
 	}
 
+	/**
+	 * 请求许可，并返回可能附带拒绝原因的结果。
+	 * <p>
+	 * {@link ToolCallContext} 优先调用本方法：拒绝时 {@link ToolApprovalResult#getReason()}
+	 * 会作为工具结果回传给模型，模型因此能知道具体的拒绝原因。
+	 * </p>
+	 * <p>
+	 * 默认实现委托给 {@link #approve(String, String, String, String)}，拒绝时不附带原因；
+	 * 需要向模型说明拒绝原因的实现（例如 {@link ManagedToolCallApprover}、QQ 审核）应覆盖本方法。
+	 * 只实现 {@link #approve(String, String, String)} 的旧代码无需修改。
+	 * </p>
+	 *
+	 * @param toolName         工具名称
+	 * @param arguments        模型给出的原始参数（JSON 字符串）
+	 * @param displayArguments 面向用户的参数文本，可能为 null
+	 * @param reason           需要许可的原因，可能为 null
+	 * @return 许可结果，不为 null
+	 */
+	default ToolApprovalResult decide(String toolName, String arguments, String displayArguments, String reason) {
+		return approve(toolName, arguments, displayArguments, reason) ? ToolApprovalResult.allow()
+				: ToolApprovalResult.deny(null);
+	}
+
+	/**
+	 * 请求许可（不区分原始参数与可读参数），语义同
+	 * {@link #decide(String, String, String, String)}。
+	 */
+	default ToolApprovalResult decide(String toolName, String arguments, String reason) {
+		return decide(toolName, arguments, null, reason);
+	}
+
 	/** 自动许可（默认策略：不打断流程）。 */
 	public static ToolCallApprover autoApprove() {
 		return (name, args, reason) -> true;
@@ -53,5 +84,25 @@ public interface ToolCallApprover {
 	/** 一律不予许可（失败时关闭，用于要求许可但无人值守的场景）。 */
 	public static ToolCallApprover denyAll() {
 		return (name, args, reason) -> false;
+	}
+
+	/**
+	 * 一律不予许可，并给出统一的拒绝原因（会回传给模型）。
+	 *
+	 * @param reason 拒绝原因，可为 null（等价于 {@link #denyAll()}）
+	 */
+	public static ToolCallApprover denyAll(String reason) {
+		return new ToolCallApprover() {
+			@Override
+			public boolean approve(String toolName, String arguments, String requestReason) {
+				return false;
+			}
+
+			@Override
+			public ToolApprovalResult decide(String toolName, String arguments, String displayArguments,
+					String requestReason) {
+				return ToolApprovalResult.deny(reason);
+			}
+		};
 	}
 }
