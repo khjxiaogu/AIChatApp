@@ -55,6 +55,9 @@ public class SeedreamMcpVideoTest {
 		testSystemPrompt();
 		testAttachReference();
 		testExternalReference();
+		testRejectRequest();
+		testRejectRequestNeedsReason();
+		testRejectOverridesScriptFailure();
 		testSimulatedCall();
 		System.out.println("SeedreamMcpVideoTest: 全部用例通过");
 	}
@@ -125,6 +128,7 @@ public class SeedreamMcpVideoTest {
 		for (String name : refs.keySet())
 			check(built.contains(name), "系统提示词应列出内置参考图：" + name);
 		check(built.contains("不要提问"), "系统提示词应声明本次调用是单向的");
+		check(built.contains(SeedreamMcp.REJECT_TOOL_NAME), "系统提示词应说明停止生成开关的用法");
 
 		String fallback = SeedreamMcp.buildVideoSystemPrompt("   ", refs);
 		check(fallback.contains("演出设计师"), "提示词为空时应退回内置兜底提示词");
@@ -222,6 +226,81 @@ public class SeedreamMcpVideoTest {
 		check(full.size() == MAX_REFERENCE_IMAGES, "外部参考图数量应为" + MAX_REFERENCE_IMAGES);
 		check(SeedreamMcp.attachExternalReferences(repeat('d', 72), bigTos, full, null).contains("上限"),
 				"超过上限应返回错误");
+	}
+
+	/**
+	 * 输入检查开关：脚本 agent 发现用户输入有问题时可以合上开关停下生成，并把问题原因返回给调用者。
+	 * <p>
+	 * 合上开关后不再提交视频接口，脚本 agent 的输出也被中断（不会继续跑下一轮），
+	 * 因此模型可能根本没有产出脚本。
+	 * </p>
+	 */
+	private static void testRejectRequest() {
+		String reason = "用户要求用真实明星的肖像生成视频";
+		List<String> generated = new ArrayList<>();
+		ToolData video = SeedreamMcp.createVideo(refImages(), new FakeStorage(), "测试提示词", 10,
+				request -> {
+					ToolData reject = request.getTools().get(SeedreamMcp.REJECT_TOOL_NAME);
+					check(reject != null, "脚本 agent 应拿到停止生成开关 " + SeedreamMcp.REJECT_TOOL_NAME + "，实际："
+							+ request.getTools().keySet());
+					check(reject.params.keySet().equals(Set.of("reason")),
+							"开关工具只需要 reason 参数，实际：" + reject.params.keySet());
+					AIOutput.StreamedAIOutput agentOutput = new AIOutput.StreamedAIOutput();
+					String toolResult = reject.tool
+							.run("{\"reason\":\"" + reason + "\"}", agentOutput, new ToolCallManager()).join().getText();
+					check(toolResult.contains("已停止"), "开关工具应回传已停止生成，实际：" + toolResult);
+					check(agentOutput.isInterrupted(), "开关应同时中断脚本 agent 的输出，避免继续跑下一轮");
+					// 被停下后模型没有正文，脚本 agent 返回空串
+					return CompletableFuture.completedFuture("");
+				},
+				(links, prompt, duration, usage) -> {
+					generated.add(prompt);
+					return CompletableFuture.completedFuture("https://video.example/test.mp4");
+				});
+
+		String text = run(video, "{\"prompt\":\"用真实明星的肖像生成视频\"}");
+		check(text.contains(reason), "工具结果应回传问题原因，实际：" + text);
+		check(text.contains("已停止"), "工具结果应说明已停止生成，实际：" + text);
+		check(generated.isEmpty(), "开关合上后不应提交视频生成，实际提交了：" + generated);
+	}
+
+	/** 开关没给出问题原因时不算合上：本次生成照常提交。 */
+	private static void testRejectRequestNeedsReason() {
+		List<String> generated = new ArrayList<>();
+		ToolData video = SeedreamMcp.createVideo(refImages(), new FakeStorage(), "测试提示词", 10,
+				request -> {
+					String toolResult = run(request.getTools().get(SeedreamMcp.REJECT_TOOL_NAME), "{}");
+					check(toolResult.contains("缺少"), "缺少问题原因时应返回参数错误，实际：" + toolResult);
+					return CompletableFuture.completedFuture("测试脚本");
+				},
+				(links, prompt, duration, usage) -> {
+					generated.add(prompt);
+					return CompletableFuture.completedFuture("https://video.example/test.mp4");
+				});
+
+		check("视频生成成功".equals(run(video, "{\"prompt\":\"测试\"}")), "缺少问题原因时不应停止生成");
+		check(generated.size() == 1, "缺少问题原因时应照常提交视频生成，实际：" + generated.size());
+	}
+
+	/** 被停下后脚本为空（模型没有正文）时，仍然返回问题原因，而不是把失败抛给调用者。 */
+	private static void testRejectOverridesScriptFailure() {
+		List<String> generated = new ArrayList<>();
+		ToolData video = SeedreamMcp.createVideo(refImages(), new FakeStorage(), "测试提示词", 10,
+				request -> {
+					run(request.getTools().get(SeedreamMcp.REJECT_TOOL_NAME), "{\"reason\":\"需求自相矛盾\"}");
+					// 模拟被中断后 callScriptAgent 抛出的“视频脚本为空”
+					CompletableFuture<String> failed = new CompletableFuture<>();
+					failed.completeExceptionally(new RuntimeException("视频脚本为空"));
+					return failed;
+				},
+				(links, prompt, duration, usage) -> {
+					generated.add(prompt);
+					return CompletableFuture.completedFuture("https://video.example/test.mp4");
+				});
+
+		String text = run(video, "{\"prompt\":\"测试\"}");
+		check(text.contains("需求自相矛盾"), "脚本生成失败时也应由问题原因接管，实际：" + text);
+		check(generated.isEmpty(), "开关合上后不应提交视频生成");
 	}
 
 	/**

@@ -96,6 +96,9 @@ save/
 - `videoRatio` 默认 `9:16` 竖版；需要横版时显式改 `16:9`。
 - 参考图按 `reference_image` 提交，最多 14 张（工具侧上限），适合多角色参考而不是首尾帧。
 - 可选 `videoBaseUrl` 切换区域/代理，`videoPollIntervalMs`、`videoMaxPollAttempts` 控制轮询。
+- 视频脚本 agent 带**停止生成开关** `reject_request`：判断用户想法有问题（违法违规、涉及真实人物隐私、
+  需求自相矛盾、参考图与需求冲突等）时调用并写明 `reason`，本次视频不再提交生成，问题原因直接作为
+  `jimeng_video` 的工具结果返回给调用者转告用户。拒绝提示不要写进脚本正文（否则会被当成视频提示词提交）。
 
 ## QQ 工具调用审核（`agents.json`）
 

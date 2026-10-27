@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import com.google.gson.JsonElement;
@@ -37,10 +39,20 @@ import com.khjxiaogu.aiwuxia.vision.SeedanceVideoGenerator;
  * </p>
  */
 public class SeedreamMcp {
+	/**
+	 * 停止生成开关的工具名。
+	 * <p>
+	 * 视频脚本 agent 发现用户输入有问题时调用它：本次视频不再提交生成，问题原因直接作为
+	 * {@code jimeng_video} 的工具结果返回给调用者。
+	 * </p>
+	 */
+	public static final String REJECT_TOOL_NAME = "reject_request";
 	/** 即梦 Seedance 视频接口允许的参考图数量上限（工具侧保持 14 张，避免一次请求过大）。 */
 	private static final int MAX_VIDEO_REFERENCE_IMAGES = 14;
 	/** 视频脚本 agent 的工具调用轮次上限。 */
 	private static final int VIDEO_AGENT_MAX_ROUNDS = 8;
+	/** 问题原因的最大长度，避免异常长的输入把工具结果撑爆。 */
+	private static final int MAX_REJECT_REASON_LENGTH = 500;
 	/** 未配置即梦视频提示词（{@code config/jimeng-video.txt}）时使用的兜底系统提示词。 */
 	private static final String DEFAULT_VIDEO_SYSTEM_PROMPT = "你是一名演出设计师，请根据用户输入写一份不超过15秒（默认10秒）的AI视频剧本，画幅默认9:16，使用“图一”“图二”等引用参考图，开头说明每个参考图的指代哪个人物，描述人物时请写全名或者图片编号，禁止使用一切其他代称。输出不含markdown格式，不包含具体时间。视频为日系萌系圆润画风视频，视频对话为全中文，无字幕。输出需要包含”视频风格“、”参考图说明“、”场景“、”剧本“。剧本需要扩写至500字左右，你需要发挥想象力。如果没有额外参考图，按现有参考图的大致意图推测补全；不要虚构图片编号，也不要提问。注意需要删除发型等人物特征，保留服饰等特征。";
 
@@ -120,6 +132,8 @@ public class SeedreamMcp {
 	 *   <li>脚本 agent 从清单里自行挑选内置参考图，用附加参考图工具（内置名字或72位图片id）继续往后附加，
 	 *       工具返回参考图编号或错误；内置参考图不需要调用者指定；</li>
 	 *   <li>脚本 agent 还可以用图片识别工具查看图片id对应的图片；</li>
+	 *   <li>脚本 agent 还拿到停止生成开关 {@value #REJECT_TOOL_NAME}：发现用户输入有问题时调用它并写清问题原因，
+	 *       本次视频不再提交生成，问题原因直接作为工具结果返回给调用者；</li>
 	 *   <li>脚本 agent 输出整段脚本后，脚本本身作为视频生成提示词，连同全部已附加的参考图一起提交。</li>
 	 * </ul>
 	 *
@@ -178,7 +192,7 @@ public class SeedreamMcp {
 		final int fallbackDuration = Math.max(4, Math.min(15, defaultDuration > 0 ? defaultDuration : 10));
 		String system = buildVideoSystemPrompt(systemPrompt, refImages);
 		return new ToolData.Builder("jimeng_video",
-				"使用即梦 Seedance 2.5 生成视频发送。工具会把视频想法交给视频脚本 agent，由它自行挑选并附加内置参考图、写即梦视频脚本并据此生成视频；调用者只需给想法，最多再补充非内置的72位图片id参考图，并可指定 4-15 秒的视频时长。")
+				"使用即梦 Seedance 2.5 生成视频发送。工具会把视频想法交给视频脚本 agent，由它自行挑选并附加内置参考图、写即梦视频脚本并据此生成视频；调用者只需给想法，最多再补充非内置的72位图片id参考图，并可指定 4-15 秒的视频时长。如果脚本 agent 发现想法本身存在严重问题（违法违规、涉及真实人物隐私、需求自相矛盾等），工具会停止生成并直接返回问题原因，此时请把原因转告用户，不要原样重试。")
 				.putParam("prompt", "用简略清晰的语言描述整个视频的内容梗概，无需详细描述动作场景和角色特征，也不要写参考图。", "视频想法")
 				.putParam("reference",
 						"可选：对话里出现、且不在内置参考图中的非内置参考图，只填72位图片id，以英文逗号,分隔。这些图会直接附加为图1开始的参考图；内置参考图不用填，由脚本 agent 自行选用。",
@@ -222,16 +236,29 @@ public class SeedreamMcp {
 					if (!refImages.isEmpty())
 						user.append("内置参考图在系统提示词里，出现里面的人物时先用 attach_reference 附加，附加成功后才能用“@图片1”“@图片2”引用。\n");
 					user.append("用户想法：\n").append(promptText);
+					// 输入检查开关：脚本 agent 发现用户输入有问题时合上它，本次不再提交视频生成
+					AtomicReference<String> rejection = new AtomicReference<>();
 					ToolCallManager subManager = new ToolCallManager().setMaxRounds(VIDEO_AGENT_MAX_ROUNDS);
 					subManager.registerTool(MultiModalMcp.createImageRecognition(tos));
 					subManager.registerTool(createAttachReference(refImages, tos, links));
+					subManager.registerTool(createRejectRequest(rejection));
 					Builder b = AIRequest.builder("videoAgent").modelHint("deepseek/pro").taskType(TaskType.STORY)
 							.strength(ReasoningStrength.MEDIUM).temperature(0.2f).maxTokens(384000);
 					b.addHistoryItem(Role.SYSTEM, system);
 					b.addHistoryItem(Role.USER, user.toString());
 					b.toolCallManager(subManager);
 					AIRequest request = b.build();
-					return scriptGenerator.generate(request).thenCompose(script -> {
+					return scriptGenerator.generate(request).handle((script, error) -> {
+						// 开关已合上：不提交视频接口，把问题原因作为工具结果回传给调用者。
+						// 脚本 agent 被停下时可能没产出脚本（甚至因此报“视频脚本为空”），
+						// 这类失败由问题原因接管，不再向上抛。
+						String rejected = rejection.get();
+						if (rejected != null)
+							return CompletableFuture.<ToolResult>completedFuture(ToolResult.text(rejectedResult(rejected)));
+						if (error != null)
+							throw new CompletionException(error instanceof CompletionException && error.getCause() != null
+									? error.getCause()
+									: error);
 						List<String> requestLinks;
 						synchronized (links) {
 							requestLinks = new ArrayList<>(links);
@@ -241,7 +268,7 @@ public class SeedreamMcp {
 						return videoGenerator.generate(requestLinks, script, duration,
 								output == null ? null : output::addUsage)
 								.thenApply(url -> ToolResult.of("视频生成成功", new VideoContent(url)));
-					});
+					}).thenCompose(future -> future);
 				}).build();
 	}
 
@@ -296,6 +323,13 @@ public class SeedreamMcp {
 		// 视频工具是一次性调用：没有人会回答脚本 agent 的追问，必须自行推测并直接给出脚本
 		sb.append("\n\n本次调用是单向的：没有人会回答你的追问，请根据现有信息自行推测"
 				+ "（参考图不足时按现有参考图的大致意图补全），直接输出最终脚本，不要提问。");
+		// 输入检查开关：判断输入该拒绝时不要用脚本内容表达拒绝，而是合上开关让本次生成停下
+		sb.append("\n\n## 停止生成开关（").append(REJECT_TOOL_NAME).append("）\n")
+				.append("发现用户输入存在无法自行推测解决的严重问题时（内容违法违规、涉及真实人物或隐私、需求自相矛盾、")
+				.append("参考图与需求明显冲突、信息少到写不出脚本等），请调用 ").append(REJECT_TOOL_NAME)
+				.append(" 并在 reason 里写清问题原因，然后立即结束本次输出：本次视频会因此停止生成，")
+				.append("问题原因会直接返回给调用者，不会被当成视频脚本提交。需要拒绝时不要用脚本正文表达拒绝。")
+				.append("只是不够具体、可以自行补全的信息不要调用本工具。\n");
 		if (!refImages.isEmpty()) {
 			sb.append("\n\n## 可用的内置参考图（使用前必须先用 attach_reference 附加，图片id也可以用 image_recognition 查看）\n");
 			for (String name : refImages.keySet()) {
@@ -350,6 +384,78 @@ public class SeedreamMcp {
 						return "已附加为图" + links.size() + "。";
 					}
 				}).build();
+	}
+
+	/**
+	 * 创建停止生成开关工具。
+	 * <p>
+	 * 脚本 agent 发现用户输入有问题时调用本工具，并把问题原因写进 {@code reason}。工具做三件事：
+	 * </p>
+	 * <ol>
+	 *   <li>把问题原因记进 {@code rejection}（只记第一次），{@code createVideo} 据此跳过视频生成；</li>
+	 *   <li>中断脚本 agent 的输出：不再发起新的模型请求，本批后续的工具调用也不再执行；</li>
+	 *   <li>回传“已停止”，告诉模型不用再输出脚本。</li>
+	 * </ol>
+	 * <p>
+	 * 声明为顺序屏障：它执行前先让本批此前的附加参考图等调用跑完，之后才判断是否停下，
+	 * 因此不会出现“刚停止又附加了一张参考图”的中间状态。
+	 * </p>
+	 *
+	 * @param rejection 问题原因接收方，第一次写入生效
+	 * @return 独立的工具定义
+	 */
+	static ToolData createRejectRequest(AtomicReference<String> rejection) {
+		return new ToolData.Builder(REJECT_TOOL_NAME,
+				"停止本次视频生成，并把用户输入存在的问题原因回传给调用者。只在发现用户输入存在无法自行推测解决的严重问题时调用，"
+						+ "例如内容违法违规、涉及真实人物或隐私、需求自相矛盾、参考图与需求明显冲突、信息少到写不出脚本；"
+						+ "调用后本次视频不会提交生成，问题原因会直接返回给调用者，因此必须写清 reason。"
+						+ "只是不够具体的信息请自行推测补全，不要调用本工具。")
+				.putParam("reason", "用户输入存在的问题原因（中文，写清具体问题，便于转告用户）", "问题原因")
+				.maxCalls(1)
+				.orderSensitive()
+				.tool((data, output, manager) -> {
+					String reason = readRejectReason(data);
+					if (reason.isEmpty())
+						return CompletableFuture
+								.completedFuture(ToolResult.text("参数错误：缺少问题原因 reason，本次视频生成继续。"));
+					rejection.compareAndSet(null, reason);
+					// 开关已合上：停止脚本 agent 的后续轮次，同一批里后面的工具调用也随之作废
+					if (output != null)
+						output.interrupt();
+					return CompletableFuture
+							.completedFuture(ToolResult.text("已停止本次视频生成，问题原因已回传给调用者；不要继续输出脚本。"));
+				}).build();
+	}
+
+	/**
+	 * 开关合上后回传给调用者的工具结果文本。
+	 *
+	 * @param reason 脚本 agent 给出的问题原因
+	 * @return 工具结果文本
+	 */
+	static String rejectedResult(String reason) {
+		return "视频生成已停止：用户输入存在问题（" + reason + "）。请把问题原因转告用户，不要原样重试。";
+	}
+
+	/**
+	 * 从工具参数里取出问题原因。
+	 *
+	 * @param data 工具参数 JSON 文本
+	 * @return 问题原因（过长时截断）；缺失、为空或无法解析时返回空串
+	 */
+	static String readRejectReason(String data) {
+		try {
+			JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
+			if (jo.has("reason") && !jo.get("reason").isJsonNull()) {
+				String reason = jo.get("reason").getAsString().trim();
+				return reason.length() > MAX_REJECT_REASON_LENGTH
+						? reason.substring(0, MAX_REJECT_REASON_LENGTH) + "…"
+						: reason;
+			}
+		} catch (RuntimeException e) {
+			// 参数不是合法 JSON 时按缺少参数处理
+		}
+		return "";
 	}
 
 	/** 视频脚本生成器：执行脚本 agent 的请求并返回脚本正文。 */
