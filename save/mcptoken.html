@@ -48,8 +48,19 @@
     margin-bottom: 16px;
   }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .token-form {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.8fr) minmax(150px, 1fr) minmax(140px, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+  }
+  .token-form .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .token-form .field label { line-height: 1.35; }
+  .token-form .field input { width: 100%; min-width: 0; }
+  .token-form .field-action { justify-content: flex-end; }
+  .token-form .field-action button { white-space: nowrap; }
   label { color: var(--muted); font-size: 13px; }
-  input, button, select {
+  input, button, select, textarea {
     font: inherit;
     color: var(--text);
     background: var(--card);
@@ -57,7 +68,7 @@
     border-radius: 8px;
     padding: 7px 10px;
   }
-  input:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+  input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
   button { cursor: pointer; }
   button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
   button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
@@ -65,6 +76,12 @@
   .stats { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 16px; }
   .stat b { display: block; font-size: 20px; }
   .stat span { color: var(--muted); font-size: 12px; }
+  .table-wrap {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
@@ -81,10 +98,58 @@
     background: color-mix(in srgb, var(--primary) 8%, var(--card));
   }
   .token-box input { width: 100%; margin: 8px 0; }
+  .prompt-box {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+  }
+  .prompt-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .prompt-head strong { font-size: 13px; }
+  .prompt-box textarea {
+    display: block;
+    width: 100%;
+    min-height: 190px;
+    margin-top: 8px;
+    resize: vertical;
+    line-height: 1.5;
+  }
   .error { color: var(--danger); white-space: pre-wrap; }
   .empty { color: var(--muted); padding: 12px 0; }
   details { margin-top: 6px; }
   summary { cursor: pointer; color: var(--muted); }
+  h3 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); }
+  .code {
+    margin: 0 0 12px;
+    padding: 12px;
+    overflow: auto;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .endpoint { word-break: break-all; }
+  @media (max-width: 720px) {
+    body { padding: 14px; }
+    .card { padding: 12px; }
+    .stats { gap: 12px 18px; }
+    .table-wrap table { min-width: 680px; }
+    .table-wrap th, .table-wrap td { white-space: nowrap; }
+    .table-wrap td.wrap-cell { white-space: normal; min-width: 140px; }
+    input { max-width: 100%; }
+    /* 移动端创建表单固定为一个输入框一行，避免标签和输入框混排流动 */
+    .token-form { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .token-form .field-action button { width: 100%; }
+    .prompt-head button { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -92,7 +157,7 @@
   <h1>MCP 访问令牌</h1>
   <p class="sub">
     访问令牌用于让外部 MCP 客户端（如 Claude、VS Code、自建脚本）调用本服务的工具。
-    每次工具调用固定扣除 <strong>100</strong> 额外配额，工具内部产生的用量（模型调用、图片/视频生成、
+    每次工具调用固定扣除一定额外配额，工具内部产生的用量（模型调用、图片/视频生成、
     搜索、存储等）按实际用量另行结算，全部从令牌所属用户的<strong>额外配额（补充配额）</strong>中扣除，
     并记录消费明细。令牌明文只显示一次，请妥善保存。
   </p>
@@ -109,24 +174,68 @@
 
   <div class="card">
     <h2>创建令牌</h2>
-    <div class="row">
-      <label for="name">备注名</label>
-      <input id="name" placeholder="例如：我的 Claude" style="min-width:200px">
-      <label for="quotaLimit">令牌额度上限</label>
-      <input id="quotaLimit" type="number" min="0" value="0" style="width:130px" title="0 表示不限制，只受用户额外配额约束">
-      <label for="expiresInDays">有效天数</label>
-      <input id="expiresInDays" type="number" min="0" value="0" style="width:110px" title="0 表示永不过期">
-      <button class="primary" id="create">创建</button>
+    <div class="token-form">
+      <div class="field">
+        <label for="name">备注名</label>
+        <input id="name" placeholder="例如：我的dsh令牌">
+      </div>
+      <div class="field">
+        <label for="quotaLimit">令牌额度上限（0 表示不限制）</label>
+        <input id="quotaLimit" type="number" min="0" value="0" title="0 表示不限制">
+      </div>
+      <div class="field">
+        <label for="expiresInDays">有效天数（0 表示永不过期）</label>
+        <input id="expiresInDays" type="number" min="0" value="0" title="0 表示永不过期">
+      </div>
+      <div class="field field-action">
+        <button class="primary" id="create">创建</button>
+      </div>
     </div>
     <div id="created" class="token-box" style="display:none">
       <div>新令牌已创建，<strong>关闭后无法再次查看明文</strong>：</div>
       <input id="createdToken" class="mono" readonly>
+      <div class="prompt-box">
+        <div class="prompt-head">
+          <strong>给 Agent 的提示词（含端点和令牌）</strong>
+          <button id="copyPrompt">复制提示词</button>
+        </div>
+        <textarea id="agentPrompt" class="mono" readonly rows="9"></textarea>
+      </div>
       <div class="row">
-        <button id="copy">复制</button>
+        <button id="copy">复制令牌</button>
         <a class="muted" id="example">查看配置示例</a>
       </div>
       <pre id="exampleBox" class="mono" style="display:none; overflow:auto; background:var(--bg); padding:10px; border-radius:8px"></pre>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>添加 MCP 配置</h2>
+    <p class="muted">
+      在支持 MCP 的客户端中新增一个 <strong>HTTP</strong> 类型服务端：
+      地址填 <span class="mono endpoint" id="mcpEndpoint">加载中…</span>，
+      请求头加入 <span class="mono">Authorization: Bearer &lt;令牌&gt;</span>
+      （不支持 Authorization 的客户端可用 <span class="mono">X-MCP-Token: &lt;令牌&gt;</span>）。
+      令牌使用上方创建的 <span class="mono">mcp_...</span> 明文，只显示一次。
+    </p>
+
+    <h3>Claude Desktop / 通用 mcpServers</h3>
+    <pre class="code" id="genericConfig">加载中…</pre>
+    <p class="muted">
+      Claude Desktop 配置文件位置：Windows 为
+      <span class="mono">%APPDATA%\Claude\claude_desktop_config.json</span>，macOS 为
+      <span class="mono">~/Library/Application Support/Claude/claude_desktop_config.json</span>；
+      保存后重启客户端。
+    </p>
+
+    <h3>VS Code（.vscode/mcp.json）</h3>
+    <pre class="code" id="vscodeConfig">加载中…</pre>
+    <p class="muted">
+      通用 MCP 客户端通常使用 <span class="mono">mcpServers</span>，VS Code 使用
+      <span class="mono">servers</span>；服务端类型为 <span class="mono">http</span>。
+      连接成功后即可看到工具列表，例如 <span class="mono">list_voice_speakers</span>、
+      <span class="mono">generate_voice</span>、<span class="mono">sdxl_gen_image</span>。
+    </p>
   </div>
 
   <div class="card">
@@ -150,6 +259,8 @@
 <script>
 (function () {
   var API = location.pathname.replace(/\/mcptoken\/?$/, '') + '/mcp';
+  // 创建令牌后自动填入下面的配置示例；未创建时使用占位符
+  var currentToken = 'mcp_xxxxxxxx';
 
   // 身份由外部框架在 URL 参数中注入：这里原样转发给管理接口，前端不保存、不展示
   function withPageQuery(url) {
@@ -177,6 +288,52 @@
 
   function showError(message) {
     document.getElementById('error').textContent = message ? String(message) : '';
+  }
+
+  function renderMcpConfig() {
+    var endpoint = location.origin + API;
+    document.getElementById('mcpEndpoint').textContent = endpoint;
+    document.getElementById('genericConfig').textContent = JSON.stringify({
+      mcpServers: {
+        aiwuxia: {
+          type: 'http',
+          url: endpoint,
+          headers: { Authorization: 'Bearer ' + currentToken }
+        }
+      }
+    }, null, 2);
+    document.getElementById('vscodeConfig').textContent = JSON.stringify({
+      servers: {
+        aiwuxia: {
+          type: 'http',
+          url: endpoint,
+          headers: { Authorization: 'Bearer ' + currentToken }
+        }
+      }
+    }, null, 2);
+  }
+
+  function buildAgentPrompt(token) {
+    var endpoint = location.origin + API;
+    return [
+      '请把下面这个 MCP 服务端接入你的工具列表，并在需要时调用它：',
+      '',
+      '服务端名称：aiwuxia',
+      'MCP 服务地址（Streamable HTTP）：' + endpoint,
+      '认证请求头：Authorization: Bearer ' + token,
+      '备用认证头：X-MCP-Token: ' + token,
+      '',
+      '这个服务提供 AIWuxia 的本地工具，常用工具包括：',
+      '- mcp_echo：回显文本，用于测试连接；',
+      '- mcp_server_time：获取服务端当前时间；',
+      '- list_voice_speakers / generate_voice：列出本地语音说话人、生成角色语音；',
+      '- sdxl_gen_image / regional_image / image_to_image / image_interrogate：图片生成、分区生成、图生图与提示词反推。',
+      '',
+      '如果客户端需要 JSON 配置字段：type=http，url=上面的服务地址，headers.Authorization=上面的认证请求头。',
+      '',
+      '请先调用 mcp_echo 确认连接正常；调用时请携带上面的令牌。',
+      '注意：每次工具调用会扣除额外配额，工具内部产生的用量按实际用量结算；令牌是敏感信息，不要发给无关方。'
+    ].join('\n');
   }
 
   async function api(path, options) {
@@ -208,7 +365,7 @@
         : (token.quotaUsed + ' / 不限');
       return '<tr>' +
         '<td class="mono">' + esc(token.tokenPrefix) + '…</td>' +
-        '<td>' + esc(token.name || '-') + '</td>' +
+        '<td class="wrap-cell">' + esc(token.name || '-') + '</td>' +
         '<td>' + esc(quota) + '</td>' +
         '<td>' + esc(token.callCount) + '</td>' +
         '<td>' + (token.enabled ? '<span class="tag ok">启用</span>' : '<span class="tag off">已停用</span>') + '</td>' +
@@ -220,8 +377,8 @@
     }).join('');
 
     document.getElementById('tokens').innerHTML = tokens.length
-      ? '<table><thead><tr><th>前缀</th><th>备注</th><th>已用额度</th><th>调用次数</th><th>状态</th>' +
-        '<th>过期时间</th><th>最后使用</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+      ? '<div class="table-wrap"><table><thead><tr><th>前缀</th><th>备注</th><th>已用额度</th><th>调用次数</th><th>状态</th>' +
+        '<th>过期时间</th><th>最后使用</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
       : '<div class="empty">还没有令牌，先在上方创建一个。</div>';
 
     Array.prototype.forEach.call(document.querySelectorAll('[data-revoke]'), function (button) {
@@ -254,11 +411,11 @@
         esc(record.cost) + '</td>' +
         '<td>' + (record.ok ? '<span class="tag ok">成功</span>' : '<span class="tag off">失败</span>') + '</td>' +
         '<td class="muted">' + esc(record.durationMs) + ' ms</td>' +
-        '<td class="muted">' + esc(record.error || '') + '</td>' +
+        '<td class="muted wrap-cell">' + esc(record.error || '') + '</td>' +
         '</tr>';
     }).join('');
-    document.getElementById('usage').innerHTML = '<table><thead><tr><th>时间</th><th>令牌</th><th>工具</th>' +
-      '<th>消费</th><th>结果</th><th>耗时</th><th>说明</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    document.getElementById('usage').innerHTML = '<div class="table-wrap"><table><thead><tr><th>时间</th><th>令牌</th><th>工具</th>' +
+      '<th>消费</th><th>结果</th><th>耗时</th><th>说明</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   async function revokeToken(id, remove) {
@@ -294,6 +451,9 @@
       });
       document.getElementById('createdToken').value = data.token;
       document.getElementById('created').style.display = 'block';
+      currentToken = data.token;
+      renderMcpConfig();
+      document.getElementById('agentPrompt').value = buildAgentPrompt(data.token);
       document.getElementById('exampleBox').textContent = JSON.stringify({
         mcpServers: {
           aiwuxia: {
@@ -322,12 +482,23 @@
       document.execCommand('copy');
     }
   });
+  document.getElementById('copyPrompt').addEventListener('click', function () {
+    var prompt = document.getElementById('agentPrompt');
+    prompt.select();
+    prompt.setSelectionRange(0, prompt.value.length);
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(prompt.value).catch(function () {});
+    } else {
+      document.execCommand('copy');
+    }
+  });
   document.getElementById('example').addEventListener('click', function (event) {
     event.preventDefault();
     var box = document.getElementById('exampleBox');
     box.style.display = box.style.display === 'none' ? 'block' : 'none';
   });
 
+  renderMcpConfig();
   loadTokens().catch(function (ex) { showError(ex.message); });
 })();
 </script>
