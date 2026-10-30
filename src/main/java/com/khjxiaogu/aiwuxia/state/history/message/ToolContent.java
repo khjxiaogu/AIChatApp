@@ -5,8 +5,10 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 /**
  * 工具调用返回的结果内容。
  * <p>
- * 实现 {@link MessageContent} 接口，包含工具的唯一标识符和执行结果字符串。
- * {@link #toText()} 直接返回工具的执行结果。
+ * 实现 {@link MessageContent} 接口，包含工具的唯一标识符与结果内容。
+ * 结果内容（{@link #getResult()}）是 {@link MessageContents}，可以按顺序包含文本、图片等，
+ * <b>只提供给模型进一步处理，一般不展示给用户</b>；需要给用户看的图片/音频等应通过工具结果的
+ * 附件通道返回（见 {@code ToolResult#getAttachments()}）。
  * </p>
  * <p>
  * 另携带结果的用户友好显示（{@link ToolCallDisplay}：简述 + 具体内容），
@@ -15,31 +17,52 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
  */
 public class ToolContent implements MessageContent {
 	final String toolId;
-	final String result;
+	final MessageContents result;
 	/** 结果的用户友好显示；仅用于展示，不持久化 */
 	transient ToolCallDisplay display;
 
 	/**
-	 * 使用工具 ID 和执行结果构造工具结果内容（无用户友好显示）。
+	 * 使用工具 ID 和纯文本结果构造工具结果内容（无用户友好显示）。
 	 *
 	 * @param toolId 工具调用的唯一标识符，不可为 null
-	 * @param result 工具执行后的返回结果字符串，不可为 null
+	 * @param result 工具执行后的返回结果文本，不可为 null
 	 */
 	public ToolContent(String toolId, String result) {
+		this(toolId, new MutableMessageContents(result), null);
+	}
+
+	/**
+	 * 使用工具 ID 和结果内容构造工具结果内容（无用户友好显示）。
+	 *
+	 * @param toolId 工具调用的唯一标识符，不可为 null
+	 * @param result 工具执行后的返回结果内容，不可为 null
+	 */
+	public ToolContent(String toolId, MessageContents result) {
 		this(toolId, result, null);
 	}
 
 	/**
-	 * 使用工具 ID、执行结果与用户友好显示构造工具结果内容。
+	 * 使用工具 ID、纯文本结果与用户友好显示构造工具结果内容。
 	 *
 	 * @param toolId  工具调用的唯一标识符，不可为 null
-	 * @param result  工具执行后的返回结果字符串，不可为 null
+	 * @param result  工具执行后的返回结果文本，不可为 null
 	 * @param display 结果的用户友好显示，可为 null
 	 */
 	public ToolContent(String toolId, String result, ToolCallDisplay display) {
+		this(toolId, new MutableMessageContents(result), display);
+	}
+
+	/**
+	 * 使用工具 ID、结果内容与用户友好显示构造工具结果内容。
+	 *
+	 * @param toolId  工具调用的唯一标识符，不可为 null
+	 * @param result  工具执行后的返回结果内容，不可为 null
+	 * @param display 结果的用户友好显示，可为 null
+	 */
+	public ToolContent(String toolId, MessageContents result, ToolCallDisplay display) {
 		super();
 		this.toolId = toolId;
-		this.result = result;
+		this.result = result == null ? MessageContents.EMPTY : result;
 		this.display = display;
 	}
 
@@ -75,7 +98,7 @@ public class ToolContent implements MessageContent {
 
 	@Override
 	public String toText() {
-		return result;
+		return result == null ? "" : result.toText();
 	}
 
 	@Override
@@ -93,12 +116,12 @@ public class ToolContent implements MessageContent {
 	}
 
 	/**
-	 * 获取工具执行的结果。
+	 * 获取工具执行的结果内容（只提供给模型处理，一般不展示给用户）。
 	 *
-	 * @return 结果字符串
+	 * @return 结果内容，永不为 null
 	 */
-	public String getResult() {
-		return result;
+	public MessageContents getResult() {
+		return result == null ? MessageContents.EMPTY : result;
 	}
 
 	@Override

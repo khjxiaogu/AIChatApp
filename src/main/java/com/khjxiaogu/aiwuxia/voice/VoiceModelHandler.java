@@ -26,6 +26,7 @@ package com.khjxiaogu.aiwuxia.voice;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -82,6 +83,58 @@ public class VoiceModelHandler {
 				.filter(p -> p.supportsVoice(roleName))
 				.findAny().isPresent();
 	};
+
+	/**
+	 * 取当前启用的本地语音模型（未配置本地语音、或本地语音未启用时返回 null）。
+	 *
+	 * @return 本地语音模型
+	 */
+	public static LocalVoiceApi getLocalVoice() {
+		if (models == null) {
+			return null;
+		}
+		for (VoiceModel model : models) {
+			if (model instanceof LocalVoiceApi) {
+				return (LocalVoiceApi) model;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * 列出本地语音模型配置的全部说话人（角色名称）。
+	 * <p>
+	 * 只表示配置中存在该说话人，不检查本地语音服务当前是否在线；生成语音时会再检查。
+	 * </p>
+	 *
+	 * @return 说话人名称列表，永不为 null
+	 */
+	public static List<String> listLocalSpeakers() {
+		LocalVoiceApi local = getLocalVoice();
+		if (local == null) {
+			return Collections.emptyList();
+		}
+		return local.getSpeakerNames();
+	}
+
+	/**
+	 * 用本地语音模型生成语音，中间会先经过 {@link VoiceTagger} 分句与情感标注。
+	 *
+	 * @param roleName      说话人（角色）名称，必须是 {@link #listLocalSpeakers()} 中的一项
+	 * @param text          要朗读的话语内容
+	 * @param messageId     请求唯一 ID
+	 * @param usageListener 用量接收方，可为 null
+	 * @return 生成的音频；本地语音未启用或说话人不存在时异常完成
+	 */
+	public static CompletableFuture<ModelGenerationResult> generateLocalAudio(String roleName, String text,
+			String messageId, Consumer<UsageIntf<?>> usageListener) {
+		LocalVoiceApi local = getLocalVoice();
+		if (local == null) {
+			return CompletableFuture.failedFuture(new ModelRouteException("本地语音模型未配置或未启用"));
+		}
+		return local.generate(roleName, text, messageId, usageListener);
+	}
+
 	public static void init(File dataFolder) throws JsonSyntaxException, IOException {
 		models=new ArrayList<>();
 		if(System.getProperty("localVoiceToken")!=null)

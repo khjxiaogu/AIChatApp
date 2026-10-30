@@ -17,7 +17,8 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
  * </p>
  * <ul>
  *   <li>{@code output}：本次生成的输出对象，工具产生的用量通过 {@link AIOutput#addUsage}
- *       写入其中；工具结果中的附件由调用方（{@code ToolCallManager} / 会话）处理；</li>
+ *       写入其中；工具结果的“结果内容”只提供给模型进一步处理，“附件”才返回给用户，
+ *       两者由调用方（{@code ToolCallManager} / 会话）分别处理；</li>
  *   <li>{@code manager}：本次生成使用的工具调用管理器，工具可以读取会话上下文
  *       或调整自身的调用规则。</li>
  * </ul>

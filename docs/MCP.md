@@ -5,6 +5,7 @@
 - **服务端**：把本地 `ToolData` 以标准 MCP 工具形式暴露给外部客户端（HTTP Streamable 传输）；
 - **客户端**：连接外部 MCP 服务端（HTTP 或 stdio），把远程工具转换为本地 `ToolData` 注册进会话；
 - **访问令牌**：用户自助创建令牌，调用工具时从令牌所属用户的**额外配额（补充配额）**中扣费，并记录消费明细。
+  计费方式为**固定调用费 100 + 工具内部产生的费用合计**。
 
 ---
 
@@ -19,7 +20,7 @@
 │  ├─ 认证：McpAccessTokenStore（SHA-256 摘要） │
 │  ├─ 协议：McpServer（initialize/tools/*）     │
 │  ├─ 工具：McpToolRegistry ← 本地 ToolData     │
-│  └─ 计费：预扣 → 执行 → 成功记账 / 失败退款   │
+│  └─ 计费：预扣 100 → 执行 → 结算内部用量      │
 └──────────────────────────────────────────────┘
         ▲
         │ 同一份 messages.db
@@ -56,7 +57,6 @@ MCP 服务端由 `AIChatService#mcp` 转发到 `/aichat/mcp`（不再在 `AIServ
 ```json
 {
   "enabled": true,
-  "defaultPrice": 1000,
   "usageType": "MCP工具",
   "exposeSessionTools": false
 }
@@ -65,9 +65,10 @@ MCP 服务端由 `AIChatService#mcp` 转发到 `/aichat/mcp`（不再在 `AIServ
 | 字段 | 说明 |
 | --- | --- |
 | `enabled` | 服务端开关；`false` 时不转发 `/aichat/mcp`，也不初始化令牌存储（客户端不受影响） |
-| `defaultPrice` | 未单独定价的工具每次调用扣除的额外配额，默认 `1000` |
 | `usageType` | 写入 `paid_usage_record.usage_type` 的用量类型，默认 `MCP工具` |
 | `exposeSessionTools` | 是否把令牌所属用户**在线会话**中的工具一并暴露（默认关闭） |
+
+> 旧配置项 `defaultPrice` 已废弃：调用费固定为 100，不再按工具单独定价。
 
 服务端内置两个自检工具（不依赖会话状态）：
 
@@ -124,6 +125,28 @@ registry.addSource(new McpToolSource() {
 
 `exposeSessionTools=true` 时，内置会话来源会返回该用户在线 WebSocket 会话里的工具（例如 `web_view`、`image_recognition`）。默认关闭，避免外部调用触发聊天副作用。
 
+工具统一返回 `ToolResult`，职责分两部分：
+
+- **结果内容**（`MessageContents`）：只提供给模型进一步处理，可以按顺序包含文本、图片等；
+  例如 `SDXLMcp` 的图片生成工具把生成的图片 Content 插在结果文本中间，而不是放进附件；
+- **附件**：用于附加在结果中返回给用户（例如 QQ 发图/发语音），由会话统一处理。
+
+服务端还会按令牌所属用户暴露 `AIChatService` 中的 SDXL 图片工具（`image_interrogate`、
+`sdxl_gen_image`、`regional_image`、`image_to_image`，以及配置了角色列表时的 `search_character`），
+与绘画会话使用同一套按用户绑定的本地模型。工具结果中的图片/音频/视频 id 以及
+`图片id：...`、`<image id=...>` 这类多媒体引用，会统一通过绘画图片存储（TOS/本地）的
+`getPublicUrl` 转换成可访问链接后再返回，不会把内部 id 直接发给 MCP 客户端。
+
+同时注册本地语音工具：
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `list_voice_speakers` | 无 | 列出本地语音配置中的全部可用说话人（角色名称） |
+| `generate_voice` | `role`、`text` | 用角色名称和话语内容生成语音；内部先经过 `VoiceTagger` 分句与情感标注，再调用本地语音模型，音频保存到 `save/voice` 后以 `AudioContent` 返回音频 id |
+
+`generate_voice` 返回的音频 id 同样会由 MCP 服务端通过本地语音存储转换成可访问链接，
+不会直接把 id 发给客户端。
+
 ### 2.4 访问令牌
 
 令牌由用户自助创建，明文只在创建时返回一次，数据库只保存 SHA-256 摘要，因此无法从库里还原明文。
@@ -134,14 +157,17 @@ registry.addSource(new McpToolSource() {
 mcp_access_token(id, uid, name, token_hash, token_prefix,
                  quota_limit, quota_used, call_count, enabled,
                  created_at, expires_at, last_used_at)
-mcp_tool_call_log(id, token_id, uid, tool, cost, ok, error,
-                  request_id, client_ip, duration_ms, result_chars, created_at)
-mcp_tool_price(tool PRIMARY KEY, cost)
+mcp_tool_call_log(id, token_id, uid, tool, cost, call_cost, usage_cost,
+                  ok, error, request_id, client_ip, duration_ms,
+                  result_chars, created_at)
 ```
 
 - `quota_limit`：单个令牌累计可消耗的额外配额上限，`0` 表示不限制；
 - `expires_at`：毫秒时间戳，空表示永不过期；
-- `mcp_tool_call_log`：每一次调用（成功与失败）都有记录，包括工具、费用、耗时、结果长度、客户端 IP 与失败原因。
+- `mcp_tool_call_log`：每一次调用（成功与失败）都有记录，包括工具、耗时、结果长度、客户端 IP 与失败原因。
+  `call_cost` 为固定调用费（100），`usage_cost` 为工具内部用量折算出的费用，`cost` 为实际扣除的合计；
+  调用失败时 `cost` 与 `usage_cost` 为 0（固定费用已退回），`call_cost` 保留名义值。
+- 旧库启动时会自动补上 `call_cost` / `usage_cost` 两列；旧版 `mcp_tool_price` 表不再使用。
 
 管理 API：
 
@@ -155,40 +181,53 @@ mcp_tool_price(tool PRIMARY KEY, cost)
 | `POST` | `/aichat/mcp/token/revoke?uid=` | 停用令牌，请求体 `{id}` |
 | `POST` | `/aichat/mcp/token/delete?uid=` | 删除令牌及其调用记录，请求体 `{id}` |
 | `GET` | `/aichat/mcp/usage?uid=&tokenId=&limit=` | 消费记录 + 汇总统计 |
-| `GET` | `/aichat/mcp/price` | 默认价与单工具价格 |
-| `POST` | `/aichat/mcp/price` | 设置价格 `{tool,cost}`，`cost<0` 表示删除 |
 | `GET` | `/aichat/mcp/status` | 统计信息 |
 | `GET` | `/aichat/mcp/tools?uid=` | 当前暴露的工具列表 |
 | `GET` | `/aichat/mcp/whoami` | 用令牌自检（需要 `Authorization`） |
 
 ### 2.5 计费规则
 
-价格单位与配额单位一致（token，等同于“补充配额”）。一次 `tools/call` 的执行顺序：
+价格单位与配额单位一致（token，等同于“补充配额”）。一次 `tools/call` 的实际费用为：
+
+```text
+总费用 = 固定调用费 100 + Σ ceil(工具内部每一笔用量的 getEquivantTokens())
+```
+
+固定调用费与工具无关，任何工具每次调用都先扣 100；工具执行期间通过 `output.addUsage(...)`
+写入的每一笔用量（额外模型调用、图片/视频生成、搜索、对象存储等）都会在调用结束后按与主流程
+补充配额一致的向上取整规则折算并累加。
+
+执行顺序：
 
 1. 校验令牌（启用、未过期）；
-2. 条件更新 `user_paid_balance`：`balance = balance - price WHERE balance >= price`。
+2. 条件更新 `user_paid_balance`：`balance = balance - 100 WHERE balance >= 100`。
    余额不足直接返回 JSON-RPC `-32002`，不执行工具；
 3. 条件更新令牌 `quota_used`（校验 `quota_limit`）；超限则退回余额并返回 `-32002`；
-4. 写入一条 `mcp_tool_call_log`（待完成）；
-5. 执行工具：
-   - 成功：写入 `daily_usage.paid_used` 与 `paid_usage_record`（`usage_type = MCP工具`），
-     记录标记为成功，返回文本结果；
-   - 失败：退回已扣余额与令牌额度，结果带 `isError: true` 返回给客户端，日志记录失败原因。
+4. 写入一条 `mcp_tool_call_log`（待完成，`call_cost = 100`）；
+5. 执行工具，收集工具内部写入的全部用量；
+6. 成功：按内部用量合计补扣费用并累加令牌 `quota_used`，把日志 `cost` 更新为
+   “100 + 内部费用”，写入 `daily_usage.paid_used` 与 `paid_usage_record`
+   （`usage_type = MCP工具`），记录标记为成功，返回文本结果；
+7. 失败：退回固定调用费与令牌额度，结果带 `isError: true` 返回给客户端，日志 `cost = 0`
+   并记录失败原因。
 
 因此：
 
 - 扣的是**用户额外配额**（`user_paid_balance`，界面上的“补充配额”），不占用每日免费额度；
+- 固定费用在调用前检查余额，内部费用在工具执行完成后按实际发生额结算；因此内部费用可能
+  超过调用前的余额或令牌额度（余额可能为负），后续调用需补足后才能继续；
 - 用户消费明细会出现在原有的用量统计中；
-- 失败不扣费；
-- 并发调用通过条件更新保证不会把余额扣成负数。
+- 调用失败不扣费：固定调用费退回，工具内部用量不向用户收费；
+- 并发调用通过条件更新保证固定调用费不会把余额扣成负数。
 
-单工具价格可通过 API 或数据库设置，优先级高于 `defaultPrice`：
+调用结果的 `_meta` 会返回本次费用明细：
 
-```bash
-curl -X POST http://127.0.0.1:8999/aichat/mcp/price \
-  -H 'Content-Type: application/json' \
-  -d '{"tool":"sdxl_gen_image","cost":5000}'
+```json
+"_meta": { "price": 100, "callPrice": 100, "usagePrice": 0, "charged": 100, "paidBalance": 49000 }
 ```
+
+`price` 为合计费用，`callPrice` 为固定调用费，`usagePrice` 为工具内部费用，`charged` 为实际扣除，
+`paidBalance` 为调用后的额外配额余额。
 
 ### 2.6 调用示例
 
@@ -212,7 +251,7 @@ curl -X POST http://127.0.0.1:8999/aichat/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 
-# 4) 调用工具（按 mcp_echo 价格扣费）
+# 4) 调用工具（固定调用费 100，mcp_echo 无内部用量）
 curl -X POST http://127.0.0.1:8999/aichat/mcp \
   -H 'Authorization: Bearer mcp_xxxxxxxx' \
   -H 'Content-Type: application/json' \
@@ -228,7 +267,7 @@ curl -X POST http://127.0.0.1:8999/aichat/mcp \
   "id": 3,
   "result": {
     "content": [{ "type": "text", "text": "hello" }],
-    "_meta": { "price": 1000, "paidBalance": 49000 }
+    "_meta": { "price": 100, "callPrice": 100, "usagePrice": 0, "charged": 100, "paidBalance": 49000 }
   }
 }
 ```
@@ -393,6 +432,9 @@ String text = client.callTool("mcp_echo", new JsonObject());
 - 服务端只实现 Streamable HTTP 的 POST 通道，不支持旧版 HTTP+SSE 的 `GET /sse` 长连接；
 - `ToolData` 的参数模型只有“字符串参数 + 全部必填”，因此 MCP 工具的 `inputSchema` 会被简化；
 - `exposeSessionTools` 默认关闭；即使开启，也只覆盖 WebSocket 聊天会话，且可能带来副作用（如发图、发消息）；
+- 工具内部费用无法在调用前预知：固定调用费在调用前校验余额，内部费用只能等工具执行完成后按实际用量补扣，
+  因此内部费用可能超过调用前的余额或令牌额度；
+- 旧的单工具价格表 `mcp_tool_price` 与 `/aichat/mcp/price` 接口已不再使用，计费统一为“固定 100 + 内部用量”；
 - 客户端工具自动注册到 Web 聊天会话，NapCat 群聊等独立会话需手动注册（见 3.2）；
 - 客户端只在启动时连接一次，修改 `mcp-client.json` 后需重启；代码内可调用 `getMcpClientManager().reload()` 热重载；
 - `paid_usage_record` 与 `daily_usage` 依赖主服务已建表；独立使用本模块时需自行准备这两张表。
@@ -403,6 +445,6 @@ String text = client.callTool("mcp_echo", new JsonObject());
 
 `mvn clean package` 可编译。已通过两组临时端到端测试（未提交进仓库）：
 
-- 服务端 + HTTP/stdio 客户端 + 令牌 + 计费 41 项断言：初始化/列表/调用、按价扣费、价格覆盖、
-  管理 API、令牌额度、余额不足、失败退款、吊销、批量请求、stdio 客户端、ToolData 桥接；
+- 服务端 + HTTP/stdio 客户端 + 令牌 + 计费断言：初始化/列表/调用、固定 100 调用费、
+  工具内部用量合计、管理 API、令牌额度、余额不足、失败退款、吊销、批量请求、stdio 客户端、ToolData 桥接；
 - `AIChatService` 集成测试：`/aichat/mcp` 由服务内方法转发、令牌扣费写入主库、管理 API 可达。

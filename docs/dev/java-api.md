@@ -234,7 +234,8 @@ resp.addUsageListener(state::addUsage);               // ← 计费/用量统计
 | `addUsageListener(Consumer<UsageIntf<?>>)` | 用量回调；会先补发已累计的用量，再持续接收新用量。接 `state::addUsage` 才会计费 |
 | `addUsage(UsageIntf<?>)` | 追加一条用量（模型提供者与工具都调用，用量在输出对象内按列表累计） |
 | `List<UsageIntf<?>> getUsages()` | 当前累计用量的只读快照 |
-| `ToolResult` 附件 | 工具返回图片/音频/视频等附件；`ToolCallManager` 交给会话的 `handleToolAttachments(...)`，由会话写入当前上下文并按需发送 |
+| `ToolResult` 结果内容 | 工具返回给模型的结果，类型为 `MessageContents`，可按顺序包含文本、图片等；默认不展示给用户 |
+| `ToolResult` 附件 | 工具返回给用户的图片/音频/视频等附件；`ToolCallManager` 交给会话的 `handleToolAttachments(...)`，由会话写入当前上下文并按需发送 |
 
 **中断（用户停止生成）**：中断的作用范围是"不再继续"，是否截断当前这一轮由提供者的计费方式决定：
 
@@ -366,7 +367,9 @@ state.registerTool(t);                       // 挂到会话，随后 AIRequest.
 ```
 
 - `Tool.run(String params, AIOutput output, ToolCallManager manager)` 收到的是**参数 JSON 字符串**，返回 `CompletableFuture<ToolResult>`；
-  只返回文本的工具可以用 `ToolData.Builder.toolText(...)`，需要附件或真正异步时返回 `CompletableFuture<ToolResult>`；
+  只返回文本的工具可以用 `ToolData.Builder.toolText(...)`；需要把图片等放进结果给模型处理时用
+  `ToolResult.content(MessageContents)`（例如图片生成工具把图片 Content 插在文本中间），
+  需要把图片/音频等返回给用户时用 `ToolResult.of(text, attachments...)` 的附件参数；
 - 工具**不再绑定会话**：同一份 `ToolData` 可以在任意会话、任意一次生成中复用；
 - 一组需要共享配置/状态的工具实现 `ToolProvider`，用 `state.registerTools(provider)` 注册；
 - 异步工具在注册时声明（`async()` 或 `registerTool(tool, true, maxCalls)`），管理器会立即返回任务 ID，完成时通知会话；

@@ -14,7 +14,9 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
+import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 
@@ -92,8 +94,46 @@ public class HistoryRequestBuilder {
 		JsonObject toolmsg=new JsonObject();
 		toolmsg.addProperty("role", Role.TOOL.getRoleName());
 		toolmsg.addProperty("tool_call_id", tool.getToolId());
-		toolmsg.addProperty("content", tool.getResult());
+		// 工具结果只提供给模型：纯文本沿用字符串，含图片等多段内容时使用 OpenAI 兼容的 content 数组
+		MessageContents result = tool.getResult();
+		if (result == null || result.isEmpty()) {
+			toolmsg.addProperty("content", "");
+		} else if (result.isPlainText()) {
+			toolmsg.addProperty("content", result.toText());
+		} else {
+			toolmsg.add("content", createToolContent(result));
+		}
 		return toolmsg;
+	}
+
+	/**
+	 * 把工具结果内容转换为 OpenAI 兼容的 content 数组。
+	 * <p>
+	 * 图片以 {@code image_url} 内容块提交，其余内容（文本、音频、视频等）按文本表示提交，
+	 * 保证不同提供者至少能拿到可读的结果。
+	 * </p>
+	 */
+	private static JsonArray createToolContent(MessageContents contents) {
+		JsonArray array = new JsonArray();
+		for (MessageContent content : contents) {
+			if (content == null) {
+				continue;
+			}
+			if (content instanceof ImageContent) {
+				JsonObject part = new JsonObject();
+				part.addProperty("type", "image_url");
+				JsonObject image = new JsonObject();
+				image.addProperty("url", ((ImageContent) content).getImageUrl());
+				part.add("image_url", image);
+				array.add(part);
+			} else {
+				JsonObject part = new JsonObject();
+				part.addProperty("type", "text");
+				part.addProperty("text", content.toText());
+				array.add(part);
+			}
+		}
+		return array;
 	}
 	public static JsonObject createReasonerMessage(String message,List<ToolCall> toolcalls) {
 		JsonObject messageContent=new JsonObject();

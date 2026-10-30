@@ -39,6 +39,7 @@ import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
+import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
@@ -399,7 +400,7 @@ public class SDXLMcp implements ToolProvider {
 		return new ToolData.Builder("search_character", "通过关键词搜索特定角色的提示词，返回相符的提示词，以,隔开")
 				.putParam("keyword", "角色英文名", "角色关键词")
 				.presenter(ToolCallPresenter.ofArgument("搜索角色", "keyword"))
-				.tool((data) -> {
+				.tool((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 
@@ -409,11 +410,11 @@ public class SDXLMcp implements ToolProvider {
 						for (String key : searchContainingAllKeywords(charas, keyword)) {
 							sb.append(key).append(",");
 						}
-						return sb.toString();
+						return CompletableFuture.completedFuture(ToolResult.text(sb.toString()));
 					} catch (Exception e) {
 						e.printStackTrace();
 					}
-					return "参数格式错误";
+					return CompletableFuture.completedFuture(ToolResult.text("参数格式错误"));
 				}).build();
 	}
 
@@ -448,7 +449,7 @@ public class SDXLMcp implements ToolProvider {
 		tools.add(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容", "图片ID")
 				.presenter(ToolCallPresenter.ofName("反推提示词"))
-				.toolText((data, output, manager) -> {
+				.tool((data, output, manager) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
 					Matcher mtch = patt.matcher(data);
 					if (mtch.find()) {
@@ -461,14 +462,14 @@ public class SDXLMcp implements ToolProvider {
 							}
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(0,1));
-							return sb.toString();
+							return CompletableFuture.completedFuture(ToolResult.text(sb.toString()));
 						} catch (IOException e) {
 							e.printStackTrace();
 						}
-						return "服务暂不可用";
+						return CompletableFuture.completedFuture(ToolResult.text("服务暂不可用"));
 						
 					}
-					return "参数格式错误";
+					return CompletableFuture.completedFuture(ToolResult.text("参数格式错误"));
 				}).build());
 		
 		tools.add(new ToolData.Builder("sdxl_gen_image",
@@ -484,19 +485,19 @@ public class SDXLMcp implements ToolProvider {
 					content.append("\n画面比例:"+jo.get("resolution").getAsString());
 					return ToolCallDisplay.of("文生图", content);
 				})
-				.toolText((data, output, manager) -> {
+				.tool((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						System.out.println(data);
 						String resolution = jo.get("resolution").getAsString();
 						int[] its = resolutions.get(resolution);
 						if (its == null)
-							return "不支持的分辨率设置";
+							return CompletableFuture.completedFuture(ToolResult.text("不支持的分辨率设置"));
 						String prompt=jo.get("positive").getAsString();
 						String negative=jo.get("negative").getAsString();
 						String extras="";
 						if(!validatePrompt(prompt)||!validatePrompt(negative)) {
-							return "失败，提示词中有非英文/符号的内容。";
+							return CompletableFuture.completedFuture(ToolResult.text("失败，提示词中有非英文/符号的内容。"));
 						}
 						prompt=appendCommonPrompt(prompt,commonPositive);
 						negative=appendCommonPrompt(negative,commonNegatives);
@@ -516,6 +517,7 @@ public class SDXLMcp implements ToolProvider {
 									its[1],func);
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
+							String imageUrl = tos.getPublicUrl(fn,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
@@ -523,7 +525,7 @@ public class SDXLMcp implements ToolProvider {
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,output == null ? null : output::addUsage))));
+									new DirectHistoryItem(Role.USER, new ImageContent(imageUrl)));
 							builder.temperature(1.3f).maxTokens(3000).streamed();
 							String caption="";
 							for(int i=0;i<3;i++)
@@ -538,14 +540,15 @@ public class SDXLMcp implements ToolProvider {
 								}
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
-							return "生成成功，图片id为："+fn+"。"+extras+caption;
+							return CompletableFuture.completedFuture(
+									imageResult("生成成功，", imageUrl, "图片id为："+fn+"。"+extras+caption));
 						} catch (IOException e) {
 							e.printStackTrace();
-							return "图片生成失败，服务暂不可用。";
+							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
 						}
 					}catch(Throwable t) {
 						t.printStackTrace();
-						return "参数格式错误";
+						return CompletableFuture.completedFuture(ToolResult.text("参数格式错误"));
 					}
 				}).build());
 		tools.add(new ToolData.Builder("regional_image",
@@ -571,14 +574,14 @@ public class SDXLMcp implements ToolProvider {
 					content.append("\n画面比例:"+jo.get("resolution").getAsString());
 					return ToolCallDisplay.of("分区图片", content);
 				})
-				.toolText((data, output, manager) -> {
+				.tool((data, output, manager) -> {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					System.out.println(data);
 					try {
 						String resolution = jo.get("resolution").getAsString();
 						int[] its = resolutions.get(resolution);
 						if (its == null)
-							return "不支持的分辨率设置";
+							return CompletableFuture.completedFuture(ToolResult.text("不支持的分辨率设置"));
 						String placement=jo.get("placement").getAsString();
 						boolean isRow=false;
 						if(placement.startsWith("row")) {
@@ -586,15 +589,15 @@ public class SDXLMcp implements ToolProvider {
 						}else if(placement.startsWith("col")) {
 							isRow=false;
 						}else {
-							return "区域排布错误，区域排布必须是row/col之一";
+							return CompletableFuture.completedFuture(ToolResult.text("区域排布错误，区域排布必须是row/col之一"));
 						}
 						String area_ratio=jo.get("area_ratio").getAsString();
 						if(!area_ratio.contains(":")) {
-							return "区域比例错误，必须是x:y的格式";
+							return CompletableFuture.completedFuture(ToolResult.text("区域比例错误，必须是x:y的格式"));
 						}
 						String[] ratios=area_ratio.split(":");
 						if(ratios.length!=2) {
-							return "区域比例错误，必须是x:y的格式";
+							return CompletableFuture.completedFuture(ToolResult.text("区域比例错误，必须是x:y的格式"));
 						}
 
 
@@ -609,7 +612,7 @@ public class SDXLMcp implements ToolProvider {
 						System.out.println(prompt);
 						System.out.println(negative);
 						if(!validatePrompt(prompt)||!validatePrompt(negative)) {
-							return "失败，提示词中有非英文/符号的内容。";
+							return CompletableFuture.completedFuture(ToolResult.text("失败，提示词中有非英文/符号的内容。"));
 						}
 						try {
 							byte[] image;
@@ -632,6 +635,7 @@ public class SDXLMcp implements ToolProvider {
 							}
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
+							String imageUrl = tos.getPublicUrl(fn,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
@@ -639,7 +643,7 @@ public class SDXLMcp implements ToolProvider {
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,output == null ? null : output::addUsage))));
+									new DirectHistoryItem(Role.USER, new ImageContent(imageUrl)));
 							builder.temperature(1.3f).maxTokens(3000).streamed();
 							String caption="";
 							for(int i=0;i<3;i++)
@@ -654,14 +658,15 @@ public class SDXLMcp implements ToolProvider {
 								}
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(2,0));
-							return "生成成功，图片id为："+fn+"。"+caption;
+							return CompletableFuture.completedFuture(
+									imageResult("生成成功，", imageUrl, "图片id为："+fn+"。"+caption));
 						} catch (IOException e) {
 							e.printStackTrace();
-							return "图片生成失败，服务暂不可用。";
+							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
 						}
 					}catch(Throwable t) {
 						t.printStackTrace();
-						return "参数格式错误";
+						return CompletableFuture.completedFuture(ToolResult.text("参数格式错误"));
 					}
 				}).build());
 		tools.add(new ToolData.Builder("image_to_image",
@@ -682,14 +687,14 @@ public class SDXLMcp implements ToolProvider {
 					content.append("\n强度:"+jo.get("strength").getAsString());
 					return ToolCallDisplay.of("图生图", content);
 				})
-				.toolText((data, output, manager) -> {
+				.tool((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 						System.out.println(data);
 						String resolution = jo.get("resolution").getAsString();
 						int[] its = resolutions.get(resolution);
 						if (its == null)
-							return "不支持的分辨率设置";
+							return CompletableFuture.completedFuture(ToolResult.text("不支持的分辨率设置"));
 						String prompt=jo.get("positive").getAsString();
 						String negative=jo.get("negative").getAsString();
 						String pid=jo.get("picture_id").getAsString();
@@ -716,6 +721,7 @@ public class SDXLMcp implements ToolProvider {
 
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
+							String imageUrl = tos.getPublicUrl(fn,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
 							builder.addHistoryItem(Role.SYSTEM,
@@ -723,7 +729,7 @@ public class SDXLMcp implements ToolProvider {
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(fn,output == null ? null : output::addUsage))));
+									new DirectHistoryItem(Role.USER, new ImageContent(imageUrl)));
 							AIOutput inner=LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build());
 							if(output!=null)
 								inner.addUsageListener(output::addUsage);
@@ -731,14 +737,15 @@ public class SDXLMcp implements ToolProvider {
 								inner.getContent()).toText();
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
-							return "生成成功，图片id为："+fn+"。"+caption;
+							return CompletableFuture.completedFuture(
+									imageResult("生成成功，", imageUrl, "图片id为："+fn+"。"+caption));
 						} catch (IOException e) {
 							e.printStackTrace();
-							return "图片生成失败，服务暂不可用。";
+							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
 						}
 					}catch(Throwable t) {
 						t.printStackTrace();
-						return "参数格式错误";
+						return CompletableFuture.completedFuture(ToolResult.text("参数格式错误"));
 					}
 				}).build());
 	}
@@ -746,6 +753,25 @@ public class SDXLMcp implements ToolProvider {
 	@Override
 	public Collection<ToolData> getTools() {
 		return java.util.Collections.unmodifiableList(tools);
+	}
+
+	/**
+	 * 构造图片生成工具的结果内容：图片 Content 插在前后文本之间。
+	 * <p>
+	 * 图片只放在结果内容里提供给模型进一步处理，不放进给用户的附件。
+	 * </p>
+	 *
+	 * @param before   图片前的文本
+	 * @param imageUrl 生成图片的地址
+	 * @param after    图片后的文本
+	 * @return 工具结果
+	 */
+	private static ToolResult imageResult(String before, String imageUrl, String after) {
+		MutableMessageContents content = new MutableMessageContents();
+		content.append(before);
+		content.addRaw(new ImageContent(imageUrl));
+		content.append(after);
+		return ToolResult.content(content);
 	}
 
 	public static Set<LoraConfigurations> addLoras(String prompt,Map<String, LoraConfigurations> lora) {

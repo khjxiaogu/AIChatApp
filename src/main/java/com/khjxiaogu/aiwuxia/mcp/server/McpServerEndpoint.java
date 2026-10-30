@@ -29,13 +29,14 @@ import io.netty.buffer.ByteBuf;
  *   <li>{@code /aichat/mcp}：MCP JSON-RPC 端点。POST 处理请求，GET/DELETE 按协议返回 405/200；</li>
  *   <li>{@code /aichat/mcp/token}、{@code /aichat/mcp/token/revoke}、{@code /aichat/mcp/token/delete}：令牌创建/列表/吊销/删除；</li>
  *   <li>{@code /aichat/mcp/usage}：消费记录查询；</li>
- *   <li>{@code /aichat/mcp/price}：单工具价格查询与设置；</li>
  *   <li>{@code /aichat/mcp/status}、{@code /aichat/mcp/tools}：统计与工具列表；</li>
  *   <li>{@code /aichat/mcp/whoami}：用令牌自检（需要 Authorization）。</li>
  * </ul>
  * <p>
  * 鉴权：MCP 请求必须携带 {@code Authorization: Bearer mcp_xxx}（或 {@code X-MCP-Token}），
- * 令牌由 {@link McpAccessTokenStore} 校验；工具调用会从令牌所属用户的额外配额（补充配额）中扣费。
+ * 令牌由 {@link McpAccessTokenStore} 校验；每次工具调用固定扣除 {@link McpServer#CALL_COST}
+ * 额外配额，工具内部产生的用量按实际用量另行结算；工具结果中的多媒体 id 会通过
+ * {@link McpServer.MediaUrlResolver} 换成可访问链接。
  * 管理 API 沿用本项目既有的“用户标识即身份”做法，身份只从请求 URL 的查询参数读取（由外部框架注入），
  * 不从请求体读取；不做额外登录校验，部署时请放在反向代理/内网之后，或只监听本机。
  * </p>
@@ -48,8 +49,6 @@ public class McpServerEndpoint implements CallBack {
     private final McpAccessTokenStore store;
     /** 协议实现。 */
     private final McpServer server;
-    /** 默认价格。 */
-    private final int defaultPrice;
     /** 服务名称（写入 initialize 响应与状态接口）。 */
     private final String serverName;
     /** 日志记录器。 */
@@ -58,19 +57,48 @@ public class McpServerEndpoint implements CallBack {
     /**
      * 创建 HTTP 端点。
      *
-     * @param registry     工具注册表
-     * @param store        令牌与计费存储
-     * @param defaultPrice 默认单次调用价格（额外配额单位，小于 0 按 0 处理）
-     * @param serverName   服务名称
+     * @param registry      工具注册表
+     * @param store         令牌与计费存储
+     * @param serverName    服务名称
      * @param serverVersion 服务版本
      */
-    public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, int defaultPrice, String serverName,
+    public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
             String serverVersion) {
+        this(registry, store, serverName, serverVersion, null);
+    }
+
+    /**
+     * 创建 HTTP 端点，并在返回工具结果前把多媒体 id 解析为链接。
+     *
+     * @param registry        工具注册表
+     * @param store           令牌与计费存储
+     * @param serverName      服务名称
+     * @param serverVersion   服务版本
+     * @param mediaUrlResolver 多媒体 id → 链接解析器，可为 null
+     */
+    public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
+            String serverVersion, McpServer.MediaUrlResolver mediaUrlResolver) {
         this.registry = registry;
         this.store = store;
-        this.defaultPrice = Math.max(0, defaultPrice);
         this.serverName = serverName == null ? "AIWuxia-MCP" : serverName;
-        this.server = new McpServer(registry, store, this.defaultPrice, this.serverName, serverVersion);
+        this.server = new McpServer(registry, store, this.serverName, serverVersion, mediaUrlResolver);
+    }
+
+    /**
+     * 兼容旧构造：单工具价格已废弃，调用费固定为 {@link McpServer#CALL_COST}。
+     *
+     * @param registry      工具注册表
+     * @param store         令牌与计费存储
+     * @param defaultPrice  旧版默认价格，已忽略
+     * @param serverName    服务名称
+     * @param serverVersion 服务版本
+     * @deprecated 计费改为“固定调用费 + 工具内部用量”，请使用
+     *             {@link #McpServerEndpoint(McpToolRegistry, McpAccessTokenStore, String, String)}
+     */
+    @Deprecated
+    public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, int defaultPrice, String serverName,
+            String serverVersion) {
+        this(registry, store, serverName, serverVersion);
     }
 
     /** 工具注册表（供宿主程序在运行期注册要暴露的工具）。 */
@@ -88,9 +116,20 @@ public class McpServerEndpoint implements CallBack {
         return server;
     }
 
-    /** 默认单次调用价格。 */
+    /** 每次工具调用的固定费用。 */
+    public int getCallCost() {
+        return server.getCallCost();
+    }
+
+    /**
+     * 旧版默认单次调用价格。
+     *
+     * @return 固定调用费 {@link McpServer#CALL_COST}
+     * @deprecated 计费改为“固定调用费 + 工具内部用量”，请使用 {@link #getCallCost()}
+     */
+    @Deprecated
     public int getDefaultPrice() {
-        return defaultPrice;
+        return server.getCallCost();
     }
 
     @Override
@@ -277,10 +316,6 @@ public class McpServerEndpoint implements CallBack {
                 usage(request, response);
                 return;
             }
-            if ("/price".equals(path)) {
-                price(request, response, method);
-                return;
-            }
             if ("/status".equals(path)) {
                 status(request, response);
                 return;
@@ -347,7 +382,7 @@ public class McpServerEndpoint implements CallBack {
         }
         data.add("tokens", tokens);
         data.addProperty("paidBalance", store.getPaidBalance(uid));
-        data.addProperty("defaultPrice", defaultPrice);
+        data.addProperty("callCost", server.getCallCost());
         writeJson(response, 200, success(data));
     }
 
@@ -392,52 +427,12 @@ public class McpServerEndpoint implements CallBack {
         writeJson(response, 200, success(data));
     }
 
-    /** 查询或设置单工具价格。 */
-    private void price(Request request, Response response, String method) throws McpException {
-        if ("GET".equalsIgnoreCase(method)) {
-            JsonObject data = new JsonObject();
-            data.addProperty("defaultPrice", defaultPrice);
-            JsonObject prices = new JsonObject();
-            for (Map.Entry<String, Integer> entry : store.prices().entrySet()) {
-                prices.addProperty(entry.getKey(), entry.getValue());
-            }
-            data.add("prices", prices);
-            writeJson(response, 200, success(data));
-            return;
-        }
-        if (!"POST".equalsIgnoreCase(method)) {
-            writeJson(response, 405, failure("仅支持 GET/POST"));
-            return;
-        }
-        JsonObject body = readJsonObject(request);
-        String tool = stringField(body, "tool");
-        Integer cost = intField(body, "cost");
-        if (tool == null || tool.trim().isEmpty() || cost == null) {
-            throw new IllegalArgumentException("缺少 tool 或 cost");
-        }
-        try {
-            if (cost.intValue() < 0) {
-                store.removePrice(tool.trim());
-            } else {
-                store.setPrice(tool.trim(), cost.intValue());
-            }
-            JsonObject data = new JsonObject();
-            data.addProperty("tool", tool.trim());
-            data.addProperty("defaultPrice", defaultPrice);
-            data.addProperty("price", server.priceOf(tool.trim()));
-            writeJson(response, 200, success(data));
-        } catch (java.sql.SQLException ex) {
-            ex.printStackTrace();
-            throw new McpException(McpProtocol.ERROR_INTERNAL, "设置价格失败：" + ex.getMessage(), ex);
-        }
-    }
-
     /** 统计信息。 */
     private void status(Request request, Response response) {
         String uid = query(request, "uid");
         JsonObject data = new JsonObject();
         data.add("statistics", store.statistics(uid));
-        data.addProperty("defaultPrice", defaultPrice);
+        data.addProperty("callCost", server.getCallCost());
         data.addProperty("serverName", serverName);
         JsonArray tools = new JsonArray();
         for (ToolData tool : registry.getStaticTools()) {
@@ -455,7 +450,8 @@ public class McpServerEndpoint implements CallBack {
             JsonObject item = new JsonObject();
             item.addProperty("name", tool.name);
             item.addProperty("description", tool.description);
-            item.addProperty("price", server.priceOf(tool.name));
+            item.addProperty("price", server.getCallCost());
+            item.addProperty("callPrice", server.getCallCost());
             JsonObject params = new JsonObject();
             if (tool.params != null) {
                 for (Map.Entry<String, String> entry : tool.params.entrySet()) {
@@ -467,7 +463,7 @@ public class McpServerEndpoint implements CallBack {
         }
         JsonObject data = new JsonObject();
         data.add("tools", tools);
-        data.addProperty("defaultPrice", defaultPrice);
+        data.addProperty("callCost", server.getCallCost());
         writeJson(response, 200, success(data));
     }
 
@@ -476,7 +472,7 @@ public class McpServerEndpoint implements CallBack {
         McpAccessTokenStore.Token token = authenticate(request);
         JsonObject data = token.toJson();
         data.addProperty("paidBalance", store.getPaidBalance(token.getUid()));
-        data.addProperty("defaultPrice", defaultPrice);
+        data.addProperty("callCost", server.getCallCost());
         data.addProperty("toolCount", registry.list(token.getUid()).size());
         writeJson(response, 200, success(data));
     }

@@ -413,7 +413,9 @@ public class AISession implements ISaveData,AutoCloseable{
 			return result.getDisplay();
 		}
 		ToolCallManager manager = getToolCallManager();
-		return manager.resultDisplayFor(call, manager.displayFor(call), result.getResult());
+		MessageContents resultContent = result.getResult();
+		return manager.resultDisplayFor(call, manager.displayFor(call),
+				resultContent == null ? "" : resultContent.toText());
 	}
 
 	public AIOutput getCurrentOutput() {

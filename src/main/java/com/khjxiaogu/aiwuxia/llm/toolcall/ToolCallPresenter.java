@@ -34,9 +34,13 @@ public interface ToolCallPresenter {
 
 	/**
 	 * 转换一次工具结果。
+	 * <p>
+	 * 工具结果本身只提供给模型进一步处理，默认不展示给用户；需要展示时由本方法生成
+	 * 用户友好的摘要/内容，而不是把原始结果直接透出。
+	 * </p>
 	 *
 	 * @param call   对应的原始工具调用
-	 * @param result 工具返回的原始结果文本
+	 * @param result 工具结果的文本表示
 	 * @return 结果的具体内容显示，默认空（即只显示调用的简述）
 	 */
 	default ToolCallDisplay resultDisplay(ToolCall call, String result) {

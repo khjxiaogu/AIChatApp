@@ -13,9 +13,7 @@ import java.sql.Types;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpException;
@@ -30,11 +28,12 @@ import com.khjxiaogu.aiwuxia.mcp.protocol.McpProtocol;
  *   <li><b>令牌</b>：用户可以为自己创建多个访问令牌（明文只在创建时返回一次，库中只保存 SHA-256 摘要），
  *       支持备注名、有效期、单令牌额度上限、吊销；</li>
  *   <li><b>计费</b>：每次工具调用前从令牌所属用户的“额外配额”（{@code user_paid_balance}，即补充配额）
- *       中预扣费用，令牌额度不足或用户余额不足时拒绝调用；调用失败时自动退回；</li>
- *   <li><b>消费记录</b>：每次调用都写入 {@code mcp_tool_call_log}（含工具、费用、耗时、结果摘要、客户端 IP），
- *       成功调用另外写入现有的 {@code paid_usage_record} 与 {@code daily_usage}，
- *       因此可以在应用原有的用量统计里看到 MCP 消耗；</li>
- *   <li><b>价格</b>：{@code mcp_tool_price} 保存单工具价格，未配置的工具使用调用方传入的默认价格。</li>
+ *       中预扣固定调用费 {@link McpServer#CALL_COST}；工具执行完成后，再把工具内部产生的用量
+ *       （{@code AIOutput#addUsage} 写入的每一笔）按 {@code ceil(getEquivantTokens())} 合计补扣；
+ *       固定费用不足时拒绝调用，调用失败时退回固定费用；</li>
+ *   <li><b>消费记录</b>：每次调用都写入 {@code mcp_tool_call_log}（含工具、固定调用费、内部费用、
+ *       实际费用、耗时、结果摘要、客户端 IP），成功调用另外写入现有的 {@code paid_usage_record}
+ *       与 {@code daily_usage}，因此可以在应用原有的用量统计里看到 MCP 消耗。</li>
  * </ul>
  * <p>
  * 本类只依赖一个已打开的 SQLite {@link Connection}（与 {@code AIChatService} 共用 {@code messages.db}），
@@ -251,6 +250,8 @@ public class McpAccessTokenStore {
         private final String uid;
         private final String tool;
         private final int cost;
+        private final int callCost;
+        private final int usageCost;
         private final boolean ok;
         private final String error;
         private final String requestId;
@@ -259,13 +260,15 @@ public class McpAccessTokenStore {
         private final int resultChars;
         private final long createdAt;
 
-        UsageRecord(long id, long tokenId, String uid, String tool, int cost, boolean ok, String error,
-                String requestId, String clientIp, long durationMs, int resultChars, long createdAt) {
+        UsageRecord(long id, long tokenId, String uid, String tool, int cost, int callCost, int usageCost, boolean ok,
+                String error, String requestId, String clientIp, long durationMs, int resultChars, long createdAt) {
             this.id = id;
             this.tokenId = tokenId;
             this.uid = uid;
             this.tool = tool;
             this.cost = cost;
+            this.callCost = callCost;
+            this.usageCost = usageCost;
             this.ok = ok;
             this.error = error;
             this.requestId = requestId;
@@ -291,8 +294,19 @@ public class McpAccessTokenStore {
             return tool;
         }
 
+        /** 本次调用实际扣除的额外配额（失败时为 0）。 */
         public int getCost() {
             return cost;
+        }
+
+        /** 本次调用的固定调用费（名义值，失败时也保留）。 */
+        public int getCallCost() {
+            return callCost;
+        }
+
+        /** 工具内部用量折算出的费用。 */
+        public int getUsageCost() {
+            return usageCost;
         }
 
         public boolean isOk() {
@@ -335,6 +349,8 @@ public class McpAccessTokenStore {
             json.addProperty("uid", uid);
             json.addProperty("tool", tool);
             json.addProperty("cost", cost);
+            json.addProperty("callCost", callCost);
+            json.addProperty("usageCost", usageCost);
             json.addProperty("ok", ok);
             if (error != null && !error.isEmpty()) {
                 json.addProperty("error", error);
@@ -397,6 +413,8 @@ public class McpAccessTokenStore {
                     + "uid TEXT NOT NULL,"
                     + "tool TEXT NOT NULL,"
                     + "cost INTEGER NOT NULL DEFAULT 0,"
+                    + "call_cost INTEGER NOT NULL DEFAULT 0,"
+                    + "usage_cost INTEGER NOT NULL DEFAULT 0,"
                     + "ok INTEGER NOT NULL DEFAULT 0,"
                     + "error TEXT,"
                     + "request_id TEXT,"
@@ -406,9 +424,35 @@ public class McpAccessTokenStore {
                     + "created_at INTEGER NOT NULL)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_mcp_log_uid ON mcp_tool_call_log(uid, id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_mcp_log_token ON mcp_tool_call_log(token_id, id)");
-            stmt.execute("CREATE TABLE IF NOT EXISTS mcp_tool_price ("
-                    + "tool TEXT PRIMARY KEY,"
-                    + "cost INTEGER NOT NULL)");
+        }
+        // 兼容旧库：补上计费明细列（旧版本只有 cost 列）
+        ensureColumn("mcp_tool_call_log", "call_cost", "INTEGER NOT NULL DEFAULT 0");
+        ensureColumn("mcp_tool_call_log", "usage_cost", "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    /** 若表中缺少某列则补上（SQLite 的 ADD COLUMN 是幂等的补充操作）。 */
+    private void ensureColumn(String table, String column, String definition) throws SQLException {
+        try (Statement stmt = database.createStatement();
+                ResultSet rs = stmt.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (rs.next()) {
+                if (column.equalsIgnoreCase(rs.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        try (Statement stmt = database.createStatement()) {
+            stmt.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+        } catch (SQLException ex) {
+            // 并发初始化时另一个线程可能已经加过该列，确认列存在即可
+            try (Statement stmt = database.createStatement();
+                    ResultSet rs = stmt.executeQuery("PRAGMA table_info(" + table + ")")) {
+                while (rs.next()) {
+                    if (column.equalsIgnoreCase(rs.getString("name"))) {
+                        return;
+                    }
+                }
+            }
+            throw ex;
         }
     }
 
@@ -665,25 +709,55 @@ public class McpAccessTokenStore {
     }
 
     /**
-     * 工具调用成功：补写用户可见的消费记录（{@code paid_usage_record} 与 {@code daily_usage}），
-     * 并把 MCP 消费记录标记为成功。
+     * 工具调用成功：补扣工具内部用量产生的费用，补写用户可见的消费记录
+     * （{@code paid_usage_record} 与 {@code daily_usage}），并把 MCP 消费记录标记为成功。
+     * <p>
+     * 固定调用费已在 {@link #charge} 中预扣；本方法补扣 {@code usageCost}，并把
+     * {@code cost} 更新为两者的合计。内部用量已经真实产生，因此这里与主流程的
+     * {@code consumePaidTokens} 一样直接扣减余额（余额不足时可能为负），保证费用不丢失。
+     * </p>
      *
      * @param charge      预扣结果
+     * @param usageCost   工具内部用量折算出的费用（小于 0 按 0 处理）
      * @param durationMs  调用耗时（毫秒）
      * @param resultChars 结果字符数
      */
-    public synchronized void commit(Charge charge, long durationMs, int resultChars) {
+    public synchronized void commit(Charge charge, int usageCost, long durationMs, int resultChars) {
         if (charge == null) {
             return;
         }
-        if (charge.getCost() > 0) {
-            recordUserConsumption(charge.getUid(), charge.getCost());
+        int extra = Math.max(0, usageCost);
+        if (extra > 0) {
+            // 工具已经执行完成，内部用量对应的成本已经发生，按实际金额补扣
+            try (PreparedStatement ps = database.prepareStatement(
+                    "UPDATE user_paid_balance SET balance = balance - ? WHERE user_id = ?")) {
+                ps.setInt(1, extra);
+                ps.setString(2, charge.getUid());
+                ps.executeUpdate();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+            try (PreparedStatement ps = database.prepareStatement(
+                    "UPDATE mcp_access_token SET quota_used = quota_used + ? WHERE id = ?")) {
+                ps.setInt(1, extra);
+                ps.setLong(2, charge.getTokenId());
+                ps.executeUpdate();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+        }
+        long totalLong = (long) charge.getCost() + extra;
+        int total = totalLong > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) totalLong;
+        if (total > 0) {
+            recordUserConsumption(charge.getUid(), total);
         }
         try (PreparedStatement ps = database.prepareStatement(
-                "UPDATE mcp_tool_call_log SET ok = 1, duration_ms = ?, result_chars = ? WHERE id = ?")) {
-            ps.setLong(1, durationMs);
-            ps.setInt(2, resultChars);
-            ps.setLong(3, charge.getLogId());
+                "UPDATE mcp_tool_call_log SET ok = 1, cost = ?, usage_cost = ?, duration_ms = ?, result_chars = ? WHERE id = ?")) {
+            ps.setInt(1, total);
+            ps.setInt(2, extra);
+            ps.setLong(3, durationMs);
+            ps.setInt(4, resultChars);
+            ps.setLong(5, charge.getLogId());
             ps.executeUpdate();
         } catch (SQLException ex) {
             ex.printStackTrace();
@@ -691,7 +765,25 @@ public class McpAccessTokenStore {
     }
 
     /**
-     * 工具调用失败：退回预扣的额外配额与令牌额度，并把消费记录标记为失败。
+     * 旧版结算入口：不含工具内部用量（内部费用按 0 处理）。
+     *
+     * @param charge      预扣结果
+     * @param durationMs  调用耗时（毫秒）
+     * @param resultChars 结果字符数
+     * @deprecated 计费改为“固定调用费 + 工具内部用量”，请使用
+     *             {@link #commit(Charge, int, long, int)}
+     */
+    @Deprecated
+    public synchronized void commit(Charge charge, long durationMs, int resultChars) {
+        commit(charge, 0, durationMs, resultChars);
+    }
+
+    /**
+     * 工具调用失败：退回预扣的固定调用费与令牌额度，并把消费记录标记为失败。
+     * <p>
+     * 失败时内部用量不向用户收费，因此记录中的实际费用 {@code cost} 与内部费用均为 0，
+     * 只在 {@code call_cost} 中保留名义固定调用费。
+     * </p>
      *
      * @param charge 预扣结果
      * @param error  失败原因（写入消费记录）
@@ -712,7 +804,7 @@ public class McpAccessTokenStore {
             }
         }
         try (PreparedStatement ps = database.prepareStatement(
-                "UPDATE mcp_tool_call_log SET ok = 0, error = ?, duration_ms = ? WHERE id = ?")) {
+                "UPDATE mcp_tool_call_log SET ok = 0, cost = 0, usage_cost = 0, error = ?, duration_ms = ? WHERE id = ?")) {
             ps.setString(1, error == null ? "未知错误" : error);
             ps.setLong(2, Math.max(0, System.currentTimeMillis() - charge.getStartTime()));
             ps.setLong(3, charge.getLogId());
@@ -720,90 +812,6 @@ public class McpAccessTokenStore {
         } catch (SQLException ex) {
             ex.printStackTrace();
         }
-    }
-
-    // ==================== 价格 ====================
-
-    /**
-     * 查询某个工具的单次调用价格。
-     *
-     * @param tool         工具名称
-     * @param defaultPrice 未单独配置时使用的默认价格
-     * @return 价格（不小于 0）
-     */
-    public synchronized int priceOf(String tool, int defaultPrice) {
-        if (tool == null) {
-            return Math.max(0, defaultPrice);
-        }
-        try (PreparedStatement ps = database.prepareStatement("SELECT cost FROM mcp_tool_price WHERE tool = ?")) {
-            ps.setString(1, tool);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return Math.max(0, rs.getInt(1));
-                }
-            }
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-        }
-        return Math.max(0, defaultPrice);
-    }
-
-    /**
-     * 设置某个工具的单次调用价格（写入数据库，重启后仍生效）。
-     *
-     * @param tool 工具名称
-     * @param cost 价格，负数按 0 处理
-     * @throws SQLException 写入失败
-     */
-    public synchronized void setPrice(String tool, int cost) throws SQLException {
-        if (tool == null || tool.trim().isEmpty()) {
-            throw new IllegalArgumentException("工具名称不能为空");
-        }
-        try (PreparedStatement ps = database.prepareStatement(
-                "INSERT INTO mcp_tool_price (tool, cost) VALUES (?, ?)"
-                        + " ON CONFLICT(tool) DO UPDATE SET cost = ?")) {
-            ps.setString(1, tool.trim());
-            ps.setInt(2, Math.max(0, cost));
-            ps.setInt(3, Math.max(0, cost));
-            ps.executeUpdate();
-        }
-    }
-
-    /**
-     * 删除某个工具的价格配置（恢复使用默认价格）。
-     *
-     * @param tool 工具名称
-     * @return 实际删除了配置返回 true
-     */
-    public synchronized boolean removePrice(String tool) {
-        if (tool == null) {
-            return false;
-        }
-        try (PreparedStatement ps = database.prepareStatement("DELETE FROM mcp_tool_price WHERE tool = ?")) {
-            ps.setString(1, tool);
-            return ps.executeUpdate() > 0;
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-            return false;
-        }
-    }
-
-    /**
-     * 全部已配置的单工具价格。
-     *
-     * @return 工具名称 → 价格（保持插入顺序）
-     */
-    public synchronized Map<String, Integer> prices() {
-        Map<String, Integer> result = new LinkedHashMap<>();
-        try (Statement stmt = database.createStatement();
-                ResultSet rs = stmt.executeQuery("SELECT tool, cost FROM mcp_tool_price ORDER BY tool")) {
-            while (rs.next()) {
-                result.put(rs.getString(1), rs.getInt(2));
-            }
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-        }
-        return result;
     }
 
     // ==================== 消费记录查询 ====================
@@ -874,7 +882,8 @@ public class McpAccessTokenStore {
             }
             String logSql = "SELECT COUNT(*) AS total,"
                     + " SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS okCount,"
-                    + " SUM(cost) AS cost FROM mcp_tool_call_log"
+                    + " SUM(cost) AS cost, SUM(call_cost) AS callCost, SUM(usage_cost) AS usageCost"
+                    + " FROM mcp_tool_call_log"
                     + (userFilter == null ? "" : " WHERE uid = ?");
             try (PreparedStatement ps = database.prepareStatement(logSql)) {
                 if (userFilter != null) {
@@ -885,6 +894,8 @@ public class McpAccessTokenStore {
                         json.addProperty("callTotal", rs.getInt("total"));
                         json.addProperty("callOk", rs.getInt("okCount"));
                         json.addProperty("costTotal", rs.getInt("cost"));
+                        json.addProperty("callCostTotal", rs.getInt("callCost"));
+                        json.addProperty("usageCostTotal", rs.getInt("usageCost"));
                     }
                 }
             }
@@ -961,16 +972,17 @@ public class McpAccessTokenStore {
     /** 写入一条待完成的消费记录，返回主键。 */
     private long insertLog(Token token, String tool, int cost, String clientIp, String requestId, long now) {
         String sql = "INSERT INTO mcp_tool_call_log"
-                + " (token_id, uid, tool, cost, ok, request_id, client_ip, duration_ms, result_chars, created_at)"
-                + " VALUES (?, ?, ?, ?, 0, ?, ?, 0, 0, ?)";
+                + " (token_id, uid, tool, cost, call_cost, usage_cost, ok, request_id, client_ip, duration_ms, result_chars, created_at)"
+                + " VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, 0, 0, ?)";
         try (PreparedStatement ps = database.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             ps.setLong(1, token.getId());
             ps.setString(2, token.getUid());
             ps.setString(3, tool == null ? "" : tool);
             ps.setInt(4, cost);
-            ps.setString(5, requestId);
-            ps.setString(6, clientIp);
-            ps.setLong(7, now);
+            ps.setInt(5, cost);
+            ps.setString(6, requestId);
+            ps.setString(7, clientIp);
+            ps.setLong(8, now);
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (keys.next()) {
@@ -997,9 +1009,10 @@ public class McpAccessTokenStore {
     /** 从结果集读取消费记录。 */
     private static UsageRecord readUsage(ResultSet rs) throws SQLException {
         return new UsageRecord(rs.getLong("id"), rs.getLong("token_id"), rs.getString("uid"),
-                rs.getString("tool"), rs.getInt("cost"), rs.getInt("ok") != 0, rs.getString("error"),
-                rs.getString("request_id"), rs.getString("client_ip"), rs.getLong("duration_ms"),
-                rs.getInt("result_chars"), rs.getLong("created_at"));
+                rs.getString("tool"), rs.getInt("cost"), rs.getInt("call_cost"), rs.getInt("usage_cost"),
+                rs.getInt("ok") != 0, rs.getString("error"), rs.getString("request_id"),
+                rs.getString("client_ip"), rs.getLong("duration_ms"), rs.getInt("result_chars"),
+                rs.getLong("created_at"));
     }
 
     /** 生成令牌明文：{@code mcp_} + 随机十六进制。 */

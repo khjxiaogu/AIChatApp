@@ -48,6 +48,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -63,12 +64,14 @@ import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
+import com.khjxiaogu.aiwuxia.mcp.LocalVoiceMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.PainterMediaMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.mcp.client.McpClientManager;
 import com.khjxiaogu.aiwuxia.mcp.server.McpAccessTokenStore;
 import com.khjxiaogu.aiwuxia.mcp.server.McpBuiltinTools;
+import com.khjxiaogu.aiwuxia.mcp.server.McpServer;
 import com.khjxiaogu.aiwuxia.mcp.server.McpServerEndpoint;
 import com.khjxiaogu.aiwuxia.mcp.server.McpToolRegistry;
 import com.khjxiaogu.aiwuxia.mcp.server.McpToolSource;
@@ -156,6 +159,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	protected Map<String, AISession> uidsockets = new ConcurrentHashMap<>();
 	/** 绘画师图片存储，使用DelegatingStorage（本地+TOS）持久化存储 */
 	protected ObjectStorageProvider painterStorage;
+	/** 本地语音文件存储（save/voice），供本地语音 MCP 保存和读取音频 id */
+	protected ObjectStorageProvider voiceStorage;
 
 	// ==================== 绘画会话共享工具 ====================
 	// 这些工具只依赖服务级配置（图片存储、Lora、角色提示词），与具体会话无关，
@@ -384,8 +389,6 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		LLMConnector.initDefault();
 		VoiceModelHandler.init(path);
 		parent = path;
-		// MCP 服务端（把本地 ToolData 暴露给外部）与客户端（把外部 ToolData 接入本地）初始化
-		initMcp(path);
 		saveData = new File(path, "saveData");
 		saveData.mkdirs();
 		resource = new FilePageService(new File(parent, "resource"));
@@ -404,7 +407,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			painterStorage = new LocalStorage(new File(parent, "painter_images"));
 			logger.info("绘画图片存储: 仅本地 (TOS初始化失败)");
 		}
+		// 本地语音文件存储：与 /voice 静态目录一致，供本地语音 MCP 保存和按 id 读取音频
+		voiceStorage = new LocalStorage(new File(parent, "voice"));
 		initPainterTools();
+		// MCP 服务端（把本地 ToolData 暴露给外部）与客户端（把外部 ToolData 接入本地）初始化。
+		// 放在绘画存储与 SDXL 工具初始化之后，MCP 服务端可以直接暴露按用户创建的 SDXL 图片工具。
+		initMcp(path);
 		reload();
 	}
 
@@ -472,8 +480,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/**
 	 * 初始化 MCP 服务端与客户端。
 	 * <p>
-	 * 服务端读取 {@code save/mcp.json}（可选）：默认单次调用价格、是否暴露在线会话工具、写入用量统计的类型；
-	 * 然后创建访问令牌存储（与主库共用 {@code messages.db}）、工具注册表并注册内置自检工具。
+	 * 服务端读取 {@code save/mcp.json}（可选）：是否暴露在线会话工具、写入用量统计的类型；
+	 * 然后创建访问令牌存储（与主库共用 {@code messages.db}）、工具注册表并注册内置自检工具、
+	 * 角色设定工具与按用户创建的 SDXL 图片工具。
+	 * 每次工具调用固定扣除 {@link McpServer#CALL_COST} 额外配额，工具内部产生的用量另行结算。
 	 * 客户端读取 {@code save/mcp-client.json}，在后台线程连接配置中的 MCP 服务端，
 	 * 连接成功后把远程工具注册到在线会话。
 	 * </p>
@@ -524,7 +534,6 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * @throws Exception 初始化失败（调用方记录日志并降级为不启用）
 	 */
 	private void initMcpServer(File path, JsonObject config) throws Exception {
-		int defaultPrice = config.has("defaultPrice") ? Math.max(0, config.get("defaultPrice").getAsInt()) : 1000;
 		String usageType = config.has("usageType") ? config.get("usageType").getAsString()
 				: McpAccessTokenStore.DEFAULT_USAGE_TYPE;
 		boolean exposeSessionTools = config.has("exposeSessionTools")
@@ -535,6 +544,25 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		McpBuiltinTools.register(registry);
 		// 角色设定查询工具：数据来自绘画 agent 目录下的人类可读索引 character-list.txt
 		registry.registerAll(new CharacterSettingMcp(path).getTools());
+		// 本地语音合成：列出可用说话人 + 用 VoiceTagger 标注后合成并存入本地语音存储
+		registry.registerAll(new LocalVoiceMcp(voiceStorage).getTools());
+		// 把 AIChatService 中按用户创建的 SDXL 图片工具暴露给 MCP：
+		// 外部调用与绘画会话使用同一套工具，用户接入自己的本地绘画模型时同样优先使用该用户的模型。
+		registry.addSource(new McpToolSource() {
+			@Override
+			public String getName() {
+				return "sdxl";
+			}
+
+			@Override
+			public Collection<ToolData> getTools(String uid) {
+				List<ToolData> tools = new ArrayList<>(painterImageGeneratorFor(uid).getTools());
+				if (painterSearchCharacterTool != null) {
+					tools.add(painterSearchCharacterTool);
+				}
+				return tools;
+			}
+		});
 		if (exposeSessionTools) {
 			// 可选：让令牌所属用户调用自己在线会话中的工具（默认关闭，避免远程触发聊天副作用）
 			registry.addSource(new McpToolSource() {
@@ -564,9 +592,47 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				}
 			});
 		}
-		mcpEndpoint = new McpServerEndpoint(registry, mcpTokenStore, defaultPrice, "AIWuxia-MCP", "0.0.1");
-		logger.info("MCP 服务端已启用：/aichat/mcp，默认单次价格 " + defaultPrice + " 额外配额"
-				+ (exposeSessionTools ? "，并暴露在线会话工具" : ""));
+		mcpEndpoint = new McpServerEndpoint(registry, mcpTokenStore, "AIWuxia-MCP", "0.0.1",
+				this::resolveMcpMediaUrl);
+		logger.info("MCP 服务端已启用：/aichat/mcp，固定调用费 " + McpServer.CALL_COST + " 额外配额 + 工具内部用量"
+				+ "，已暴露 SDXL 图片工具与本地语音工具" + (exposeSessionTools ? "，并暴露在线会话工具" : ""));
+	}
+
+	/**
+	 * MCP 服务端的多媒体 id → 链接解析：先查本地语音存储（{@code /voice/}），
+	 * 再查绘画图片存储（TOS/本地）的
+	 * {@link ObjectStorageProvider#getPublicUrl(String, Consumer)} 转换成可访问链接。
+	 *
+	 * @param id       多媒体 id（图片/音频/视频）
+	 * @param addUsage 解析过程中产生的用量接收方，可为 null
+	 * @return 可访问链接；存储未初始化或解析失败时返回原 id
+	 */
+	private String resolveMcpMediaUrl(String id, Consumer<UsageIntf<?>> addUsage) {
+		if (id == null || id.isEmpty()) {
+			return id;
+		}
+		// 语音文件优先走 voice 存储；图片/视频等再走绘画图片存储
+		ObjectStorageProvider voice = voiceStorage;
+		if (voice != null) {
+			try {
+				if (voice.exists(id, addUsage)) {
+					// 与 /voice 静态文件服务保持一致，返回可直接访问的链接而不是 base64
+					return urlbase + "/voice/" + id;
+				}
+			} catch (Exception ex) {
+				logger.warning("MCP 语音链接解析失败：" + id + "，原因：" + ex.getMessage());
+			}
+		}
+		ObjectStorageProvider storage = painterStorage;
+		if (storage == null) {
+			return id;
+		}
+		try {
+			return storage.getPublicUrl(id, addUsage);
+		} catch (Exception ex) {
+			logger.warning("MCP 多媒体链接解析失败：" + id + "，原因：" + ex.getMessage());
+			return id;
+		}
 	}
 
 	/** MCP 服务端端点（由 {@code /aichat/mcp} 转发），未启用时为 null。 */

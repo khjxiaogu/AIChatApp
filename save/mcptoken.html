@@ -92,8 +92,9 @@
   <h1>MCP 访问令牌</h1>
   <p class="sub">
     访问令牌用于让外部 MCP 客户端（如 Claude、VS Code、自建脚本）调用本服务的工具。
-    每次工具调用都会从令牌所属用户的<strong>额外配额（补充配额）</strong>中扣费，并记录消费明细。
-    令牌明文只显示一次，请妥善保存。
+    每次工具调用固定扣除 <strong>100</strong> 额外配额，工具内部产生的用量（模型调用、图片/视频生成、
+    搜索、存储等）按实际用量另行结算，全部从令牌所属用户的<strong>额外配额（补充配额）</strong>中扣除，
+    并记录消费明细。令牌明文只显示一次，请妥善保存。
   </p>
 
   <div class="card">
@@ -102,7 +103,7 @@
       <div class="stat"><b id="tokenTotal">-</b><span>令牌数</span></div>
       <div class="stat"><b id="callTotal">-</b><span>累计调用</span></div>
       <div class="stat"><b id="costTotal">-</b><span>累计消费</span></div>
-      <div class="stat"><b id="defaultPrice">-</b><span>默认单次价格</span></div>
+      <div class="stat"><b id="callCost">-</b><span>固定调用费用</span></div>
     </div>
   </div>
 
@@ -199,7 +200,7 @@
     var tokens = data.tokens || [];
     document.getElementById('stats').style.display = 'flex';
     document.getElementById('paidBalance').textContent = data.paidBalance == null ? '-' : data.paidBalance;
-    document.getElementById('defaultPrice').textContent = data.defaultPrice == null ? '-' : data.defaultPrice;
+    document.getElementById('callCost').textContent = data.callCost == null ? '-' : data.callCost;
     document.getElementById('tokenTotal').textContent = tokens.length;
 
     var rows = tokens.map(function (token) {
@@ -249,7 +250,8 @@
         '<td class="muted">' + esc(record.createdAtText || fmtTime(record.createdAt)) + '</td>' +
         '<td>' + esc(tokenNames[record.tokenId] || ('#' + record.tokenId)) + '</td>' +
         '<td class="mono">' + esc(record.tool) + '</td>' +
-        '<td>' + esc(record.cost) + '</td>' +
+        '<td title="调用费 ' + esc(record.callCost) + ' + 内部用量 ' + esc(record.usageCost) + '">' +
+        esc(record.cost) + '</td>' +
         '<td>' + (record.ok ? '<span class="tag ok">成功</span>' : '<span class="tag off">失败</span>') + '</td>' +
         '<td class="muted">' + esc(record.durationMs) + ' ms</td>' +
         '<td class="muted">' + esc(record.error || '') + '</td>' +

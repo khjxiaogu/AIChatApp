@@ -590,9 +590,10 @@ public class ToolCallContext {
 			if (result == null) {
 				return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
 			}
-			// 工具附件不经过 AIOutput，直接交给会话写入当前上下文
+			// 工具附件给用户（由会话写入上下文并发送），结果内容只交给模型处理
 			manager.publishAttachments(result.getAttachments());
-			return new ToolContent(call.id, result.getText(), buildResultDisplay(call, callDisplay, result.getText()));
+			String resultText = result.getText();
+			return new ToolContent(call.id, result.getContent(), buildResultDisplay(call, callDisplay, resultText));
 		} catch (InterruptedException ex) {
 			Thread.currentThread().interrupt();
 			return notExecuted(call, manager.getToolErrorMessage(), callDisplay);
