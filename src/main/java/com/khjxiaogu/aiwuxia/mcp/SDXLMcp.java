@@ -431,7 +431,8 @@ public class SDXLMcp implements ToolProvider {
 		resolutions.put("3:4", new int[] { 1200, 1600 });
 		resolutions.put("4:3", new int[] { 1600, 1200 });
 		resolutions.put("1:1", new int[] { 1200, 1200 });
-		for (String s : "low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,missing fingers,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs,trademark,artist's name,username,watermark,signature,watermark,text,words,extra limbs,missing limbs,distorted,blurry,fused toes,too many toes,extra toes"
+		// 手部相关的负向词默认覆盖多指/缺指/粘连等；正向补强由绘画子 agent 的提示词负责
+		for (String s : "low quality,bad anatomy,unnatural hair color,bad feet,malformed hands,bad hands,deformed hands,missing fingers,extra fingers,extra digits,fused fingers,too many fingers,poorly drawn hands,malformed limbs,missing limb,mutated hands,extra arms,extra limb,mutated hands and fingers,extra legs,floating limbs,disconnected limbs,trademark,artist's name,username,watermark,signature,watermark,text,words,extra limbs,missing limbs,distorted,blurry,fused toes,too many toes,extra toes"
 				.split(",")) {
 			commonNegatives.add(new PromptClass(s));
 		}

@@ -10,12 +10,38 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 
 public class HistoryCompactor {
 	public static interface DoHistoryCompact{
 		void compact(String str) throws IOException;
 	}
+
+	/**
+	 * 只取条目里的纯文本内容。
+	 * <p>
+	 * 图片、音频、视频、工具调用/工具结果等非文本段一律跳过：这些内容要么体积很大
+	 * （例如图片的 base64 data URL），要么不适合写进摘要提示词。摘要只压对话文本，
+	 * 避免摘要请求本身超出模型的上下文上限。
+	 * </p>
+	 *
+	 * @param contents 条目内容，可为 null
+	 * @return 纯文本拼接结果，不为 null
+	 */
+	private static String plainTextOnly(MessageContents contents) {
+		if (contents == null) {
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (MessageContent content : contents) {
+			if (content != null && content.isPlainText()) {
+				sb.append(content.toText());
+			}
+		}
+		return sb.toString();
+	}
+
 	public static void compact(HistoryHolder history,int limit,int min,
 		Function<Role,String> roleNameTag,
 		DoHistoryCompact compactor) throws IOException {
@@ -67,8 +93,12 @@ public class HistoryCompactor {
 				HistoryItem hi=it.next();
 				len-=hi.getTokenLength();
 				if(hi.getRole()!=Role.SYSTEM) {
-					summery.append(roleNameTag.apply(hi.getRole()));
-					summery.append(hi.getDisplayContent()).append("\n");
+					// 只用纯文本：图片等非文本内容不进入摘要（显示内容里可能带完整 base64）
+					String text=plainTextOnly(hi.getDisplayContent());
+					if(!text.trim().isEmpty()) {
+						summery.append(roleNameTag.apply(hi.getRole()));
+						summery.append(text).append("\n");
+					}
 				}
 				his.add(hi);
 				
