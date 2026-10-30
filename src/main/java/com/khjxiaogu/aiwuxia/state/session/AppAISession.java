@@ -86,9 +86,17 @@ public class AppAISession extends AISession {
 		if (arguments == null || arguments.trim().isEmpty()) {
 			arguments = request.getArguments();
 		}
-		request.setResult(window.confirm("模型请求执行工具（" + request.getToolName() + "），是否允许？\n"
+		boolean approved = window.confirm("模型请求执行工具（" + request.getToolName() + "），是否允许？\n"
 				+ (request.getReason() == null ? "" : "原因：" + request.getReason() + "\n")
-				+ "参数：\n" + arguments));
+				+ "参数：\n" + arguments);
+		if (approved) {
+			request.approve();
+			return;
+		}
+		// 拒绝时允许填写原因，原因会作为工具结果回传给模型；留空则使用默认未许可提示
+		String denyReason = window.prompt("已拒绝执行工具「" + request.getToolName()
+				+ "」。\n可填写拒绝原因（会转告模型，留空使用默认提示）：");
+		request.deny(denyReason == null || denyReason.trim().isEmpty() ? null : denyReason.trim());
 	}
 
 	/**

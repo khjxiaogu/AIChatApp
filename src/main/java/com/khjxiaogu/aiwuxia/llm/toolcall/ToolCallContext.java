@@ -524,10 +524,12 @@ public class ToolCallContext {
 		if (decision.needsApproval()) {
 			ToolCallApprover approver = manager.getApprover();
 			// 参数名换成工具声明的人可读名称，审核界面不必直接展示 JSON
-			boolean approved = approver != null && approver.approve(call.function.name, call.function.arguments,
-					data.formatArguments(call.function.arguments), decision.getReason());
-			// 许可原因只用于向许可方说明，回传给模型的是“未获许可”的结果
-			decision = approved ? ToolCallDecision.ALLOW : ToolCallDecision.deny(manager.getUnapprovedMessage());
+			// 许可方可在拒绝时附带原因；该原因会替换默认的“未获许可”文案回传给模型
+			ToolApprovalResult approval = approver == null ? ToolApprovalResult.DENY
+					: approver.decide(call.function.name, call.function.arguments,
+							data.formatArguments(call.function.arguments), decision.getReason());
+			decision = approval.isApproved() ? ToolCallDecision.ALLOW
+					: ToolCallDecision.deny(approval.getReasonOr(manager.getUnapprovedMessage()));
 		}
 		if (!decision.isAllowed()) {
 			return Execution.finished(notExecuted(call, decision.getReasonOr(ToolCallManager.DEFAULT_DENY_MESSAGE), callDisplay));

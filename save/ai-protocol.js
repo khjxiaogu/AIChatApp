@@ -1124,9 +1124,17 @@
 			aiSendPromptReply: function (input, content) {
 				return this.aiSendFrame('prompt', { input: input, content: content });
 			},
-			/** 回答工具调用许可请求 */
-			aiSendToolApproval: function (id, approved) {
-				return this.aiSendFrame('toolApproval', { id: id, approved: !!approved });
+			/**
+			 * 回答工具调用许可请求。
+			 * @param {string} id 请求 id
+			 * @param {boolean} approved 是否允许
+			 * @param {string} [reason] 拒绝原因，会作为工具结果回传给模型
+			 */
+			aiSendToolApproval: function (id, approved, reason) {
+				var frame = { id: id, approved: !!approved };
+				if (!approved && reason != null && String(reason).length)
+					frame.reason = String(reason);
+				return this.aiSendFrame('toolApproval', frame);
 			},
 
 			/* ================= 动画管道（帧顺序 + 可等待的条件） ================= */

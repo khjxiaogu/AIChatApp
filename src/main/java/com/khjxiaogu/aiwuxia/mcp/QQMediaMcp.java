@@ -17,6 +17,11 @@ import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
  * 工具只校验图片 id 并把 {@link ImageContent} 放进工具结果，真正的发送由 QQ 会话处理，
  * 通用工具不直接调用任何 QQ 接口。
  * </p>
+ * <p>
+ * 附件里保存的是<b>图片 id</b>（对象存储键），不是图片内容本身：QQ 会话发送时再按 id
+ * 从对象存储取图。这样历史记录不会因为图片被写成 base64 data URL 而膨胀，摘要提示也不会
+ * 把整张图片当成正文。
+ * </p>
  */
 public class QQMediaMcp {
 
@@ -55,8 +60,9 @@ public class QQMediaMcp {
 							return CompletableFuture.completedFuture(ToolResult.text("图片id不存在"
 									+ (fn.length() == 72 ? "" : "，该错误是因为图片ID长度不是72导致，请检查输入") + "。"));
 						}
-						return CompletableFuture.completedFuture(ToolResult.of("图片已提交发送", new ImageContent(
-								tos.getUrl(fn, output == null ? null : output::addUsage), null, isNsfw)));
+						// 只保存图片 id，发送时由 QQ 会话从对象存储取图；不要把 base64 写进附件
+						return CompletableFuture.completedFuture(ToolResult.of("图片已提交发送",
+								new ImageContent(fn, null, isNsfw)));
 					} catch (Throwable t) {
 						t.printStackTrace();
 					}
