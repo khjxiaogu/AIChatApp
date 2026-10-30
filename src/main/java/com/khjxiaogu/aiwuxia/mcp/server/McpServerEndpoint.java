@@ -3,6 +3,7 @@ package com.khjxiaogu.aiwuxia.mcp.server;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -13,6 +14,7 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpException;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpJson;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpProtocol;
+import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 import com.khjxiaogu.webserver.web.CallBack;
 import com.khjxiaogu.webserver.web.lowlayer.Request;
@@ -29,6 +31,7 @@ import io.netty.buffer.ByteBuf;
  *   <li>{@code /aichat/mcp}：MCP JSON-RPC 端点。POST 处理请求，GET/DELETE 按协议返回 405/200；</li>
  *   <li>{@code /aichat/mcp/token}、{@code /aichat/mcp/token/revoke}、{@code /aichat/mcp/token/delete}：令牌创建/列表/吊销/删除；</li>
  *   <li>{@code /aichat/mcp/usage}：消费记录查询；</li>
+ *   <li>{@code /aichat/mcp/media?file_id=...}：MCP 生成内容的统一访问入口（图片、语音等）；</li>
  *   <li>{@code /aichat/mcp/status}、{@code /aichat/mcp/tools}：统计与工具列表；</li>
  *   <li>{@code /aichat/mcp/whoami}：用令牌自检（需要 Authorization）。</li>
  * </ul>
@@ -51,6 +54,8 @@ public class McpServerEndpoint implements CallBack {
     private final McpServer server;
     /** 服务名称（写入 initialize 响应与状态接口）。 */
     private final String serverName;
+    /** MCP 生成内容的统一本地存储，供 {@code /media} 入口下载。 */
+    private final ObjectStorageProvider mediaStorage;
     /** 日志记录器。 */
     private final SimpleLogger logger = new SimpleLogger("MCP");
 
@@ -64,7 +69,7 @@ public class McpServerEndpoint implements CallBack {
      */
     public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
             String serverVersion) {
-        this(registry, store, serverName, serverVersion, null);
+        this(registry, store, serverName, serverVersion, null, null);
     }
 
     /**
@@ -78,9 +83,26 @@ public class McpServerEndpoint implements CallBack {
      */
     public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
             String serverVersion, McpServer.MediaUrlResolver mediaUrlResolver) {
+        this(registry, store, serverName, serverVersion, mediaUrlResolver, null);
+    }
+
+    /**
+     * 创建 HTTP 端点，并指定 MCP 生成内容的统一本地存储。
+     *
+     * @param registry        工具注册表
+     * @param store           令牌与计费存储
+     * @param serverName      服务名称
+     * @param serverVersion   服务版本
+     * @param mediaUrlResolver 多媒体 id → 链接解析器，可为 null
+     * @param mediaStorage    统一媒体存储，供 {@code /media?file_id=...} 下载，可为 null
+     */
+    public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
+            String serverVersion, McpServer.MediaUrlResolver mediaUrlResolver,
+            ObjectStorageProvider mediaStorage) {
         this.registry = registry;
         this.store = store;
         this.serverName = serverName == null ? "AIWuxia-MCP" : serverName;
+        this.mediaStorage = mediaStorage;
         this.server = new McpServer(registry, store, this.serverName, serverVersion, mediaUrlResolver);
     }
 
@@ -294,6 +316,10 @@ public class McpServerEndpoint implements CallBack {
             return;
         }
         try {
+            if ("/media".equals(path) || "/file".equals(path)) {
+                media(request, response);
+                return;
+            }
             if ("/token".equals(path)) {
                 if ("GET".equalsIgnoreCase(method)) {
                     listTokens(request, response);
@@ -337,6 +363,121 @@ public class McpServerEndpoint implements CallBack {
             ex.printStackTrace();
             writeJson(response, 500, failure("服务端内部错误"));
         }
+    }
+
+    /**
+     * MCP 生成内容的统一访问入口。
+     * <p>
+     * 所有 MCP 工具生成的图片、语音等都会写入同一个本地存储，对外只暴露
+     * {@code GET /aichat/mcp/media?file_id=...}。文件 id 由工具写入存储时生成，
+     * 入口按扩展名或文件魔数返回正确的 Content-Type。
+     * </p>
+     */
+    private void media(Request request, Response response) {
+        if (!"GET".equalsIgnoreCase(request.getMethod())) {
+            response.setHeader("Allow", "GET");
+            writeJson(response, 405, failure("仅支持 GET"));
+            return;
+        }
+        String id = query(request, "file_id");
+        if (id == null || id.trim().isEmpty()) {
+            // 兼容简写 id 参数
+            id = query(request, "id");
+        }
+        if (id == null || id.trim().isEmpty()) {
+            writeJson(response, 400, failure("缺少文件 id（file_id）"));
+            return;
+        }
+        id = id.trim();
+        if (!isSafeMediaId(id)) {
+            writeJson(response, 400, failure("非法的文件 id"));
+            return;
+        }
+        if (mediaStorage == null) {
+            writeJson(response, 404, failure("MCP 媒体存储未启用"));
+            return;
+        }
+        try {
+            byte[] data = mediaStorage.download(id, null);
+            if (data == null || data.length == 0) {
+                writeJson(response, 404, failure("文件不存在或已清理"));
+                return;
+            }
+            response.setHeader("Content-Type", mediaContentType(id, data));
+            response.setHeader("Cache-Control", "public, max-age=86400");
+            response.setHeader("Access-Control-Allow-Origin", "*");
+            response.write(200, data);
+        } catch (Throwable ex) {
+            writeJson(response, 404, failure("文件不存在或已清理：" + id));
+        }
+    }
+
+    /** 媒体 id 只允许安全字符，避免路径穿越。 */
+    private static boolean isSafeMediaId(String id) {
+        if (id == null || id.isEmpty() || id.contains("..") || id.indexOf('/') >= 0 || id.indexOf('\\') >= 0) {
+            return false;
+        }
+        return id.matches("[A-Za-z0-9._-]+");
+    }
+
+    /** 根据扩展名或文件魔数推断 Content-Type。 */
+    private static String mediaContentType(String id, byte[] data) {
+        String lower = id.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".svg")) return "image/svg+xml";
+        if (lower.endsWith(".mp3")) return "audio/mpeg";
+        if (lower.endsWith(".wav")) return "audio/wav";
+        if (lower.endsWith(".ogg")) return "audio/ogg";
+        if (lower.endsWith(".m4a")) return "audio/mp4";
+        if (lower.endsWith(".flac")) return "audio/flac";
+        if (lower.endsWith(".aac")) return "audio/aac";
+        if (lower.endsWith(".mp4")) return "video/mp4";
+        if (lower.endsWith(".webm")) return "video/webm";
+        if (lower.endsWith(".json")) return "application/json";
+        if (lower.endsWith(".txt")) return "text/plain";
+        // 图片 id 通常没有扩展名（内容哈希），用文件头判断
+        return sniffMediaType(data);
+    }
+
+    /** 通过文件头识别常见图片/音频/视频类型。 */
+    private static String sniffMediaType(byte[] data) {
+        if (data == null || data.length < 4) {
+            return "application/octet-stream";
+        }
+        if ((data[0] & 0xFF) == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G') {
+            return "image/png";
+        }
+        if ((data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0xD8 && (data[2] & 0xFF) == 0xFF) {
+            return "image/jpeg";
+        }
+        if (data[0] == 'G' && data[1] == 'I' && data[2] == 'F' && data[3] == '8') {
+            return "image/gif";
+        }
+        if (data.length >= 12 && data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F') {
+            if (data[8] == 'W' && data[9] == 'E' && data[10] == 'B' && data[11] == 'P') {
+                return "image/webp";
+            }
+            if (data[8] == 'W' && data[9] == 'A' && data[10] == 'V' && data[11] == 'E') {
+                return "audio/wav";
+            }
+        }
+        if (data[0] == 'O' && data[1] == 'g' && data[2] == 'g' && data[3] == 'S') {
+            return "audio/ogg";
+        }
+        if (data[0] == 'I' && data[1] == 'D' && data[2] == '3') {
+            return "audio/mpeg";
+        }
+        if ((data[0] & 0xFF) == 0xFF
+                && ((data[1] & 0xFF) == 0xFB || (data[1] & 0xFF) == 0xF3 || (data[1] & 0xFF) == 0xF2)) {
+            return "audio/mpeg";
+        }
+        if (data.length >= 12 && data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p') {
+            return "video/mp4";
+        }
+        return "application/octet-stream";
     }
 
     /**

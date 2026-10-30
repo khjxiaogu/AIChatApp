@@ -133,19 +133,27 @@ registry.addSource(new McpToolSource() {
 
 服务端还会按令牌所属用户暴露 `AIChatService` 中的 SDXL 图片工具（`image_interrogate`、
 `sdxl_gen_image`、`regional_image`、`image_to_image`，以及配置了角色列表时的 `search_character`），
-与绘画会话使用同一套按用户绑定的本地模型。工具结果中的图片/音频/视频 id 以及
-`图片id：...`、`<image id=...>` 这类多媒体引用，会统一通过绘画图片存储（TOS/本地）的
-`getPublicUrl` 转换成可访问链接后再返回，不会把内部 id 直接发给 MCP 客户端。
+与绘画会话使用同一套按用户绑定的本地模型。
 
 同时注册本地语音工具：
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
 | `list_voice_speakers` | 无 | 列出本地语音配置中的全部可用说话人（角色名称） |
-| `generate_voice` | `role`、`text` | 用角色名称和话语内容生成语音；内部先经过 `VoiceTagger` 分句与情感标注，再调用本地语音模型，音频保存到 `save/voice` 后以 `AudioContent` 返回音频 id |
+| `generate_voice` | `role`、`text` | 用角色名称和话语内容生成语音；内部先经过 `VoiceTagger` 分句与情感标注，再调用本地语音模型 |
 
-`generate_voice` 返回的音频 id 同样会由 MCP 服务端通过本地语音存储转换成可访问链接，
-不会直接把 id 发给客户端。
+**MCP 生成内容统一存储与访问**：
+
+- 所有 MCP 工具生成的图片、语音等内容统一写入 MCP 本地存储（`save/mcp_files`）；
+- 对外统一使用一个入口 + 文件 id 参数访问：
+
+```text
+GET /aichat/mcp/media?file_id=<文件id>
+```
+
+- 工具结果里可以放对象存储 id，MCP 服务端会把它以及 `图片id：...`、`<image id=...>` 等多媒体引用
+  统一转换为上面的入口链接，不再直接返回内部 id，也不再区分图片/语音各自的访问路径；
+- 图片 id 没有扩展名时，入口会根据文件头自动识别 `Content-Type`。
 
 ### 2.4 访问令牌
 
@@ -183,6 +191,7 @@ mcp_tool_call_log(id, token_id, uid, tool, cost, call_cost, usage_cost,
 | `GET` | `/aichat/mcp/usage?uid=&tokenId=&limit=` | 消费记录 + 汇总统计 |
 | `GET` | `/aichat/mcp/status` | 统计信息 |
 | `GET` | `/aichat/mcp/tools?uid=` | 当前暴露的工具列表 |
+| `GET` | `/aichat/mcp/media?file_id=` | MCP 生成内容的统一访问入口（图片、语音等） |
 | `GET` | `/aichat/mcp/whoami` | 用令牌自检（需要 `Authorization`） |
 
 ### 2.5 计费规则

@@ -55,6 +55,7 @@ save/                                  ← 数据根目录（所有东西都在�
 ├─ site.json                           ← 站点域名
 ├─ resource/                           ← 立绘、背景等图片资源（网页访问 /aichat/resource/…）
 ├─ voice/                              ← 生成的语音文件（网页访问 /aichat/voice/…）
+├─ mcp_files/                          ← MCP 生成内容（网页访问 /aichat/mcp/media?file_id=…）
 ├─ painter_images/ ircimages/          ← 绘画页 / QQ 群侧图片
 └─ *.html *.js *.css                   ← 网页页面与公共库
 ```

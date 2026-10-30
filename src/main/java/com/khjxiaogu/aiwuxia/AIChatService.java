@@ -159,8 +159,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	protected Map<String, AISession> uidsockets = new ConcurrentHashMap<>();
 	/** 绘画师图片存储，使用DelegatingStorage（本地+TOS）持久化存储 */
 	protected ObjectStorageProvider painterStorage;
-	/** 本地语音文件存储（save/voice），供本地语音 MCP 保存和读取音频 id */
-	protected ObjectStorageProvider voiceStorage;
+	/** MCP 生成内容统一使用的本地存储（save/mcp_files），图片、语音等都放在这里 */
+	protected ObjectStorageProvider mcpStorage;
 
 	// ==================== 绘画会话共享工具 ====================
 	// 这些工具只依赖服务级配置（图片存储、Lora、角色提示词），与具体会话无关，
@@ -179,6 +179,14 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * </p>
 	 */
 	private final Map<String, SDXLMcp> painterImageGenerators = new ConcurrentHashMap<>();
+	/**
+	 * 按用户缓存的 MCP 版 SDXL 图片工具集。
+	 * <p>
+	 * 与绘画会话使用同一套模型选择与参数，但生成结果统一写入 {@link #mcpStorage}，
+	 * 并且结果里放对象存储 id，由 MCP 服务端转换成统一的媒体访问入口。
+	 * </p>
+	 */
+	private final Map<String, SDXLMcp> mcpImageGenerators = new ConcurrentHashMap<>();
 	/** 角色提示词搜索工具，服务未配置角色列表时为 null */
 	private ToolData painterSearchCharacterTool;
 	/** 网页抓取工具，所有绘画会话共享 */
@@ -407,8 +415,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			painterStorage = new LocalStorage(new File(parent, "painter_images"));
 			logger.info("绘画图片存储: 仅本地 (TOS初始化失败)");
 		}
-		// 本地语音文件存储：与 /voice 静态目录一致，供本地语音 MCP 保存和按 id 读取音频
-		voiceStorage = new LocalStorage(new File(parent, "voice"));
+		// MCP 生成的所有内容（图片、语音等）只使用本地存储，统一通过 /aichat/mcp/media 访问
+		mcpStorage = new LocalStorage(new File(parent, "mcp_files"));
+		logger.info("MCP 内容存储: 仅本地（save/mcp_files）");
 		initPainterTools();
 		// MCP 服务端（把本地 ToolData 暴露给外部）与客户端（把外部 ToolData 接入本地）初始化。
 		// 放在绘画存储与 SDXL 工具初始化之后，MCP 服务端可以直接暴露按用户创建的 SDXL 图片工具。
@@ -450,6 +459,56 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		return painterImageGenerators.computeIfAbsent(key, k -> SDXLMcp.createRemoteLocalModel(
 				k.isEmpty() ? null : k, painterStorage, lora,
 				(imageId, output) -> urlbase + "/painter/image?image_id=" + imageId, true));
+	}
+
+	/**
+	 * 取指定用户的 MCP 版 SDXL 图片工具集（不存在时创建并缓存）。
+	 * <p>
+	 * 与绘画会话使用同一套模型选择，但生成结果统一写入 {@link #mcpStorage}，结果内容里放
+	 * 对象存储 id（不是直接链接），由 MCP 服务端统一转换成
+	 * {@code /aichat/mcp/media?file_id=...} 访问入口。
+	 * </p>
+	 *
+	 * @param uid 用户标识，可为 null 或空（使用共享本地模型池）
+	 * @return 该用户的 MCP 版 SDXL 图片工具集
+	 */
+	private SDXLMcp mcpImageGeneratorFor(String uid) {
+		String key = uid == null ? "" : uid;
+		return mcpImageGenerators.computeIfAbsent(key, k -> SDXLMcp.createRemoteLocalModel(
+				k.isEmpty() ? null : k, mcpStorage, lora,
+				(imageId, output) -> mcpMediaUrl(imageId), true, true));
+	}
+
+	/** MCP 统一媒体访问入口：同一个入口 + 文件 id 参数。 */
+	private String mcpMediaUrl(String id) {
+		return resolveMcpMediaUrl(extractMcpFileId(id), null);
+	}
+
+	/**
+	 * 从统一媒体链接中取出文件 id；传入的本来就是 id 时原样返回。
+	 * <p>
+	 * 这样 SDXL 的图生图/分区工具既接受原始图片 id，也接受 MCP 结果里返回的
+	 * {@code /aichat/mcp/media?file_id=...} 链接。
+	 * </p>
+	 */
+	private static String extractMcpFileId(String value) {
+		if (value == null) {
+			return null;
+		}
+		int index = value.indexOf("file_id=");
+		if (index < 0) {
+			return value;
+		}
+		String id = value.substring(index + "file_id=".length());
+		int amp = id.indexOf('&');
+		if (amp >= 0) {
+			id = id.substring(0, amp);
+		}
+		try {
+			return java.net.URLDecoder.decode(id, "UTF-8");
+		} catch (java.io.UnsupportedEncodingException ex) {
+			return id;
+		}
 	}
 
 	/**
@@ -544,8 +603,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		McpBuiltinTools.register(registry);
 		// 角色设定查询工具：数据来自绘画 agent 目录下的人类可读索引 character-list.txt
 		registry.registerAll(new CharacterSettingMcp(path).getTools());
-		// 本地语音合成：列出可用说话人 + 用 VoiceTagger 标注后合成并存入本地语音存储
-		registry.registerAll(new LocalVoiceMcp(voiceStorage).getTools());
+		// 本地语音合成：列出可用说话人 + 用 VoiceTagger 标注后合成并存入 MCP 统一对象存储
+		registry.registerAll(new LocalVoiceMcp(mcpStorage).getTools());
 		// 把 AIChatService 中按用户创建的 SDXL 图片工具暴露给 MCP：
 		// 外部调用与绘画会话使用同一套工具，用户接入自己的本地绘画模型时同样优先使用该用户的模型。
 		registry.addSource(new McpToolSource() {
@@ -556,7 +615,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 
 			@Override
 			public Collection<ToolData> getTools(String uid) {
-				List<ToolData> tools = new ArrayList<>(painterImageGeneratorFor(uid).getTools());
+				List<ToolData> tools = new ArrayList<>(mcpImageGeneratorFor(uid).getTools());
 				if (painterSearchCharacterTool != null) {
 					tools.add(painterSearchCharacterTool);
 				}
@@ -593,45 +652,31 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			});
 		}
 		mcpEndpoint = new McpServerEndpoint(registry, mcpTokenStore, "AIWuxia-MCP", "0.0.1",
-				this::resolveMcpMediaUrl);
+				this::resolveMcpMediaUrl, mcpStorage);
 		logger.info("MCP 服务端已启用：/aichat/mcp，固定调用费 " + McpServer.CALL_COST + " 额外配额 + 工具内部用量"
 				+ "，已暴露 SDXL 图片工具与本地语音工具" + (exposeSessionTools ? "，并暴露在线会话工具" : ""));
 	}
 
 	/**
-	 * MCP 服务端的多媒体 id → 链接解析：先查本地语音存储（{@code /voice/}），
-	 * 再查绘画图片存储（TOS/本地）的
-	 * {@link ObjectStorageProvider#getPublicUrl(String, Consumer)} 转换成可访问链接。
+	 * MCP 服务端的多媒体 id → 统一访问入口解析。
+	 * <p>
+	 * MCP 生成的所有内容统一存放在 {@link #mcpStorage}，对外只暴露同一个入口
+	 * {@code /aichat/mcp/media?file_id=...}，不再区分为图片/语音或直接返回 TOS/本地链接。
+	 * </p>
 	 *
-	 * @param id       多媒体 id（图片/音频/视频）
+	 * @param id       多媒体 id
 	 * @param addUsage 解析过程中产生的用量接收方，可为 null
-	 * @return 可访问链接；存储未初始化或解析失败时返回原 id
+	 * @return 统一的媒体访问链接；id 为空时原样返回
 	 */
 	private String resolveMcpMediaUrl(String id, Consumer<UsageIntf<?>> addUsage) {
 		if (id == null || id.isEmpty()) {
 			return id;
 		}
-		// 语音文件优先走 voice 存储；图片/视频等再走绘画图片存储
-		ObjectStorageProvider voice = voiceStorage;
-		if (voice != null) {
-			try {
-				if (voice.exists(id, addUsage)) {
-					// 与 /voice 静态文件服务保持一致，返回可直接访问的链接而不是 base64
-					return urlbase + "/voice/" + id;
-				}
-			} catch (Exception ex) {
-				logger.warning("MCP 语音链接解析失败：" + id + "，原因：" + ex.getMessage());
-			}
-		}
-		ObjectStorageProvider storage = painterStorage;
-		if (storage == null) {
-			return id;
-		}
 		try {
-			return storage.getPublicUrl(id, addUsage);
-		} catch (Exception ex) {
-			logger.warning("MCP 多媒体链接解析失败：" + id + "，原因：" + ex.getMessage());
-			return id;
+			return urlbase + "/mcp/media?file_id=" + java.net.URLEncoder.encode(id, "UTF-8");
+		} catch (java.io.UnsupportedEncodingException ex) {
+			// UTF-8 一定可用；这里只是编译期受检异常兜底
+			return urlbase + "/mcp/media?file_id=" + id;
 		}
 	}
 

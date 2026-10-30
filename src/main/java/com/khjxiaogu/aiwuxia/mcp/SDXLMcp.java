@@ -68,6 +68,14 @@ public class SDXLMcp implements ToolProvider {
 	private final boolean isNsfw;
 	private final BiFunction<String, AIOutput, String> urlGetter;
 	private final BiFunction<String, String, CompletableFuture<JsonObject>> func;
+	/**
+	 * 结果内容里放对象存储 id 而不是直接链接。
+	 * <p>
+	 * 供 MCP 使用：生成结果统一写入对象存储后由 MCP 服务端转换成统一媒体入口；
+	 * 普通绘画会话保持 false，继续在结果里放可直接访问的图片链接。
+	 * </p>
+	 */
+	private final boolean contentIdMode;
 
 	public static class LoraConfigurations{
 		public final List<LoraConfiguration> li=new ArrayList<>(5);
@@ -266,7 +274,7 @@ public class SDXLMcp implements ToolProvider {
      * @return 工具集
      */
     public static SDXLMcp createRemoteLocalModel(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,BiFunction<String,AIOutput,String> urlGetter,boolean isNsfw) {
-        return createRemoteLocalModel(null, tos, lora, urlGetter, isNsfw);
+        return createRemoteLocalModel(null, tos, lora, urlGetter, isNsfw, false);
     }
 
     /**
@@ -286,8 +294,25 @@ public class SDXLMcp implements ToolProvider {
      */
     public static SDXLMcp createRemoteLocalModel(String uid, ObjectStorageProvider tos,
             Map<String, LoraConfigurations> lora, BiFunction<String, AIOutput, String> urlGetter, boolean isNsfw) {
+        return createRemoteLocalModel(uid, tos, lora, urlGetter, isNsfw, false);
+    }
+
+    /**
+     * 创建绑定到指定用户的 SDXL 图片工具集，并指定结果内容里是否放对象存储 id。
+     *
+     * @param uid           用户标识，可为 null 或空（等价于共享池）
+     * @param tos           对象存储
+     * @param lora          Lora 配置
+     * @param urlGetter     图片 id → 图片内容
+     * @param isNsfw        是否允许不宜内容
+     * @param contentIdMode true 表示结果内容里放对象存储 id，由 MCP 服务端转换成统一媒体入口
+     * @return 绑定该用户的工具集
+     */
+    public static SDXLMcp createRemoteLocalModel(String uid, ObjectStorageProvider tos,
+            Map<String, LoraConfigurations> lora, BiFunction<String, AIOutput, String> urlGetter, boolean isNsfw,
+            boolean contentIdMode) {
         BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,data)->LocalModel.require(uid,ModelType.SDXL,UUID.randomUUID().toString(), JsonBuilder.object().add("path", url).add("data", data).end()).thenApply(t->JsonParser.parseString(new String(t.bodyData,StandardCharsets.UTF_8)).getAsJsonObject());
-        return create(tos,lora,isNsfw,urlGetter,func);
+        return create(tos,lora,isNsfw,urlGetter,func,contentIdMode);
     }
 	public static SDXLMcp createLocal(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,ResourceLock lock) {
 		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,payload)->CompletableFuture.supplyAsync(()->{
@@ -387,7 +412,24 @@ public class SDXLMcp implements ToolProvider {
 	public static SDXLMcp create(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
 			BiFunction<String, AIOutput, String> urlGetter,
 			BiFunction<String, String, CompletableFuture<JsonObject>> func) {
-		return new SDXLMcp(tos, lora, isNsfw, urlGetter, func);
+		return create(tos, lora, isNsfw, urlGetter, func, false);
+	}
+
+	/**
+	 * 创建图片工具集，并指定结果内容里是否放对象存储 id。
+	 *
+	 * @param tos           对象存储
+	 * @param lora          Lora 配置
+	 * @param isNsfw        是否允许不宜内容
+	 * @param urlGetter     图片 id → 图片内容
+	 * @param func          调用 SDXL 服务的函数
+	 * @param contentIdMode true 表示结果内容里放对象存储 id，由 MCP 服务端统一转换链接
+	 * @return 工具集
+	 */
+	public static SDXLMcp create(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
+			BiFunction<String, AIOutput, String> urlGetter,
+			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode) {
+		return new SDXLMcp(tos, lora, isNsfw, urlGetter, func, contentIdMode);
 	}
 
 	/**
@@ -421,11 +463,18 @@ public class SDXLMcp implements ToolProvider {
 	public SDXLMcp(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
 			BiFunction<String, AIOutput, String> urlGetter,
 			BiFunction<String, String, CompletableFuture<JsonObject>> func) {
+		this(tos, lora, isNsfw, urlGetter, func, false);
+	}
+
+	public SDXLMcp(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
+			BiFunction<String, AIOutput, String> urlGetter,
+			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode) {
 		this.tos = tos;
 		this.lora = lora;
 		this.isNsfw = isNsfw;
 		this.urlGetter = urlGetter;
 		this.func = func;
+		this.contentIdMode = contentIdMode;
 
 		resolutions.put("16:9", new int[] { 1920, 1080 });
 		resolutions.put("9:16", new int[] { 1080, 1920 });
@@ -451,7 +500,7 @@ public class SDXLMcp implements ToolProvider {
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容", "图片ID")
 				.presenter(ToolCallPresenter.ofName("反推提示词"))
 				.tool((data, output, manager) -> {
-					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
+					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([^\"]+)\"");
 					Matcher mtch = patt.matcher(data);
 					if (mtch.find()) {
 						String id = mtch.group(1);
@@ -542,7 +591,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", imageUrl, "图片id为："+fn+"。"+extras+caption));
+									imageResult("生成成功，", contentIdMode ? fn : imageUrl, "图片id为："+fn+"。"+extras+caption));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
@@ -660,7 +709,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(2,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", imageUrl, "图片id为："+fn+"。"+caption));
+									imageResult("生成成功，", contentIdMode ? fn : imageUrl, "图片id为："+fn+"。"+caption));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
@@ -739,7 +788,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", imageUrl, "图片id为："+fn+"。"+caption));
+									imageResult("生成成功，", contentIdMode ? fn : imageUrl, "图片id为："+fn+"。"+caption));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));

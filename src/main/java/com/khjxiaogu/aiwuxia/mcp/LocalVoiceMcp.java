@@ -27,16 +27,16 @@ import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 /**
  * 本地语音合成的 MCP 工具。
  * <p>
- * 只依赖本地语音模型与对象存储，暴露两个工具：
+ * 只依赖本地语音模型与本地存储，暴露两个工具：
  * </p>
  * <ul>
  *   <li>{@code list_voice_speakers}：列出本地语音配置中的全部可用说话人；</li>
  *   <li>{@code generate_voice}：输入角色名称与话语内容，先经过 {@code VoiceTagger}
- *       分句与情感标注，再调用本地语音模型合成，最后把音频写入本地存储并返回音频 id。</li>
+ *       分句与情感标注，再调用本地语音模型合成，最后把音频写入 MCP 统一本地存储并返回音频 id。</li>
  * </ul>
  * <p>
  * 音频 id 由音频内容哈希 + 扩展名组成，生成结果以 {@link AudioContent} 放进工具结果内容；
- * MCP 服务端会把其中的 id 通过对象存储解析成可访问链接后再返回给客户端。
+ * MCP 服务端会把其中的 id 统一转换成 {@code /aichat/mcp/media?file_id=...} 访问入口。
  * </p>
  */
 public final class LocalVoiceMcp implements ToolProvider {
@@ -52,7 +52,7 @@ public final class LocalVoiceMcp implements ToolProvider {
 	/**
 	 * 创建本地语音 MCP 模块。
 	 *
-	 * @param storage 音频存储（通常是 {@code save/voice} 的本地存储），可为 null
+	 * @param storage MCP 统一本地存储（通常是 {@code save/mcp_files}），可为 null
 	 */
 	public LocalVoiceMcp(ObjectStorageProvider storage) {
 		this.storage = storage;
@@ -66,7 +66,7 @@ public final class LocalVoiceMcp implements ToolProvider {
 	/**
 	 * 创建本地语音 MCP 工具列表。
 	 *
-	 * @param storage 音频存储（通常是 {@code save/voice} 的本地存储），可为 null
+	 * @param storage MCP 统一本地存储（通常是 {@code save/mcp_files}），可为 null
 	 * @return 工具列表
 	 */
 	public static List<ToolData> create(ObjectStorageProvider storage) {
@@ -97,14 +97,14 @@ public final class LocalVoiceMcp implements ToolProvider {
 
 	/**
 	 * 生成语音的工具：输入角色名称与话语内容，经过 VoiceTagger 后交给本地语音模型合成，
-	 * 并把音频保存到传入的对象存储。
+	 * 并把音频保存到传入的本地存储。
 	 *
 	 * @param storage 音频存储，可为 null（此时只生成不保存，直接返回错误）
 	 * @return 工具定义
 	 */
 	public static ToolData generateVoice(ObjectStorageProvider storage) {
 		return new ToolData.Builder(TOOL_GENERATE_VOICE,
-				"使用本地语音模型生成角色语音。只需提供角色名称和话语内容；系统会先用 VoiceTagger 分句与情感标注，再合成并保存到本地存储，返回音频 id。")
+				"使用本地语音模型生成角色语音。只需提供角色名称和话语内容；系统会先用 VoiceTagger 分句与情感标注，再合成并保存到 MCP 统一本地存储，返回音频 id。")
 				.putParam("role", "角色名称，必须是 list_voice_speakers 返回的可用说话人之一", "角色名称")
 				.putParam("text", "要朗读的话语内容", "话语内容")
 				.presenter(ToolCallPresenter.ofArgument("生成语音", "text"))
