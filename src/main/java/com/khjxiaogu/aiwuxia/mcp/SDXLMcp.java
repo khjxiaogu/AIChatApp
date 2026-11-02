@@ -591,7 +591,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", contentIdMode ? fn : imageUrl, "图片id为："+fn+"。"+extras+caption));
+									imageResult("生成成功，", contentIdMode ? fn : imageUrl, imageText(fn, extras, caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
@@ -709,7 +709,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(2,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", contentIdMode ? fn : imageUrl, "图片id为："+fn+"。"+caption));
+									imageResult("生成成功，", contentIdMode ? fn : imageUrl, imageText(fn, "", caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
@@ -788,7 +788,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", contentIdMode ? fn : imageUrl, "图片id为："+fn+"。"+caption));
+									imageResult("生成成功，", contentIdMode ? fn : imageUrl, imageText(fn, "", caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
@@ -803,6 +803,14 @@ public class SDXLMcp implements ToolProvider {
 	@Override
 	public Collection<ToolData> getTools() {
 		return java.util.Collections.unmodifiableList(tools);
+	}
+
+	/**
+	 * 图片结果的文本：MCP 模式已经在结果内容里带上图片，不再重复赘述图片 id；
+	 * 普通绘画会话仍保留 id，方便后续图生图使用。
+	 */
+	private String imageText(String fn, String extras, String caption) {
+		return (contentIdMode ? "" : "图片id为：" + fn + "。") + extras + caption;
 	}
 
 	/**

@@ -83,7 +83,7 @@ public final class LocalVoiceMcp implements ToolProvider {
 	 */
 	public static ToolData listSpeakers() {
 		return new ToolData.Builder(TOOL_LIST_SPEAKERS,
-				"获取本地语音合成所有可用说话人（角色名称）列表。调用 generate_voice 时 role 参数必须从中选择。")
+				"获取当前可用的语音说话人（角色）列表。生成语音前可先调用本工具查看角色名称。")
 				.presenter(ToolCallPresenter.ofBrief(call -> "获取语音说话人"))
 				.tool((data, output, manager) -> {
 					List<String> speakers = VoiceModelHandler.listLocalSpeakers();
@@ -104,9 +104,9 @@ public final class LocalVoiceMcp implements ToolProvider {
 	 */
 	public static ToolData generateVoice(ObjectStorageProvider storage) {
 		return new ToolData.Builder(TOOL_GENERATE_VOICE,
-				"使用本地语音模型生成角色语音。只需提供角色名称和话语内容；系统会先用 VoiceTagger 分句与情感标注，再合成并保存到 MCP 统一本地存储，返回音频 id。")
-				.putParam("role", "角色名称，必须是 list_voice_speakers 返回的可用说话人之一", "角色名称")
-				.putParam("text", "要朗读的话语内容", "话语内容")
+				"根据角色名称和话语内容生成角色语音。输入说话人名称与要朗读的文本，返回可直接播放的语音。")
+				.putParam("role", "说话人（角色）名称，可从 list_voice_speakers 获取。", "角色名称")
+				.putParam("text", "要朗读的话语内容。", "话语内容")
 				.presenter(ToolCallPresenter.ofArgument("生成语音", "text"))
 				.tool((data, output, manager) -> {
 					String role;

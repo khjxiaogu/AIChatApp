@@ -132,7 +132,7 @@ public class VolcanoModelProvider implements ModelProvider{
 				}else if(msgc instanceof ImageContent) {
 					
 					msgjo.addProperty("type", "image_url");
-					msgjo.addProperty("image_url", ((ImageContent)msgc).getImageUrl());
+					msgjo.addProperty("image_url", imagePayload(((ImageContent)msgc).getImageUrl()));
 				}else{
 
 					msgjo.addProperty("type", "text");
@@ -281,6 +281,30 @@ public class VolcanoModelProvider implements ModelProvider{
 			return;
 		if(!output.getReasoner().isEnded())
 			output.putReasoner(new PlainText(text));
+	}
+
+	/**
+	 * 把图片地址转换成火山方舟接口可接受的 image_url。
+	 * <p>
+	 * 本地对象存储返回的是 {@code data:image/png;base64,...} 形式的 data URL；
+	 * 方舟会把整串内容当成 base64 解码，从而报 “Invalid base64 image_url”。
+	 * 这里去掉 data URL 头，只传纯 base64；普通 HTTP(S) 链接原样返回。
+	 * </p>
+	 */
+	private static String imagePayload(String imageUrl) {
+		if (imageUrl == null || imageUrl.isEmpty()
+				|| !imageUrl.regionMatches(true, 0, "data:", 0, 5)) {
+			return imageUrl;
+		}
+		int comma = imageUrl.indexOf(',');
+		if (comma < 0) {
+			return imageUrl;
+		}
+		String header = imageUrl.substring(0, comma);
+		if (!header.toLowerCase().contains(";base64")) {
+			return imageUrl;
+		}
+		return imageUrl.substring(comma + 1);
 	}
 
 	@Override
