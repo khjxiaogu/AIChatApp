@@ -18,6 +18,8 @@ import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
+import com.khjxiaogu.aiwuxia.multimedia.LocalVoiceMultimediaApi;
+import com.khjxiaogu.aiwuxia.multimedia.MultimediaApi;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
@@ -74,6 +76,20 @@ public final class LocalVoiceMcp implements ToolProvider {
 		tools.add(listSpeakers());
 		tools.add(generateVoice(storage));
 		return tools;
+	}
+
+	/**
+	 * 以通用多媒体 API 的形式提供本地语音合成。
+	 * <p>
+	 * 复用 {@link #generateVoice} 的现有工具实现，不改变原方法；提示词作为朗读文本，
+	 * 可选参数 {@code role} 指定说话人，输出音频附件 + 提示词。
+	 * </p>
+	 *
+	 * @param storage 音频存储
+	 * @return 通用多媒体 API
+	 */
+	public static MultimediaApi createMultimediaApi(ObjectStorageProvider storage) {
+		return new LocalVoiceMultimediaApi(storage);
 	}
 
 	/**

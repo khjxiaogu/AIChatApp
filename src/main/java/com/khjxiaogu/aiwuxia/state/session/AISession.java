@@ -58,6 +58,7 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTaskListener;
+import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -116,6 +117,14 @@ public class AISession implements ISaveData,AutoCloseable{
 	protected SessionWriteContext currentWrite;
 	/** 当前会话关联的用户标识 */
 	public final String user;
+	/**
+	 * 本会话使用的对象存储，可为 null。
+	 * <p>
+	 * 只保存附件 ID，具体地址由模型调用层在发送请求时解析；绘画会话与 QQ 会话会注入各自
+	 * 的对象存储，构建 {@link com.khjxiaogu.aiwuxia.llm.AIRequest} 时自动带上。
+	 * </p>
+	 */
+	private volatile ObjectStorageProvider objectStorage;
 	/**
 	 * 全部会话共享的命令任务线程池。
 	 * <p>
@@ -1407,6 +1416,26 @@ public class AISession implements ISaveData,AutoCloseable{
 	 */
 	public AIApplication getAiapp() {
 		return aiapp;
+	}
+
+	/**
+	 * 本会话使用的对象存储，未配置时为 null。
+	 *
+	 * @return 对象存储
+	 */
+	public ObjectStorageProvider getObjectStorage() {
+		return objectStorage;
+	}
+
+	/**
+	 * 设置本会话使用的对象存储；之后构建的模型请求会自动带上它来解析/上传附件。
+	 *
+	 * @param objectStorage 对象存储，可为 null
+	 * @return 当前会话，便于链式调用
+	 */
+	public AISession setObjectStorage(ObjectStorageProvider objectStorage) {
+		this.objectStorage = objectStorage;
+		return this;
 	}
 
 	/**

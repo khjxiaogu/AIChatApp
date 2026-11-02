@@ -200,6 +200,8 @@ public class NapCatAIConnector extends WebSocketClient {
 		connectBlocking();
 		for(AIGroupSession sess:states) {
 
+			// 历史里的图片只保存对象存储 ID，模型调用层用本会话的存储把它们解析成可访问地址
+			sess.setObjectStorage(tos);
 			registerSkills(sess,dataFolder,sess.config);
 			this.states.add(sess);
 			sess.reasonerConsumer=data->{

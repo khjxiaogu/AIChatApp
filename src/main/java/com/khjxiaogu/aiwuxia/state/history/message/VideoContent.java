@@ -3,8 +3,12 @@ package com.khjxiaogu.aiwuxia.state.history.message;
 /**
  * 视频消息内容。
  * <p>
- * 实现 {@link MessageContent} 接口，包含视频的 URL 地址和可选的文字描述。
+ * 实现 {@link MessageContent} 接口，包含视频的地址和可选的文字描述。
  * 当描述不为 null 时，该内容可表示为文本；否则不可表示为文本。
+ * </p>
+ * <p>
+ * <b>约定：{@code video_url} 保存对象存储 ID</b>，由模型调用层解析成可访问地址；
+ * 旧的 http 链接 / data URL 仍然兼容。
  * </p>
  */
 public class VideoContent implements MessageContent {

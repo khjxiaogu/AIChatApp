@@ -36,6 +36,7 @@ import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokModelProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.mimo.MimoModelProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.siliconflow.SiliconFlowModelProvider;
 import com.khjxiaogu.aiwuxia.llm.providers.volcano.VolcanoModelProvider;
+import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 /**
  * LLM（大语言模型）连接器，提供统一的静态入口来调用 AI 模型。
  * 该类通过 {@link ModelRouter} 路由请求到合适的 {@link ModelProvider}，
@@ -97,6 +98,26 @@ public class LLMConnector {
      * @throws IOException 如果在执行模型调用过程中发生 I/O 错误
      */
     public static AIOutput call(AIRequest request) throws ModelRouteException, IOException {
-        return router.route(request).execute(exec,request);
+        return call(request, null);
+    }
+
+    /**
+     * 调用 AI 模型，并为本次调用指定对象存储。
+     * <p>
+     * 设置对象存储后，模型层会解析历史消息里的附件 ID，并把输入消息里未入库的
+     * data URL / http 链接 / 本地文件上传成对象存储 ID 后再提交。业务层因此只需在消息里
+     * 保存 ID，不必自己把附件解析成链接或 base64。
+     * </p>
+     *
+     * @param request 包含所有必要参数的 AI 请求对象
+     * @param storage 本次调用使用的对象存储，可为 null（沿用请求里已配置的存储）
+     * @return AI 模型的输出对象 {@link AIOutput}
+     * @throws ModelRouteException 如果没有找到能够处理该请求的模型提供商
+     * @throws IOException 如果在执行模型调用过程中发生 I/O 错误
+     */
+    public static AIOutput call(AIRequest request, ObjectStorageProvider storage)
+            throws ModelRouteException, IOException {
+        AIRequest actual = storage == null ? request : request.withStorage(storage);
+        return router.route(actual).execute(exec, actual);
     }
 }

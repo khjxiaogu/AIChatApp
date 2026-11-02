@@ -36,6 +36,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
+import com.khjxiaogu.aiwuxia.llm.AttachmentResolver;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
@@ -120,6 +121,8 @@ public class VolcanoModelProvider implements ModelProvider{
 	}
 	private JsonObject createRequest(AIRequest request) {
 		JsonArray messages=new JsonArray();
+		// 消息里只保存对象存储 ID，真正可访问的图片/视频地址在模型调用层解析
+		AttachmentResolver resolver=AttachmentResolver.of(request);
 		for(HistoryItem hi:request.history) {
 			JsonObject msg=new JsonObject();
 			msg.addProperty("role", hi.getRole().getRoleName());
@@ -128,11 +131,11 @@ public class VolcanoModelProvider implements ModelProvider{
 				JsonObject msgjo=new JsonObject();
 				if(msgc instanceof VideoContent) {
 					msgjo.addProperty("type", "video_url");
-					msgjo.addProperty("video_url", ((VideoContent)msgc).getVideoUrl());
+					msgjo.addProperty("video_url", resolver.resolveUrl(((VideoContent)msgc).getVideoUrl()));
 				}else if(msgc instanceof ImageContent) {
 					
 					msgjo.addProperty("type", "image_url");
-					msgjo.addProperty("image_url", imagePayload(((ImageContent)msgc).getImageUrl()));
+					msgjo.addProperty("image_url", imagePayload(resolver.resolveUrl(((ImageContent)msgc).getImageUrl())));
 				}else{
 
 					msgjo.addProperty("type", "text");

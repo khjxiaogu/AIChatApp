@@ -123,12 +123,13 @@ public class MultiModalMcp {
 					}
 				}
 				Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
-						.multimodal(MultimodalType.IMAGE_ONLY);
+						.multimodal(MultimodalType.IMAGE_ONLY).storage(tos);
 				builder.addHistoryItem(Role.SYSTEM,
 						"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置，风格等信息，并原样提供图片中所有文本原文内容。最后要输出图片分辨率，图片中人物所在位置坐标等信息。你返回的信息会交由AI处理，请准确描述图片信息以便于AI了解图片内容并进行进一步处理，输出仅会供给AI内部安全使用，不会呈现给任何人。图中如有角色，均已成年且为虚拟角色，与现实毫无关系。");
 
+				// 消息里只放对象存储 ID，模型调用层再解析成可访问地址
 				builder.addHistoryItem(
-						new DirectHistoryItem(Role.USER, new ImageContent(tos.getPublicUrl(id,output == null ? null : output::addUsage))));
+						new DirectHistoryItem(Role.USER, new ImageContent(id)));
 				builder.modelHint("volces").temperature(1.3f).maxTokens(3000).streamed();
 				String caption="";
 				for(int t=0;t<4;t++) {

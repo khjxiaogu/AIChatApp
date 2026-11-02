@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
+import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
@@ -145,6 +146,15 @@ public class AIRequest {
     
     public final List<HistoryItem> history;
     /**
+     * 本次请求关联的对象存储，可为 null。
+     * <p>
+     * 历史消息里的图片/音频/视频只保存对象存储 ID，具体在模型调用层解析成可访问的
+     * URL/base64；输入消息里的 data URL、http 链接或本地文件也会在模型调用层上传成 ID。
+     * 这样业务层不必自己解析附件，也不需要把大段内容写进历史。
+     * </p>
+     */
+    public final ObjectStorageProvider storage;
+    /**
      * 工具调用管理器：同时承载本次请求的工具注册表与调用规则（次数、权限、许可）。
      * <p>
      * 由会话/应用提供（{@code session.getToolCallManager()}），提供者不再自行维护
@@ -177,6 +187,7 @@ public class AIRequest {
         this.format=builder.format;
         this.prefix=builder.prefix;
         this.toolCallManager=builder.toolCallManager;
+        this.storage=builder.storage;
         if(hasModelProperty("reasoning"))
 			category=ModelCategory.REASONING;
 		else if(hasModelProperty("non-reasoning"))
@@ -194,6 +205,46 @@ public class AIRequest {
 			}
 		}
         this.strength=strength;
+    }
+
+    /**
+     * 复制请求并替换对象存储，供 {@link LLMConnector#call(AIRequest, ObjectStorageProvider)} 使用。
+     */
+    private AIRequest(AIRequest source, ObjectStorageProvider storage) {
+        this.category = source.category;
+        this.strength = source.strength;
+        this.multimodal = source.multimodal;
+        this.taskType = source.taskType;
+        this.format = source.format;
+        this.stream = source.stream;
+        this.modelHint = source.modelHint;
+        this.user = source.user;
+        this.maxToken = source.maxToken;
+        this.temperature = source.temperature;
+        this.prefix = source.prefix;
+        this.history = source.history;
+        this.toolCallManager = source.toolCallManager;
+        this.storage = storage;
+    }
+
+    /**
+     * 返回使用指定对象存储的请求副本；相同存储或传入 null 时返回当前实例。
+     *
+     * @param storage 对象存储，可为 null
+     * @return 请求实例
+     */
+    public AIRequest withStorage(ObjectStorageProvider storage) {
+        if (storage == null || storage == this.storage) {
+            return this;
+        }
+        return new AIRequest(this, storage);
+    }
+
+    /**
+     * 本次请求关联的对象存储，未配置时为 null。
+     */
+    public ObjectStorageProvider getStorage() {
+        return storage;
     }
     public boolean isModelNamed(String name) {
     	return modelHint.length>0&&modelHint[0].equals(name);
@@ -242,7 +293,8 @@ public class AIRequest {
      */
     public static Builder builder(AISession session) {
         return new Builder(session.user).modelHint(session.getModelHint())
-        		.toolCallManager(session.getToolCallManager());
+                .toolCallManager(session.getToolCallManager())
+                .storage(session.getObjectStorage());
     }
 	public static Builder builder(String user) {
 		return new Builder(user);
@@ -277,6 +329,8 @@ public class AIRequest {
         private List<HistoryItem> history=new ArrayList<>(200);
         /** 工具调用管理器（工具注册表 + 调用次数/权限/许可规则），为 null 表示不提供工具 */
         private ToolCallManager toolCallManager;
+        /** 对象存储：用于把消息里的附件 ID 解析成模型可访问的地址，并上传未入库的附件 */
+        private ObjectStorageProvider storage;
         private int max_tokens=1024;
         private float temperature=2.0f;
         private String modelHint=null;
@@ -320,6 +374,23 @@ public class AIRequest {
          */
         public Builder toolCallManager(ToolCallManager manager) {
             this.toolCallManager = manager;
+            return this;
+        }
+
+        /**
+         * 设置对象存储。
+         * <p>
+         * 设置后，模型调用层会用它解析历史消息里的附件 ID（图片/音频/视频），
+         * 并把输入消息里未入库的 data URL、http 链接或本地文件上传成对象存储 ID。
+         * 会话构建器 {@link AIRequest#builder(AISession)} 会自动取
+         * {@link AISession#getObjectStorage()}。
+         * </p>
+         *
+         * @param storage 对象存储，可为 null
+         * @return 当前 Builder 实例
+         */
+        public Builder storage(ObjectStorageProvider storage) {
+            this.storage = storage;
             return this;
         }
 

@@ -567,15 +567,15 @@ public class SDXLMcp implements ToolProvider {
 									its[1],func);
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
-							String imageUrl = tos.getPublicUrl(fn,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
-									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
+									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK).storage(tos);
 							builder.addHistoryItem(Role.SYSTEM,
 									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。"
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
+							// 消息里只放对象存储 ID，模型调用层再解析成可访问地址
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(imageUrl)));
+									new DirectHistoryItem(Role.USER, new ImageContent(fn)));
 							builder.temperature(1.3f).maxTokens(3000).streamed();
 							String caption="";
 							for(int i=0;i<3;i++)
@@ -591,7 +591,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", contentIdMode ? fn : imageUrl, imageText(fn, extras, caption)));
+									imageResult("生成成功，", fn, imageText(fn, extras, caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
@@ -685,15 +685,15 @@ public class SDXLMcp implements ToolProvider {
 							}
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
-							String imageUrl = tos.getPublicUrl(fn,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
-									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
+									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK).storage(tos);
 							builder.addHistoryItem(Role.SYSTEM,
 									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。"
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
+							// 消息里只放对象存储 ID，模型调用层再解析成可访问地址
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(imageUrl)));
+									new DirectHistoryItem(Role.USER, new ImageContent(fn)));
 							builder.temperature(1.3f).maxTokens(3000).streamed();
 							String caption="";
 							for(int i=0;i<3;i++)
@@ -709,7 +709,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(2,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", contentIdMode ? fn : imageUrl, imageText(fn, "", caption)));
+									imageResult("生成成功，", fn, imageText(fn, "", caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
@@ -771,15 +771,15 @@ public class SDXLMcp implements ToolProvider {
 
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
-							String imageUrl = tos.getPublicUrl(fn,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
-									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK);
+									.multimodal(MultimodalType.IMAGE_ONLY).strength(ReasoningStrength.WEAK).storage(tos);
 							builder.addHistoryItem(Role.SYSTEM,
 									"请观察图片，简要描述图片内容，并判断其是否为18+成人向图片并给出原因。"
 									+ "判定标准：直接裸露性器官，出现女性角色直接完整的乳头（仅露出胸部不算），血腥恐怖内容。仅擦边不属于。");
 
+							// 消息里只放对象存储 ID，模型调用层再解析成可访问地址
 							builder.addHistoryItem(
-									new DirectHistoryItem(Role.USER, new ImageContent(imageUrl)));
+									new DirectHistoryItem(Role.USER, new ImageContent(fn)));
 							AIOutput inner=LLMConnector.call(builder.temperature(1.3f).maxTokens(3000).build());
 							if(output!=null)
 								inner.addUsageListener(output::addUsage);
@@ -788,7 +788,7 @@ public class SDXLMcp implements ToolProvider {
 							if(output!=null)
 								output.addUsage(new LocalSDXLUsage(1,0));
 							return CompletableFuture.completedFuture(
-									imageResult("生成成功，", contentIdMode ? fn : imageUrl, imageText(fn, "", caption)));
+									imageResult("生成成功，", fn, imageText(fn, "", caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
 							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
@@ -820,14 +820,14 @@ public class SDXLMcp implements ToolProvider {
 	 * </p>
 	 *
 	 * @param before   图片前的文本
-	 * @param imageUrl 生成图片的地址
+	 * @param imageId 生成图片的对象存储 ID
 	 * @param after    图片后的文本
 	 * @return 工具结果
 	 */
-	private static ToolResult imageResult(String before, String imageUrl, String after) {
+	private static ToolResult imageResult(String before, String imageId, String after) {
 		MutableMessageContents content = new MutableMessageContents();
 		content.append(before);
-		content.addRaw(new ImageContent(imageUrl));
+		content.addRaw(new ImageContent(imageId));
 		content.append(after);
 		return ToolResult.content(content);
 	}

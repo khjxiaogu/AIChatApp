@@ -20,6 +20,8 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
+import com.khjxiaogu.aiwuxia.multimedia.MultimediaApi;
+import com.khjxiaogu.aiwuxia.multimedia.SDXLAgentMultimediaApi;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
@@ -144,5 +146,27 @@ public class SDXLAgentMcp {
 						}
 					});
 				}).build();
+	}
+
+	/**
+	 * 以通用多媒体 API 的形式提供 SDXLAgent。
+	 * <p>
+	 * 复用 {@link #createImage} 的现有工具实现，不改变原方法；返回的 API 接受“可选图片附件 +
+	 * 提示词”，输出图片附件 + 子 agent 文本。
+	 * </p>
+	 *
+	 * @param path   子 agent 配置目录
+	 * @param tos    对象存储
+	 * @param lora   LoRA 配置
+	 * @param charas 角色提示词
+	 * @param isNsfw 是否允许不宜内容
+	 * @param lock   资源锁
+	 * @return 通用多媒体 API
+	 * @throws IOException 读取子 agent 配置失败
+	 */
+	public static MultimediaApi createMultimediaApi(File path, ObjectStorageProvider tos,
+			Map<String, LoraConfigurations> lora, List<String> charas, boolean isNsfw, ResourceLock lock)
+			throws IOException {
+		return new SDXLAgentMultimediaApi(path, tos, lora, charas, isNsfw, lock);
 	}
 }

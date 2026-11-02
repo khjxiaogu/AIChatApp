@@ -3,8 +3,13 @@ package com.khjxiaogu.aiwuxia.state.history.message;
 /**
  * 图片消息内容。
  * <p>
- * 实现 {@link MessageContent} 接口，包含图片的 URL 地址和可选的文字描述。
+ * 实现 {@link MessageContent} 接口，包含图片的地址和可选的文字描述。
  * 当描述不为 null 时，该内容可表示为文本；否则不可表示为文本。
+ * </p>
+ * <p>
+ * <b>约定：{@code image_url} 保存对象存储 ID</b>（内容哈希，可带扩展名），不要提前换成
+ * public URL 或 base64。模型调用层会用请求上的对象存储把 ID 解析成提供者可访问的地址；
+ * 旧数据里的 http 链接 / data URL 仍然兼容，会在调用时自动上传成 ID。
  * </p>
  */
 public class ImageContent implements MessageContent {

@@ -219,6 +219,18 @@ resp.addUsageListener(state::addUsage);               // ← 计费/用量统计
 | `enableDeepThink()` | — | 开启深度思考 |
 | `prefix(String)` | — | 续写前缀 |
 | `toolCallManager(...)` | — | 显式指定工具集；`builder(state)` 已自动取 |
+| `storage(...)` | `ObjectStorageProvider` | 对象存储；`builder(state)` 自动取 `state.getObjectStorage()` |
+
+**附件按对象存储 ID 传递**：历史消息里的 `ImageContent` / `AudioContent` / `VideoContent` 只保存对象存储 ID，
+不要自己先换成 public URL 或 base64。模型调用层（`AttachmentResolver`）会用请求上的 `ObjectStorage`：
+ID 解析成提供者可访问的地址；输入消息里的 `data:` URL、`http(s)` 链接或本地文件先上传成 ID 再提交。
+也可在调用时直接传入：
+
+```java
+AIOutput resp = LLMConnector.call(b.build(), tos);
+```
+
+不支持图片的提供者会把附件降级为带对象存储 ID 的文本标签，消息内容始终只有 ID。
 
 `AIOutput`（`com.khjxiaogu.aiwuxia.llm.AIOutput`）：
 
@@ -397,8 +409,36 @@ state.registerTool(t);                       // 挂到会话，随后 AIRequest.
 
 ---
 
-## 11. 与前端协作：帧协议
+## 10.1 通用多媒体 API
 
+`com.khjxiaogu.aiwuxia.multimedia` 把图片/视频/语音统一成“可选附件 + 提示词”的输入和
+“附件 + 提示词”的输出：
+
+```java
+MultimediaApi api = SDXLAgentMcp.createMultimediaApi(path, tos, lora, charas, false, lock);
+// 或 SeedreamMcp.createMultimediaImage(...) / createMultimediaVideo(...)
+// 或 LocalVoiceMcp.createMultimediaApi(storage)
+
+MultimediaRequest request = MultimediaRequest.builder("一个女孩在樱花树下")
+        .attachments(referenceImages)      // 可选，ImageContent/VideoContent/AudioContent
+        .option("duration", "8")           // 可选，实现相关参数（语音用 role）
+        .storage(tos)                      // 可选，用于解析/上传附件
+        .build();
+
+MultimediaResult result = api.generate(request).join();
+if (result.isSuccess()) {
+    List<MessageContent> outputs = result.getAttachments();
+    String prompt = result.getPrompt();
+}
+```
+
+- 附件与提示词都由 `MessageContent` / `String` 表达，不绑定具体模型；
+- 现有工具方法（`createImage`、`createVideo`、`generateVoice`）保持不变，适配器内部复用它们；
+- 调用方暂时不需要改动，后续可逐步把工具调用迁移到这套 API。
+
+---
+
+## 11. 与前端协作：帧协议
 服务端 → 浏览器都是带 `type` 的 JSON 帧，前端由 `save/ai-protocol.js` 统一分发。app 常用的出口：
 
 | API | 前端效果 |

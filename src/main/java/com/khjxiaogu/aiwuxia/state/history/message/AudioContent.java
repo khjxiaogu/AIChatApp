@@ -3,8 +3,12 @@ package com.khjxiaogu.aiwuxia.state.history.message;
 /**
  * 音频消息内容。
  * <p>
- * 实现 {@link MessageContent} 接口，包含音频地址（URL、data URL 或本地文件路径）和可选描述。
- * 工具只产生本内容，具体如何发送由会话处理。
+ * 实现 {@link MessageContent} 接口，包含音频地址（对象存储 ID、URL、data URL 或本地文件路径）
+ * 和可选描述。工具只产生本内容，具体如何发送由会话处理。
+ * </p>
+ * <p>
+ * <b>约定：作为模型输入时优先保存对象存储 ID</b>，由模型调用层解析成可访问地址；
+ * 旧的 URL、data URL 与本地路径仍然兼容，会在调用时自动上传成 ID。
  * </p>
  */
 public class AudioContent implements MessageContent {

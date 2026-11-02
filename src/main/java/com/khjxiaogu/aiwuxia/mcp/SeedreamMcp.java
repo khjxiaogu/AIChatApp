@@ -23,6 +23,8 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
+import com.khjxiaogu.aiwuxia.multimedia.JimengMultimediaApi;
+import com.khjxiaogu.aiwuxia.multimedia.MultimediaApi;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
@@ -118,6 +120,41 @@ public class SeedreamMcp {
 							});
 					return cf.thenApply(ToolResult::text);
 				}).build();
+	}
+
+	/**
+	 * 以通用多媒体 API 的形式提供即梦图片生成。
+	 * <p>
+	 * 复用 {@link #createImage} 的现有工具实现，不改变原方法；输入为可选参考图附件 + 提示词，
+	 * 输出为图片附件 + 文本结果。
+	 * </p>
+	 *
+	 * @param config    即梦配置
+	 * @param refImages 内置参考图
+	 * @param tos       对象存储
+	 * @return 通用多媒体 API
+	 */
+	public static MultimediaApi createMultimediaImage(JsonObject config, Map<String, String> refImages,
+			ObjectStorageProvider tos) {
+		return JimengMultimediaApi.image(config, refImages, tos);
+	}
+
+	/**
+	 * 以通用多媒体 API 的形式提供即梦视频生成。
+	 * <p>
+	 * 复用 {@link #createVideo} 的现有工具实现，不改变原方法；输入为可选参考图附件 + 提示词
+	 * （以及可选的 duration 参数），输出为视频附件 + 提示词。
+	 * </p>
+	 *
+	 * @param config       即梦配置
+	 * @param refImages    内置参考图
+	 * @param tos          对象存储
+	 * @param systemPrompt 即梦视频提示词，为空时使用内置兜底提示词
+	 * @return 通用多媒体 API
+	 */
+	public static MultimediaApi createMultimediaVideo(JsonObject config, Map<String, String> refImages,
+			ObjectStorageProvider tos, String systemPrompt) {
+		return JimengMultimediaApi.video(config, refImages, tos, systemPrompt);
 	}
 
 	/**

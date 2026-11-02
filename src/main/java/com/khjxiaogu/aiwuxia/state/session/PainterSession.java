@@ -143,6 +143,8 @@ public class PainterSession extends WebSocketAISession {
     public PainterSession(AIChatService par, String uid, String chatid, AIApplication aiapp,
                           ApplicationAttributes attr, File fn, ISaveData data) {
         super(par, uid, chatid, aiapp, attr, fn, data);
+        // 历史里的图片只保存对象存储 ID，模型调用层用本会话的存储把它们解析成可访问地址
+        setObjectStorage(par.getPainterStorage());
         // 绘画工具由 AIChatService 统一创建，SDXL 工具按用户取用，这里只注册进本会话的工具调用管理器，
         // 由管理器统一处理调用次数、权限、许可与执行
         par.registerPainterTools(this);
