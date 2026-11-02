@@ -6,6 +6,7 @@
     <title>用量统计 · 模型价格</title>
     <script src="feather.min.js"></script>
     <script src="vue.js"></script>
+    <script src="qrcode.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <style>
         /* ===== 基础样式 (源自 html1) ===== */
@@ -404,6 +405,232 @@
             cursor: not-allowed;
         }
 
+        /* 余额充值区域 */
+        .recharge-section {
+            margin-top: 14px;
+            padding: 12px 14px;
+            border-radius: 20px;
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            border: 1px solid #bfdbfe;
+        }
+        .recharge-btn {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            border: none;
+            border-radius: 40px;
+            padding: 9px 18px;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(59, 130, 246, 0.35);
+            transition: all 0.2s;
+        }
+        .recharge-btn:active {
+            transform: scale(0.97);
+        }
+        .recharge-btn:disabled {
+            background: #e2e8f0;
+            color: #94a3b8;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+
+        /* 充值弹窗 */
+        .pay-modal-mask {
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            background: rgba(15, 23, 42, 0.55);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            z-index: 9999;
+        }
+        .pay-modal {
+            width: 100%;
+            max-width: 360px;
+            max-height: 90vh;
+            overflow-y: auto;
+            background: #fff;
+            border-radius: 24px;
+            padding: 20px 18px;
+            box-shadow: 0 20px 50px rgba(15, 23, 42, 0.28);
+        }
+        .pay-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: 600;
+            color: #0f172a;
+            margin-bottom: 14px;
+        }
+        .pay-close {
+            border: none;
+            background: transparent;
+            font-size: 26px;
+            line-height: 1;
+            color: #94a3b8;
+            cursor: pointer;
+            padding: 0 4px;
+        }
+        .pay-label {
+            font-size: 13px;
+            color: #475569;
+            margin-bottom: 8px;
+        }
+        .pay-methods {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .pay-method {
+            flex: 1;
+            padding: 10px 8px;
+            border: 1px solid #cbd5e1;
+            border-radius: 14px;
+            background: #fff;
+            color: #475569;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .pay-method.active {
+            border-color: #3b82f6;
+            background: #eff6ff;
+            color: #2563eb;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+        }
+        .pay-method:active {
+            transform: scale(0.98);
+        }
+        .pay-channel-tip {
+            margin: 8px 0 10px 0;
+            padding: 10px 12px;
+            border-radius: 14px;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1d4ed8;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.5;
+        }
+        .pay-amount-input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 14px;
+            font-size: 20px;
+            font-weight: 600;
+            color: #0f172a;
+            outline: none;
+            transition: all 0.2s;
+        }
+        .pay-amount-input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        .pay-hint {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #64748b;
+            line-height: 1.6;
+        }
+        .pay-submit {
+            width: 100%;
+            margin-top: 16px;
+            padding: 12px;
+            border: none;
+            border-radius: 40px;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .pay-submit:active {
+            transform: scale(0.98);
+        }
+        .pay-submit:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
+        .pay-qr {
+            text-align: center;
+        }
+        .pay-qr-amount {
+            font-size: 28px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 8px;
+        }
+        .pay-qr-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 220px;
+            padding: 8px;
+            background: #f8fafc;
+            border-radius: 16px;
+        }
+        .pay-qr-canvas {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+        .pay-order-id {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #94a3b8;
+            word-break: break-all;
+        }
+        .pay-status {
+            margin-top: 8px;
+            font-size: 13px;
+            color: #2563eb;
+        }
+        .pay-status.success {
+            color: #16a34a;
+        }
+        .pay-status.failed {
+            color: #dc2626;
+        }
+        .pay-link {
+            display: block;
+            margin-top: 12px;
+            font-size: 12px;
+            color: #3b82f6;
+            word-break: break-all;
+        }
+        .pay-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .pay-actions button {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 40px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .pay-actions .pay-secondary {
+            background: #e2e8f0;
+            color: #475569;
+        }
+        .pay-actions .pay-primary {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #fff;
+        }
+
         /* 移动端微调 */
         @media (max-width: 480px) {
             body {
@@ -443,6 +670,20 @@
             }
             .newuser-section {
                 padding: 10px 12px;
+            }
+            .recharge-btn {
+                padding: 7px 14px;
+                font-size: 13px;
+            }
+            .recharge-section {
+                padding: 10px 12px;
+            }
+            .pay-modal {
+                padding: 18px 14px;
+            }
+            .pay-method {
+                padding: 8px 6px;
+                font-size: 13px;
             }
             .date-field {
                 padding: 5px 10px;
@@ -667,6 +908,27 @@
                                 {{ formatNumber(paidCost)}} <span class="stat-unit">Token</span>
                             </span>
                             <span class="badge">已用补充配额</span>
+                        </div>
+
+                        <!-- 余额充值：输入金额后扫描二维码支付，到账后自动增加补充配额 -->
+                        <div class="recharge-section">
+                            <div class="flex-between" style="gap: 12px;">
+                                <div>
+                                    <div class="stat-label" style="margin-bottom: 2px;">
+                                        余额充值
+                                    </div>
+                                    <div class="stat-sub" style="margin-top: 0;">
+                                        1 元 = {{ formatNumber(tokensPerYuan) }} 补充配额，扫码支付后自动到账
+                                        <span v-if="!rechargeAllowed">；补充配额已达上限，暂不可充值</span>
+                                    </div>
+                                </div>
+                                <button class="recharge-btn" :disabled="!rechargeAllowed" @click="openPayModal">
+                                    {{ rechargeAllowed ? '充值' : '已达上限' }}
+                                </button>
+                            </div>
+                            <div v-if="rechargeMessage" class="cdk-message" :class="{ 'error': rechargeMessageType === 'error' }">
+                                {{ rechargeMessage }}
+                            </div>
                         </div>
                         
                         <div v-if="!newUserClaimed" class="newuser-section">
@@ -924,6 +1186,62 @@
             </div>
         </div>
     </div>
+
+    <!-- 充值弹窗：输入金额 → 创建支付订单 → 展示二维码并轮询到账状态 -->
+    <div v-if="payModalVisible" class="pay-modal-mask" @click.self="closePayModal">
+        <div class="pay-modal">
+            <div class="pay-modal-header">
+                <span>补充配额充值</span>
+                <button class="pay-close" @click="closePayModal">×</button>
+            </div>
+
+            <!-- 第一步：选择支付方式并输入金额 -->
+            <div v-if="!payOrder">
+                <div class="pay-label">支付方式</div>
+                <div class="pay-methods">
+                    <button type="button" class="pay-method" :class="{ active: payMethod === 'WECHAT' }"
+                            @click="payMethod = 'WECHAT'">微信支付</button>
+                    <button type="button" class="pay-method" :class="{ active: payMethod === 'ALIPAY' }"
+                            @click="payMethod = 'ALIPAY'">支付宝</button>
+                </div>
+                <div class="pay-label">充值金额（元）</div>
+                <input class="pay-amount-input" type="number" inputmode="decimal"
+                       min="0.01" step="0.01" :max="maxRecharge"
+                       v-model="payAmount" @keyup.enter="submitPayment"
+                       placeholder="请输入充值金额">
+                <div class="pay-hint">
+                    按 1 元 = {{ formatNumber(tokensPerYuan) }} 补充配额换算，本次约可获得
+                    <strong>{{ formatNumber(payTokensPreview) }}</strong> 配额。<br>
+                    单次充值范围：{{ minRecharge }} ~ {{ maxRecharge }} 元。<br>
+                    已选择<strong>{{ payMethodLabel }}</strong>，点击支付后将显示{{ payMethodLabel }}付款二维码，请使用{{ payMethodLabel }}扫码完成付款。
+                </div>
+                <button class="pay-submit" :disabled="payLoading" @click="submitPayment">
+                    {{ payLoading ? ('正在创建' + payMethodLabel + '订单...') : ('使用' + payMethodLabel + '支付') }}
+                </button>
+                <div v-if="payError" class="cdk-message error">{{ payError }}</div>
+            </div>
+
+            <!-- 第二步：展示二维码并等待支付 -->
+            <div v-else class="pay-qr">
+                <div class="pay-qr-amount">￥{{ payOrder.amount }}</div>
+                <div v-if="payOrder.status === 'CREATED'" class="pay-channel-tip">
+                    请使用<strong>{{ payMethodLabel }}</strong>扫一扫，扫描下方二维码完成支付
+                </div>
+                <div v-if="payOrder.status === 'CREATED'" class="pay-qr-box" ref="payQrBox"></div>
+                <div class="pay-status"
+                     :class="{ success: payOrder.status === 'SUCCESS', failed: payOrder.status === 'FAILED' }">
+                    {{ payStatusText }}
+                </div>
+                <div class="pay-order-id">订单号：{{ payOrder.orderId }}</div>
+                <a v-if="payOrder.url" class="pay-link" :href="payOrder.url"
+                   target="_blank" rel="noopener">无法扫码？点击打开支付链接</a>
+                <div class="pay-actions">
+                    <button v-if="payOrder.status === 'SUCCESS'" class="pay-primary" @click="closePayModal">完成</button>
+                    <button v-else class="pay-secondary" @click="closePayModal">稍后支付</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -1015,6 +1333,31 @@
             });
     }
 
+    async function createRechargeOrderApi(amount, method) {
+        var uid = encodeURIComponent(pageQueries.uid || '');
+        return fetch("createRechargeOrder?uid=" + uid + "&amount=" + encodeURIComponent(amount)
+                + "&method=" + encodeURIComponent(method || 'ALIPAY'))
+            .then(p => {
+                if (p.status === 200) {
+                    return p.json();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
+    async function fetchRechargeOrderStatus(orderId) {
+        var uid = encodeURIComponent(pageQueries.uid || '');
+        return fetch("rechargeOrderStatus?uid=" + uid + "&orderId=" + encodeURIComponent(orderId))
+            .then(p => {
+                if (p.status === 200) {
+                    return p.json();
+                } else {
+                    return p.text().then(r => { return Promise.reject(r); });
+                }
+            });
+    }
+
     var vue = new Vue({
         el: '#app',
         data() {
@@ -1035,6 +1378,16 @@
                 newUserLoading: false,
                 newUserMessage: '',
                 newUserMessageType: 'success',
+                payModalVisible: false,
+                payAmount: '2',
+                payMethod: 'WECHAT',
+                payLoading: false,
+                payError: '',
+                payOrder: null,
+                payPollTimer: null,
+                paySuccessHandled: false,
+                rechargeMessage: '',
+                rechargeMessageType: 'success',
                 recordStart: '',
                 recordEnd: '',
                 recordList: [],
@@ -1148,6 +1501,41 @@
                 return this.tokenRemaining && this.tokenRemaining.newUserGift
                     ? this.tokenRemaining.newUserGift : 100000;
             },
+            tokensPerYuan() {
+                return this.tokenRemaining && this.tokenRemaining.tokensPerYuan
+                    ? Number(this.tokenRemaining.tokensPerYuan) : 500000;
+            },
+            rechargeEnabled() {
+                return this.tokenRemaining ? !!this.tokenRemaining.rechargeEnabled : false;
+            },
+            rechargeAllowed() {
+                return this.tokenRemaining && this.tokenRemaining.rechargeAllowed !== undefined
+                    ? !!this.tokenRemaining.rechargeAllowed : true;
+            },
+            minRecharge() {
+                return this.tokenRemaining && this.tokenRemaining.minRecharge
+                    ? String(this.tokenRemaining.minRecharge) : '0.01';
+            },
+            maxRecharge() {
+                return this.tokenRemaining && this.tokenRemaining.maxRecharge
+                    ? String(this.tokenRemaining.maxRecharge) : '4000';
+            },
+            payTokensPreview() {
+                const amount = Number(this.payAmount);
+                if (!isFinite(amount) || amount <= 0) return 0;
+                return Math.floor(amount * this.tokensPerYuan);
+            },
+            payMethodLabel() {
+                return this.payMethod === 'ALIPAY' ? '支付宝' : '微信支付';
+            },
+            payStatusText() {
+                if (!this.payOrder) return '';
+                if (this.payOrder.status === 'SUCCESS') {
+                    return '支付成功，' + this.formatNumber(this.payOrder.tokens || 0) + ' 补充配额已到账';
+                }
+                if (this.payOrder.status === 'FAILED') return '支付失败，请重新发起支付';
+                return '等待' + this.payMethodLabel + '支付中，支付成功后会自动到账…';
+            },
             totalPaidConsumed() {
                 if (!this.dailyUsageList.length) return 0;
                 return this.dailyUsageList.reduce((sum, day) => sum + (day.paidUsed || 0), 0);
@@ -1234,6 +1622,7 @@
         beforeDestroy() {
             window.removeEventListener('resize', this.handleResize);
             document.removeEventListener('visibilitychange', this.handleVisibility);
+            this.stopPayPolling();
             if (this.pieInstance) {
                 this.pieInstance.dispose();
                 this.pieInstance = null;
@@ -1440,6 +1829,153 @@
                 setTimeout(() => {
                     if (this.pieInstance) this.pieInstance.resize();
                 }, 100);
+            },
+            openPayModal() {
+                if (!pageQueries.uid) {
+                    this.rechargeMessage = '缺少用户ID，无法充值';
+                    this.rechargeMessageType = 'error';
+                    return;
+                }
+                if (!this.rechargeEnabled) {
+                    this.rechargeMessage = '充值功能未配置，请联系管理员';
+                    this.rechargeMessageType = 'error';
+                    return;
+                }
+                if (!this.rechargeAllowed) {
+                    this.rechargeMessage = '补充配额已达到上限，暂时无法继续充值';
+                    this.rechargeMessageType = 'error';
+                    return;
+                }
+                this.payModalVisible = true;
+                this.payAmount = '2';
+                this.payLoading = false;
+                this.payError = '';
+                this.payOrder = null;
+                this.paySuccessHandled = false;
+                this.stopPayPolling();
+            },
+            closePayModal() {
+                this.payModalVisible = false;
+                this.stopPayPolling();
+            },
+            submitPayment() {
+                if (this.payLoading) return;
+                const raw = String(this.payAmount === null || this.payAmount === undefined ? '' : this.payAmount).trim();
+                if (!/^\d+(\.\d{1,2})?$/.test(raw)) {
+                    this.payError = '请输入正确的金额（最多两位小数）';
+                    return;
+                }
+                const amount = Number(raw);
+                if (!isFinite(amount) || amount <= 0) {
+                    this.payError = '金额必须大于 0';
+                    return;
+                }
+                if (amount > Number(this.maxRecharge)) {
+                    this.payError = '单次充值金额不能超过 ' + this.maxRecharge + ' 元';
+                    return;
+                }
+                this.payLoading = true;
+                this.payError = '';
+                createRechargeOrderApi(raw, this.payMethod).then(order => {
+                    this.payLoading = false;
+                    this.payOrder = order;
+                    this.payAmount = order.amount;
+                    this.paySuccessHandled = false;
+                    if (order.status === 'SUCCESS') {
+                        this.onPaySuccess();
+                    } else if (order.status === 'FAILED') {
+                        this.rechargeMessage = '该笔支付已失败，请重新发起支付';
+                        this.rechargeMessageType = 'error';
+                    } else {
+                        this.startPayPolling();
+                    }
+                    if (order.status === 'CREATED') {
+                        this.renderQrCode(order.url);
+                    }
+                }).catch(err => {
+                    this.payLoading = false;
+                    this.payError = String(err || '创建支付订单失败');
+                });
+            },
+            renderQrCode(url) {
+                this.$nextTick(() => {
+                    const box = this.$refs.payQrBox;
+                    if (!box) return;
+                    box.innerHTML = '';
+                    if (!url) {
+                        box.textContent = '支付链接为空，请重新发起支付';
+                        return;
+                    }
+                    if (typeof qrcode !== 'function') {
+                        box.textContent = '二维码组件未加载，请点击下方支付链接';
+                        return;
+                    }
+                    try {
+                        const qr = qrcode(0, 'M');
+                        qr.addData(url, 'Byte');
+                        qr.make();
+                        const count = qr.getModuleCount();
+                        const margin = 4;
+                        const cell = Math.max(3, Math.floor(280 / count));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = canvas.height = count * cell + margin * 2;
+                        const ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        ctx.fillStyle = '#000000';
+                        for (let r = 0; r < count; r++) {
+                            for (let c = 0; c < count; c++) {
+                                if (qr.isDark(r, c)) {
+                                    ctx.fillRect(margin + c * cell, margin + r * cell, cell, cell);
+                                }
+                            }
+                        }
+                        canvas.className = 'pay-qr-canvas';
+                        box.appendChild(canvas);
+                    } catch (e) {
+                        box.textContent = '二维码生成失败，请点击下方支付链接';
+                    }
+                });
+            },
+            startPayPolling() {
+                this.stopPayPolling();
+                this.payPollTimer = setInterval(() => {
+                    this.pollPaymentStatus();
+                }, 3000);
+            },
+            stopPayPolling() {
+                if (this.payPollTimer) {
+                    clearInterval(this.payPollTimer);
+                    this.payPollTimer = null;
+                }
+            },
+            pollPaymentStatus() {
+                if (!this.payOrder || !this.payOrder.orderId) return;
+                const orderId = this.payOrder.orderId;
+                fetchRechargeOrderStatus(orderId).then(order => {
+                    if (!this.payOrder || this.payOrder.orderId !== orderId) return;
+                    this.payOrder = Object.assign({}, this.payOrder, order);
+                    if (order.status === 'SUCCESS') {
+                        this.onPaySuccess();
+                    } else if (order.status === 'FAILED') {
+                        this.stopPayPolling();
+                        this.rechargeMessage = '支付失败，请重新发起支付';
+                        this.rechargeMessageType = 'error';
+                    }
+                }).catch(() => {});
+            },
+            onPaySuccess() {
+                this.stopPayPolling();
+                if (this.paySuccessHandled) return;
+                this.paySuccessHandled = true;
+                const tokens = this.payOrder && this.payOrder.tokens ? this.payOrder.tokens : 0;
+                this.rechargeMessage = '支付成功，' + this.formatNumber(tokens) + ' 补充配额已到账';
+                this.rechargeMessageType = 'success';
+                this.refreshBalance();
+                this.loadIncreaseRecords();
+                setTimeout(() => {
+                    this.rechargeMessage = '';
+                }, 6000);
             },
             exchangeCdk() {
                 if (!this.cdkCode || this.cdkCode.trim() === '') {

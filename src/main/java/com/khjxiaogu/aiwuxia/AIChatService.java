@@ -26,6 +26,7 @@ package com.khjxiaogu.aiwuxia;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.sql.Connection;
@@ -34,6 +35,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -48,10 +50,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
@@ -89,6 +93,7 @@ import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
@@ -236,6 +241,77 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/** 配额增加来源：新用户赠送 */
 	public static final String INCREASE_SOURCE_NEW_USER = "新用户赠送";
 
+	// ==================== DeepSeek 开放平台充值 ====================
+
+	/**
+	 * 充值金额与补充配额的换算比例：1 元 = 500000 token。
+	 * <p>
+	 * 与 {@code UsageTracker.calculatePrice()} 中"每百万 token 2 元"的现有换算比保持一致：
+	 * 充值金额（元）× {@code TOKENS_PER_YUAN} 即为到账的补充配额。
+	 * </p>
+	 */
+	public static final int TOKENS_PER_YUAN = 500_000;
+	/** 单次充值的最小金额（元） */
+	public static final BigDecimal MIN_RECHARGE_AMOUNT = new BigDecimal("0.01");
+	/** 单次充值上限的默认值（元），可在配置中修改 */
+	public static final BigDecimal DEFAULT_MAX_RECHARGE_AMOUNT = new BigDecimal("50");
+	/**
+	 * 补充配额总量上限的默认值（token），可在配置中修改。
+	 * <p>
+	 * 默认 2500 万 token（按现有 1 元 = 500000 token 的换算比相当于 50 元）。
+	 * 达到该值（或本次充值会让余额超过该值）时禁止继续充值；已支付的订单仍正常到账。
+	 * </p>
+	 */
+	public static final int DEFAULT_MAX_PAID_BALANCE = 25_000_000;
+
+	/** 充值订单状态：已创建（等待支付） */
+	private static final String PAYMENT_STATUS_CREATED = "CREATED";
+	/** 充值订单状态：支付成功 */
+	private static final String PAYMENT_STATUS_SUCCESS = "SUCCESS";
+	/** 充值订单状态：支付失败 */
+	private static final String PAYMENT_STATUS_FAILED = "FAILED";
+
+	/** DeepSeek 开放平台创建支付链接接口 */
+	private static final String DEEPSEEK_PAYMENT_CREATE_URL = "https://platform.deepseek.com/api/v1/payments";
+	/** DeepSeek 开放平台查询全部支付订单（发票）接口 */
+	private static final String DEEPSEEK_INVOICE_URL = "https://platform.deepseek.com/auth-api/v0/users/get_all_invoice";
+	/** 充值主支付方式：固定为云闪付，微信/支付宝通过 {@code fallback_method_type} 切换 */
+	private static final String PAYMENT_PRIMARY_METHOD = "CMB_UNIONPAY";
+	/** 支付方式 ID：支付宝（沿用原有默认值） */
+	public static final String PAYMENT_METHOD_ALIPAY = "ALIPAY";
+	/** 支付方式 ID：微信支付（替换原来的 ALIPAY 位置，即 {@code fallback_method_type}） */
+	public static final String PAYMENT_METHOD_WECHAT = "WECHAT";
+	/**
+	 * 未配置 shumei_device_id 时使用的默认设备指纹。
+	 * <p>
+	 * 该值可以在 {@code config/deepseek-payment.json} 中覆盖，见 {@link ConfigPaths#deepseekPayment(File)}。
+	 * </p>
+	 */
+	private static final String DEFAULT_SHUMEI_DEVICE_ID = "BAgl4gambcpToWwN1UPWKeJtQ8PkFVdBFAetr6DQr7NjLv1LitQigWskKS5dHXe2N+f25GwIDb+kgwH5Xgvtp6g==";
+	/** 后台检查未支付订单的基础间隔（毫秒），实际间隔为 5 秒 + 0~5 秒随机 */
+	private static final long PAYMENT_POLL_BASE_INTERVAL_MS = 5000;
+	/** 前端状态查询触发远端检查的最小间隔，避免前端轮询把请求全部打到 DeepSeek */
+	private static final long PAYMENT_STATUS_REFRESH_INTERVAL_MS = 4000;
+
+	/** 充值配置中的 Cookie（访问 DeepSeek 开放平台时使用），为空表示未配置 */
+	private volatile String paymentCookie = "";
+	/** 充值配置中的数美设备指纹 */
+	private volatile String paymentShumeiDeviceId = DEFAULT_SHUMEI_DEVICE_ID;
+	/** 充值配置中的 Authorization 头（形如 {@code Bearer xxx}），为空表示不发送 */
+	private volatile String paymentAuthorization = "";
+	/** 单次充值上限（元），由 {@link #loadPaymentConfig(File)} 读取，默认 {@link #DEFAULT_MAX_RECHARGE_AMOUNT} */
+	private volatile BigDecimal maxRechargeAmount = DEFAULT_MAX_RECHARGE_AMOUNT;
+	/** 补充配额总量上限（token），由 {@link #loadPaymentConfig(File)} 读取，默认 {@link #DEFAULT_MAX_PAID_BALANCE} */
+	private volatile int maxPaidBalance = DEFAULT_MAX_PAID_BALANCE;
+	/** 充值相关数据库/网络操作的串行锁，保证同一用户不会并发创建同金额订单 */
+	private final Object paymentLock = new Object();
+	/** 每个用户最近一次远端订单检查时间，用于限制状态查询触发远端请求的频率 */
+	private final Map<String, Long> paymentRefreshedAt = new ConcurrentHashMap<>();
+	/** 后台检查未支付订单的线程 */
+	private Thread paymentPoller;
+	/** 后台检查线程是否继续运行 */
+	private volatile boolean paymentPollerRunning = true;
+
 	public void initModelNames() {
 		modelTranslations.put("deepseek",new NameTranslator().add("deepseek", "Deepseek")
 				.add("pro", "专家").add("flash", "对话")
@@ -375,6 +451,29 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		        /** 配额增加记录按用户+日期查询的索引 */
 		        String createQuotaIncreaseIndex = "CREATE INDEX IF NOT EXISTS idx_quota_increase_user_date"
 		        		+ " ON quota_increase_record(user_id, date)";
+		        /** 充值订单表：保存本地订单号、DeepSeek 支付订单号、支付链接与到账状态 */
+		        String createPaymentOrderTable = "CREATE TABLE IF NOT EXISTS payment_order ("
+		        		+ "order_id TEXT PRIMARY KEY,"
+		        		+ "user_id TEXT NOT NULL,"
+		        		+ "amount TEXT NOT NULL,"
+		        		+ "currency TEXT NOT NULL DEFAULT 'CNY',"
+		        		+ "payment_order_id TEXT,"
+		        		+ "url TEXT,"
+		        		+ "status TEXT NOT NULL DEFAULT '" + PAYMENT_STATUS_CREATED + "',"
+		        		+ "tokens INTEGER NOT NULL DEFAULT 0,"
+		        		+ "credited INTEGER NOT NULL DEFAULT 0,"
+		        		+ "created_at TEXT NOT NULL,"
+		        		+ "updated_at TEXT NOT NULL,"
+		        		+ "paid_at TEXT)";
+		        /** 按用户+金额+状态查询未支付订单的索引（重复发起同金额充值时复用旧链接） */
+		        String createPaymentOrderUserIndex = "CREATE INDEX IF NOT EXISTS idx_payment_order_user_amount"
+		        		+ " ON payment_order(user_id, amount, status)";
+		        /** 按状态扫描未支付订单的索引（后台轮询使用） */
+		        String createPaymentOrderStatusIndex = "CREATE INDEX IF NOT EXISTS idx_payment_order_status"
+		        		+ " ON payment_order(status)";
+		        /** 按 DeepSeek 支付订单号查询的索引 */
+		        String createPaymentOrderPidIndex = "CREATE INDEX IF NOT EXISTS idx_payment_order_pid"
+		        		+ " ON payment_order(payment_order_id)";
 				stmt.execute(createMsg);
 				stmt.execute(createPerm);
 				stmt.execute(createRemark);
@@ -388,6 +487,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				stmt.execute(createPaidUsageIndex);
 				stmt.execute(createQuotaIncreaseTable);
 				stmt.execute(createQuotaIncreaseIndex);
+				stmt.execute(createPaymentOrderTable);
+				stmt.execute(createPaymentOrderUserIndex);
+				stmt.execute(createPaymentOrderStatusIndex);
+				stmt.execute(createPaymentOrderPidIndex);
 			}
 			migrateChatsSchema();
 		} catch (SQLException e) {
@@ -423,6 +526,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		// 放在绘画存储与 SDXL 工具初始化之后，MCP 服务端可以直接暴露按用户创建的 SDXL 图片工具。
 		initMcp(path);
 		reload();
+		// 未支付充值订单的后台检查线程：启动后按 5 秒 + 0~5 秒随机间隔检查支付状态。
+		startPaymentPoller();
 	}
 
 	/**
@@ -893,6 +998,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			} catch (Exception e) {
 				getLogger().error(e);
 			}
+		}
+		// 充值凭据属于运行期配置，reload 命令同时刷新，修改文件后无需重启服务。
+		if (parent != null) {
+			loadPaymentConfig(parent);
 		}
 	}
 
@@ -1429,6 +1538,22 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@Adapter
 	public ResultDTO featherjs() throws IOException {
 		return new ResultDTO(200, new File(parent, "feather.min.js"));
+	}
+
+	/**
+	 * HTTP GET端点：返回二维码生成脚本 {@code qrcode.js}（充值弹窗用）。
+	 * <p>
+	 * 脚本为 Kazuhiko Arase 的 qrcode-generator（MIT），保存在数据目录下，避免依赖外部 CDN。
+	 * </p>
+	 *
+	 * @return 包含文件内容的ResultDTO
+	 * @throws IOException 如果文件读取失败
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/qrcode.js")
+	@Adapter
+	public ResultDTO qrcodejs() throws IOException {
+		return new ResultDTO(200, new File(parent, "qrcode.js"));
 	}
 
 	/**
@@ -2876,11 +3001,20 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		boolean checkedIn = hasCheckedIn(userId, today);
 		// 新用户福利是否已被领取（领取过则前端不再显示领取入口）
 		boolean newUserClaimed = hasQuotaIncrease(userId, INCREASE_SOURCE_NEW_USER);
+		// 充值上限：补充配额总量达到上限后禁止继续充值
+		int rechargeRemainingTokens = Math.max(0, maxPaidBalance - paidRemaining);
+		boolean rechargeAllowed = rechargeRemainingTokens >= tokensForAmount(MIN_RECHARGE_AMOUNT);
 
 		return new ResultDTO(200,JsonBuilder.object().add("freeTotal", freeLimit).add("paidRemaining", paidRemaining)
 				.add("freeCost", freeUsed).add("paidCost", paidUsed)
 				.add("checkedIn", checkedIn).add("checkinReward", DAILY_CHECKIN_REWARD)
-				.add("newUserClaimed", newUserClaimed).add("newUserGift", NEW_USER_GIFT));
+				.add("newUserClaimed", newUserClaimed).add("newUserGift", NEW_USER_GIFT)
+				// 充值入口配置：是否可用、金额与配额换算比、单次金额范围、是否还能继续充值
+				.add("rechargeEnabled", !paymentCookie.isEmpty())
+				.add("tokensPerYuan", TOKENS_PER_YUAN)
+				.add("minRecharge", MIN_RECHARGE_AMOUNT.toPlainString())
+				.add("maxRecharge", maxRechargeAmount.toPlainString())
+				.add("rechargeAllowed", rechargeAllowed));
 	}
 
 	/**
@@ -3493,6 +3627,943 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			getLogger().printStackTrace(e);
 		}
 		return 0;
+	}
+
+	// ---------- DeepSeek 开放平台充值 ----------
+
+	/**
+	 * 读取充值凭据（{@code config/deepseek-payment.json}）。
+	 * <p>
+	 * 取值优先级从高到低为：系统属性 {@code -Ddeepseek_cookie=...}/{@code -Dshumei_device_id=...}、
+	 * 配置文件里的 {@code cookie}/{@code shumei_device_id} 字段、内置默认设备指纹。
+	 * cookie 没有默认值，未配置时充值功能不可用（相关接口会返回明确的未配置提示）。
+	 * </p>
+	 *
+	 * @param dataFolder 数据目录
+	 */
+	private void loadPaymentConfig(File dataFolder) {
+		JsonObject config = new JsonObject();
+		File configFile = ConfigPaths.deepseekPayment(dataFolder);
+		if (configFile.isFile()) {
+			try {
+				config = JsonParser.parseString(FileUtil.readString(configFile)).getAsJsonObject();
+			} catch (Throwable ex) {
+				logger.warning("充值配置解析失败，改用系统属性/默认值：" + ex.getMessage());
+			}
+		}
+		String cookie = firstNonBlank(System.getProperty("deepseek_cookie"), stringValue(config, "cookie"));
+		String deviceId = firstNonBlank(System.getProperty("shumei_device_id"),
+			stringValue(config, "shumei_device_id"), DEFAULT_SHUMEI_DEVICE_ID);
+		String authorization = firstNonBlank(System.getProperty("deepseek_authorization"),
+			stringValue(config, "authorization"));
+		paymentCookie = normalizeCookie(cookie);
+		paymentShumeiDeviceId = deviceId == null ? DEFAULT_SHUMEI_DEVICE_ID : deviceId;
+		paymentAuthorization = normalizeAuthorization(authorization);
+		// 充值限额：两个值都可以在配置文件或系统属性中调整
+		maxRechargeAmount = readPositiveAmount(config, "max_recharge_amount",
+			"deepseek_max_recharge_amount", DEFAULT_MAX_RECHARGE_AMOUNT);
+		maxPaidBalance = readPositiveInt(config, "max_paid_balance",
+			"deepseek_max_paid_balance", DEFAULT_MAX_PAID_BALANCE);
+		if (!paymentAuthorization.isEmpty()) {
+			logger.info("DeepSeek 充值已配置 Authorization Bearer");
+		}
+		if (paymentCookie.isEmpty()) {
+			logger.info("DeepSeek 充值未配置 cookie（" + configFile.getPath() + "），充值入口将不可用");
+		} else {
+			logger.info("DeepSeek 充值已启用：单次最多 " + maxRechargeAmount.toPlainString()
+				+ " 元，补充配额总量上限 " + maxPaidBalance + " token");
+		}
+	}
+
+	/**
+	 * 读取正数配置项（系统属性优先，其次配置文件）。
+	 *
+	 * @param config   配置 JSON
+	 * @param key      配置文件字段名
+	 * @param property 系统属性名
+	 * @param fallback 未配置或配置非法时的默认值
+	 * @return 正数配置值
+	 */
+	private BigDecimal readPositiveAmount(JsonObject config, String key, String property, BigDecimal fallback) {
+		String text = firstNonBlank(System.getProperty(property), stringValue(config, key));
+		if (text == null) {
+			return fallback;
+		}
+		try {
+			BigDecimal value = new BigDecimal(text.trim());
+			if (value.signum() > 0) {
+				return value;
+			}
+		} catch (NumberFormatException ex) {
+			// 统一在下面记录告警
+		}
+		logger.warning("充值配置 " + key + " 不是正数，使用默认值 " + fallback.toPlainString() + "：" + text);
+		return fallback;
+	}
+
+	/**
+	 * 读取正整数配置项（系统属性优先，其次配置文件）。
+	 *
+	 * @param config   配置 JSON
+	 * @param key      配置文件字段名
+	 * @param property 系统属性名
+	 * @param fallback 未配置或配置非法时的默认值
+	 * @return 正整数配置值
+	 */
+	private int readPositiveInt(JsonObject config, String key, String property, int fallback) {
+		String text = firstNonBlank(System.getProperty(property), stringValue(config, key));
+		if (text == null) {
+			return fallback;
+		}
+		try {
+			long value = Long.parseLong(text.trim());
+			if (value > 0 && value <= Integer.MAX_VALUE) {
+				return (int) value;
+			}
+		} catch (NumberFormatException ex) {
+			// 统一在下面记录告警
+		}
+		logger.warning("充值配置 " + key + " 不是正整数，使用默认值 " + fallback + "：" + text);
+		return fallback;
+	}
+
+	/**
+	 * 启动未支付充值订单的后台检查线程。
+	 * <p>
+	 * 线程按"5 秒 + 0~5 秒随机"的间隔检查所有 {@code CREATED} 订单；支付成功的订单会按
+	 * {@link #TOKENS_PER_YUAN} 的换算比增加到对应用户的补充配额。没有未支付订单时不会访问远端接口。
+	 * </p>
+	 */
+	private void startPaymentPoller() {
+		if (paymentPoller != null) {
+			return;
+		}
+		paymentPoller = new Thread(this::paymentPollLoop, "deepseek-payment-poller");
+		paymentPoller.setDaemon(true);
+		paymentPoller.start();
+	}
+
+	/** 后台检查循环：固定 5 秒 + 0~5 秒随机的节奏，异常只记录日志，不影响后续检查。 */
+	private void paymentPollLoop() {
+		while (paymentPollerRunning) {
+			try {
+				Thread.sleep(PAYMENT_POLL_BASE_INTERVAL_MS + ThreadLocalRandom.current().nextInt(5001));
+			} catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				return;
+			}
+			try {
+				pollPendingPaymentOrders();
+			} catch (Throwable ex) {
+				logger.printStackTrace(ex);
+			}
+		}
+	}
+
+	/** 扫描所有用户的未支付订单，每个用户只拉取一次远端的全部支付订单并更新状态。 */
+	private void pollPendingPaymentOrders() {
+		Set<String> users = new HashSet<>();
+		synchronized (paymentLock) {
+			// 未支付订单需要检查；已成功但还没发放配额的订单需要补发
+			try (PreparedStatement pstmt = database.prepareStatement(
+					"SELECT DISTINCT user_id FROM payment_order WHERE status = ? OR (status = ? AND credited = 0)")) {
+				pstmt.setString(1, PAYMENT_STATUS_CREATED);
+				pstmt.setString(2, PAYMENT_STATUS_SUCCESS);
+				try (ResultSet rs = pstmt.executeQuery()) {
+					while (rs.next()) {
+						String uid = rs.getString("user_id");
+						if (uid != null && !uid.isEmpty()) {
+							users.add(uid);
+						}
+					}
+				}
+			} catch (SQLException ex) {
+				logger.printStackTrace(ex);
+				return;
+			}
+		}
+		for (String uid : users) {
+			synchronized (paymentLock) {
+				refreshPendingPaymentOrders(uid);
+			}
+		}
+	}
+
+	/**
+	 * 立即检查指定用户的全部未支付订单。
+	 *
+	 * @param userId 用户ID
+	 * @return true 表示远端检查成功（不代表订单已支付）；false 表示配置缺失或请求失败
+	 */
+	private boolean refreshPendingPaymentOrders(String userId) {
+		// 先把已判定成功但尚未发放配额的订单补发（发放失败或进程中断后的重试）
+		creditUncreditedPaymentOrders(userId);
+		List<PaymentOrder> pending = listPaymentOrders(
+			"SELECT * FROM payment_order WHERE user_id = ? AND status = ?", userId, PAYMENT_STATUS_CREATED);
+		if (pending.isEmpty()) {
+			return true;
+		}
+		// 先记录检查时间：状态查询接口据此节流，即使远端请求失败也不会被前端轮询反复触发
+		paymentRefreshedAt.put(userId, System.currentTimeMillis());
+		Map<String, JsonObject> remoteOrders;
+		try {
+			remoteOrders = fetchRemotePaymentOrders();
+		} catch (Throwable ex) {
+			logger.warning("检查充值订单失败：" + ex.getMessage());
+			return false;
+		}
+		String now = Instant.now().toString();
+		for (PaymentOrder order : pending) {
+			if (order.paymentOrderId == null || order.paymentOrderId.isEmpty()) {
+				continue;
+			}
+			JsonObject remote = remoteOrders.get(order.paymentOrderId);
+			if (remote == null) {
+				continue;
+			}
+			String status = stringValue(remote, "payment_order_status");
+			if (PAYMENT_STATUS_SUCCESS.equalsIgnoreCase(status)) {
+				String paidAt = firstNonBlank(stringValue(remote, "paid_at"), now);
+				updatePaymentOrderStatus(order.orderId, PAYMENT_STATUS_SUCCESS, paidAt);
+				creditPaymentOrder(order.orderId);
+			} else if (PAYMENT_STATUS_FAILED.equalsIgnoreCase(status)) {
+				updatePaymentOrderStatus(order.orderId, PAYMENT_STATUS_FAILED, null);
+			}
+			// CREATED 以及未知状态保持未支付，等待下一次检查
+		}
+		return true;
+	}
+
+	/**
+	 * 在 DeepSeek 开放平台请求上附加可配置的 {@code Authorization: Bearer ...} 头。
+	 *
+	 * @param builder 请求构造器
+	 * @return 同一个构造器，便于继续链式调用
+	 */
+	private HttpRequestBuilder withPaymentAuthorization(HttpRequestBuilder builder) {
+		if (paymentAuthorization != null && !paymentAuthorization.isEmpty()) {
+			builder.header("Authorization", paymentAuthorization);
+		}
+		return builder;
+	}
+
+	/**
+	 * 拉取 DeepSeek 开放平台上当前账号的全部支付订单。
+	 *
+	 * @return DeepSeek 支付订单号 → 订单 JSON
+	 * @throws IOException 未配置 cookie、请求失败或响应结构不符合预期
+	 */
+	private Map<String, JsonObject> fetchRemotePaymentOrders() throws IOException {
+		if (paymentCookie == null || paymentCookie.trim().isEmpty()) {
+			throw new IOException("充值功能未配置：请在 config/deepseek-payment.json 中填写 cookie");
+		}
+		HttpRequestBuilder builder = new HttpRequestBuilder(DEEPSEEK_INVOICE_URL)
+			.defUA()
+			.cookie(paymentCookie)
+			.contenttype("application/json")
+			.header("accept", "application/json")
+			.header("referer", "https://platform.deepseek.com/usage");
+		withPaymentAuthorization(builder);
+		String text = builder
+			.readTimeout(20000)
+			.get()
+			.readString();
+		JsonObject resp = parseJsonObject(text, "获取支付订单");
+		int code = intValue(resp, "code", -1);
+		if (code != 0) {
+			throw new IOException("获取支付订单失败：" + stringValue(resp, "msg") + "（code=" + code + "）");
+		}
+		JsonObject data = objectValue(resp, "data");
+		if (data == null) {
+			throw new IOException("获取支付订单失败：响应缺少 data");
+		}
+		int bizCode = intValue(data, "biz_code", 0);
+		if (bizCode != 0) {
+			throw new IOException("获取支付订单失败：" + stringValue(data, "biz_msg") + "（biz_code=" + bizCode + "）");
+		}
+		JsonObject biz = objectValue(data, "biz_data");
+		if (biz == null) {
+			throw new IOException("获取支付订单失败：响应缺少 biz_data");
+		}
+		JsonArray orders = arrayValue(objectValue(biz, "invoices"), "payment_orders");
+		Map<String, JsonObject> result = new LinkedHashMap<>();
+		if (orders != null) {
+			for (JsonElement element : orders) {
+				if (!element.isJsonObject()) {
+					continue;
+				}
+				JsonObject order = element.getAsJsonObject();
+				String orderId = stringValue(order, "payment_order_id");
+				if (orderId != null && !orderId.isEmpty()) {
+					result.put(orderId, order);
+				}
+			}
+		}
+		return result;
+	}
+
+	/**
+	 * 在 DeepSeek 开放平台创建支付链接。
+	 * <p>
+	 * 请求里的主支付方式固定为云闪付（{@code CMB_UNIONPAY}）。微信支付与支付宝只替换
+	 * {@code fallback_method_type}：选微信时填 {@code WECHAT}，选支付宝时填 {@code ALIPAY}，
+	 * 其余字段与原有请求完全一致。
+	 * </p>
+	 *
+	 * @param amountText     规范化后的金额（如 {@code 2}）
+	 * @param fallbackMethod 支付方式（{@link #PAYMENT_METHOD_WECHAT} 或 {@link #PAYMENT_METHOD_ALIPAY}）
+	 * @return 响应中的 {@code biz_data}（包含 payment_order_id、url、amount 等）
+	 * @throws IOException 未配置 cookie、请求失败或响应结构不符合预期
+	 */
+	private JsonObject requestRemotePayment(String amountText, String fallbackMethod) throws IOException {
+		if (paymentCookie == null || paymentCookie.trim().isEmpty()) {
+			throw new IOException("充值功能未配置：请在 config/deepseek-payment.json 中填写 cookie");
+		}
+		JsonObject orderInfo = new JsonObject();
+		orderInfo.addProperty("payment_method_type", PAYMENT_PRIMARY_METHOD);
+		orderInfo.addProperty("fallback_method_type", fallbackMethod);
+		orderInfo.addProperty("amount", amountText);
+		orderInfo.addProperty("currency", "CNY");
+		orderInfo.addProperty("request_id", UUID.randomUUID().toString());
+		JsonObject body = new JsonObject();
+		body.add("order_info", orderInfo);
+		body.addProperty("shumei_device_id", paymentShumeiDeviceId);
+
+		HttpRequestBuilder builder = new HttpRequestBuilder(DEEPSEEK_PAYMENT_CREATE_URL)
+			.defUA()
+			.cookie(paymentCookie)
+			.contenttype("application/json")
+			.header("accept", "application/json")
+			.header("origin", "https://platform.deepseek.com")
+			.header("referer", "https://platform.deepseek.com/usage");
+		withPaymentAuthorization(builder);
+		String text = builder
+			.readTimeout(20000)
+			.post()
+			.send(body.toString())
+			.readString();
+		JsonObject resp = parseJsonObject(text, "创建支付订单");
+		int code = intValue(resp, "code", -1);
+		if (code != 0) {
+			throw new IOException("创建支付订单失败：" + stringValue(resp, "msg") + "（code=" + code + "）");
+		}
+		JsonObject data = objectValue(resp, "data");
+		if (data == null) {
+			throw new IOException("创建支付订单失败：响应缺少 data");
+		}
+		int bizCode = intValue(data, "biz_code", 0);
+		if (bizCode != 0) {
+			throw new IOException("创建支付订单失败：" + stringValue(data, "biz_msg") + "（biz_code=" + bizCode + "）");
+		}
+		JsonObject biz = objectValue(data, "biz_data");
+		if (biz == null) {
+			throw new IOException("创建支付订单失败：响应缺少 biz_data");
+		}
+		int payCode = intValue(biz, "code", 0);
+		if (payCode != 0) {
+			throw new IOException("创建支付订单失败：" + stringValue(biz, "msg") + "（code=" + payCode + "）");
+		}
+		return biz;
+	}
+
+	/**
+	 * 创建充值订单：用户输入金额并点击支付后调用。
+	 * <p>
+	 * 如果该用户存在相同金额、仍未支付的旧订单，先立即检查旧订单是否已经支付：
+	 * </p>
+	 * <ul>
+	 * <li>旧订单已支付：发放配额并把到账结果直接返回前端，本次不再创建新链接，避免重复付款；</li>
+	 * <li>旧订单未支付（且不是失败）：直接复用旧订单的付款链接，避免重复下单；</li>
+	 * <li>旧订单已失败或不存在：创建新的支付链接（同一金额可以再次发起充值）。</li>
+	 * </ul>
+	 *
+	 * @param userId     用户ID
+	 * @param amountText 充值金额（元，默认由前端填 2）
+	 * @param methodText 支付方式（{@code WECHAT} 或 {@code ALIPAY}，缺省为支付宝）
+	 * @return 订单信息（含支付链接，前端用 {@code url} 生成二维码）
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/createRechargeOrder")
+	@Adapter
+	public ResultDTO createRechargeOrder(@Query("uid") String userId, @Query("amount") String amountText,
+			@Query("method") String methodText) {
+		if (userId == null || userId.trim().isEmpty()) {
+			return new ResultDTO(400, "缺少用户ID");
+		}
+		BigDecimal amount = parseRechargeAmount(amountText, maxRechargeAmount);
+		if (amount == null) {
+			return new ResultDTO(400, "请输入正确的充值金额（" + MIN_RECHARGE_AMOUNT.toPlainString()
+				+ " ~ " + maxRechargeAmount.toPlainString() + " 元，最多两位小数）");
+		}
+		String paymentMethod = normalizePaymentMethod(methodText);
+		if (paymentMethod == null) {
+			return new ResultDTO(400, "不支持的支付方式，仅支持 "
+				+ PAYMENT_METHOD_WECHAT + " / " + PAYMENT_METHOD_ALIPAY);
+		}
+		String uid = userId.trim();
+		String amountValue = amount.toPlainString();
+		int tokens = tokensForAmount(amount);
+		if (tokens <= 0) {
+			return new ResultDTO(400, "充值金额超出可兑换范围");
+		}
+		synchronized (paymentLock) {
+			// 0. 先补发此前已成功但未到账的订单，避免历史订单因异常中断而漏发
+			creditUncreditedPaymentOrders(uid);
+			// 0.5 充值上限：补充配额总量不得超过配置的上限
+			int paidBalance = getPaidBalance(uid);
+			if (paidBalance >= maxPaidBalance) {
+				return new ResultDTO(400, "补充配额已达到上限，暂时无法继续充值");
+			}
+			if ((long) paidBalance + tokens > maxPaidBalance) {
+				return new ResultDTO(400, "本次充值后将超过补充配额上限，请减少充值金额");
+			}
+			// 1. 相同金额的未支付订单：立即检查旧付款链接，仍未支付且未失败时优先复用
+			PaymentOrder existing = findPendingPaymentOrder(uid, amountValue);
+			if (existing != null) {
+				String existingOrderId = existing.orderId;
+				refreshPendingPaymentOrders(uid);
+				PaymentOrder checked = getPaymentOrderById(existingOrderId);
+				if (checked != null && PAYMENT_STATUS_CREATED.equals(checked.status)) {
+					// 未支付且未失败：直接复用旧付款链接，避免重复下单
+					return new ResultDTO(200, paymentOrderJson(checked, true));
+				}
+				if (checked != null && PAYMENT_STATUS_SUCCESS.equals(checked.status)) {
+					// 刚刚发现旧订单其实已经支付：把到账结果返回给前端，本次不再创建新链接，避免重复付款
+					return new ResultDTO(200, paymentOrderJson(checked, true));
+				}
+				// 旧订单已失败：继续创建新的支付链接
+			}
+			// 2. 创建新的支付链接
+			JsonObject remote;
+			try {
+				remote = requestRemotePayment(amountValue, paymentMethod);
+			} catch (Throwable ex) {
+				logger.warning("创建充值订单失败：" + ex.getMessage());
+				return new ResultDTO(500, "创建支付订单失败：" + ex.getMessage());
+			}
+			String paymentOrderId = stringValue(remote, "payment_order_id");
+			String payUrl = stringValue(remote, "url");
+			if (paymentOrderId == null || paymentOrderId.isEmpty()
+				|| payUrl == null || payUrl.isEmpty()) {
+				return new ResultDTO(500, "创建支付订单失败：响应缺少支付订单号或支付链接");
+			}
+			String currency = firstNonBlank(stringValue(remote, "currency"), "CNY");
+			try {
+				PaymentOrder order = insertPaymentOrder(uid, amountValue, currency, paymentOrderId, payUrl, tokens);
+				paymentRefreshedAt.put(uid, System.currentTimeMillis());
+				logger.info("已创建充值订单：" + order.orderId + "，用户 " + uid + "，金额 " + amountValue
+					+ " 元，支付方式 " + paymentMethod);
+				return new ResultDTO(200, paymentOrderJson(order, false));
+			} catch (SQLException ex) {
+				logger.printStackTrace(ex);
+				return new ResultDTO(500, "保存支付订单失败：" + ex.getMessage());
+			}
+		}
+	}
+
+	/**
+	 * 查询充值订单状态：前端展示二维码后轮询该接口。
+	 * <p>
+	 * 为避免前端轮询把请求全部打到 DeepSeek，只有当该用户最近一次远端检查超过
+	 * {@link #PAYMENT_STATUS_REFRESH_INTERVAL_MS} 时才会立即检查；支付成功后在此处完成配额发放，
+	 * 即使前端关闭页面，后台线程也会继续检查并发放。
+	 * </p>
+	 *
+	 * @param userId  用户ID
+	 * @param orderId 本地订单ID
+	 * @return 订单状态（CREATED/SUCCESS/FAILED）及到账信息
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/rechargeOrderStatus")
+	@Adapter
+	public ResultDTO rechargeOrderStatus(@Query("uid") String userId, @Query("orderId") String orderId) {
+		if (userId == null || userId.trim().isEmpty()) {
+			return new ResultDTO(400, "缺少用户ID");
+		}
+		if (orderId == null || orderId.trim().isEmpty()) {
+			return new ResultDTO(400, "缺少订单ID");
+		}
+		String uid = userId.trim();
+		String oid = orderId.trim();
+		synchronized (paymentLock) {
+			PaymentOrder order = getPaymentOrder(oid, uid);
+			if (order == null) {
+				return new ResultDTO(404, "订单不存在");
+			}
+			if (PAYMENT_STATUS_CREATED.equals(order.status)) {
+				Long last = paymentRefreshedAt.get(uid);
+				long now = System.currentTimeMillis();
+				if (last == null || now - last >= PAYMENT_STATUS_REFRESH_INTERVAL_MS) {
+					refreshPendingPaymentOrders(uid);
+					order = getPaymentOrder(oid, uid);
+					if (order == null) {
+						return new ResultDTO(404, "订单不存在");
+					}
+				}
+			}
+			if (PAYMENT_STATUS_SUCCESS.equals(order.status) && !order.credited) {
+				creditPaymentOrder(oid);
+				order = getPaymentOrder(oid, uid);
+			}
+			return new ResultDTO(200, paymentOrderJson(order, false));
+		}
+	}
+
+	/**
+	 * 规范化支付方式：只接受微信支付与支付宝，未传时默认支付宝。
+	 *
+	 * @param method 支付方式 ID（{@code WECHAT}/{@code ALIPAY}，大小写不敏感）
+	 * @return 规范化后的支付方式；传入不支持的值时返回 null
+	 */
+	private static String normalizePaymentMethod(String method) {
+		if (method == null || method.trim().isEmpty()) {
+			return PAYMENT_METHOD_ALIPAY;
+		}
+		String value = method.trim();
+		if (PAYMENT_METHOD_WECHAT.equalsIgnoreCase(value)) {
+			return PAYMENT_METHOD_WECHAT;
+		}
+		if (PAYMENT_METHOD_ALIPAY.equalsIgnoreCase(value)) {
+			return PAYMENT_METHOD_ALIPAY;
+		}
+		return null;
+	}
+
+	/**
+	 * 解析并校验充值金额：只接受 {@link #MIN_RECHARGE_AMOUNT} ~ {@code maxAmount} 元、最多两位小数的普通十进制写法。
+	 *
+	 * @param amountText 用户输入的金额
+	 * @param maxAmount  单次充值上限（元）
+	 * @return 去掉多余 0 的金额；非法时返回 null
+	 */
+	private static BigDecimal parseRechargeAmount(String amountText, BigDecimal maxAmount) {
+		if (amountText == null || amountText.trim().isEmpty()) {
+			return null;
+		}
+		String text = amountText.trim();
+		if (!text.matches("\\d+(\\.\\d{1,2})?")) {
+			return null;
+		}
+		BigDecimal amount;
+		try {
+			amount = new BigDecimal(text).stripTrailingZeros();
+		} catch (NumberFormatException ex) {
+			return null;
+		}
+		BigDecimal max = maxAmount == null ? DEFAULT_MAX_RECHARGE_AMOUNT : maxAmount;
+		if (amount.signum() <= 0
+			|| amount.compareTo(MIN_RECHARGE_AMOUNT) < 0
+			|| amount.compareTo(max) > 0) {
+			return null;
+		}
+		return amount;
+	}
+
+	/**
+	 * 按现有换算比把金额换算成补充配额。
+	 *
+	 * @param amount 金额（元）
+	 * @return 配额数量，超出 int 范围时截断
+	 */
+	private static int tokensForAmount(BigDecimal amount) {
+		if (amount == null) {
+			return 0;
+		}
+		long tokens = amount.multiply(BigDecimal.valueOf(TOKENS_PER_YUAN)).longValue();
+		if (tokens <= 0) {
+			return 0;
+		}
+		return (int) Math.min(tokens, Integer.MAX_VALUE);
+	}
+
+	/**
+	 * 按现有换算比把数据库里保存的金额字符串换算成补充配额（用于兼容 tokens 列为 0 的旧订单）。
+	 *
+	 * @param amountText 金额字符串
+	 * @return 配额数量，无法解析时返回 0
+	 */
+	private static int tokensForAmountSafe(String amountText) {
+		if (amountText == null || amountText.trim().isEmpty()) {
+			return 0;
+		}
+		try {
+			return tokensForAmount(new BigDecimal(amountText.trim()).stripTrailingZeros());
+		} catch (Throwable ex) {
+			return 0;
+		}
+	}
+
+	/**
+	 * 查找指定用户、指定金额、仍处于未支付状态且带支付链接的订单。
+	 *
+	 * @param userId 用户ID
+	 * @param amount 规范化后的金额
+	 * @return 最新的一条未支付订单，没有时返回 null
+	 */
+	private PaymentOrder findPendingPaymentOrder(String userId, String amount) {
+		List<PaymentOrder> orders = listPaymentOrders(
+			"SELECT * FROM payment_order WHERE user_id = ? AND amount = ? AND status = ?"
+				+ " AND url IS NOT NULL AND url <> '' ORDER BY created_at DESC LIMIT 1",
+			userId, amount, PAYMENT_STATUS_CREATED);
+		return orders.isEmpty() ? null : orders.get(0);
+	}
+
+	/**
+	 * 按本地订单ID与用户ID读取订单（同时校验订单归属）。
+	 *
+	 * @param orderId 本地订单ID
+	 * @param userId  用户ID
+	 * @return 订单，不存在或不属于该用户时返回 null
+	 */
+	private PaymentOrder getPaymentOrder(String orderId, String userId) {
+		List<PaymentOrder> orders = listPaymentOrders(
+			"SELECT * FROM payment_order WHERE order_id = ? AND user_id = ?", orderId, userId);
+		return orders.isEmpty() ? null : orders.get(0);
+	}
+
+	/**
+	 * 按本地订单ID读取订单。
+	 *
+	 * @param orderId 本地订单ID
+	 * @return 订单，不存在时返回 null
+	 */
+	private PaymentOrder getPaymentOrderById(String orderId) {
+		List<PaymentOrder> orders = listPaymentOrders(
+			"SELECT * FROM payment_order WHERE order_id = ?", orderId);
+		return orders.isEmpty() ? null : orders.get(0);
+	}
+
+	/**
+	 * 执行订单查询并转换结果。
+	 *
+	 * @param sql  查询语句（占位符按顺序绑定 {@code args}）
+	 * @param args 字符串参数
+	 * @return 订单列表，SQL 出错时返回空列表
+	 */
+	private List<PaymentOrder> listPaymentOrders(String sql, String... args) {
+		List<PaymentOrder> result = new ArrayList<>();
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			for (int i = 0; i < args.length; i++) {
+				pstmt.setString(i + 1, args[i]);
+			}
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					result.add(readPaymentOrder(rs));
+				}
+			}
+		} catch (SQLException ex) {
+			logger.printStackTrace(ex);
+		}
+		return result;
+	}
+
+	/**
+	 * 把结果集当前行转换成订单对象。
+	 *
+	 * @param rs 结果集
+	 * @return 订单对象
+	 * @throws SQLException 读取列失败
+	 */
+	private static PaymentOrder readPaymentOrder(ResultSet rs) throws SQLException {
+		PaymentOrder order = new PaymentOrder();
+		order.orderId = rs.getString("order_id");
+		order.userId = rs.getString("user_id");
+		order.amount = rs.getString("amount");
+		order.currency = rs.getString("currency");
+		order.paymentOrderId = rs.getString("payment_order_id");
+		order.url = rs.getString("url");
+		order.status = rs.getString("status");
+		order.tokens = rs.getInt("tokens");
+		order.credited = rs.getInt("credited") != 0;
+		order.createdAt = rs.getString("created_at");
+		order.updatedAt = rs.getString("updated_at");
+		order.paidAt = rs.getString("paid_at");
+		return order;
+	}
+
+	/**
+	 * 插入一条新的充值订单。
+	 *
+	 * @param userId         用户ID
+	 * @param amount         规范化后的金额
+	 * @param currency       币种
+	 * @param paymentOrderId DeepSeek 支付订单号
+	 * @param url            支付链接（二维码内容）
+	 * @param tokens         支付成功后应增加的配额
+	 * @return 插入后的订单对象
+	 * @throws SQLException 写入失败
+	 */
+	private PaymentOrder insertPaymentOrder(String userId, String amount, String currency,
+			String paymentOrderId, String url, int tokens) throws SQLException {
+		PaymentOrder order = new PaymentOrder();
+		order.orderId = UUID.randomUUID().toString();
+		order.userId = userId;
+		order.amount = amount;
+		order.currency = currency == null || currency.isEmpty() ? "CNY" : currency;
+		order.paymentOrderId = paymentOrderId;
+		order.url = url;
+		order.status = PAYMENT_STATUS_CREATED;
+		order.tokens = tokens;
+		order.credited = false;
+		order.createdAt = Instant.now().toString();
+		order.updatedAt = order.createdAt;
+		String sql = "INSERT INTO payment_order (order_id, user_id, amount, currency, payment_order_id, url,"
+			+ " status, tokens, credited, created_at, updated_at, paid_at)"
+			+ " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, order.orderId);
+			pstmt.setString(2, order.userId);
+			pstmt.setString(3, order.amount);
+			pstmt.setString(4, order.currency);
+			pstmt.setString(5, order.paymentOrderId);
+			pstmt.setString(6, order.url);
+			pstmt.setString(7, order.status);
+			pstmt.setInt(8, order.tokens);
+			pstmt.setString(9, order.createdAt);
+			pstmt.setString(10, order.updatedAt);
+			pstmt.executeUpdate();
+		}
+		return order;
+	}
+
+	/**
+	 * 把未支付订单更新为终态；已经进入终态的订单不会被覆盖。
+	 *
+	 * @param orderId 本地订单ID
+	 * @param status  目标状态（SUCCESS/FAILED）
+	 * @param paidAt  支付时间，null 表示不更新
+	 */
+	private void updatePaymentOrderStatus(String orderId, String status, String paidAt) {
+		String sql = "UPDATE payment_order SET status = ?, updated_at = ?, paid_at = COALESCE(?, paid_at)"
+			+ " WHERE order_id = ? AND status = ?";
+		try (PreparedStatement pstmt = database.prepareStatement(sql)) {
+			pstmt.setString(1, status);
+			pstmt.setString(2, Instant.now().toString());
+			pstmt.setString(3, paidAt);
+			pstmt.setString(4, orderId);
+			pstmt.setString(5, PAYMENT_STATUS_CREATED);
+			pstmt.executeUpdate();
+		} catch (SQLException ex) {
+			logger.printStackTrace(ex);
+		}
+	}
+
+	/**
+	 * 补发指定用户下所有"已支付但未发放配额"的订单。
+	 * <p>
+	 * 用于发放配额失败、或进程在"标记成功"和"增加余额"之间中断后的自动重试。
+	 * </p>
+	 *
+	 * @param userId 用户ID
+	 */
+	private void creditUncreditedPaymentOrders(String userId) {
+		List<PaymentOrder> orders = listPaymentOrders(
+			"SELECT * FROM payment_order WHERE user_id = ? AND status = ? AND credited = 0",
+			userId, PAYMENT_STATUS_SUCCESS);
+		for (PaymentOrder order : orders) {
+			creditPaymentOrder(order.orderId);
+		}
+	}
+
+	/**
+	 * 给已支付的订单发放补充配额。
+	 * <p>
+	 * 先用条件更新抢占 {@code credited} 标记，保证同一个订单只会发放一次；发放失败时回滚标记，
+	 * 等下一次后台检查重试。到账金额按订单里的 {@code tokens} 计算，旧数据缺失时按金额换算。
+	 * </p>
+	 *
+	 * @param orderId 本地订单ID
+	 * @return true 表示本次成功发放
+	 */
+	private boolean creditPaymentOrder(String orderId) {
+		PaymentOrder order = getPaymentOrderById(orderId);
+		if (order == null || !PAYMENT_STATUS_SUCCESS.equals(order.status) || order.credited) {
+			return false;
+		}
+		int tokens = order.tokens > 0 ? order.tokens : tokensForAmountSafe(order.amount);
+		if (tokens <= 0) {
+			logger.warning("充值订单 " + orderId + " 金额无效，无法发放配额：" + order.amount);
+			return false;
+		}
+		try (PreparedStatement pstmt = database.prepareStatement(
+				"UPDATE payment_order SET credited = 1, updated_at = ? WHERE order_id = ? AND credited = 0")) {
+			pstmt.setString(1, Instant.now().toString());
+			pstmt.setString(2, orderId);
+			if (pstmt.executeUpdate() != 1) {
+				return false;
+			}
+		} catch (SQLException ex) {
+			logger.printStackTrace(ex);
+			return false;
+		}
+		String detail = "DeepSeek支付订单 "
+			+ (order.paymentOrderId == null || order.paymentOrderId.isEmpty() ? orderId : order.paymentOrderId);
+		if (!addPaidBalance(order.userId, tokens, INCREASE_SOURCE_RECHARGE, detail)) {
+			try (PreparedStatement pstmt = database.prepareStatement(
+					"UPDATE payment_order SET credited = 0 WHERE order_id = ?")) {
+				pstmt.setString(1, orderId);
+				pstmt.executeUpdate();
+			} catch (SQLException ex) {
+				logger.printStackTrace(ex);
+			}
+			return false;
+		}
+		logger.info("充值到账：用户 " + order.userId + " 支付 " + order.amount + " 元，增加补充配额 " + tokens);
+		return true;
+	}
+
+	/**
+	 * 订单信息转前端 JSON。
+	 *
+	 * @param order  订单
+	 * @param reused 是否为复用旧付款链接
+	 * @return JSON 对象
+	 */
+	private static JsonObject paymentOrderJson(PaymentOrder order, boolean reused) {
+		JsonObject json = new JsonObject();
+		json.addProperty("orderId", order.orderId);
+		json.addProperty("paymentOrderId", order.paymentOrderId == null ? "" : order.paymentOrderId);
+		json.addProperty("amount", order.amount);
+		json.addProperty("currency", order.currency);
+		json.addProperty("status", order.status);
+		json.addProperty("url", order.url == null ? "" : order.url);
+		json.addProperty("tokens", order.tokens > 0 ? order.tokens : tokensForAmountSafe(order.amount));
+		json.addProperty("credited", order.credited);
+		json.addProperty("reused", reused);
+		json.addProperty("createdAt", order.createdAt == null ? "" : order.createdAt);
+		json.addProperty("paidAt", order.paidAt == null ? "" : order.paidAt);
+		return json;
+	}
+
+	/** 把响应文本解析成 JSON 对象，失败时抛出带动作名的 IO 异常。 */
+	private static JsonObject parseJsonObject(String text, String action) throws IOException {
+		JsonElement element;
+		try {
+			element = JsonParser.parseString(text);
+		} catch (Throwable ex) {
+			throw new IOException(action + "失败：响应不是合法 JSON（" + shortenForLog(text) + "）", ex);
+		}
+		if (element == null || !element.isJsonObject()) {
+			throw new IOException(action + "失败：响应不是 JSON 对象（" + shortenForLog(text) + "）");
+		}
+		return element.getAsJsonObject();
+	}
+
+	/** 截断过长的响应文本，避免把整段错误页写进异常和日志。 */
+	private static String shortenForLog(String text) {
+		if (text == null) {
+			return "";
+		}
+		return text.length() > 300 ? text.substring(0, 300) + "…" : text;
+	}
+
+	/** 读取 JSON 对象里的字符串字段，字段不存在或不是基本类型时返回 null。 */
+	private static String stringValue(JsonObject json, String key) {
+		if (json == null) {
+			return null;
+		}
+		JsonElement element = json.get(key);
+		if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+			return null;
+		}
+		return element.getAsString();
+	}
+
+	/** 读取 JSON 对象里的整数字段，字段不存在或无法转换时返回默认值。 */
+	private static int intValue(JsonObject json, String key, int fallback) {
+		if (json == null) {
+			return fallback;
+		}
+		JsonElement element = json.get(key);
+		if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+			return fallback;
+		}
+		try {
+			return element.getAsInt();
+		} catch (Throwable ex) {
+			return fallback;
+		}
+	}
+
+	/** 读取 JSON 对象里的子对象，字段不存在或不是对象时返回 null。 */
+	private static JsonObject objectValue(JsonObject json, String key) {
+		if (json == null) {
+			return null;
+		}
+		JsonElement element = json.get(key);
+		return element != null && element.isJsonObject() ? element.getAsJsonObject() : null;
+	}
+
+	/** 读取 JSON 对象里的数组，字段不存在或不是数组时返回 null。 */
+	private static JsonArray arrayValue(JsonObject json, String key) {
+		if (json == null) {
+			return null;
+		}
+		JsonElement element = json.get(key);
+		return element != null && element.isJsonArray() ? element.getAsJsonArray() : null;
+	}
+
+	/** 返回第一个非空白字符串（已去除首尾空白），全部为空时返回 null。 */
+	private static String firstNonBlank(String... values) {
+		for (String value : values) {
+			if (value != null && !value.trim().isEmpty()) {
+				return value.trim();
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * 规范化 Cookie 配置：去掉粘贴时可能带上的 {@code Cookie:} 前缀与换行。
+	 *
+	 * @param value 原始配置值
+	 * @return 可直接放入请求头的 Cookie，未配置时为空串
+	 */
+	private static String normalizeCookie(String value) {
+		if (value == null) {
+			return "";
+		}
+		String cookie = value.trim();
+		if (cookie.regionMatches(true, 0, "cookie:", 0, 7)) {
+			cookie = cookie.substring(7).trim();
+		}
+		return cookie.replace('\r', ' ').replace('\n', ' ');
+	}
+
+	/**
+	 * 规范化 Authorization 配置：允许只填 token，也允许直接填完整的 {@code Bearer xxx}。
+	 *
+	 * @param value 原始配置值
+	 * @return 可直接放入 {@code Authorization} 请求头的值；未配置时为空串
+	 */
+	private static String normalizeAuthorization(String value) {
+		if (value == null) {
+			return "";
+		}
+		String authorization = value.trim().replace('\r', ' ').replace('\n', ' ');
+		if (authorization.isEmpty()) {
+			return "";
+		}
+		if (authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+			return authorization;
+		}
+		return "Bearer " + authorization;
+	}
+
+	/** 充值订单的数据库行。 */
+	private static final class PaymentOrder {
+		private String orderId;
+		private String userId;
+		private String amount;
+		private String currency;
+		private String paymentOrderId;
+		private String url;
+		private String status;
+		private int tokens;
+		private boolean credited;
+		private String createdAt;
+		private String updatedAt;
+		private String paidAt;
 	}
 
     /**

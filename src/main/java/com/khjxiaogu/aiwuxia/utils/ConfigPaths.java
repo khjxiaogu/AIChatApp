@@ -47,6 +47,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *    ├─ volcano-voice.json      火山语音 bot 映射
  *    ├─ agents.json             QQ 群 agent 清单
  *    ├─ crontab.json            定时任务
+ *    ├─ deepseek-payment.json   DeepSeek 开放平台充值凭据（cookie / 设备指纹）
  *    └─ sdxl/                   生图相关
  *       ├─ character-tags.txt   角色 tag 库（提示词关键词）
  *       ├─ loras.json           LoRA 配置
@@ -82,6 +83,8 @@ public final class ConfigPaths {
 	public static final String AGENTS = "agents.json";
 	/** 定时任务（原 {@code save/crontab.json}） */
 	public static final String CRONTAB = "crontab.json";
+	/** DeepSeek 开放平台充值凭据（cookie、shumei_device_id） */
+	public static final String DEEPSEEK_PAYMENT = "deepseek-payment.json";
 
 	// ---- 生图（config/sdxl）文件名 ----
 	/** 角色 tag 库（原 {@code save/promptdo.txt}） */
@@ -228,6 +231,42 @@ public final class ConfigPaths {
 	 */
 	public static File crontab(File dataFolder) {
 		return locate(folder(dataFolder), CRONTAB, dataFolder, LEGACY_CRONTAB);
+	}
+
+	/**
+	 * DeepSeek 开放平台充值凭据文件。
+	 * <p>
+	 * 文件内容形如：
+	 * </p>
+	 * <pre>
+	 * {
+	 *   "cookie": "…登录 platform.deepseek.com 后的完整 Cookie…",
+	 *   "shumei_device_id": "…数美设备指纹，可留空使用内置默认值…",
+	 *   "authorization": "…Bearer token，可只填 token…",
+	 *   "max_recharge_amount": 50,
+	 *   "max_paid_balance": 25000000
+	 * }
+	 * </pre>
+	 * <p>
+	 * {@code authorization} 可选，会作为 {@code Authorization} 请求头发送给 DeepSeek
+	 * 的创建支付与查询订单接口；只填 token 时会自动补上 {@code Bearer } 前缀，也可以直接填完整的
+	 * {@code Bearer xxx}。未配置时不发送该请求头。
+	 * </p>
+	 * <p>
+	 * 后两个字段可选，分别表示单次充值上限（元）与补充配额总量上限（token）；
+	 * 也可以用系统属性 {@code -Ddeepseek_authorization=...}、
+	 * {@code -Ddeepseek_max_recharge_amount=...}、
+	 * {@code -Ddeepseek_max_paid_balance=...} 覆盖。未配置时使用代码内置默认值。
+	 * </p>
+	 * <p>
+	 * 文件不存在或 cookie 为空时充值功能不可用（页面上的充值入口会返回未配置提示）。
+	 * </p>
+	 *
+	 * @param dataFolder 数据目录
+	 * @return {@code config/deepseek-payment.json}
+	 */
+	public static File deepseekPayment(File dataFolder) {
+		return locate(folder(dataFolder), DEEPSEEK_PAYMENT, dataFolder, DEEPSEEK_PAYMENT);
 	}
 
 	/**
