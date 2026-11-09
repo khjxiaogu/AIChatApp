@@ -69,6 +69,7 @@ import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.LocalVoiceMcp;
+import com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.PainterMediaMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
@@ -710,6 +711,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		registry.registerAll(new CharacterSettingMcp(path).getTools());
 		// 本地语音合成：列出可用说话人 + 用 VoiceTagger 标注后合成并存入 MCP 统一对象存储
 		registry.registerAll(new LocalVoiceMcp(mcpStorage).getTools());
+		// 本地 SVS（歌声转换）：通过 LocalModel 的 svs 模型通道，与直接调用 localemp 的 SvsMcp 区分
+		registry.registerAll(new SvsLocalModelMcp(mcpStorage, ConfigPaths.svsVoices(path)).getTools());
 		// 把 AIChatService 中按用户创建的 SDXL 图片工具暴露给 MCP：
 		// 外部调用与绘画会话使用同一套工具，用户接入自己的本地绘画模型时同样优先使用该用户的模型。
 		registry.addSource(new McpToolSource() {
@@ -1241,6 +1244,54 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				getLogger().printStackTrace(e);
 			}
 		}
+	}
+
+	/**
+	 * HTTP GET端点：公开原曲目录中的文件，供 SVS 合成器通过 HTTP 下载。
+	 *
+	 * @param file 文件名（不含路径）
+	 * @return 文件内容
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/music/original")
+	@Adapter
+	public ResultDTO musicOriginal(@Query("file") String file) {
+		return musicFile("original", file);
+	}
+
+	/**
+	 * HTTP GET端点：公开合成目录中的文件。
+	 *
+	 * @param file 文件名（不含路径）
+	 * @return 文件内容
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/music/output")
+	@Adapter
+	public ResultDTO musicOutput(@Query("file") String file) {
+		return musicFile("output", file);
+	}
+
+	/** 安全地返回音乐目录中的单个文件，拒绝路径穿越与非文件名参数。 */
+	private ResultDTO musicFile(String folder, String file) {
+		if (file == null || file.trim().isEmpty() || file.contains("/") || file.contains("\\")
+				|| file.contains("..")) {
+			return new ResultDTO(400, "非法文件名");
+		}
+		File base = new File(parent, "music");
+		if ("output".equals(folder)) {
+			base = new File(base, "output");
+		}
+		File target = new File(base, file);
+		if (!target.isFile() && file.indexOf('+') >= 0) {
+			// 兼容少数未把查询串里的 '+' 还原成空格的框架
+			target = new File(base, file.replace('+', ' '));
+		}
+		if (!target.isFile()) {
+			System.out.println("[Music] 404 folder=" + folder + " file=" + file + " base=" + base.getAbsolutePath());
+			return new ResultDTO(404, "文件不存在");
+		}
+		return new ResultDTO(200, target);
 	}
 
 	/**

@@ -93,6 +93,7 @@ import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfiguration;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
+import com.khjxiaogu.aiwuxia.mcp.SvsMcp;
 import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
@@ -120,6 +121,7 @@ import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.vision.ImageNoise;
 import com.khjxiaogu.aiwuxia.vision.SDXLLocalModelClient;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.voice.SvsLocalModelClient;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
 import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
@@ -161,6 +163,10 @@ public class NapCatAIConnector extends WebSocketClient {
 	private final Map<AIGroupSession, Queue<MessageContent>> pendingToolAttachments = new ConcurrentHashMap<>();
 	/** 单个会话最多暂存的工具附件数量，防止一直排不到发送时无限堆积。 */
 	private static final int MAX_PENDING_TOOL_ATTACHMENTS = 16;
+	/** 重量级子 agent 每回合最多调用一次。 */
+	private static final int AGENT_TURN_LIMIT = 1;
+	/** NapCat 每个 AI 最多持有的未完成异步任务数。 */
+	private static final int MAX_PENDING_ASYNC_TASKS = 2;
 	/**
 	 * 单个附件发送后等待回执的上限。
 	 * <p>
@@ -178,8 +184,9 @@ public class NapCatAIConnector extends WebSocketClient {
 		this.dataFolder = dataFolder;
 		// 本地模型部署地址：站点域名默认读 save/site.json，可用 --site-host / -Dsite_host 覆盖
 		SDXLLocalModelClient lmc=new SDXLLocalModelClient(URI.create(SiteConfig.resolve(dataFolder).webSocketUrl(SiteConfig.DEFAULT_HOST, "/aichat/kh$localModelDeploy")), resourceLock, true, 1000);
+		SvsLocalModelClient svs=new SvsLocalModelClient(URI.create(SiteConfig.resolve(dataFolder).webSocketUrl(SiteConfig.DEFAULT_HOST, "/aichat/kh$localModelDeploy")), resourceLock, true, 1000);
 		lmc.connectBlocking();
-		
+		svs.connectBlocking();
 		try {
 			File tosConfigFile = ConfigPaths.objectStorage(dataFolder);
 			if (tosConfigFile.exists()) {
@@ -596,6 +603,7 @@ public class NapCatAIConnector extends WebSocketClient {
 	}
 	public void registerSkills(AIGroupSession state,File dataFolder,JsonObject config) throws IOException {
 		ToolSettings toolSettings = ToolSettings.parse(config);
+		state.getToolCallManager().setMaxPendingAsyncTasks(MAX_PENDING_ASYNC_TASKS);
 		Map<String, LoraConfigurations> lora = new LinkedHashMap<>();
 		File lfn=ConfigPaths.sdxlLoras(dataFolder);
 		if(lfn.exists()) {
@@ -708,9 +716,15 @@ public class NapCatAIConnector extends WebSocketClient {
 		}
 		if (toolSettings.isEnabled("music")) {
 			MusicMcp music = new MusicMcp(new File(dataFolder, "music"), config.get("voice").getAsString(),
-					state.getRoleName(Role.ASSISTANT), resourceLock);
+					state.getRoleName(Role.ASSISTANT), resourceLock, tos, ConfigPaths.svsVoices(dataFolder));
 			state.registerTools(music);
 			recordTools(toolNamesBySkill, "music", music.getTools());
+		}
+		if (toolSettings.isEnabled("svs")) {
+			// SVS 独立于音乐平台：输入音频链接，voice 传角色名，由配置文件映射到音频 ID
+			SvsMcp svs = new SvsMcp(tos, resourceLock, ConfigPaths.svsVoices(dataFolder));
+			state.registerTools(svs);
+			recordTools(toolNamesBySkill, "svs", svs.getTools());
 		}
 		if (toolSettings.isEnabled("seedimage")) {
 			ToolData image = SeedreamMcp.createImage(imgKey, refimage, tos);
@@ -728,7 +742,21 @@ public class NapCatAIConnector extends WebSocketClient {
 		AgentPingMcp ping = new AgentPingMcp(state.getRoleName(Role.ASSISTANT), state);
 		state.registerTools(ping);
 		recordTools(toolNamesBySkill, "agent-ping", ping.getTools());
+		applyAgentTurnLimits(state, toolSettings);
 		applyToolApproval(state, config, toolSettings, toolNamesBySkill);
+	}
+
+	/**
+	 * 子 agent 单回合调用上限：SDXLAgent 与 Music 子 agent 每回合最多调用一次，
+	 * 避免模型在同一回合反复启动重量级子 agent。
+	 */
+	private static void applyAgentTurnLimits(AIGroupSession state, ToolSettings toolSettings) {
+		if (toolSettings.isEnabled("sdxl-agent") || toolSettings.isEnabled("sdxl-agent-nsfw")) {
+			state.getToolCallManager().setToolCallLimit("sdxl_agent", AGENT_TURN_LIMIT);
+		}
+		if (toolSettings.isEnabled("music")) {
+			state.getToolCallManager().setToolCallLimit("find_music", AGENT_TURN_LIMIT);
+		}
 	}
 
 	/** 记录技能注册出来的一个工具。 */

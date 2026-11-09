@@ -17,6 +17,7 @@ import com.khjxiaogu.aiwuxia.llm.DirectHistoryItem;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -45,15 +46,19 @@ public class MultiModalMcp {
 		return new ToolData.Builder("image_recognition", "使用多模态模型查看图片并返回图片描述。该功能仅负责描述图片内容，注意需要甄别描述中的内容是否合理，是否符合人物设定，人物是否应该知道对应内容。描述中的分析仅供参考，你需要独立判断是否正确。")
 				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容", "图片ID")
 				.presenter(ToolCallPresenter.ofBrief(call -> "查看图片"))
-				.toolText((data, output, manager) -> {
+				.tool((data, output, manager) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([0-9a-fA-F]{72})\"");
 					Matcher mtch = patt.matcher(data);
 					if (mtch.find()) {
 						String id = mtch.group(1);
-						return recognizeImage(tos, id, output);
+						String result = recognizeImage(tos, id, output);
+						if ("服务暂不可用".equals(result)) {
+							return CompletableFuture.completedFuture(ToolResult.failure(result));
+						}
+						return CompletableFuture.completedFuture(ToolResult.text(result));
 
 					}
-					return "参数格式错误";
+					return CompletableFuture.completedFuture(ToolResult.text("参数格式错误"));
 				}).build();
 	}
 	/**

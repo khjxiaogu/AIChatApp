@@ -243,6 +243,15 @@ QQ 群 agent 的 `tools` 含 `seedvideo` 时注册 `jimeng_video` 工具，后�
 > 🚚 从旧版本升级（文件还散落在 `save/` 根目录）请按 [docs/MIGRATION.md](../MIGRATION.md) 搬迁——
 > 旧位置仍被兼容，不搬也能跑，但日志会提示一次。
 
+### 5.3 子 agent 单回合限制
+
+NapCat 中启用 `sdxl-agent` / `sdxl-agent-nsfw` 或 `music` 时，对应子 agent 工具
+（`sdxl_agent`、`find_music`）在**同一回合最多调用一次**，由 `ToolCallManager` 的
+单工具次数限制实现，跨回合自动重新计数。
+
+NapCat 还会限制每个 AI 最多持有 **2 个未完成异步任务**。同一批工具调用中的多个异步工具
+一起放行；当已持有任务数达到上限后，后续批次不再允许启动新的异步工具，直到有任务完成。
+
 **站点域名**单独放在 `save/site.json`：
 
 ```json
@@ -274,6 +283,7 @@ QQ 群 agent 的 `tools` 含 `seedvideo` 时注册 `jimeng_video` 工具，后�
 | `volcappid` / `volcsecret` | 火山声音复刻 |
 | `sdwebuiUrl` | 本地 SD WebUI 地址 |
 | `svsHost` | 音乐合成服务地址 |
+| `musicBaseUrl` | 音乐文件公开地址前缀，NapCat 模式默认 `http://127.0.0.1:8998/aichat` |
 
 > 提供商是**按 token 是否存在**决定启用的。一个都不配 → 对话会失败（模型路由错误）。
 

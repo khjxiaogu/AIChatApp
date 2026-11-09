@@ -82,6 +82,54 @@ public class VoiceModelLocalServer extends AbstractServiceClass {
     }
 
     /**
+     * 公开原曲目录中的文件，供 SVS 合成器下载。
+     *
+     * @param file 文件名（不含路径）
+     * @return 文件内容
+     */
+    @HttpMethod("GET")
+    @HttpPath("/music/original")
+    @Adapter
+    public ResultDTO musicOriginal(@Query("file") String file) {
+        return musicFile("original", file);
+    }
+
+    /**
+     * 公开合成目录中的文件，供 SVS 合成器下载。
+     *
+     * @param file 文件名（不含路径）
+     * @return 文件内容
+     */
+    @HttpMethod("GET")
+    @HttpPath("/music/output")
+    @Adapter
+    public ResultDTO musicOutput(@Query("file") String file) {
+        return musicFile("output", file);
+    }
+
+    /** 安全地返回 {@code save/music} 下的单个文件，拒绝路径穿越。 */
+    private ResultDTO musicFile(String folder, String file) {
+        if (file == null || file.trim().isEmpty() || file.contains("/") || file.contains("\\")
+                || file.contains("..")) {
+            return new ResultDTO(400, "非法文件名");
+        }
+        File base = new File("save/music");
+        if ("output".equals(folder)) {
+            base = new File(base, "output");
+        }
+        File target = new File(base, file);
+        if (!target.isFile() && file.indexOf('+') >= 0) {
+            // 兼容少数未把查询串里的 '+' 还原成空格的框架
+            target = new File(base, file.replace('+', ' '));
+        }
+        if (!target.isFile()) {
+            System.out.println("[Music] 404 folder=" + folder + " file=" + file + " base=" + base.getAbsolutePath());
+            return new ResultDTO(404, "文件不存在");
+        }
+        return new ResultDTO(200, target);
+    }
+
+    /**
      * HTTP POST 端点，用于接收本地模型产出的数据（如音频字节数组）。
      * 该端点通常由模型服务在生成结果后调用，将数据通过 HTTP 推送给服务器。
      * 接收到的数据会通过 {@link LocalModel#lhs} 的 {@code onMessage} 方法传递给等待的请求。

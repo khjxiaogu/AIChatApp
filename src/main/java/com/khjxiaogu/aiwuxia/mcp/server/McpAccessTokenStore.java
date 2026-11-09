@@ -723,10 +723,44 @@ public class McpAccessTokenStore {
      * @param resultChars 结果字符数
      */
     public synchronized void commit(Charge charge, int usageCost, long durationMs, int resultChars) {
+        commit(charge, usageCost, durationMs, resultChars, true, true);
+    }
+
+    /**
+     * 工具调用结算，支持失败时免除基础调用费。
+     * <p>
+     * {@code success=false} 表示工具明确标记为简单失败（例如网络不可达、本地服务不存在）：
+     * 退回预扣的固定调用费，但仍补扣工具内部已经产生的用量费用；
+     * {@code chargeCallCost=false} 时同样只结算内部用量。成功时两者都为 true。
+     * </p>
+     *
+     * @param charge       预扣结果
+     * @param usageCost    工具内部用量折算出的费用（小于 0 按 0 处理）
+     * @param durationMs   调用耗时（毫秒）
+     * @param resultChars  结果字符数
+     * @param success      工具是否成功
+     * @param chargeCallCost 是否收取固定调用费
+     */
+    public synchronized void commit(Charge charge, int usageCost, long durationMs, int resultChars,
+            boolean success, boolean chargeCallCost) {
         if (charge == null) {
             return;
         }
         int extra = Math.max(0, usageCost);
+        int callCost = chargeCallCost ? Math.max(0, charge.getCost()) : 0;
+        int refundCall = Math.max(0, charge.getCost() - callCost);
+        // 简单失败：固定调用费退回用户余额与令牌额度，但工具内部用量照常结算
+        if (refundCall > 0) {
+            refundBalance(charge.getUid(), refundCall);
+            try (PreparedStatement ps = database.prepareStatement(
+                    "UPDATE mcp_access_token SET quota_used = MAX(0, quota_used - ?) WHERE id = ?")) {
+                ps.setInt(1, refundCall);
+                ps.setLong(2, charge.getTokenId());
+                ps.executeUpdate();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+        }
         if (extra > 0) {
             // 工具已经执行完成，内部用量对应的成本已经发生，按实际金额补扣
             try (PreparedStatement ps = database.prepareStatement(
@@ -746,18 +780,20 @@ public class McpAccessTokenStore {
                 ex.printStackTrace();
             }
         }
-        long totalLong = (long) charge.getCost() + extra;
+        long totalLong = (long) callCost + extra;
         int total = totalLong > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) totalLong;
         if (total > 0) {
             recordUserConsumption(charge.getUid(), total);
         }
         try (PreparedStatement ps = database.prepareStatement(
-                "UPDATE mcp_tool_call_log SET ok = 1, cost = ?, usage_cost = ?, duration_ms = ?, result_chars = ? WHERE id = ?")) {
-            ps.setInt(1, total);
-            ps.setInt(2, extra);
-            ps.setLong(3, durationMs);
-            ps.setInt(4, resultChars);
-            ps.setLong(5, charge.getLogId());
+                "UPDATE mcp_tool_call_log SET ok = ?, cost = ?, call_cost = ?, usage_cost = ?, duration_ms = ?, result_chars = ? WHERE id = ?")) {
+            ps.setInt(1, success ? 1 : 0);
+            ps.setInt(2, total);
+            ps.setInt(3, callCost);
+            ps.setInt(4, extra);
+            ps.setLong(5, durationMs);
+            ps.setInt(6, resultChars);
+            ps.setLong(7, charge.getLogId());
             ps.executeUpdate();
         } catch (SQLException ex) {
             ex.printStackTrace();

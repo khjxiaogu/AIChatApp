@@ -92,10 +92,29 @@ public class LocalModelClient extends WebSocketClient {
     public static class Response {
         public final byte[] data;
         public final String format;
+        /**
+         * true 表示结果由本地服务通过其它通道（例如 HTTP 回调）完成，本客户端不再回发 WebSocket 响应。
+         * SVS 的 localemp.py 就是这种模式：它把音频直接 POST 回服务器，而不是回给本客户端。
+         */
+        public final boolean external;
 
         public Response(byte[] data, String format) {
+            this(data, format, false);
+        }
+
+        private Response(byte[] data, String format, boolean external) {
             this.data = data;
             this.format = format;
+            this.external = external;
+        }
+
+        /**
+         * 创建一个“由外部通道回传结果”的响应：不向服务器发送 WebSocket 回复。
+         *
+         * @return 外部完成响应
+         */
+        public static Response external() {
+            return new Response(null, null, true);
         }
     }
 
@@ -114,6 +133,8 @@ public class LocalModelClient extends WebSocketClient {
     private final AtomicInteger healthCheckFailures = new AtomicInteger();
     /** 保证健康检查只启动一次（重连后不重复启动） */
     private final AtomicBoolean healthMonitorStarted = new AtomicBoolean(false);
+    /** 是否已经安排了一次重连，避免 onError/onClose/重连失败重复排队 */
+    private final AtomicBoolean reconnectScheduled = new AtomicBoolean(false);
     /** 正在处理中的请求数：本地服务忙时跳过本轮检查，避免长任务被误判成掉线 */
     private final AtomicInteger activeRequests = new AtomicInteger();
 
@@ -231,6 +252,10 @@ public class LocalModelClient extends WebSocketClient {
 	            } finally {
 	                activeRequests.decrementAndGet();
 	            }
+	            if (response != null && response.external) {
+	                // 结果由本地服务经其它通道回传（例如 localemp.py 的 HTTP 回调），这里不能回复
+	                return;
+	            }
 	            if (response != null && response.data != null) {
 	                JsonObject reply = JsonBuilder.object()
 	                        .add("reqid", reqid)
@@ -267,37 +292,43 @@ public class LocalModelClient extends WebSocketClient {
     @Override
     public void onClose(int code, String reason, boolean remote) {
     	opened=false;
-        System.out.println("[LocalModelClient] disconnected: " + code + " " + reason);
-        if (autoReconnect && !closed) {
-            reconnectTimer.schedule(() -> {
-                if (!closed&&!opened) {
-                    System.out.println("[LocalModelClient] reconnecting...");
-                    try {
-                        reconnectBlocking();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }, reconnectIntervalMs, TimeUnit.MILLISECONDS);
-        }
+        // 连接断开后静默重连；失败也会继续重试，不向日志刷错误
+        scheduleReconnect();
     }
 
     @Override
     public void onError(Exception e) {
     	opened=false;
-        System.err.println("[LocalModelClient] error: " + e.getMessage());
-        if (autoReconnect && !closed) {
-            reconnectTimer.schedule(() -> {
-                if (!closed&&!opened) {
-                    System.out.println("[LocalModelClient] reconnecting...");
-                    try {
-                        reconnectBlocking();
-                    } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }, reconnectIntervalMs, TimeUnit.MILLISECONDS);
+        // 静默失败：不打印异常，直接进入无限重连
+        scheduleReconnect();
+    }
+
+    /**
+     * 安排一次重连。
+     * <p>
+     * 使用 {@link #reconnectScheduled} 去重，保证同一时刻只有一个重连任务；
+     * 重连失败会在任务内再次安排，直到连接成功或客户端被显式关闭。
+     * </p>
+     */
+    private void scheduleReconnect() {
+        if (!autoReconnect || closed || opened) {
+            return;
         }
+        if (!reconnectScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        reconnectTimer.schedule(() -> {
+            reconnectScheduled.set(false);
+            if (closed || opened) {
+                return;
+            }
+            try {
+                reconnectBlocking();
+            } catch (Throwable ignored) {
+                // 静默失败并继续重试
+                scheduleReconnect();
+            }
+        }, reconnectIntervalMs, TimeUnit.MILLISECONDS);
     }
 
     /**

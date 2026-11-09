@@ -384,7 +384,10 @@ state.registerTool(t);                       // 挂到会话，随后 AIRequest.
   需要把图片/音频等返回给用户时用 `ToolResult.of(text, attachments...)` 的附件参数；
 - 工具**不再绑定会话**：同一份 `ToolData` 可以在任意会话、任意一次生成中复用；
 - 一组需要共享配置/状态的工具实现 `ToolProvider`，用 `state.registerTools(provider)` 注册；
-- 异步工具在注册时声明（`async()` 或 `registerTool(tool, true, maxCalls)`），管理器会立即返回任务 ID，完成时通知会话；
+- 异步工具在注册时声明（`async()` 或 `registerTool(tool, true, maxCalls)`），工具先统一等待 1 秒：
+  1 秒内完成直接返回真实结果，未完成才创建任务并返回任务 ID，完成时通知会话；同一批多个异步工具共享一个 1 秒窗口；
+  子 agent 可用 `ToolCallManager.setDisableAsyncTasks(true)` 统一改为同步等待，确保拿到真实结果后才返回；
+  每个 AI 的未完成异步任务上限用 `setMaxPendingAsyncTasks(n)` 设置，同一批工具调用只检查一次；
 - 同一批工具调用默认**并发**执行（工具本体在独立线程池上运行，结果仍按模型给出的顺序推送）；
   有前后依赖或用户可见副作用顺序的工具用 `.orderSensitive()` 声明，它是**屏障**：
   启动前等待此前所有同步工具，它（若为同步工具）完成后才启动后续工具；声明为异步的工具只返回任务回执，不被等待；屏障前后的普通工具仍可并发。
@@ -435,6 +438,73 @@ if (result.isSuccess()) {
 - 附件与提示词都由 `MessageContent` / `String` 表达，不绑定具体模型；
 - 现有工具方法（`createImage`、`createVideo`、`generateVoice`）保持不变，适配器内部复用它们；
 - 调用方暂时不需要改动，后续可逐步把工具调用迁移到这套 API。
+
+### 10.2 Qwen-Image 2.1（ComfyUI）
+
+`com.khjxiaogu.aiwuxia.vision.QwenImageApi` 接入本地 ComfyUI 的 Qwen-Image 2.1：
+
+```java
+QwenImageApi qwen = new QwenImageApi("http://127.0.0.1:8188")
+        .setResourceLock(resourceLock, 6);       // 与 SDXL 等本地模型共用锁，Qwen 占 6 份
+
+List<QwenImageApi.ImageResult> images = qwen.textToImage("一个银发少女站在屋顶"); // 文生图
+qwen.reference(List.of(new QwenImageApi.InputImage(bytes, "ref.png")), "让她穿上图2的衣服");
+```
+
+- 支持 `textToImage`、极速草稿 `fast=true`、`edit` 单图改图和 `reference` 最多 10 张参考图；
+- MCP 工具只暴露提示词、负面词、画面比例（`16:9/9:16/3:4/4:3/1:1`）和 `fast`；
+  步数、CFG、种子、任务结束释放显存均由服务端固定（CFG=1、普通 25 步、极速 8 步、随机种子、始终释放）；
+- 普通模式尺寸：16:9=1024×576、9:16=576×1024、3:4=768×1024、4:3=1024×768、1:1=1024×1024；
+  极速模式长边 768（16:9=768×432 等）；
+- 内部按 README 的工作流节点构造 `/prompt` 图，轮询 `/history` 并下载 `/view`；
+- 生成的 `ImageResult.data` 是图片字节，可直接上传对象存储；
+- 可选 `ResourceLock`：生成、上传、显存释放都会占用资源并自动释放（Qwen 默认 6 份）；
+- `QwenImageMcp` 提供 `qwen_gen_image` / `qwen_edit_image` 两个工具，但**不注册给 NapCat**；
+  其中同步文生图工具会挂到 `SDXLAgent` 的子 agent 工具表，作为“参考底图生成器”使用，
+  见 `SDXLAgentMcp.createImage(...)`。
+
+### 10.3 SVS（歌声转换）
+
+`com.khjxiaogu.aiwuxia.mcp.SvsMcp` 从 `MusicMcp` 的 SVS 流程复制而来，但与音乐平台无关：
+输入任意 http/https 音频链接，调用 localemp.py（`-DsvsHost=host:port`）做 RVC 变声，
+结果音频上传对象存储后作为附件返回。
+
+SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，按
+`config/svs-voices.json`（`{"角色名":"音频id"}`）解析出实际模型名；配置文件每次调用重新读取。
+工具 `list_svs_voices` 列出可用角色（刻意避开 `list_voice_speakers` / `list_characters`）。
+`svs_convert` 参数：`audio_url`、`voice`、`pitch`（-24~24）、
+`filter_radius`（0~7）、`protect`（0~1）、`do_split`（默认 true）。
+`do_split=false` 时不做伴奏分离、不混伴奏；固定使用临时文件，不提供文件名参数。
+每次成功生成按输出体积计费：`LocalSVSUsage` 每 0.6 MiB 计 5000 token；
+`do_split=false` 时只按输出体积的 1/3 计费。
+资源锁与其它本地模型共享。
+
+另外两套 LocalModel 接入：
+- `com.khjxiaogu.aiwuxia.voice.SvsLocalModelClient`：以 `model_type=svs` 连接服务器，
+  调用 localemp.py 前用 `LocalModel.registerTask(reqid)` 注册回调任务（与 `MusicMcp` 一致），
+  等 localemp 的 HTTP 回调完成后把音频通过 WebSocket 回传（客户端需与服务器在同一 JVM）；
+- `com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp`：使用 `LocalModel.requireSvs` 的 SVS MCP，
+  已在 `AIChatService` 的 MCP 注册表中注册。`svs_convert` 声明为异步工具，MCP 层会立即返回
+  `task_id`，再用通用 `mcp_task_result` 轮询获取音频。
+  `LocalModelClient` 断线后不再打印错误，按固定间隔无限静默重连。
+
+### 10.4 音乐子 agent
+
+`MusicMcp` 对主模型只暴露 `find_music`、`send_music`：
+`find_music` 子 agent 负责在原曲目录和合成目录中查找、搜索、下载及角色歌声合成，
+内部注册 `list_music`、`search_local_music`、`search_music`、`download_platform_music`、
+`download_url_music`、`sing_local_music` 以及 `SvsMcp`。成功时返回“文件名 + 信息”，
+找不到歌曲或失败时只返回“信息”。子 agent 使用 `deepseek/pro`，最多 8 轮工具调用。
+
+目录约定：
+
+- 原曲：`save/music`（已有歌曲也在这里）；
+- 合成输出：`save/music/output`；
+- `sing_music` / `sing_local_music` 自动写入输出目录；
+- `download_platform_music` / `download_url_music` 下载到原曲目录；
+- `send_music` 同时查找两个目录；
+- 服务端公开 `GET /aichat/music/original?file=...` 与 `/aichat/music/output?file=...`，
+  代码用 `-DmusicBaseUrl`（NapCat 模式默认 `http://127.0.0.1:8998/aichat`）生成给 localemp 的 HTTP 链接。
 
 ---
 

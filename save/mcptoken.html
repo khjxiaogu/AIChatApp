@@ -317,7 +317,7 @@
     document.getElementById('mcpEndpoint').textContent = endpoint;
     document.getElementById('genericConfig').textContent = JSON.stringify({
       mcpServers: {
-        aiwuxia: {
+        khjmcp: {
           type: 'http',
           url: endpoint,
           headers: { Authorization: 'Bearer ' + currentToken }
@@ -326,7 +326,7 @@
     }, null, 2);
     document.getElementById('vscodeConfig').textContent = JSON.stringify({
       servers: {
-        aiwuxia: {
+        khjmcp: {
           type: 'http',
           url: endpoint,
           headers: { Authorization: 'Bearer ' + currentToken }
@@ -340,12 +340,12 @@
     return [
       '请把下面这个 MCP 服务端接入你的工具列表，并在需要时调用它：',
       '',
-      '服务端名称：aiwuxia',
+      '服务端名称：khjmcp',
       'MCP 服务地址（Streamable HTTP）：' + endpoint,
       '认证请求头：Authorization: Bearer ' + token,
       '备用认证头：X-MCP-Token: ' + token,
       '',
-      '这个服务提供 AIWuxia 的本地工具，常用工具包括：',
+      '这个服务提供 khjmcp 的本地工具，常用工具包括：',
       '- mcp_echo：回显文本，用于测试连接；',
       '- mcp_server_time：获取服务端当前时间；',
       '- list_voice_speakers / generate_voice：列出本地语音说话人、生成角色语音；',
@@ -478,7 +478,7 @@
       document.getElementById('agentPrompt').value = buildAgentPrompt(data.token);
       document.getElementById('exampleBox').textContent = JSON.stringify({
         mcpServers: {
-          aiwuxia: {
+          khjmcp: {
             type: 'http',
             url: location.origin + API,
             headers: { Authorization: 'Bearer ' + data.token }

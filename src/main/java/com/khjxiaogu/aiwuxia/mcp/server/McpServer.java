@@ -1,8 +1,19 @@
 package com.khjxiaogu.aiwuxia.mcp.server;
 
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -10,6 +21,7 @@ import java.util.regex.Pattern;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
@@ -39,6 +51,10 @@ import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
  *       {@link AIOutput#addUsage} 写入的内部用量；</li>
  *   <li>成功则按内部用量结算“固定调用费 + 内部费用合计”
  *       （{@link McpAccessTokenStore#commit}），失败则退回固定调用费并以 {@code isError} 结果回传。</li>
+ *   <li>工具明确标记为简单失败（{@link ToolResult#isSuccess()} 为 false，例如网络不可达、服务不存在）时，
+ *       只免除固定调用费，工具内部已经产生的用量照常结算。</li>
+ *   <li>声明为异步（{@code ToolData.async}）的工具不等待完成，立即返回 {@code task_id}；
+ *       客户端用内置的 {@value #TASK_RESULT_TOOL} 工具轮询结果。</li>
  * </ol>
  * <p>
  * 计费公式为 {@code CALL_COST + Σ ceil(usage.getEquivantTokens())}：固定调用费与工具无关；
@@ -58,6 +74,14 @@ public class McpServer {
 
     /** 每次工具调用的固定费用（额外配额单位），工具内部产生的用量在此基础上另行结算。 */
     public static final int CALL_COST = 100;
+    /** 通用异步任务查询工具名。 */
+    public static final String TASK_RESULT_TOOL = "mcp_task_result";
+    /** 当前配额查询工具名。 */
+    public static final String QUOTA_TOOL = "mcp_quota";
+    /** 异步任务保留时间：30 分钟。 */
+    private static final long TASK_TTL_MS = 30L * 60L * 1000L;
+    /** 单次查询异步任务最多等待时间，避免 MCP 客户端超时。 */
+    private static final long TASK_WAIT_SECONDS = 20L;
 
     /**
      * 多媒体 id → 可访问链接的解析器。
@@ -88,6 +112,8 @@ public class McpServer {
     private final String serverVersion;
     /** 多媒体 id → 链接解析器，可为 null（不处理多媒体 id）。 */
     private final MediaUrlResolver mediaUrlResolver;
+    /** task_id → 异步工具任务。 */
+    private final Map<String, AsyncTask> asyncTasks = new ConcurrentHashMap<>();
 
     /**
      * 创建协议实现。
@@ -117,6 +143,9 @@ public class McpServer {
         this.serverName = serverName == null ? "AIWuxia-MCP" : serverName;
         this.serverVersion = serverVersion == null ? "0.0.1" : serverVersion;
         this.mediaUrlResolver = mediaUrlResolver;
+        // 通用异步任务查询工具：所有 tool.async == true 的 MCP 工具都会返回 task_id
+        this.registry.register(createTaskResultTool());
+        this.registry.register(createQuotaTool());
     }
 
     /**
@@ -134,6 +163,161 @@ public class McpServer {
     public McpServer(McpToolRegistry registry, McpAccessTokenStore store, int defaultPrice, String serverName,
             String serverVersion) {
         this(registry, store, serverName, serverVersion);
+    }
+
+    /** 通用异步任务查询工具：传入任意异步工具返回的 task_id。 */
+    private ToolData createTaskResultTool() {
+        return new ToolData.Builder(TASK_RESULT_TOOL,
+                "查询异步 MCP 工具的任务结果。凡是调用后返回 task_id 的工具，都用本工具传 task_id 查询；"
+                        + "返回“处理中”时继续轮询，任务完成后返回实际结果并失效。")
+                .putParam("task_id", "异步工具返回的 task_id。", "任务 ID")
+                .tool((data, output, manager) -> CompletableFuture.completedFuture(queryTask(data, output)))
+                .build();
+    }
+
+    /** 当前配额查询工具：只返回额外配额余额，不收费。 */
+    private ToolData createQuotaTool() {
+        return new ToolData.Builder(QUOTA_TOOL, "查询当前 MCP 令牌的额外配额余额。本工具免费。")
+                .tool((data, output, manager) -> CompletableFuture.completedFuture(ToolResult.text("")))
+                .build();
+    }
+
+    /** 生成当前令牌的配额文本：只返回额外配额余额。 */
+    private String quotaText(McpAccessTokenStore.Token token) {
+        if (store == null) {
+            return "MCP 计费未启用，无法查询配额。";
+        }
+        if (token == null) {
+            return "当前连接没有访问令牌，无法查询配额。";
+        }
+        return "当前额外配额：" + store.getPaidBalance(token.getUid());
+    }
+
+    /** 查询异步任务；最多等待 20 秒，避免单次轮询导致客户端超时。 */
+    private ToolResult queryTask(String data, AIOutput output) {
+        cleanupAsyncTasks();
+        String taskId;
+        try {
+            JsonObject json = JsonParser.parseString(data == null ? "{}" : data).getAsJsonObject();
+            JsonElement value = json.get("task_id");
+            taskId = value == null || value.isJsonNull() ? "" : value.getAsString().trim();
+        } catch (RuntimeException ex) {
+            return ToolResult.text("参数错误：task_id 必须是字符串。");
+        }
+        if (taskId.isEmpty()) {
+            return ToolResult.text("参数错误：缺少 task_id。");
+        }
+        AsyncTask task = asyncTasks.get(taskId);
+        if (task == null) {
+            return ToolResult.failure("任务不存在或已过期：" + taskId);
+        }
+        try {
+            // 等待任务完成并完成计费；查询本身不再把任务用量转进来，并发查询不会重复计费
+            task.processed.get(TASK_WAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException ex) {
+            return ToolResult.text("任务仍在处理中，task_id=" + taskId
+                    + "。请继续调用 " + TASK_RESULT_TOOL + " 轮询。");
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            return ToolResult.failure("任务查询被中断：" + taskId);
+        } catch (ExecutionException ex) {
+            Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+            return ToolResult.failure("任务查询失败：" + describe(cause));
+        }
+        if (!task.success) {
+            return ToolResult.failure(task.resultText);
+        }
+        if (task.result == null) {
+            return ToolResult.text(task.resultText);
+        }
+        return ToolResult.of(task.resultText, task.result.getAttachments());
+    }
+
+    /**
+     * 异步任务完成回调：立即解析结果、收集用量并扣费。
+     * <p>
+     * 扣费发生在任务完成时而不是查询时，因此多个客户端并发查询同一任务不会重复计费。
+     * 简单失败只免基础调用费，任务内部已经产生的用量仍然扣除。
+     * </p>
+     */
+    private void finishTask(AsyncTask task, ToolResult result, Throwable error) {
+        boolean success;
+        String text;
+        try {
+            if (error != null) {
+                success = false;
+                text = "任务执行失败：" + describe(error);
+                task.result = null;
+            } else {
+                success = result == null || result.isSuccess();
+                MessageContents content = result == null ? MessageContents.EMPTY : result.getContent();
+                text = resolveMedia(content, usage -> task.output.addUsage(usage)).toText();
+                if (text == null) {
+                    text = "";
+                }
+                task.result = result;
+            }
+        } catch (Throwable ex) {
+            ex.printStackTrace();
+            success = false;
+            text = "任务执行失败：" + describe(ex);
+            task.result = null;
+        }
+        task.resultText = text;
+        task.success = success;
+        if (task.settled.compareAndSet(false, true)) {
+            int usagePrice = usageCostOf(task.output);
+            if (store != null && task.charge != null) {
+                try {
+                    store.commit(task.charge, usagePrice, System.currentTimeMillis() - task.startedAt,
+                            text.length(), success, success);
+                } catch (Throwable ex) {
+                    ex.printStackTrace();
+                }
+            }
+        }
+        task.processed.complete(null);
+    }
+
+    /** 清理超过 30 分钟仍未完成或未被取走的任务。 */
+    private void cleanupAsyncTasks() {
+        long now = System.currentTimeMillis();
+        Iterator<Entry<String, AsyncTask>> iterator = asyncTasks.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Entry<String, AsyncTask> entry = iterator.next();
+            AsyncTask task = entry.getValue();
+            if (now - task.createdAt <= TASK_TTL_MS) {
+                continue;
+            }
+            if (task.settled.compareAndSet(false, true) && store != null && task.charge != null) {
+                // 任务超时未完成：退回预扣的基础调用费，任务内部未结算的用量不再收费
+                store.refund(task.charge, "async task expired");
+            }
+            iterator.remove();
+            task.processed.complete(null);
+        }
+    }
+
+    /** 异步工具任务。 */
+    private static final class AsyncTask {
+        private final CompletableFuture<ToolResult> future;
+        private final CompletableFuture<Void> processed = new CompletableFuture<>();
+        private final AIOutput output;
+        private final McpAccessTokenStore.Charge charge;
+        private final long startedAt;
+        private final long createdAt = System.currentTimeMillis();
+        private final AtomicBoolean settled = new AtomicBoolean(false);
+        private volatile ToolResult result;
+        private volatile String resultText = "";
+        private volatile boolean success = true;
+
+        AsyncTask(CompletableFuture<ToolResult> future, AIOutput output, McpAccessTokenStore.Charge charge,
+                long startedAt) {
+            this.future = future;
+            this.output = output;
+            this.charge = charge;
+            this.startedAt = startedAt;
+        }
     }
 
     /** 工具注册表。 */
@@ -288,6 +472,14 @@ public class McpServer {
             throw McpException.invalidParams("工具不存在或当前不可用：" + name);
         }
         String requestId = id == null || id.isJsonNull() ? null : id.getAsString();
+        System.out.println("[MCP] tools/call name=" + name + " arguments=" + arguments);
+        if (QUOTA_TOOL.equals(name)) {
+            // 配额查询是免费工具：不预扣、不写消费记录
+            boolean available = store != null && token != null;
+            String text = quotaText(token);
+            Integer balance = available ? Integer.valueOf(store.getPaidBalance(token.getUid())) : null;
+            return successResult(text, 0, 0, Integer.valueOf(0), balance, available);
+        }
         McpAccessTokenStore.Charge charge = null;
         if (store != null) {
             // 先按固定调用费预扣：固定费用都不够时直接拒绝，不执行工具
@@ -298,29 +490,94 @@ public class McpServer {
         // 工具内部写入的用量在工具执行完成后统一换算成费用。
         AIOutput output = new AIOutput.FilledAIOutput(MessageContents.EMPTY, "", null);
         String text;
-        try {
-            ToolResult result = tool.tool.run(McpJson.stringifyArguments(arguments), output, new ToolCallManager())
-                    .join();
-            // 固定处理：多媒体内容里的 id 统一通过 TOS 换成可访问链接，不再把内部 id 直接返回给客户端
-            MessageContents content = result == null ? MessageContents.EMPTY : result.getContent();
-            text = resolveMedia(content, usage -> output.addUsage(usage)).toText();
-            if (text == null) {
-                text = "";
+        boolean success = true;
+        boolean deferredCommit = tool.async;
+        if (tool.async) {
+            // 所有 async 工具统一转为后台任务：立即返回 task_id，由 mcp_task_result 查询
+            String taskId = UUID.randomUUID().toString();
+            AIOutput taskOutput = new AIOutput.FilledAIOutput(MessageContents.EMPTY, "", null);
+            CompletableFuture<ToolResult> future;
+            try {
+                future = tool.tool.run(McpJson.stringifyArguments(arguments), taskOutput, new ToolCallManager());
+            } catch (Throwable ex) {
+                ex.printStackTrace();
+                if (store != null && charge != null) {
+                    store.refund(charge, ex.toString());
+                }
+                return errorResult("工具执行失败：" + describe(ex), CALL_COST);
             }
-        } catch (Throwable ex) {
-            ex.printStackTrace();
-            if (store != null && charge != null) {
-                store.refund(charge, ex.toString());
+            if (future == null) {
+                if (store != null && charge != null) {
+                    store.refund(charge, "async tool returned null future");
+                }
+                return errorResult("工具执行失败：异步工具没有返回任务。", CALL_COST);
             }
-            return errorResult("工具执行失败：" + describe(ex), CALL_COST);
+            // 本地模型未在线时工具通常会立即返回失败 Future，直接失败而不是先返回 task_id
+            if (future.isDone()) {
+                ToolResult immediate = null;
+                Throwable failure = null;
+                try {
+                    immediate = future.getNow(null);
+                } catch (CompletionException ex) {
+                    failure = ex.getCause() == null ? ex : ex.getCause();
+                } catch (CancellationException ex) {
+                    failure = ex;
+                }
+                if (failure != null || (immediate != null && !immediate.isSuccess())) {
+                    String failText = failure != null ? "工具执行失败：" + describe(failure)
+                            : immediate.getText();
+                    if (failText == null || failText.isEmpty()) {
+                        failText = "本地模型服务不在线或工具不可用。";
+                    }
+                    int failUsage = usageCostOf(taskOutput);
+                    if (store != null && charge != null) {
+                        // 简单失败免基础费，但任务已经产生的用量照常结算
+                        store.commit(charge, failUsage, System.currentTimeMillis() - start,
+                                failText.length(), false, false);
+                    }
+                    Integer failCharged = store == null ? null : Integer.valueOf(failUsage);
+                    Integer failBalance = store == null || token == null ? null
+                            : Integer.valueOf(store.getPaidBalance(token.getUid()));
+                    return successResult(failText, 0, failUsage, failCharged, failBalance, false);
+                }
+            }
+            AsyncTask task = new AsyncTask(future, taskOutput, charge, start);
+            asyncTasks.put(taskId, task);
+            // 完成时立即结算：并发查询不再承担任务用量，避免重复扣费
+            future.whenComplete((result, error) -> finishTask(task, result, error));
+            cleanupAsyncTasks();
+            text = "任务已提交，task_id=" + taskId + "。请调用 " + TASK_RESULT_TOOL
+                    + " 并传入该 task_id 查询结果；不要重复提交。";
+        } else {
+            try {
+                ToolResult result = tool.tool.run(McpJson.stringifyArguments(arguments), output, new ToolCallManager())
+                        .join();
+                success = result == null || result.isSuccess();
+                // 固定处理：多媒体内容里的 id 统一通过 TOS 换成可访问链接，不再把内部 id 直接返回给客户端
+                MessageContents content = result == null ? MessageContents.EMPTY : result.getContent();
+                text = resolveMedia(content, usage -> output.addUsage(usage)).toText();
+                if (text == null) {
+                    text = "";
+                }
+            } catch (Throwable ex) {
+                ex.printStackTrace();
+                if (store != null && charge != null) {
+                    store.refund(charge, ex.toString());
+                }
+                return errorResult("工具执行失败：" + describe(ex), CALL_COST);
+            }
         }
         int usagePrice = usageCostOf(output);
-        if (store != null && charge != null) {
-            store.commit(charge, usagePrice, System.currentTimeMillis() - start, text.length());
+        System.out.println("[MCP] tools/call result name=" + name + " success=" + success + " usagePrice=" + usagePrice
+                + " text=" + (text.length() > 500 ? text.substring(0, 500) + "..." : text));
+        if (store != null && charge != null && !deferredCommit) {
+            // 简单失败不扣基础调用费，但工具内部已经产生的用量照常扣费
+            store.commit(charge, usagePrice, System.currentTimeMillis() - start, text.length(), success, success);
         }
-        Integer charged = store == null ? null : Integer.valueOf(totalCost(CALL_COST, usagePrice));
+        int callPrice = success ? CALL_COST : 0;
+        Integer charged = store == null ? null : Integer.valueOf(totalCost(callPrice, usagePrice));
         Integer balance = store == null || token == null ? null : Integer.valueOf(store.getPaidBalance(token.getUid()));
-        return successResult(text, CALL_COST, usagePrice, charged, balance);
+        return successResult(text, callPrice, usagePrice, charged, balance, success);
     }
 
     // ==================== 内部实现 ====================
@@ -532,9 +789,9 @@ public class McpServer {
         return json;
     }
 
-    /** 构造文本成功结果。 */
+    /** 构造文本结果；{@code success=false} 时按 MCP 约定标记 isError。 */
     private static JsonObject successResult(String text, int callPrice, int usagePrice, Integer charged,
-            Integer balance) {
+            Integer balance, boolean success) {
         JsonObject result = new JsonObject();
         JsonArray content = new JsonArray();
         JsonObject item = new JsonObject();
@@ -553,15 +810,17 @@ public class McpServer {
             meta.addProperty("paidBalance", balance.intValue());
         }
         result.add("_meta", meta);
+        if (!success) {
+            // 简单失败：工具已经明确标记，基础调用费已免除，但内部用量费用仍可能计入
+            result.addProperty("isError", true);
+        }
         return result;
     }
 
     /** 构造文本错误结果（工具内部失败，按 MCP 约定用 isError 而不是 JSON-RPC 错误）。 */
     private static JsonObject errorResult(String text, int callPrice) {
         // 失败时固定调用费已退回，charged 为 0；price 仍给出本次调用的名义固定费用
-        JsonObject result = successResult(text, callPrice, 0, Integer.valueOf(0), null);
-        result.addProperty("isError", true);
-        return result;
+        return successResult(text, callPrice, 0, Integer.valueOf(0), null, false);
     }
 
     /** 空列表结果（resources/prompts 等本服务不提供的类别）。 */

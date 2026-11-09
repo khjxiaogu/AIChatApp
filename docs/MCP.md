@@ -73,7 +73,9 @@ MCP 服务端由 `AIChatService#mcp` 转发到 `/aichat/mcp`（不再在 `AIServ
 服务端内置两个自检工具（不依赖会话状态）：
 
 - `mcp_echo`：参数 `text`，原样返回；
-- `mcp_server_time`：无参数，返回服务端当前时间。
+- `mcp_server_time`：无参数，返回服务端当前时间；
+- `mcp_task_result`：参数 `task_id`，查询任意异步工具的任务结果；
+- `mcp_quota`：无参数，仅返回当前额外配额余额，免费。
 
 除此之外还会注册角色设定查询工具（`list_characters` / `search_characters` /
 `get_character_setting`），见 [2.8](#28-角色设定工具)。
@@ -91,6 +93,10 @@ MCP 服务端由 `AIChatService#mcp` 转发到 `/aichat/mcp`（不再在 `AIServ
   - 未知方法返回 `-32601`；支持 JSON-RPC 批量请求
 - 会话：`initialize` 下发 `Mcp-Session-Id`，后续请求可回传；服务端无状态，不强制校验
 - `GET /aichat/mcp` 返回 405（不支持服务端主动推送），`DELETE /aichat/mcp` 返回 200（结束会话）
+- 异步工具：凡是 `ToolData.async()` 的工具，`tools/call` 都立即返回 `task_id`，随后用内置的
+  `mcp_task_result`（参数 `task_id`）查询结果；任务保留 30 分钟，单次查询最多等待 20 秒。
+  任务完成时立即结算内部用量，查询只读取结果，因此并发查询不会重复扣费。
+  如果本地模型服务不在线、异步工具立即返回失败，则不会创建任务，直接返回失败并免基础调用费。
 
 ### 2.3 注册要暴露的工具
 
@@ -217,8 +223,11 @@ mcp_tool_call_log(id, token_id, uid, tool, cost, call_cost, usage_cost,
 6. 成功：按内部用量合计补扣费用并累加令牌 `quota_used`，把日志 `cost` 更新为
    “100 + 内部费用”，写入 `daily_usage.paid_used` 与 `paid_usage_record`
    （`usage_type = MCP工具`），记录标记为成功，返回文本结果；
-7. 失败：退回固定调用费与令牌额度，结果带 `isError: true` 返回给客户端，日志 `cost = 0`
-   并记录失败原因。
+7. 工具明确标记为简单失败（`ToolResult.isSuccess() == false`，例如网络不可达、本地服务不存在）：
+   退回固定调用费与对应令牌额度，但工具内部已经产生的用量照常补扣；结果带 `isError: true`，
+   日志 `call_cost = 0`、`usage_cost = 内部费用`、`ok = 0`；
+8. 工具抛异常等其它失败：退回固定调用费与令牌额度，结果带 `isError: true` 返回给客户端，
+   日志 `cost = 0` 并记录失败原因。
 
 因此：
 
@@ -226,7 +235,7 @@ mcp_tool_call_log(id, token_id, uid, tool, cost, call_cost, usage_cost,
 - 固定费用在调用前检查余额，内部费用在工具执行完成后按实际发生额结算；因此内部费用可能
   超过调用前的余额或令牌额度（余额可能为负），后续调用需补足后才能继续；
 - 用户消费明细会出现在原有的用量统计中；
-- 调用失败不扣费：固定调用费退回，工具内部用量不向用户收费；
+- 工具抛异常时不扣费；工具主动标记简单失败时只免固定调用费，内部已发生的用量费用仍扣除；
 - 并发调用通过条件更新保证固定调用费不会把余额扣成负数。
 
 调用结果的 `_meta` 会返回本次费用明细：

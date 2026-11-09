@@ -578,26 +578,40 @@ public class LocalModelHandshaker implements WebsocketEvents {
 
     /**
      * SVS（歌声合成）请求参数。
-     * 除音源（{@code url}、{@code name}）外，SVS 模型还需要以下五个参数：
+     * <p>
+     * 除音源（{@code url}、{@code name}）外，SVS 模型还需要以下参数：
+     * </p>
      * <ul>
      *   <li>{@code pitch} - 音高，整数</li>
-     *   <li>{@code separate} - 是否分离人声</li>
-     *   <li>{@code timbre} - 音色标识</li>
-     *   <li>{@code filter} - 滤波强度，取值 {@value #SVS_MIN_FILTER}-{@value #SVS_MAX_FILTER}</li>
-     *   <li>{@code strength} - 合成强度，取值 0.00-1.00</li>
+     *   <li>{@code separate} - 是否分离人声（旧本地模型字段）</li>
+     *   <li>{@code do_split} - localemp.py 是否执行伴奏分离与合成，默认 true</li>
+     *   <li>{@code timbre} / {@code voice} - 音色标识（localemp.py 使用 {@code voice}）</li>
+     *   <li>{@code filter} / {@code filter_radius} - 滤波强度/中值滤波半径</li>
+     *   <li>{@code strength} / {@code protect} - 合成强度/防撕裂保护</li>
      * </ul>
      * 通过 {@link #builder()} 构建：
      * <pre>
      * SvsOptions options = SvsOptions.builder()
      *     .pitch(2).separate(true).timbre("chara").filter(3).strength(0.75);
+     * // localemp.py：
+     * SvsOptions options = SvsOptions.builder()
+     *     .voice("my_model").pitch(2).filterRadius(3).protect(0.33).doSplit(false);
      * </pre>
      */
     public static class SvsOptions {
         private int pitch = 0;
         private boolean separate = false;
+        /** localemp.py 的伴奏分离与合成开关，默认 true。 */
+        private boolean doSplit = true;
         private String timbre;
         private int filter = SVS_MIN_FILTER;
         private double strength = SVS_MAX_STRENGTH;
+        /** localemp.py 的模型名（不含 .pth）；与 timbre 二选一。 */
+        private String voice;
+        /** localemp.py 的中值滤波半径，0~7。 */
+        private int filterRadius = 0;
+        /** localemp.py 的防撕裂保护，0~1。 */
+        private double protect = 0d;
 
         private SvsOptions() {
         }
@@ -628,6 +642,16 @@ public class LocalModelHandshaker implements WebsocketEvents {
         }
 
         /**
+         * 设置 localemp.py 是否执行伴奏分离与合成。
+         *
+         * @param doSplit true 分离人声/伴奏并混回；false 直接转换整段音频，输出不含伴奏
+         */
+        public SvsOptions doSplit(boolean doSplit) {
+            this.doSplit = doSplit;
+            return this;
+        }
+
+        /**
          * 设置音色标识。
          *
          * @param timbre 音色标识，不可为 null 或空字符串
@@ -637,6 +661,42 @@ public class LocalModelHandshaker implements WebsocketEvents {
             if (timbre == null || timbre.isEmpty())
                 throw new IllegalArgumentException("timbre must not be empty");
             this.timbre = timbre;
+            return this;
+        }
+
+        /**
+         * 设置 localemp.py 使用的模型名（不带 .pth）。
+         *
+         * @param voice 模型名
+         */
+        public SvsOptions voice(String voice) {
+            if (voice == null || voice.isEmpty())
+                throw new IllegalArgumentException("voice must not be empty");
+            this.voice = voice;
+            return this;
+        }
+
+        /**
+         * 设置 localemp.py 的中值滤波半径。
+         *
+         * @param filterRadius 0~7
+         */
+        public SvsOptions filterRadius(int filterRadius) {
+            if (filterRadius < 0 || filterRadius > 7)
+                throw new IllegalArgumentException("filterRadius out of range [0, 7]: " + filterRadius);
+            this.filterRadius = filterRadius;
+            return this;
+        }
+
+        /**
+         * 设置 localemp.py 的防撕裂保护。
+         *
+         * @param protect 0~1
+         */
+        public SvsOptions protect(double protect) {
+            if (protect < 0d || protect > 1d)
+                throw new IllegalArgumentException("protect out of range [0, 1]: " + protect);
+            this.protect = protect;
             return this;
         }
 
@@ -678,6 +738,11 @@ public class LocalModelHandshaker implements WebsocketEvents {
             return separate;
         }
 
+        /** @return localemp.py 是否执行伴奏分离与合成 */
+        public boolean isDoSplit() {
+            return doSplit;
+        }
+
         /** @return 音色标识 */
         public String getTimbre() {
             return timbre;
@@ -693,6 +758,21 @@ public class LocalModelHandshaker implements WebsocketEvents {
             return strength;
         }
 
+        /** @return localemp.py 的模型名 */
+        public String getVoice() {
+            return voice;
+        }
+
+        /** @return localemp.py 的中值滤波半径 */
+        public int getFilterRadius() {
+            return filterRadius;
+        }
+
+        /** @return localemp.py 的防撕裂保护 */
+        public double getProtect() {
+            return protect;
+        }
+
         /**
          * 将五个 SVS 参数写入指定的请求 JSON 对象。
          *
@@ -701,13 +781,19 @@ public class LocalModelHandshaker implements WebsocketEvents {
          * @throws IllegalArgumentException 未设置音色时抛出
          */
         public JsonObject applyTo(JsonObject request) {
-            if (timbre == null || timbre.isEmpty())
-                throw new IllegalArgumentException("timbre must not be empty");
+            if ((timbre == null || timbre.isEmpty()) && (voice == null || voice.isEmpty()))
+                throw new IllegalArgumentException("timbre or voice must not be empty");
             request.addProperty("pitch", pitch);
             request.addProperty("separate", separate);
-            request.addProperty("timbre", timbre);
+            request.addProperty("do_split", doSplit);
+            if (timbre != null && !timbre.isEmpty())
+                request.addProperty("timbre", timbre);
+            if (voice != null && !voice.isEmpty())
+                request.addProperty("voice", voice);
             request.addProperty("filter", filter);
+            request.addProperty("filter_radius", filterRadius);
             request.addProperty("strength", strength);
+            request.addProperty("protect", protect);
             return request;
         }
 

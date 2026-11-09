@@ -283,6 +283,11 @@ public class McpServerEndpoint implements CallBack {
      * @return 响应对象；通知返回 null
      */
     private JsonObject dispatch(JsonObject request, McpAccessTokenStore.Token token, String clientIp) {
+        if (McpProtocol.METHOD_TOOLS_CALL.equals(stringField(request, "method"))) {
+            // 调试：确认客户端到底发了什么 tools/call 请求；过长时截断，避免日志被大参数淹没
+            String raw = request.toString();
+            System.out.println("[MCP] <- tools/call " + (raw.length() > 2000 ? raw.substring(0, 2000) + "..." : raw));
+        }
         JsonElement id = request.get("id");
         boolean notification = id == null || id.isJsonNull();
         try {

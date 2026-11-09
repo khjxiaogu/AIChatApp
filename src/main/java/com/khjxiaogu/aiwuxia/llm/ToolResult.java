@@ -21,21 +21,38 @@ import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
  *       {@code ToolCallPresenter.resultDisplay(...)} 生成用户友好内容。</li>
  *   <li><b>附件（{@link #getAttachments()}）</b>：需要附加在结果中返回给用户的图片、音频、视频等，
  *       由会话统一写入当前上下文并按传输方式发送（例如 QQ 发图）。附件不参与模型请求。</li>
+ *   <li><b>是否成功（{@link #isSuccess()}）</b>：默认 true；只有明确的简单失败（网络不可达、服务不存在等）
+ *       才标记为 false。目前仅 MCP 服务端用它判断是否免除基础调用费，其它调用方可忽略。</li>
  * </ul>
  */
 public final class ToolResult {
 
-	private static final ToolResult EMPTY = new ToolResult(MessageContents.EMPTY, Collections.<MessageContent>emptyList());
+	private static final ToolResult EMPTY = new ToolResult(MessageContents.EMPTY, Collections.<MessageContent>emptyList(),
+			true);
 
 	/** 只提供给模型处理的结果内容。 */
 	private final MessageContents content;
 	/** 需要返回给用户的附件。 */
 	private final List<MessageContent> attachments;
+	/**
+	 * 工具是否成功完成。
+	 * <p>
+	 * 默认 true。只有明确知道是“简单失败”（网络无法连接、服务不存在/未启动等）时才设为 false；
+	 * 其余情况保持默认，避免把业务性失败误判为不收费。该字段只供 MCP 服务端计算基础调用费使用，
+	 * 其它调用方可以忽略。
+	 * </p>
+	 */
+	private final boolean success;
 
 	private ToolResult(MessageContents content, List<MessageContent> attachments) {
+		this(content, attachments, true);
+	}
+
+	private ToolResult(MessageContents content, List<MessageContent> attachments, boolean success) {
 		this.content = content == null ? MessageContents.EMPTY : content;
 		this.attachments = attachments == null ? Collections.<MessageContent>emptyList()
 				: Collections.unmodifiableList(new ArrayList<>(attachments));
+		this.success = success;
 	}
 
 	/**
@@ -143,6 +160,54 @@ public final class ToolResult {
 			return EMPTY;
 		}
 		return new ToolResult(new MutableMessageContents(text), list);
+	}
+
+	/**
+	 * 只包含文本的失败结果：内容照常回传给模型，但标记为简单失败。
+	 * <p>
+	 * 适用于明确的服务不可用（连接失败、服务未启动、无可用模型等），
+	 * 不应把普通业务错误或参数错误标成失败。
+	 * </p>
+	 *
+	 * @param text 失败说明，null 视为空串
+	 * @return 标记失败的工具结果
+	 */
+	public static ToolResult failure(String text) {
+		return new ToolResult(text == null || text.isEmpty() ? MessageContents.EMPTY : new MutableMessageContents(text),
+				null, false);
+	}
+
+	/**
+	 * 只包含结果内容的失败结果。
+	 *
+	 * @param content 模型可见的结果内容，null 视为空
+	 * @return 标记失败的工具结果
+	 */
+	public static ToolResult failure(MessageContents content) {
+		return new ToolResult(content, null, false);
+	}
+
+	/**
+	 * 把当前结果标记为成功或失败，内容与附件不变。
+	 *
+	 * @param success 是否成功
+	 * @return 新的结果对象
+	 */
+	public ToolResult withSuccess(boolean success) {
+		if (this.success == success) {
+			return this;
+		}
+		return new ToolResult(content, attachments, success);
+	}
+
+	/** 把当前结果标记为简单失败。 */
+	public ToolResult asFailure() {
+		return withSuccess(false);
+	}
+
+	/** 工具是否成功完成；未显式标记时默认 true。 */
+	public boolean isSuccess() {
+		return success;
 	}
 
 	/**

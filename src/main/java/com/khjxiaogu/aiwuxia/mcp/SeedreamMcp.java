@@ -98,7 +98,7 @@ public class SeedreamMcp {
 						}
 					} catch (IOException e) {
 						e.printStackTrace();
-						return CompletableFuture.completedFuture(ToolResult.text("参考图处理失败"));
+						return CompletableFuture.completedFuture(ToolResult.failure("参考图处理失败"));
 					}
 					if (errors.size() > 0) {
 						StringBuilder sb = new StringBuilder();
@@ -275,7 +275,8 @@ public class SeedreamMcp {
 					user.append("用户想法：\n").append(promptText);
 					// 输入检查开关：脚本 agent 发现用户输入有问题时合上它，本次不再提交视频生成
 					AtomicReference<String> rejection = new AtomicReference<>();
-					ToolCallManager subManager = new ToolCallManager().setMaxRounds(VIDEO_AGENT_MAX_ROUNDS);
+					ToolCallManager subManager = new ToolCallManager().setMaxRounds(VIDEO_AGENT_MAX_ROUNDS)
+							.setDisableAsyncTasks(true);
 					subManager.registerTool(MultiModalMcp.createImageRecognition(tos));
 					subManager.registerTool(createAttachReference(refImages, tos, links));
 					subManager.registerTool(createRejectRequest(rejection));
@@ -360,6 +361,8 @@ public class SeedreamMcp {
 		// 视频工具是一次性调用：没有人会回答脚本 agent 的追问，必须自行推测并直接给出脚本
 		sb.append("\n\n本次调用是单向的：没有人会回答你的追问，请根据现有信息自行推测"
 				+ "（参考图不足时按现有参考图的大致意图补全），直接输出最终脚本，不要提问。");
+		sb.append("\n所有工具调用必须等待返回真实结果后才能继续或结束；禁止提前返回、禁止声称“稍后通知”"
+				+ "或把未完成的任务当成完成。");
 		// 输入检查开关：判断输入该拒绝时不要用脚本内容表达拒绝，而是合上开关让本次生成停下
 		sb.append("\n\n## 停止生成开关（").append(REJECT_TOOL_NAME).append("）\n")
 				.append("发现用户输入存在无法自行推测解决的严重问题时（内容违法违规、涉及真实人物或隐私、需求自相矛盾、")

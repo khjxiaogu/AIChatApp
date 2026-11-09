@@ -33,6 +33,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
  * 每次工具调用统一返回 {@link CompletableFuture}。注册时声明为异步的工具，管理器会立即创建
  * {@link ToolTask} 并向模型返回“任务已创建，任务ID：...”，任务完成后通过
  * {@link ToolTaskListener} 通知会话；未声明异步的工具由管理器等待 future 完成后返回真实结果。
+ * 通过 {@link #setDisableAsyncTasks(boolean)} 可以统一禁用异步任务，适合必须等待全部结果的子 agent。
  * </p>
  * <p>
  * 多个工具可以通过 {@link #bindTools(int, String...)} 绑定为共享调用次数的组。组 ID 由管理器
@@ -75,6 +76,9 @@ public class ToolCallManager {
 	/** 默认异步任务创建提示文本。 */
 	public static final String DEFAULT_ASYNC_MESSAGE = "任务已创建，任务ID：%s（工具：%s）。任务完成后会自动通知你。";
 
+	/** 未完成异步任务数超限时的提示文本。 */
+	public static final String DEFAULT_ASYNC_TASK_LIMIT_MESSAGE = "当前未完成异步任务数已达上限，请等待已有任务完成后再调用异步工具。";
+
 	/** 已完成任务在内存中保留的最大数量。 */
 	private static final int MAX_FINISHED_TASKS = 128;
 
@@ -99,6 +103,12 @@ public class ToolCallManager {
 	private volatile boolean closed;
 	/** 异步任务创建提示文本模板。 */
 	private String asyncMessage = DEFAULT_ASYNC_MESSAGE;
+	/** 未完成异步任务数超限提示文本。 */
+	private String asyncTaskLimitMessage = DEFAULT_ASYNC_TASK_LIMIT_MESSAGE;
+	/** 每个 AI 最多持有的未完成异步任务数，小于 0 表示不限制。 */
+	private int maxPendingAsyncTasks = -1;
+	/** true 时统一禁用异步任务：即使工具声明为 async，也按同步执行并等待结果。 */
+	private boolean disableAsyncTasks;
 
 	/** 工具调用轮次上限（模型每请求一批工具调用记为一轮），小于等于 0 表示不限制。 */
 	private int maxRounds = DEFAULT_MAX_ROUNDS;
@@ -172,7 +182,7 @@ public class ToolCallManager {
 		int effectiveMax = pending == null ? maxCalls : pending;
 		ToolRegistration old = registrations.get(tool.name);
 		int oldGroup = old == null ? 0 : old.getGroupId();
-		registrations.put(tool.name, new ToolRegistration(tool, async, effectiveMax));
+		registrations.put(tool.name, new ToolRegistration(tool, async && !disableAsyncTasks, effectiveMax));
 		pruneGroup(oldGroup);
 		return this;
 	}
@@ -391,10 +401,30 @@ public class ToolCallManager {
 		return toolName == null ? null : registrations.get(toolName);
 	}
 
-	/** 指定工具是否声明为异步。 */
+	/** 指定工具是否声明为异步；统一禁用异步任务时始终返回 false。 */
 	public boolean isAsync(String toolName) {
 		ToolRegistration registration = getRegistration(toolName);
-		return registration != null && registration.isAsync();
+		return !disableAsyncTasks && registration != null && registration.isAsync();
+	}
+
+	/**
+	 * 统一禁用或恢复异步任务。
+	 * <p>
+	 * 开启后，即使工具通过 {@code async()} 声明异步，也按同步方式执行并等待真实结果。
+	 * 适合子 agent 等“必须拿到全部结果后才能继续”的场景。
+	 * </p>
+	 *
+	 * @param disable true 禁用异步任务
+	 * @return 当前管理器
+	 */
+	public ToolCallManager setDisableAsyncTasks(boolean disable) {
+		this.disableAsyncTasks = disable;
+		return this;
+	}
+
+	/** @return 是否统一禁用了异步任务 */
+	public boolean isDisableAsyncTasks() {
+		return disableAsyncTasks;
 	}
 
 	/**
@@ -582,6 +612,47 @@ public class ToolCallManager {
 	public ToolCallManager setAsyncMessage(String asyncMessage) {
 		this.asyncMessage = asyncMessage == null ? DEFAULT_ASYNC_MESSAGE : asyncMessage;
 		return this;
+	}
+
+	/** 未完成异步任务数超限提示文本。 */
+	public String getAsyncTaskLimitMessage() {
+		return asyncTaskLimitMessage;
+	}
+
+	/** 设置未完成异步任务数超限提示文本，null 恢复默认。 */
+	public ToolCallManager setAsyncTaskLimitMessage(String message) {
+		this.asyncTaskLimitMessage = message == null ? DEFAULT_ASYNC_TASK_LIMIT_MESSAGE : message;
+		return this;
+	}
+
+	/** 每个 AI 最多持有的未完成异步任务数，小于 0 表示不限制。 */
+	public int getMaxPendingAsyncTasks() {
+		return maxPendingAsyncTasks;
+	}
+
+	/**
+	 * 设置每个 AI 最多持有的未完成异步任务数。
+	 * <p>
+	 * 0 表示不允许启动异步工具；小于 0 表示不限制。同一批工具调用只检查一次，
+	 * 因此同一批中的多个异步工具不会被该限制拆开。
+	 * </p>
+	 *
+	 * @param maxPendingAsyncTasks 上限
+	 * @return 本管理器，便于链式调用
+	 */
+	public ToolCallManager setMaxPendingAsyncTasks(int maxPendingAsyncTasks) {
+		this.maxPendingAsyncTasks = maxPendingAsyncTasks;
+		return this;
+	}
+
+	/** 当前未完成异步任务数。 */
+	public int getPendingAsyncTaskCount() {
+		return getRunningTasks().size();
+	}
+
+	/** 是否还能启动新的异步任务。 */
+	public boolean hasAsyncTaskCapacity() {
+		return maxPendingAsyncTasks < 0 || getPendingAsyncTaskCount() < maxPendingAsyncTasks;
 	}
 
 	/** 生成异步任务的“任务已创建”回复。 */

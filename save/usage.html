@@ -918,7 +918,7 @@
                                         余额充值
                                     </div>
                                     <div class="stat-sub" style="margin-top: 0;">
-                                        1 元 = {{ formatNumber(tokensPerYuan) }} 补充配额，扫码支付后自动到账
+                                        1 元 = {{ formatNumber(tokensPerYuan) }} 补充配额，扫码支付后自动到账，收款方为Deepseek，本平台不收取任何手续费
                                         <span v-if="!rechargeAllowed">；补充配额已达上限，暂不可充值</span>
                                     </div>
                                 </div>
@@ -1831,11 +1831,6 @@
                 }, 100);
             },
             openPayModal() {
-                if (!pageQueries.uid) {
-                    this.rechargeMessage = '缺少用户ID，无法充值';
-                    this.rechargeMessageType = 'error';
-                    return;
-                }
                 if (!this.rechargeEnabled) {
                     this.rechargeMessage = '充值功能未配置，请联系管理员';
                     this.rechargeMessageType = 'error';

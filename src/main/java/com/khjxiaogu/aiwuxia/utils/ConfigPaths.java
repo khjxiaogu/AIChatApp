@@ -83,6 +83,8 @@ public final class ConfigPaths {
 	public static final String AGENTS = "agents.json";
 	/** 定时任务（原 {@code save/crontab.json}） */
 	public static final String CRONTAB = "crontab.json";
+	/** SVS 音色角色配置：角色名 → 音频 ID */
+	public static final String SVS_VOICES = "svs-voices.json";
 	/** DeepSeek 开放平台充值凭据（cookie、shumei_device_id） */
 	public static final String DEEPSEEK_PAYMENT = "deepseek-payment.json";
 
@@ -231,6 +233,16 @@ public final class ConfigPaths {
 	 */
 	public static File crontab(File dataFolder) {
 		return locate(folder(dataFolder), CRONTAB, dataFolder, LEGACY_CRONTAB);
+	}
+
+	/**
+	 * SVS 音色角色配置文件。
+	 *
+	 * @param dataFolder 数据目录
+	 * @return {@code config/svs-voices.json}
+	 */
+	public static File svsVoices(File dataFolder) {
+		return new File(folder(dataFolder), SVS_VOICES);
 	}
 
 	/**

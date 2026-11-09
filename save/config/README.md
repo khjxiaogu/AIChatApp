@@ -40,6 +40,7 @@ save/
 | `volcano-voice.json` | 火山声音复刻 bot 映射，形如 `{"角色名": "voice_type"}` | 忽略（部署本地） |
 | `agents.json` | QQ 群 agent 清单：`name`（应用名）/ `save`（存档文件）/ `voice` / `tools` / `adminId` 等，`NapCatAIConnector` 启动时读取。`tools` 里可把工具写成 `{"name":"seedvideo","approval":true}` 启用工具调用审核 | 忽略（部署本地） |
 | `crontab.json` | 定时任务清单 | 忽略（部署本地） |
+| `svs-voices.json` | SVS 音色角色：`{"角色名": "音频id"}`。`svs_convert` 的 `voice` 传角色名，由这里映射到 localemp.py 的 RVC 模型名/音频 ID；`list_svs_voices` 会列出可用角色。文件每次调用时重新读取 | 入库 |
 | `sdxl/character-tags.txt` | 角色 tag 库（danbooru 风格 tag，一行一个）。生成提示词时按关键词检索，命中就往提示词里补 tag | 入库 |
 | `sdxl/loras.json` | LoRA 配置：`{"触发词": {"key": "文件名", "weight": 0.8}}` | 忽略（部署本地） |
 | `sdxl/reference-images.json` | 参考图：`{"名称": "图片地址"}`，供 Seedream 生图/生视频带参考图；生视频时这些名字会列进脚本 agent 的提示词，由 agent 自行选用 | 忽略（部署本地） |

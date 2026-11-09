@@ -119,11 +119,12 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
  * <tr><td>dsh_model</td><td>deepseek-flash</td><td>模型 id</td></tr>
  * <tr><td>dsh_reasoning</td><td>high</td><td>推理强度，留空则不指定</td></tr>
  * <tr><td>dsh_cwd</td><td>dsh-workspace</td><td>会话工作目录（agent 的工具活动范围）</td></tr>
- * <tr><td>dsh_msg_limit</td><td>300</td><td>单条消息的最大字数（超过才按纯字数切开）</td></tr>
+ * <tr><td>dsh_msg_limit</td><td>600</td><td>单条消息/单个转发节点的最大字数（超过才按纯字数切开）</td></tr>
  * <tr><td>dsh_flush_line</td><td>700</td><td>单行文本攒到这么多字就立刻发送（不等整轮结束）</td></tr>
  * <tr><td>dsh_flush_multiline</td><td>400</td><td>多行文本累计到这么多字就立刻发送</td></tr>
  * <tr><td>dsh_output_reasoning</td><td>true</td><td>是否转发思维链</td></tr>
  * <tr><td>dsh_reasoning_forward</td><td>false</td><td>思维链与工具调用是否整轮合并成一条转发消息（不再分段实时推送）</td></tr>
+ * <tr><td>dsh_forward_text</td><td>true</td><td>正文是否也用合并转发消息发送（转发失败自动回退为普通消息）</td></tr>
  * <tr><td>dsh_prefix</td><td>true</td><td>是否给思维链加 💭、工具加 🔧（正文回复不加标签）</td></tr>
  * <tr><td>dsh_send_delay_min_ms</td><td>1000</td><td>每条消息发出前随机等待的下限（等上一条回执之后）</td></tr>
  * <tr><td>dsh_send_delay_max_ms</td><td>3000</td><td>每条消息发出前随机等待的上限</td></tr>
@@ -179,6 +180,14 @@ public class DeepseekHarnessConnector extends WebSocketClient {
 	 * </p>
 	 */
 	private final boolean reasoningForward;
+	/**
+	 * 正文是否也用合并转发消息发送。
+	 * <p>
+	 * 打开后正文不再逐条以普通消息发出，而是打包成一条 QQ 合并转发；
+	 * 转发发送失败时自动回退成普通消息，保证内容不丢。
+	 * </p>
+	 */
+	private final boolean forwardText;
 	/** 每条消息发出前随机等待的下限（等上一条回执之后）。 */
 	private final long sendDelayMin;
 	/** 每条消息发出前随机等待的上限。 */
@@ -422,10 +431,11 @@ public class DeepseekHarnessConnector extends WebSocketClient {
 		super(URI.create("ws://" + url),
 				token == null || token.isEmpty() ? new HashMap<>() : headers("Authorization", "Bearer " + token));
 		this.dataFolder = dataFolder;
-		this.messageLimit = (int) Math.max(1, optLong("dsh_msg_limit", 300));
+		this.messageLimit = (int) Math.max(1, optLong("dsh_msg_limit", 600));
 		this.outputReasoning = optBool("dsh_output_reasoning", true);
 		this.outputPrefix = optBool("dsh_prefix", true);
 		this.reasoningForward = optBool("dsh_reasoning_forward", false);
+		this.forwardText = optBool("dsh_forward_text", true);
 		this.sendDelayMin = Math.max(0, optLong("dsh_send_delay_min_ms", 1000));
 		this.sendDelayMax = Math.max(this.sendDelayMin, optLong("dsh_send_delay_max_ms", 3000));
 		this.sendAckTimeout = Math.max(1000, optLong("dsh_send_ack_timeout_ms", 15000));
@@ -1429,6 +1439,18 @@ public class DeepseekHarnessConnector extends WebSocketClient {
 		String text = raw == null ? "" : raw;
 		if (text.trim().isEmpty())
 			return;
+		// 正文优先走合并转发；发送失败再回退到普通消息，保证内容不丢
+		if (forwardText && "回复".equals(label)) {
+			if (buf.sentMessages >= maxMessagesPerTurn) {
+				notifyTruncated(qqKey, buf);
+				return;
+			}
+			if (sendForwardInternal(qqKey, text, outputPrefix ? "📄 回复" : "回复", true)) {
+				buf.sentMessages++;
+				return;
+			}
+			log("正文合并转发失败，回退为普通消息发送");
+		}
 		for (String chunk : cutAtNewline(text, Math.max(50, messageLimit))) {
 			if (buf.sentMessages >= maxMessagesPerTurn) {
 				notifyTruncated(qqKey, buf);
@@ -1768,21 +1790,31 @@ public class DeepseekHarnessConnector extends WebSocketClient {
 	private void sendForward(String qqKey, String text) {
 		if (text == null || text.trim().isEmpty())
 			return;
-		sender.execute(() -> sendForwardNow(qqKey, text));
+		sender.execute(() -> sendForwardInternal(qqKey, text,
+				outputPrefix ? "💭 思考与工具" : "思考与工具", false));
 	}
 
-	/** 在 sender 线程上真正发送合并转发消息。 */
-	private void sendForwardNow(String qqKey, String text) {
+	/**
+	 * 在 sender 线程上真正发送合并转发消息。
+	 *
+	 * @param qqKey    目标会话
+	 * @param text     内容
+	 * @param nodeName 转发卡片的发送者名字
+	 * @param awaitAck true 表示等这条转发的回执，返回是否成功（正文用它决定要不要回退）；
+	 *                 false 表示发完就走（思维链用它，失败也不重发）
+	 * @return 是否发送成功；{@code awaitAck=false} 时恒为 true
+	 */
+	private boolean sendForwardInternal(String qqKey, String text, String nodeName, boolean awaitAck) {
 		ParsedKey key = ParsedKey.parse(qqKey);
 		if (key == null)
-			return;
+			return false;
 		int nodeChars = Math.max(200, Math.min(1500, messageLimit * 3));
 		List<String> nodes = cutAtNewline(text, nodeChars);
 		if (nodes.isEmpty())
-			return;
+			return true;
 		synchronized (sendLock) {
 			if (!awaitPreviousAndDelay())
-				return;
+				return true;
 			JsonArray messages = new JsonArray();
 			for (String chunkText : nodes) {
 				JsonObject content = new JsonObject();
@@ -1798,8 +1830,8 @@ public class DeepseekHarnessConnector extends WebSocketClient {
 				long botId = botSelfId != 0 ? botSelfId : targetBotId != 0 ? targetBotId : key.user;
 				nodeData.addProperty("uin", String.valueOf(botId));
 				nodeData.addProperty("user_id", String.valueOf(botId));
-				nodeData.addProperty("name", outputPrefix ? "💭 思考与工具" : "思考与工具");
-				nodeData.addProperty("nickname", outputPrefix ? "💭 思考与工具" : "思考与工具");
+				nodeData.addProperty("name", nodeName);
+				nodeData.addProperty("nickname", nodeName);
 				nodeData.add("content", contentArray);
 				JsonObject nodeObj = new JsonObject();
 				nodeObj.addProperty("type", "node");
@@ -1817,7 +1849,15 @@ public class DeepseekHarnessConnector extends WebSocketClient {
 			params.add("messages", messages);
 			action.add("params", params);
 			lastSend = callNapCat(action, null);
-			log("已发送思维链合并转发（" + nodes.size() + " 个节点，" + text.length() + " 字）");
+			log("已发送合并转发（" + nodes.size() + " 个节点，" + text.length() + " 字，" + nodeName + "）");
+			if (!awaitAck)
+				return true;
+			JsonObject ack = lastSend == null ? null : lastSend.await(sendAckTimeout);
+			if (ack == null) {
+				log("合并转发没有确认成功（节点 " + nodes.size() + " 个），将回退为普通消息");
+				return false;
+			}
+			return true;
 		}
 	}
 

@@ -23,7 +23,9 @@ import com.khjxiaogu.aiwuxia.multimedia.MultimediaApi;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
+import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.voice.ModelType;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 
 /**
@@ -140,17 +142,21 @@ public final class LocalVoiceMcp implements ToolProvider {
 					if (text.isEmpty()) {
 						return CompletableFuture.completedFuture(ToolResult.text("参数错误：缺少话语内容 text。"));
 					}
+					if (!LocalModel.hasOnlineService(ModelType.AUDIO)) {
+						return CompletableFuture
+								.completedFuture(ToolResult.failure("本地语音模型不在线，请先启动并连接本地语音服务。"));
+					}
 					if (storage == null) {
-						return CompletableFuture.completedFuture(ToolResult.text("本地语音存储不可用，无法保存生成的音频。"));
+						return CompletableFuture.completedFuture(ToolResult.failure("本地语音存储不可用，无法保存生成的音频。"));
 					}
 					Consumer<UsageIntf<?>> usage = output == null ? null : u -> output.addUsage(u);
 					try {
 						return VoiceModelHandler
 								.generateLocalAudio(role, text, UUID.randomUUID().toString(), usage)
 								.thenApply(result -> saveAndBuildResult(storage, result, usage))
-								.exceptionally(ex -> ToolResult.text("语音生成失败：" + rootMessage(ex)));
+								.exceptionally(ex -> ToolResult.failure("语音生成失败：" + rootMessage(ex)));
 					} catch (Throwable ex) {
-						return CompletableFuture.completedFuture(ToolResult.text("语音生成失败：" + rootMessage(ex)));
+						return CompletableFuture.completedFuture(ToolResult.failure("语音生成失败：" + rootMessage(ex)));
 					}
 				}).build();
 	}
@@ -159,7 +165,7 @@ public final class LocalVoiceMcp implements ToolProvider {
 	private static ToolResult saveAndBuildResult(ObjectStorageProvider storage, ModelGenerationResult result,
 			Consumer<UsageIntf<?>> usage) {
 		if (result == null || result.bodyData == null || result.bodyData.length == 0) {
-			return ToolResult.text("语音生成失败：本地语音模型没有返回音频数据。");
+			return ToolResult.failure("语音生成失败：本地语音模型没有返回音频数据。");
 		}
 		String format = normalizeFormat(result.format);
 		String audioId = audioId(result.bodyData, format);

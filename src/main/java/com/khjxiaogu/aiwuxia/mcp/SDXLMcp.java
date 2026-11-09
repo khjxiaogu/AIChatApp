@@ -516,7 +516,7 @@ public class SDXLMcp implements ToolProvider {
 						} catch (IOException e) {
 							e.printStackTrace();
 						}
-						return CompletableFuture.completedFuture(ToolResult.text("服务暂不可用"));
+						return CompletableFuture.completedFuture(ToolResult.failure("服务暂不可用"));
 						
 					}
 					return CompletableFuture.completedFuture(ToolResult.text("参数格式错误"));
@@ -594,7 +594,7 @@ public class SDXLMcp implements ToolProvider {
 									imageResult("生成成功，", fn, imageText(fn, extras, caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
-							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
+							return CompletableFuture.completedFuture(ToolResult.failure("图片生成失败，服务暂不可用。"));
 						}
 					}catch(Throwable t) {
 						t.printStackTrace();
@@ -712,7 +712,7 @@ public class SDXLMcp implements ToolProvider {
 									imageResult("生成成功，", fn, imageText(fn, "", caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
-							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
+							return CompletableFuture.completedFuture(ToolResult.failure("图片生成失败，服务暂不可用。"));
 						}
 					}catch(Throwable t) {
 						t.printStackTrace();
@@ -791,7 +791,7 @@ public class SDXLMcp implements ToolProvider {
 									imageResult("生成成功，", fn, imageText(fn, "", caption)));
 						} catch (IOException e) {
 							e.printStackTrace();
-							return CompletableFuture.completedFuture(ToolResult.text("图片生成失败，服务暂不可用。"));
+							return CompletableFuture.completedFuture(ToolResult.failure("图片生成失败，服务暂不可用。"));
 						}
 					}catch(Throwable t) {
 						t.printStackTrace();

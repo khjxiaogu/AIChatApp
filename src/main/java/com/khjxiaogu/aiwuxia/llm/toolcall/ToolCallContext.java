@@ -11,6 +11,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -34,7 +36,8 @@ import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
  * </p>
  * <p>
  * 工具统一返回 {@link CompletableFuture}。同步工具等待完成后返回真实结果；注册为异步的工具
- * 立即返回“任务已创建，任务ID：...”，任务完成由 {@link ToolCallManager} 通知会话。
+ * 先统一等待 1 秒，1 秒内完成直接返回结果，未完成才登记为任务并返回“任务已创建，任务ID：...”。
+ * 同一批中的多个异步工具共享这一个 1 秒等待窗口。
  * </p>
  */
 public class ToolCallContext {
@@ -148,6 +151,14 @@ public class ToolCallContext {
 	private final AtomicBoolean limitNotified = new AtomicBoolean();
 	/** 本轮是否已有调用因触及次数上限而未执行 */
 	private final AtomicBoolean callLimitExhausted = new AtomicBoolean();
+	/** 本批工具调用是否已经做过“未完成异步任务数”检查 */
+	private boolean batchAsyncDecisionMade;
+	/** 本批工具调用是否允许启动异步任务 */
+	private boolean batchAsyncAllowed = true;
+	/** 本批异步工具统一等待截止时间 */
+	private long asyncWaitDeadline;
+	/** 异步工具统一等待窗口：1 秒内完成则直接返回结果，否则转为后台任务。 */
+	private static final long ASYNC_WAIT_MS = 1000L;
 	/**
 	 * 工具执行线程池。
 	 * <p>
@@ -178,25 +189,33 @@ public class ToolCallContext {
 		private final ToolContent immediate;
 		private final ToolCall call;
 		private final ToolCallDisplay display;
-		/** 同步工具的完成信号；异步工具不需要等待完成，为 null */
+		/** 同步工具的完成信号；异步工具在观察窗口内也可能使用 */
 		private final CompletableFuture<ToolResult> future;
+		/** 是否为等待 1 秒后再决定是否转异步的工具 */
+		private final boolean asyncCandidate;
 		/** 是否已经取过结果 */
 		private boolean awaited;
 
 		private Execution(ToolContent immediate, ToolCall call, ToolCallDisplay display,
-				CompletableFuture<ToolResult> future) {
+				CompletableFuture<ToolResult> future, boolean asyncCandidate) {
 			this.immediate = immediate;
 			this.call = call;
 			this.display = display;
 			this.future = future;
+			this.asyncCandidate = asyncCandidate;
 		}
 
 		static Execution finished(ToolContent result) {
-			return new Execution(result, null, null, null);
+			return new Execution(result, null, null, null, false);
 		}
 
 		static Execution running(ToolCall call, ToolCallDisplay display, CompletableFuture<ToolResult> future) {
-			return new Execution(null, call, display, future);
+			return new Execution(null, call, display, future, false);
+		}
+
+		static Execution asyncCandidate(ToolCall call, ToolCallDisplay display,
+				CompletableFuture<ToolResult> future) {
+			return new Execution(null, call, display, future, true);
 		}
 	}
 
@@ -287,6 +306,11 @@ public class ToolCallContext {
 		}
 		// 本轮的增量已消费，重置以便下一轮收集
 		collector = new ToolCallCollector();
+		// 同一批工具调用共享一次异步容量判定：本批中多个异步工具一起放行或一起拒绝
+		batchAsyncDecisionMade = false;
+		batchAsyncAllowed = true;
+		// 同一批中的多个异步工具共享同一个 1 秒等待窗口
+		asyncWaitDeadline = System.currentTimeMillis() + ASYNC_WAIT_MS;
 
 		// 生成已被中断：工具不再执行，但调用本身照常写入历史，结果统一写成“用户已停止生成。”
 		if (isInterrupted()) {
@@ -371,8 +395,7 @@ public class ToolCallContext {
 	/**
 	 * 等待一组已启动调用完成，并按原位置写入结果。
 	 * <p>
-	 * 只等待同步工具；声明为异步的工具已经直接得到“任务已创建”的结果，
-	 * 不会阻塞后续工具。
+	 * 同步工具等待完成；异步工具在共享的 1 秒窗口内完成则直接取结果，否则转成后台任务。
 	 * </p>
 	 *
 	 * @param executions 与调用列表等长的启动记录，未启动处为 null
@@ -389,7 +412,7 @@ public class ToolCallContext {
 	/**
 	 * 等待单个调用完成并写入结果。
 	 * <p>
-	 * 异步工具的结果已经是“任务已创建”，这里不再等待其实际完成；只有同步工具会阻塞等待。
+	 * 异步候选在共享 1 秒窗口内完成时直接返回真实结果，超时才登记为后台任务；同步工具会阻塞等待。
 	 * </p>
 	 *
 	 * @param executions 启动记录列表
@@ -410,9 +433,38 @@ public class ToolCallContext {
 			execution.awaited = true;
 			return execution.immediate;
 		}
+		if (execution.asyncCandidate) {
+			try {
+				long remaining = asyncWaitDeadline - System.currentTimeMillis();
+				if (remaining > 0) {
+					execution.future.get(remaining, TimeUnit.MILLISECONDS);
+				} else if (!execution.future.isDone()) {
+					return submitAsyncNow(execution, results, index);
+				}
+			} catch (TimeoutException ex) {
+				return submitAsyncNow(execution, results, index);
+			} catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+			} catch (ExecutionException ex) {
+				// 1 秒内已失败，交给 awaitFuture 转成工具错误结果
+			}
+		}
 		execution.awaited = true;
 		ToolContent result = awaitFuture(execution.call, execution.display, execution.future);
 		results.set(index, result);
+		return result;
+	}
+
+	/** 1 秒内未完成的异步工具转为后台任务，并返回任务已创建的结果。 */
+	private ToolContent submitAsyncNow(Execution execution, List<ToolContent> results, int index) {
+		ToolTask task = manager.submitTask(execution.call.function.name, execution.call.id, execution.future,
+				execution.display);
+		ToolContent result = task == null
+				? notExecuted(execution.call, manager.getToolErrorMessage(), execution.display)
+				: new ToolContent(execution.call.id, manager.asyncReply(task),
+						ToolCallDisplay.of(execution.display.getBrief()));
+		results.set(index, result);
+		execution.awaited = true;
 		return result;
 	}
 
@@ -483,7 +535,8 @@ public class ToolCallContext {
 	 * <p>
 	 * 校验失败（不存在/超限/无权限/无许可/内部错误）直接返回带失败结果 {@link Execution#finished}；
 	 * 可执行的调用返回 {@link Execution#running}，由 {@link #awaitExecution(List, List, int)} 等待完成。
-	 * 声明为异步的工具在启动后立即登记异步任务并返回“任务已创建”，不在这里等待，也不阻塞后续工具。
+	 * 声明为异步的工具先按 {@link Execution#asyncCandidate} 启动，统一等待 1 秒后再决定直接返回结果
+	 * 还是登记为后台任务。
 	 * </p>
 	 */
 	private Execution start(ToolCall call, ToolCallDisplay callDisplay) {
@@ -561,14 +614,17 @@ public class ToolCallContext {
 			ex.printStackTrace();
 			return Execution.finished(notExecuted(call, manager.getToolErrorMessage(), callDisplay));
 		}
-		if (registration.isAsync()) {
-			ToolTask task = manager.submitTask(call.function.name, call.id, future, callDisplay);
-			if (task == null) {
-				return Execution.finished(notExecuted(call, manager.getToolErrorMessage(), callDisplay));
+		if (registration.isAsync() && !manager.isDisableAsyncTasks()) {
+			if (!batchAsyncDecisionMade) {
+				batchAsyncDecisionMade = true;
+				batchAsyncAllowed = manager.hasAsyncTaskCapacity();
 			}
-			// 异步工具立即返回任务回复，后续顺序敏感工具也不会等待它真正完成
-			return Execution.finished(new ToolContent(call.id, manager.asyncReply(task),
-					ToolCallDisplay.of(callDisplay.getBrief())));
+			if (!batchAsyncAllowed) {
+				return Execution.finished(
+						notExecuted(call, manager.getAsyncTaskLimitMessage(), callDisplay));
+			}
+			// 先启动工具，等待窗口结束后再决定直接返回结果还是转后台任务
+			return Execution.asyncCandidate(call, callDisplay, future);
 		}
 		return Execution.running(call, callDisplay, future);
 	}
@@ -663,6 +719,8 @@ public class ToolCallContext {
 		groupCalls.clear();
 		limitNotified.set(false);
 		callLimitExhausted.set(false);
+		batchAsyncDecisionMade = false;
+		batchAsyncAllowed = true;
 	}
 
 	/** 已处理的、计入轮次上限的工具调用轮次。 */

@@ -303,11 +303,12 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 | `dsh_model`            | `deepseek-flash`   | 模型 id                           |
 | `dsh_reasoning`        | `high`             | 推理强度，留空则不指定                     |
 | `dsh_cwd`              | `save/dsh-workspace` | 会话工作目录（agent 工具的活动范围）           |
-| `dsh_msg_limit`        | `300`              | 单条消息的最大字数（超过才按纯字数切开，不再按行拆）      |
+| `dsh_msg_limit`        | `600`              | 单条消息/单个转发节点的最大字数（超过才按纯字数切开，不再按行拆）      |
 | `dsh_flush_line`       | `700`              | 单行文本攒到这么多字就**立刻发送**（不等整轮结束） |
 | `dsh_flush_multiline`  | `400`              | 多行文本累计到这么多字就**立刻发送**           |
 | `dsh_output_reasoning` | `true`             | 是否转发思维链                         |
 | `dsh_reasoning_forward` | `false`           | 思维链**与工具调用**是否整轮合并成**一条转发消息**（打开后不再分段实时推送） |
+| `dsh_forward_text`     | `true`             | 正文是否也用**合并转发消息**发送；转发失败会自动回退成普通消息 |
 | `dsh_output_tools`     | `false`            | 是否转发工具调用与工具结果（同一次调用的多个工具合并成一条，**只显示工具名、不显示参数**） |
 | `dsh_prefix`           | `true`             | 是否给思维链加 💭、工具加 🔧（正文回复不加任何标签） |
 | `dsh_send_delay_min_ms` | `1000`            | 每条消息发出前随机等待的下限（等上一条回执之后）      |
