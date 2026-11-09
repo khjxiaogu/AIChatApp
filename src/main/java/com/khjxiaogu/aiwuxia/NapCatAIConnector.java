@@ -33,7 +33,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -62,10 +61,6 @@ import java.util.function.Supplier;
 
 import javax.imageio.ImageIO;
 
-import org.java_websocket.client.WebSocketClient;
-import org.java_websocket.framing.CloseFrame;
-import org.java_websocket.handshake.ServerHandshake;
-
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -74,6 +69,11 @@ import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.AIGroupApplication;
+import com.khjxiaogu.aiwuxia.chat.ChatAdapter;
+import com.khjxiaogu.aiwuxia.chat.ChatEventHandler;
+import com.khjxiaogu.aiwuxia.chat.IncomingContent;
+import com.khjxiaogu.aiwuxia.chat.IncomingMessage;
+import com.khjxiaogu.aiwuxia.chat.NapcatAdapter;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
@@ -111,12 +111,9 @@ import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.tools.QqToolApprovalManager;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ToolSettings;
-import com.khjxiaogu.aiwuxia.utils.BotCallback;
-import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.GroupOutputGate;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.vision.ImageNoise;
 import com.khjxiaogu.aiwuxia.vision.SDXLLocalModelClient;
@@ -126,7 +123,22 @@ import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
 import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 
-public class NapCatAIConnector extends WebSocketClient {
+/**
+ * 通用聊天机器人控制器。
+ * <p>
+ * 负责与会话相关的全部业务：会话历史、技能/工具注册、工具调用审核、回复生成、语音回复、
+ * 工具附件与群内发送顺序。所有平台相关的收发都通过 {@link ChatAdapter} 完成，因此换一个
+ * 适配器实现即可接入不同协议的聊天平台（当前默认是 {@link NapcatAdapter}，即 NapCat /
+ * OneBot v11）。
+ * </p>
+ * <p>
+ * 类名沿用 {@code NapCatAIConnector} 以保持调用方不变，但本类不再直接依赖任何 NapCat 协议字段：
+ * OneBot 事件解析、echo 回执、群消息发送都在 {@link NapcatAdapter} 里。
+ * </p>
+ */
+public class NapCatAIConnector {
+	/** 协议适配器：平台相关的连接与收发全部经过它。 */
+	private final ChatAdapter adapter;
 	List<AIGroupSession> states=new ArrayList<>();
 
 	Deque<Mid2Bid> mbid=new ArrayDeque<>(200);
@@ -165,7 +177,7 @@ public class NapCatAIConnector extends WebSocketClient {
 	private static final int MAX_PENDING_TOOL_ATTACHMENTS = 16;
 	/** 重量级子 agent 每回合最多调用一次。 */
 	private static final int AGENT_TURN_LIMIT = 1;
-	/** NapCat 每个 AI 最多持有的未完成异步任务数。 */
+	/** 每个 AI 最多持有的未完成异步任务数。 */
 	private static final int MAX_PENDING_ASYNC_TASKS = 2;
 	/**
 	 * 单个附件发送后等待回执的上限。
@@ -178,9 +190,40 @@ public class NapCatAIConnector extends WebSocketClient {
 	private final ResourceLock resourceLock = new ResourceLock(12);
 	/** 工具调用审核：需要审核的工具私聊管理员确认。 */
 	private final QqToolApprovalManager toolApproval;
+	/**
+	 * 一次交给发送顺序闸门执行的发送动作。
+	 * <p>
+	 * 只包含一次协议发送：适配器返回消息 id 的 future，等待回执的策略由调用方决定。
+	 * </p>
+	 */
+	@FunctionalInterface
+	private interface SendCall {
+		CompletableFuture<String> send();
+	}
+
+	/**
+	 * NapCat 专用的便捷构造：内部创建 {@link NapcatAdapter}。
+	 *
+	 * @param dataFolder 运行数据目录（save/）
+	 * @param url        NapCat 正向 WS 地址
+	 * @param token      OneBot 访问令牌
+	 * @param states     要驱动的会话
+	 */
 	public NapCatAIConnector(File dataFolder, String url,
 			String token, AIGroupSession... states) throws JsonSyntaxException, IOException, InterruptedException {
-		super(URI.create("ws://" + url), Map.of("Authorization", "Bearer " + token));
+		this(dataFolder, new NapcatAdapter(url, token), states);
+	}
+
+	/**
+	 * 通用构造：任意协议适配器都可以接进来。
+	 *
+	 * @param dataFolder 运行数据目录（save/）
+	 * @param adapter    协议适配器，构造过程中会完成连接
+	 * @param states     要驱动的会话
+	 */
+	public NapCatAIConnector(File dataFolder, ChatAdapter adapter, AIGroupSession... states)
+			throws JsonSyntaxException, IOException, InterruptedException {
+		this.adapter = adapter;
 		this.dataFolder = dataFolder;
 		// 本地模型部署地址：站点域名默认读 save/site.json，可用 --site-host / -Dsite_host 覆盖
 		SDXLLocalModelClient lmc=new SDXLLocalModelClient(URI.create(SiteConfig.resolve(dataFolder).webSocketUrl(SiteConfig.DEFAULT_HOST, "/aichat/kh$localModelDeploy")), resourceLock, true, 1000);
@@ -204,7 +247,35 @@ public class NapCatAIConnector extends WebSocketClient {
 		imgKey = JsonParser.parseString(FileUtil.readString(ConfigPaths.imageGeneration(dataFolder))).getAsJsonObject();
 		this.toolApproval = new QqToolApprovalManager(this::sendPrivateText,
 				QqToolApprovalManager.DEFAULT_TIMEOUT_MILLIS);
-		connectBlocking();
+		// 先注册事件处理器再连接，避免漏掉刚连上时的消息
+		adapter.setEventHandler(new ChatEventHandler() {
+			@Override
+			public void onOpen() {
+				System.out.println("opened connection");
+			}
+
+			@Override
+			public void onClose(int code, String reason, boolean remote) {
+				System.out.println("聊天连接关闭：" + code + " " + reason + (remote ? "（远端）" : ""));
+			}
+
+			@Override
+			public void onError(Throwable error) {
+				System.err.println("聊天连接异常：" + error);
+			}
+
+			@Override
+			public void onGroupMessage(IncomingMessage message) {
+				NapCatAIConnector.this.handleGroupMessage(message);
+			}
+
+			@Override
+			public void onPrivateMessage(IncomingMessage message) {
+				NapCatAIConnector.this.handlePrivateMessage(message);
+			}
+		});
+		System.out.println("聊天适配器：" + adapter.getName());
+		connectAdapter();
 		for(AIGroupSession sess:states) {
 
 			// 历史里的图片只保存对象存储 ID，模型调用层用本会话的存储把它们解析成可访问地址
@@ -214,15 +285,11 @@ public class NapCatAIConnector extends WebSocketClient {
 			sess.reasonerConsumer=data->{
 				try {
 					final String reasoning = data == null ? "" : data.toString();
-					final CompletableFuture<JsonObject> sent = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
-							.add("group_id", sess.groupId)
-							.object("message").add("type", "text").object("data").add("text", reasoning).end().end()
-							.end().end());
+					final CompletableFuture<String> sent = adapter.sendText(chatId(sess), reasoning);
 					// 回执等待放到准备线程，避免阻塞调用方（命令线程/生成线程）
 					sendMessage.submit(()->{
 						try {
-							JsonObject jo = sent.get();
-							String mid=jo.get("message_id").getAsString();
+							String mid = sent.get();
 							appendMid(mid,sess.botId);
 							sess.addStatus("思维链消息id："+mid+"\n");
 						} catch (Throwable e) {
@@ -250,8 +317,26 @@ public class NapCatAIConnector extends WebSocketClient {
 			
 		}
 	}
+
+	/**
+	 * 连接适配器，把协议层的异常统一成构造器声明的 {@link IOException}。
+	 */
+	private void connectAdapter() throws IOException, InterruptedException {
+		try {
+			adapter.connect();
+		} catch (IOException e) {
+			throw e;
+		} catch (InterruptedException e) {
+			throw e;
+		} catch (Exception e) {
+			throw new IOException("聊天适配器连接失败：" + adapter.getName(), e);
+		}
+	}
+
 	Object mbidLock=new Object();
 	public void appendMid(String mid,long bid) {
+		if(mid==null||mid.isEmpty())
+			return;
 		synchronized(mbidLock) {
 			mbid.addLast(new Mid2Bid(mid,bid));
 			while(mbid.size()>150) {
@@ -259,22 +344,23 @@ public class NapCatAIConnector extends WebSocketClient {
 			}
 		}
 	}
-	public Map<String,BotCallback> callBack=new ConcurrentHashMap<>();
-	public void sendWithCallback(JsonObject jo,BotCallback callback) {
-		String uid=UUID.randomUUID().toString();
-		if(callback!=null)
-			callBack.put(uid, callback);
-		jo.addProperty("echo", uid);
-		this.send(jo.toString());
+
+	/** 查一条自己发出的消息属于哪个机器人，找不到返回 -1。 */
+	private long findBid(String mid) {
+		synchronized(mbidLock) {
+			for(Mid2Bid mbidItem:mbid) {
+				if(mid.equals(mbidItem.mid))
+					return mbidItem.bid;
+			}
+		}
+		return -1;
 	}
-	public CompletableFuture<JsonObject> sendWithCallback(JsonObject jo) {
-		String uid=UUID.randomUUID().toString();
-		BotCallbackPromise cb=new BotCallbackPromise(1);
-		callBack.put(uid, cb.getBotCallback());
-		jo.addProperty("echo", uid);
-		this.send(jo.toString());
-		return cb.getFuture();
+
+	/** 协议层暴露的适配器，便于运行期查询连接状态或替换实现。 */
+	public ChatAdapter getAdapter() {
+		return adapter;
 	}
+
     public static BufferedImage shrinkToQuarter(BufferedImage original) {
         if (original == null) {
             throw new IllegalArgumentException("原始图像不能为null");
@@ -311,7 +397,7 @@ public class NapCatAIConnector extends WebSocketClient {
         return scaledImage;
     }
 	/**
-	 * 会话处理工具附件：由 QQ 会话调用。
+	 * 会话处理工具附件：由聊天会话调用。
 	 * <p>
 	 * 这里只把附件暂存起来，不立即发送；本轮回复准备好之后，会在拿到本群发送顺序时
 	 * 先把暂存的附件按产生顺序发出，再发出回复本身。
@@ -422,40 +508,28 @@ public class NapCatAIConnector extends WebSocketClient {
 		return tos.download(ref, null);
 	}
 
-	/** 组装一条只发文本的群消息。 */
-	private JsonObject textPayload(long groupId, String text) {
-		return JsonBuilder.object().add("action", "send_group_msg").object("params").add("group_id", groupId)
-				.object("message").add("type", "text").object("data").add("text", text).end().end().end().end();
+	/** 会话在适配器里的聊天标识（与 {@code AIGroupSession.groupId} 对应）。 */
+	private static String chatId(AIGroupSession state) {
+		return String.valueOf(state.groupId);
+	}
+
+	/** 组装一条纯文本回复的发送动作。 */
+	private SendCall textSend(AIGroupSession state, String text) {
+		final String target = chatId(state);
+		final String content = text == null ? "" : text;
+		return () -> adapter.sendText(target, content);
 	}
 
 	/**
-	 * 组装一条图片群消息；{@code text} 不为 null 时在图片后附一段文字（受限图片的查看链接）。
-	 */
-	private JsonObject imagePayload(long groupId, String file, String text) {
-		JsonObject payload = JsonBuilder.object().add("action", "send_group_msg").object("params")
-				.add("group_id", groupId)
-				.array("message").object().add("type", "image").object("data").add("file", file).end().end()
-				.end().end().end();
-		if (text != null) {
-			JsonObject textMsg = new JsonObject();
-			textMsg.addProperty("type", "text");
-			JsonObject data = new JsonObject();
-			data.addProperty("text", text);
-			textMsg.add("data", data);
-			payload.getAsJsonObject("params").getAsJsonArray("message").add(textMsg);
-		}
-		return payload;
-	}
-
-	/**
-	 * 把一个工具附件转换成一条或多条群消息 JSON。
+	 * 把一个工具附件转换成一条或多条发送动作。
 	 * <p>
 	 * 图片裁剪、取图、base64 等耗时操作都在这里完成（准备线程），发送动作本身只负责入队。
 	 * 图片附件保存的是图片 id，这里再按 id 从对象存储取图，兼容历史数据里的 URL / data URL。
 	 * </p>
 	 */
-	private List<JsonObject> buildToolAttachmentPayloads(AIGroupSession state, MessageContent content) {
-		List<JsonObject> payloads = new ArrayList<>(2);
+	private List<SendCall> buildToolAttachmentSends(AIGroupSession state, MessageContent content) {
+		final String target = chatId(state);
+		List<SendCall> sends = new ArrayList<>(2);
 		if (content instanceof ImageContent) {
 			ImageContent image = (ImageContent) content;
 			String ref = image.getImageUrl();
@@ -472,31 +546,30 @@ public class NapCatAIConnector extends WebSocketClient {
 						ImageIO.write(shrinkToQuarter(bi), "jpg", baos);
 						thumb = baos.toByteArray();
 					}
-					payloads.add(imagePayload(state.groupId, FileUtil.toDataUrl(thumb), readerUrl));
+					final String thumbUrl = FileUtil.toDataUrl(thumb);
+					final String caption = readerUrl;
+					sends.add(() -> adapter.sendImage(target, thumbUrl, caption));
 				} catch (Exception e) {
 					e.printStackTrace();
-					payloads.add(textPayload(state.groupId, readerUrl != null ? readerUrl : "受限图片发送失败：图片不存在"));
+					sends.add(textSend(state, readerUrl != null ? readerUrl : "受限图片发送失败：图片不存在"));
 				}
 			} else {
 				try {
-					payloads.add(imagePayload(state.groupId, imageFileForSend(ref), null));
+					final String file = imageFileForSend(ref);
+					sends.add(() -> adapter.sendImage(target, file, null));
 				} catch (Exception e) {
 					e.printStackTrace();
-					payloads.add(textPayload(state.groupId, "图片发送失败：图片不存在"));
+					sends.add(textSend(state, "图片发送失败：图片不存在"));
 				}
 			}
 		} else if (content instanceof VideoContent) {
-			payloads.add(JsonBuilder.object().add("action", "send_group_msg").object("params")
-					.add("group_id", state.groupId)
-					.object("message").add("type", "video").object("data")
-					.add("file", ((VideoContent) content).getVideoUrl()).end().end().end().end());
+			final String file = ((VideoContent) content).getVideoUrl();
+			sends.add(() -> adapter.sendVideo(target, file));
 		} else if (content instanceof AudioContent) {
-			payloads.add(JsonBuilder.object().add("action", "send_group_msg").object("params")
-					.add("group_id", state.groupId)
-					.object("message").add("type", "record").object("data")
-					.add("file", ((AudioContent) content).getAudioUrl()).end().end().end().end());
+			final String file = ((AudioContent) content).getAudioUrl();
+			sends.add(() -> adapter.sendRecord(target, file));
 		}
-		return payloads;
+		return sends;
 	}
 
 	/**
@@ -540,6 +613,7 @@ public class NapCatAIConnector extends WebSocketClient {
 	/** 发送图片消息，返回消息 id 或失败说明。 */
 	public String sendImageMessage(AIGroupSession state, String image, String description, boolean censored)
 			throws Exception {
+		final String target = chatId(state);
 		if (censored) {
 			String readerUrl = SiteConfig.resolve(dataFolder).readerUrl(SiteConfig.DEFAULT_READER_HOST,
 					"/works/imgView.html?img=" + URLEncoder.encode(image, StandardCharsets.UTF_8));
@@ -549,57 +623,38 @@ public class NapCatAIConnector extends WebSocketClient {
 					BufferedImage bo = shrinkToQuarter(bi);
 					ImageIO.write(bo, "jpg", baos);
 				}
-				JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
-						.add("group_id", state.groupId)
-						.array("message").object().add("type", "image").object("data")
-						.add("file", FileUtil.toDataUrl(baos.toByteArray())).end().end().object().add("type", "text")
-						.object("data").add("text", readerUrl).end().end().end().end()
-						.end()).get();
-
-				appendMid(jo.get("message_id").getAsString(), state.botId);
-				return "发送图片成功，消息id：" + jo.get("message_id").getAsString();
+				String mid = adapter.sendImage(target, FileUtil.toDataUrl(baos.toByteArray()), readerUrl).get();
+				appendMid(mid, state.botId);
+				return "发送图片成功，消息id：" + mid;
 			} catch (Exception e2) {
 				e2.printStackTrace();
 				try {
-					JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg")
-							.object("params").add("group_id", state.groupId)
-							.array("message").object().add("type", "text").object("data").add("text", readerUrl).end()
-							.end().end().end()
-							.end()).get();
-					appendMid(jo.get("message_id").getAsString(), state.botId);
-					return "发送图片成功，消息id：" + jo.get("message_id").getAsString();
+					String mid = adapter.sendText(target, readerUrl).get();
+					appendMid(mid, state.botId);
+					return "发送图片成功，消息id：" + mid;
 				} catch (Exception e3) {
 					e3.printStackTrace();
 					return "发送失败";
 				}
 			}
 		}
-		JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
-				.add("group_id", state.groupId)
-				.object("message").add("type", "image").object("data").add("file", image).end().end().end().end())
-				.get();
-		appendMid(jo.get("message_id").getAsString(), state.botId);
-		return "发送图片消息id：" + jo.get("message_id").getAsString();
+		String mid = adapter.sendImage(target, image, null).get();
+		appendMid(mid, state.botId);
+		return "发送图片消息id：" + mid;
 	}
 
 	/** 发送视频消息。 */
 	public String sendVideoMessage(AIGroupSession state, String video) throws Exception {
-		JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
-				.add("group_id", state.groupId)
-				.object("message").add("type", "video").object("data").add("file", video).end().end().end()
-				.end()).get();
-		appendMid(jo.get("message_id").getAsString(), state.botId);
-		return "发送生成视频消息成功，消息id：" + jo.get("message_id").getAsString();
+		String mid = adapter.sendVideo(chatId(state), video).get();
+		appendMid(mid, state.botId);
+		return "发送生成视频消息成功，消息id：" + mid;
 	}
 
 	/** 发送音频消息。 */
 	public String sendAudioMessage(AIGroupSession state, String audio) throws Exception {
-		JsonObject jo = sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").object("params")
-				.add("group_id", state.groupId)
-				.object("message").add("type", "record").object("data").add("file", audio).end().end().end()
-				.end()).get();
-		appendMid(jo.get("message_id").getAsString(), state.botId);
-		return "发送音频消息id：" + jo.get("message_id").getAsString();
+		String mid = adapter.sendRecord(chatId(state), audio).get();
+		appendMid(mid, state.botId);
+		return "发送音频消息id：" + mid;
 	}
 	public void registerSkills(AIGroupSession state,File dataFolder,JsonObject config) throws IOException {
 		ToolSettings toolSettings = ToolSettings.parse(config);
@@ -874,25 +929,16 @@ public class NapCatAIConnector extends WebSocketClient {
 		}
 	}
 
-	@Override
-	public void onMessage(ByteBuffer bytes) {
-	}
-
-	@Override
-	public void onOpen(ServerHandshake serverHandshake) {
-		System.out.println("opened connection");
-	}
-
+	/** 读取媒体（图片等）原始字节，具体协议由适配器解释引用。 */
 	public byte[] getImageBytes(String fileId) throws Exception {
-		// 1. 构造请求 JSON：{"file_id":urls "..."}
-		return FileUtil.readAll(FileUtil.fetch(fileId));
+		return adapter.fetchMedia(fileId);
 	}
 
 	/**
 	 * 发送私聊文本消息（不等待回执）。
 	 * <p>
 	 * 工具审核的问题与结果都走私聊。这里刻意不注册回执回调，因为管理员答复是在
-	 * WebSocket 读线程上处理的，如果在读线程里同步等待回执会卡死自己。
+	 * 协议读线程上处理的，如果在读线程里同步等待回执会卡死自己。
 	 * </p>
 	 *
 	 * @param qq   QQ 号
@@ -903,275 +949,148 @@ public class NapCatAIConnector extends WebSocketClient {
 		if (text == null || text.isEmpty()) {
 			return;
 		}
-		JsonObject message = JsonBuilder.object().add("action", "send_private_msg").object("params")
-				.add("user_id", qq).object("message").add("type", "text").object("data").add("text", text)
-				.end().end().end().end();
-		this.send(message.toString());
+		adapter.sendPrivateText(String.valueOf(qq), text);
 	}
 
 	/**
 	 * 处理私聊事件：只有管理员对工具审核的「允许/拒绝」会被消费，其它私聊一律忽略。
 	 *
-	 * @param msg OneBot 私聊事件
+	 * @param message 归一化后的私聊消息
 	 */
-	private void handlePrivateMessage(JsonObject msg) {
-		// 忽略机器人自己发出的私聊事件，避免把自己的消息当成管理员答复
-		if (msg.has("post_type") && !msg.get("post_type").isJsonNull()
-				&& "message_sent".equals(msg.get("post_type").getAsString())) {
-			return;
-		}
-		long selfId = 0;
-		if (msg.has("self_id") && !msg.get("self_id").isJsonNull()) {
-			try {
-				selfId = msg.get("self_id").getAsLong();
-			} catch (RuntimeException e) {
-				selfId = 0;
-			}
-		}
-		long userId = 0;
-		if (msg.has("user_id") && !msg.get("user_id").isJsonNull()) {
-			try {
-				userId = msg.get("user_id").getAsLong();
-			} catch (RuntimeException e) {
-				userId = 0;
-			}
-		}
-		if (userId == 0 && msg.has("sender") && msg.get("sender").isJsonObject()) {
-			JsonObject sender = msg.getAsJsonObject("sender");
-			if (sender.has("user_id") && !sender.get("user_id").isJsonNull()) {
-				try {
-					userId = sender.get("user_id").getAsLong();
-				} catch (RuntimeException e) {
-					userId = 0;
-				}
-			}
-		}
-		String text = extractPrivateText(msg);
+	private void handlePrivateMessage(IncomingMessage message) {
+		long selfId = parseLong(message.getSelfId(), 0);
+		long userId = parseLong(message.getSenderId(), 0);
+		String text = message.getPlainText();
 		if (text.isEmpty()) {
 			return;
 		}
 		toolApproval.answer(selfId, userId, text);
 	}
 
-	/** 从私聊事件里取出纯文本内容。 */
-	private static String extractPrivateText(JsonObject msg) {
-		if (msg.has("message") && msg.get("message").isJsonArray()) {
-			StringBuilder builder = new StringBuilder();
-			for (JsonElement element : msg.getAsJsonArray("message")) {
-				if (element == null || !element.isJsonObject()) {
-					continue;
-				}
-				JsonObject block = element.getAsJsonObject();
-				String type = block.has("type") ? block.get("type").getAsString() : "";
-				if (!"text".equals(type)) {
-					continue;
-				}
-				if (block.has("data") && block.get("data").isJsonObject()) {
-					JsonObject data = block.getAsJsonObject("data");
-					if (data.has("text") && !data.get("text").isJsonNull()) {
-						builder.append(data.get("text").getAsString());
-					}
-				}
-			}
-			if (builder.length() > 0) {
-				return builder.toString();
-			}
+	/** 协议 id 转数字，非数字（或空）时退回默认值。 */
+	private static long parseLong(String value, long fallback) {
+		if (value == null || value.isEmpty()) {
+			return fallback;
 		}
-		if (msg.has("raw_message") && !msg.get("raw_message").isJsonNull()) {
-			try {
-				return msg.get("raw_message").getAsString();
-			} catch (RuntimeException e) {
-				// 忽略无法读取的私聊
-			}
+		try {
+			return Long.parseLong(value.trim());
+		} catch (RuntimeException e) {
+			return fallback;
 		}
-		return "";
 	}
-	Object lock = new Object();
-	@Override
-	public void onMessage(String message) {
-		synchronized (lock) {
-			try {
-
-				
-				JsonObject msg = JsonParser.parseString(message).getAsJsonObject();
-				//System.out.println("received message: " + message);
-				if(msg.has("status")&&msg.has("echo")) {
-					
-					JsonElement data=msg.get("data");
-					BotCallback cb=callBack.remove(msg.get("echo").getAsString());
-					if(cb!=null) {
-						JsonObject dataobj=null;
-						if(data.isJsonObject())
-							dataobj=data.getAsJsonObject();
-						cb.call(msg.get("retcode").getAsInt(), dataobj);
+	/**
+	 * 处理群消息：归一化内容 -> 会话历史 -> 触发回复。
+	 * <p>
+	 * 这里只关心业务：消息属于哪个会话、是否 @ 了机器人、要不要触发一轮回复。协议字段
+	 * （message 段、raw.elements、@ 列表、回复 id）已经在适配器里归一化。
+	 * </p>
+	 *
+	 * @param msg 归一化后的群消息
+	 */
+	private void handleGroupMessage(IncomingMessage msg) {
+		long groupId = parseLong(msg.getChatId(), 0);
+		// 先解析 @ 列表与“回复了我”：没有被显式 @ 时，回复消息才算 @
+		Set<Long> containsAt = new HashSet<>();
+		for (String at : msg.getMentionedIds()) {
+			long atId = parseLong(at, -1);
+			if (atId > 0) {
+				containsAt.add(atId);
+			}
+		}
+		String replyMsgId = msg.getReplyToMessageId();
+		long replyId = -1;
+		if (replyMsgId != null && !replyMsgId.isEmpty()) {
+			replyId = findBid(replyMsgId);
+			if (containsAt.isEmpty() && replyId != -1) {
+				containsAt.add(replyId);
+			}
+		}
+		outer: for (AIGroupSession state : states) {
+			if (groupId != state.groupId) {
+				continue;
+			}
+			long senderid = parseLong(msg.getSenderId(), 0);
+			// 忽略机器人自己发的消息
+			if (senderid == state.botId) {
+				continue;
+			}
+			boolean containsAtMe = containsAt.contains(state.botId);
+			String sender = msg.getSenderName();
+			List<Supplier<MessageContent>> mes = new ArrayList<>();
+			String senderName = "<message senderName=\"" + sender + "\" senderId=\"" + senderid
+					+ "\" messageId=\"" + msg.getMessageId() + "\">";
+			mes.add(() -> new PlainText(senderName));
+			if (containsAtMe) {
+				mes.add(() -> new PlainText("@" + state.getRoleName(Role.ASSISTANT)));
+			}
+			boolean hasText = false;
+			StringBuilder textContent = new StringBuilder();
+			for (IncomingContent content : msg.getContents()) {
+				if (content instanceof IncomingContent.QuoteBlock) {
+					IncomingContent.QuoteBlock quote = (IncomingContent.QuoteBlock) content;
+					String quoteId = quote.getMessageId().isEmpty()
+							? (replyMsgId == null ? "" : replyMsgId)
+							: quote.getMessageId();
+					String quoteText = "<quote messageId=\"" + quoteId + "\" senderId=\"" + quote.getSenderId()
+							+ "\">" + quote.getText() + "</quote>";
+					mes.add(() -> new PlainText(quoteText));
+					// 引用的是机器人自己的消息（且不是本次连接发出去的）也算 @
+					if (replyId == -1 && quote.getSenderId().equals(String.valueOf(state.botId))) {
+						containsAtMe = true;
 					}
-					return;
-				}
-				if(!msg.has("message_type"))
-					return;
-				String evt=msg.get("message_type").getAsString();
-				// 私聊只用于管理员答复工具审核；其它私聊消息一律不处理
-				if ("private".equals(evt)) {
-					handlePrivateMessage(msg);
-					return;
-				}
-				if (!"group".equals(evt))
-					return;
-				/*if ("message_sent".equals(evt)) {
-					
-				}*/
-				@SuppressWarnings("unused")
-				long self=msg.get("self_id").getAsLong();
-				if ("group".equals(evt)) {
-					System.out.println("received group message: " + message);
-					Set<Long> containsAt=new HashSet<>();
-					long replyId=-1;
-					String replyMsgId=null;
-					Map<String, String> urls = new HashMap<>();
-					for (JsonElement je : msg.get("message").getAsJsonArray()) {
-						JsonObject nmsg = je.getAsJsonObject();
-						String type=nmsg.get("type").getAsString();
-
-						JsonObject data = nmsg.get("data").getAsJsonObject();
-						
-						if (type.equals("image")) {
-
-							urls.put(data.get("file").getAsString(), data.get("url").getAsString());
-						}else if(type.equals("at")) {
-							if(data.has("qq")) {
-								long atid=Long.parseLong(data.get("qq").getAsString());
-								
-								
-								containsAt.add(atid);
-							}
-						}else if(type.equals("reply")) {
-							if(data.has("id")) {
-								String mid=data.get("id").getAsString();
-								replyMsgId=mid;
-								synchronized(mbidLock) {
-									for(Mid2Bid msid:mbid) {
-										if(mid.equals(msid.mid)) {
-											replyId=msid.bid;
-											break;
-										}
-									}
-								}
-							}
-							
+				} else if (content instanceof IncomingContent.TextBlock) {
+					hasText = true;
+					String messageLine = ((IncomingContent.TextBlock) content).getText();
+					textContent.append(messageLine);
+					if (!containsAtMe && messageLine.contains("@" + state.getRoleName(Role.ASSISTANT))) {
+						containsAtMe = true;
+					}
+					mes.add(() -> new PlainText(messageLine));
+				} else if (content instanceof IncomingContent.ImageBlock) {
+					IncomingContent.ImageBlock image = (IncomingContent.ImageBlock) content;
+					hasText = true;
+					String summary = "（" + image.getSummary() + "）";
+					String ref = image.getUrl();
+					mes.add(() -> {
+						try {
+							byte[] data = adapter.fetchMedia(ref);
+							String path = tos.uploadIfNotExists(data, state::addUsage);
+							return new PlainText("<image id=\"" + path + "\" />");
+						} catch (Exception e) {
+							e.printStackTrace();
 						}
-					}
-					if(containsAt.isEmpty()&&replyId!=-1) {
-						containsAt.add(replyId);
-					}
-					outer:for(AIGroupSession state:states) {
-						if (msg.get("group_id").getAsLong() == state.groupId) {
-							boolean containsAtMe = containsAt.contains(state.botId);
-							
-							String sender = "";
-							JsonObject senderObj = msg.get("sender").getAsJsonObject();
-							if (senderObj.has("card"))
-								sender = senderObj.get("card").getAsString();
-							if (sender.isEmpty())
-								sender = senderObj.get("nickname").getAsString();
-							long senderid = senderObj.get("user_id").getAsLong();
-							StringBuilder textContent=new StringBuilder();
-							if (senderid != state.botId) {
-								JsonArray ja = msg.get("raw").getAsJsonObject().get("elements").getAsJsonArray();
-								
-								List<Supplier<MessageContent>> mes = new ArrayList<>();
-								String senderName = "<message senderName=\"" + sender + "\" senderId=\"" + senderid
-										+ "\" messageId=\"" + msg.get("message_id").getAsString() + "\">";
-								mes.add(() -> new PlainText(senderName));
-								if(containsAtMe)
-									mes.add(() -> new PlainText("@" + state.getRoleName(Role.ASSISTANT)));
-								boolean hasText = false;
-								for (JsonElement je : ja) {
-									JsonObject melm = je.getAsJsonObject();
-									if (!melm.get("replyElement").isJsonNull()) {
-										JsonObject reply = melm.get("replyElement").getAsJsonObject();
-										StringBuilder msgBuilder = new StringBuilder();
-										msgBuilder.append("<quote messageId=\"" + replyMsgId
-												+ "\" senderId=\"" + reply.get("senderUid").getAsString() + "\">");
-										for (JsonElement replys : reply.get("sourceMsgTextElems").getAsJsonArray()) {
-											if (replys.getAsJsonObject().get("textElemContent").isJsonPrimitive())
-												msgBuilder.append(
-														replys.getAsJsonObject().get("textElemContent").getAsString());
-										}
-										msgBuilder.append("</quote>");
-										mes.add(() -> new PlainText(msgBuilder.toString()));
-										String senderId=reply.get("senderUid").getAsString();
-						
-										if (replyId==-1&&senderId.equals(String.valueOf(state.botId))) {
-											containsAtMe=true;
-										}
-										continue;
-									}
-									if (!melm.get("textElement").isJsonNull()) {
-										hasText = true;
-										JsonObject text = melm.get("textElement").getAsJsonObject();
-										String messageLine = text.get("content").getAsString();
-										textContent.append(messageLine);
-										if ((!containsAtMe)
-												&& messageLine.contains("@" + state.getRoleName(Role.ASSISTANT)))
-											containsAtMe = true;
-										mes.add(() -> new PlainText(messageLine));
-	
-									} else if (!melm.get("picElement").isJsonNull()) {
-										JsonObject pic = melm.get("picElement").getAsJsonObject();
-										String summary = "（" + pic.get("summary").getAsString() + "）";
-										String fid = urls.get(pic.get("fileName").getAsString());
-										hasText = true;
-										mes.add(() -> {
-											try {
-												byte[] data=getImageBytes(fid);
-												String path = tos.uploadIfNotExists(data,state::addUsage);
-												return new PlainText("<image id=\"" + path + "\" />");
-											} catch (Exception e) {
-												e.printStackTrace();
-											}
-											return new PlainText(summary);
-	
-										});
-									}
-								}
-								if(senderid==1905387052L) {
-									if (containsAtMe) {
-										if(textContent.toString().contains("##清理上下文")) {
-											((AIGroupApplication) state.getAiapp()).compactHistory(state);
-											this.sendWithCallback(JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
-													.add("group_id", state.groupId)
-													.object("message").add("type", "text").object("data").add("text", "已处理").end().end()
-													.end().end()).get();
-											continue outer;
-										}
-									}
-									
-								}
-								if (hasText) {
-									mes.add(() -> new PlainText("</message>"));
-	
-									state.addMessage(mes,false);
-								}
-								// int hours=new Date().getHours();
-								// if(hours<6)
-								// containsAtMe=false;
-								if (containsAtMe) {
-									// 记录本轮触发者，工具审核时告诉管理员是谁发起的
-									state.lastSpeakerId = senderid;
-									state.lastSpeakerName = sender;
-	
-									this.send(JsonBuilder.object().add("action", "set_msg_emoji_like").object("params")
-											.add("message_id", msg.get("message_id").getAsString()).add("emoji_id", "424").add("set", true).end().end().toString());
-									submitMessage(state);
-								}
-	
-							}
-						}
-					}
-
+						return new PlainText(summary);
+					});
 				}
-			} catch (Throwable t) {
-				t.printStackTrace();
+			}
+			if (senderid == 1905387052L) {
+				if (containsAtMe) {
+					if (textContent.toString().contains("##清理上下文")) {
+						try {
+							((AIGroupApplication) state.getAiapp()).compactHistory(state);
+							// 不等待回执：这里运行在协议事件线程上，等回执会把自己卡住
+							adapter.sendText(chatId(state), "已处理");
+						} catch (Exception e) {
+							e.printStackTrace();
+						}
+						continue outer;
+					}
+				}
+			}
+			if (hasText) {
+				mes.add(() -> new PlainText("</message>"));
+				state.addMessage(mes, false);
+			}
+			// int hours=new Date().getHours();
+			// if(hours<6)
+			// containsAtMe=false;
+			if (containsAtMe) {
+				// 记录本轮触发者，工具审核时告诉管理员是谁发起的
+				state.lastSpeakerId = senderid;
+				state.lastSpeakerName = sender;
+
+				adapter.react(msg.getMessageId(), "424");
+				submitMessage(state);
 			}
 		}
 	}
@@ -1215,43 +1134,43 @@ public class NapCatAIConnector extends WebSocketClient {
 			sendMessage.submit(()->prepareReply(state,gate,seq,reply,toWritePrice,attachments));
 		} catch (Throwable t) {
 			t.printStackTrace();
-			gate.complete(seq,()->emitPayload(state,groupText(state.groupId,reply+toWritePrice),reply));
+			gate.complete(seq,()->emitPayload(state,textSend(state,reply+toWritePrice),reply));
 		}
 	}
 
-	/** 组装本轮要发送的 JSON（含暂存的工具附件）。此方法可以很慢，但不接触顺序闸门。 */
+	/** 组装本轮要发送的动作（含暂存的工具附件）。此方法可以很慢，但不接触顺序闸门。 */
 	private void prepareReply(AIGroupSession state,GroupOutputGate gate,long seq,String msg,String toWritePrice,
 			List<MessageContent> attachments) {
-		JsonObject payload;
+		SendCall payload;
 		try {
 			beforeSendMessage(state);
 			if(msg==null||msg.isEmpty()) {
-				payload=groupText(state.groupId,"生成完成。"+toWritePrice);
+				payload=textSend(state,"生成完成。"+toWritePrice);
 			}else {
-				payload=groupRecord(state,msg,toWritePrice);
+				payload=replySend(state,msg,toWritePrice);
 			}
 		} catch (Throwable e) {
 			e.printStackTrace();
-			payload=groupText(state.groupId,(msg==null?"":msg)+toWritePrice);
+			payload=textSend(state,(msg==null?"":msg)+toWritePrice);
 		}
-		List<JsonObject> attachmentPayloads=new ArrayList<>();
+		List<SendCall> attachmentSends=new ArrayList<>();
 		if(attachments!=null) {
 			for(MessageContent attachment:attachments) {
 				try {
-					attachmentPayloads.addAll(buildToolAttachmentPayloads(state,attachment));
+					attachmentSends.addAll(buildToolAttachmentSends(state,attachment));
 				} catch (Throwable e) {
 					e.printStackTrace();
 					state.addStatus("<tool status=\"failed\">附件发送失败：" + e.getMessage() + "</tool>");
 				}
 			}
 		}
-		final JsonObject toSend=payload;
+		final SendCall toSend=payload;
 		final String notifyText=msg==null?"":msg;
-		final List<JsonObject> attachmentsToSend=attachmentPayloads;
+		final List<SendCall> sends=attachmentSends;
 		gate.complete(seq,()->{
 			// 先发本轮的附件，再发本轮的正文/语音；附件各自最多等 5 秒回执，
 			// 回执先到立即继续，超时不再等待也不报错，直接发下一条。
-			for(JsonObject attachment:attachmentsToSend) {
+			for(SendCall attachment:sends) {
 				emitAttachment(state,attachment);
 			}
 			emitPayload(state,toSend,notifyText);
@@ -1265,17 +1184,16 @@ public class NapCatAIConnector extends WebSocketClient {
 	 * 5 秒内没完成：不再等待、不报错，直接返回让调用方继续。
 	 * </p>
 	 */
-	private void emitAttachment(AIGroupSession state,JsonObject payload) {
-		CompletableFuture<JsonObject> sent;
+	private void emitAttachment(AIGroupSession state,SendCall send) {
+		CompletableFuture<String> sent;
 		try {
-			sent=sendWithCallback(payload);
+			sent=send.send();
 		} catch (Throwable t) {
 			t.printStackTrace();
 			return;
 		}
 		try {
-			JsonObject jo=sent.get(ATTACHMENT_ACK_WAIT_MS, TimeUnit.MILLISECONDS);
-			String mid=jo.get("message_id").getAsString();
+			String mid=sent.get(ATTACHMENT_ACK_WAIT_MS, TimeUnit.MILLISECONDS);
 			appendMid(mid,state.botId);
 		} catch (TimeoutException e) {
 			// 5 秒内没完成发送：不管了，直接发下一条
@@ -1286,11 +1204,11 @@ public class NapCatAIConnector extends WebSocketClient {
 		}
 	}
 
-	/** 在闸门线程上执行一次 WS 发送；回执与通知交给准备线程，避免阻塞后续消息。 */
-	private void emitPayload(AIGroupSession state,JsonObject payload,String notifyText) {
-		CompletableFuture<JsonObject> sent;
+	/** 在闸门线程上执行一次发送；回执与通知交给准备线程，避免阻塞后续消息。 */
+	private void emitPayload(AIGroupSession state,SendCall send,String notifyText) {
+		CompletableFuture<String> sent;
 		try {
-			sent=sendWithCallback(payload);
+			sent=send.send();
 		} catch (Throwable t) {
 			t.printStackTrace();
 			return;
@@ -1303,14 +1221,15 @@ public class NapCatAIConnector extends WebSocketClient {
 	}
 
 	/** 发送成功后的本地簿记：消息 id、状态、通知同群其它 agent。附件消息不写状态、不通知。 */
-	private void afterSent(AIGroupSession state,CompletableFuture<JsonObject> sent,String notifyText) {
+	private void afterSent(AIGroupSession state,CompletableFuture<String> sent,String notifyText) {
 		try {
-			JsonObject jo=sent.get();
-			String mid=jo.get("message_id").getAsString();
+			String mid=sent.get();
 			appendMid(mid,state.botId);
 			if(notifyText!=null) {
-				state.addStatus("上条消息id："+mid+"\n");
-				notifyOtherAgents(state,notifyText,mid);
+				// 协议不提供消息 id 时（mid 为 null）不写状态，避免写进一串 null
+				if(mid!=null&&!mid.isEmpty())
+					state.addStatus("上条消息id："+mid+"\n");
+				notifyOtherAgents(state,notifyText,mid==null?"":mid);
 			}
 		} catch (Throwable e) {
 			if(e instanceof InterruptedException)
@@ -1319,26 +1238,17 @@ public class NapCatAIConnector extends WebSocketClient {
 		}
 	}
 
-	/** 纯文本群消息。 */
-	private static JsonObject groupText(long groupId,String text) {
-		return JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
-				.add("group_id", groupId)
-				.object("message").add("type", "text").object("data").add("text", text==null?"":text).end().end()
-				.end().end();
-	}
-
 	/**
 	 * 语音回复：合成在这里完成（不占顺序），失败或超时则退回文本，仍然按本轮顺序发出。
 	 */
-	private JsonObject groupRecord(AIGroupSession state,String msg,String toWritePrice) {
-		CompletableFuture<ModelGenerationResult> dataFuture =VoiceModelHandler.getAudioData("", state.getRoleName(Role.ASSISTANT),"qbot", msg.replaceAll("枫茜", "枫西").replaceAll("茜茜", "西西"),UUID.randomUUID().toString(), state::addUsage);
+	private SendCall replySend(AIGroupSession state,String msg,String toWritePrice) {
 		try {
+			CompletableFuture<ModelGenerationResult> dataFuture =VoiceModelHandler.getAudioData("", state.getRoleName(Role.ASSISTANT),"qbot", msg.replaceAll("枫茜", "枫西").replaceAll("茜茜", "西西"),UUID.randomUUID().toString(), state::addUsage);
 			ModelGenerationResult audio=dataFuture.get();
 			if(audio!=null&&audio.bodyData!=null&&audio.bodyData.length>0) {
-				return JsonBuilder.object().add("action", "send_group_msg").add("echo","assistant_message").object("params")
-						.add("group_id", state.groupId)
-						.object("message").add("type", "record").object("data").add("file", FileUtil.toDataUrl(audio.bodyData)).end().end()
-						.end().end();
+				final String target=chatId(state);
+				final String dataUrl=FileUtil.toDataUrl(audio.bodyData);
+				return () -> adapter.sendRecord(target,dataUrl);
 			}
 		} catch (Throwable e) {
 			if(e instanceof InterruptedException)
@@ -1346,7 +1256,7 @@ public class NapCatAIConnector extends WebSocketClient {
 			if(!(e instanceof ModelRouteException))
 				e.printStackTrace();
 		}
-		return groupText(state.groupId,msg+toWritePrice);
+		return textSend(state,msg+toWritePrice);
 	}
 
 	Object globalLock=new Object();
@@ -1391,17 +1301,6 @@ public class NapCatAIConnector extends WebSocketClient {
 	}
 
 
-	@Override
-	public void onClose(int code, String reason, boolean remote) {
-		if(remote)
-			this.reconnect();
-	}
-
-	@Override
-	public void onError(Exception e) {
-		close(CloseFrame.NORMAL, e.toString());
-	}
-
 	@SuppressWarnings("resource")
 	public static void main(String[] args) throws Throwable {
 		try {
@@ -1435,8 +1334,10 @@ public class NapCatAIConnector extends WebSocketClient {
 					e.printStackTrace();
 				}
 			}).start();
-			new NapCatAIConnector(dataFolder, System.getProperty("napcat_url"),
-					System.getProperty("napcat_token"),states);
+			// 协议适配器可替换：换一个 ChatAdapter 实现，就能用同一个控制器接入别的聊天平台
+			ChatAdapter adapter = new NapcatAdapter(System.getProperty("napcat_url"),
+					System.getProperty("napcat_token"));
+			new NapCatAIConnector(dataFolder, adapter, states);
 		} catch (IOException e) {
 			e.printStackTrace();
 		} catch (InterruptedException e) {
