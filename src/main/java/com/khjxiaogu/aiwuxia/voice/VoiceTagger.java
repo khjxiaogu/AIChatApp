@@ -20,6 +20,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ModelBudget;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
@@ -72,7 +73,8 @@ public class VoiceTagger {
 			prompt.append("**第一人称说话人**\n").append(role).append("\n");
 		prompt.append("**待处理角色话语**\n");
 		prompt.append(lastText);
-		Builder b=AIRequest.builder("voiceTagger").modelHint("mimo").taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192);
+		// 语音标注是轻量任务，不指定模型，按 mimo 级别的预算选择最接近的提供商
+		Builder b=AIRequest.builder("voiceTagger").taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192).budget(ModelBudget.MIMO);
 		b.addHistoryItem(Role.SYSTEM, sysprompt);
 
 		b.addHistoryItem(Role.USER, prompt.toString());

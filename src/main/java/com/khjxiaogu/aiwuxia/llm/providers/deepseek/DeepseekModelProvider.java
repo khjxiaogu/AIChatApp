@@ -43,6 +43,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.MultimodalType;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
+import com.khjxiaogu.aiwuxia.llm.ModelBudget;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
@@ -346,5 +347,14 @@ public class DeepseekModelProvider implements ModelProvider{
 	@Override
 	public boolean supportsHinted(AIRequest request) {
 		return request.isModelNamed("deepseek");
+	}
+
+	@Override
+	public double budget(AIRequest request) {
+		// 与 createUsage 的模型选择保持一致：pro 用专业模型，其余为 flash
+		if (request.hasModelProperty("pro")) {
+			return ModelBudget.ratio(request, 2.25, 6.75);
+		}
+		return ModelBudget.ratio(request, ModelBudget.BASE_PROMPT, ModelBudget.BASE_COMPLETION);
 	}
 }

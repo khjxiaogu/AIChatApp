@@ -38,6 +38,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.HistoryRequestBuilder;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
+import com.khjxiaogu.aiwuxia.llm.ModelBudget;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
@@ -235,5 +236,14 @@ public class MimoModelProvider implements ModelProvider{
 	@Override
 	public boolean supportsHinted(AIRequest request) {
 		return request.isModelNamed("mimo");
+	}
+
+	@Override
+	public double budget(AIRequest request) {
+		// 与 createUsage 的模型选择保持一致：pro 用专业模型，其余为 flash
+		if (request.hasModelProperty("pro")) {
+			return ModelBudget.ratio(request, 1.5, 3);
+		}
+		return ModelBudget.ratio(request, 0.5, 1);
 	}
 }

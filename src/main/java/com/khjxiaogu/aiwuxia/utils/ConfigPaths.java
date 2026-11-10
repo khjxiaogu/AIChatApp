@@ -45,7 +45,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *    ├─ voice-tags.txt          语音标签（配音情感标注）提示词
  *    ├─ local-voice.json        本地语音模型 bot 映射
  *    ├─ volcano-voice.json      火山语音 bot 映射
- *    ├─ agents.json             QQ 群 agent 清单
+ *    ├─ agents.json             群聊 agent 清单
  *    ├─ crontab.json            定时任务
  *    ├─ deepseek-payment.json   DeepSeek 开放平台充值凭据（cookie / 设备指纹）
  *    └─ sdxl/                   生图相关
@@ -79,7 +79,7 @@ public final class ConfigPaths {
 	public static final String LOCAL_VOICE = "local-voice.json";
 	/** 火山语音 bot 映射（原 {@code save/volcanovoice.json}） */
 	public static final String VOLCANO_VOICE = "volcano-voice.json";
-	/** QQ 群 agent 清单（原 {@code save/agents.json}） */
+	/** 群聊 agent 清单（原 {@code save/agents.json}） */
 	public static final String AGENTS = "agents.json";
 	/** 定时任务（原 {@code save/crontab.json}） */
 	public static final String CRONTAB = "crontab.json";
@@ -216,7 +216,7 @@ public final class ConfigPaths {
 	}
 
 	/**
-	 * QQ 群 agent 清单文件。
+	 * 群聊 agent 清单文件。
 	 *
 	 * @param dataFolder 数据目录
 	 * @return {@code config/agents.json}

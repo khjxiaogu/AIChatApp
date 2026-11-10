@@ -16,7 +16,7 @@ public class ImageContent implements MessageContent {
 
 	final String image_url;
 	final String description;
-	/** 是否为不宜内容（QQ 发送时做遮挡/阅读器链接处理）。 */
+	/** 是否为不宜内容（群聊发送时做遮挡/阅读器链接处理）。 */
 	final boolean censored;
 
 	/**

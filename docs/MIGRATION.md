@@ -81,7 +81,7 @@
 | 3 | `voicetag.txt` | `config/voice-tags.txt` | 语音情感切分提示词 |
 | 4 | `localvoice.json` | `config/local-voice.json` | 本地语音音色映射 |
 | 5 | `volcanovoice.json` | `config/volcano-voice.json` | 火山语音音色映射 |
-| 6 | `agents.json` | `config/agents.json` | QQ 群机器人清单 |
+| 6 | `agents.json` | `config/agents.json` | 群聊机器人清单 |
 | 7 | `crontab.json` | `config/crontab.json` | 定时任务 |
 | 8 | `promptdo.txt` | `config/sdxl/character-tags.txt` | 角色 tag 库（生图提示词关键词） |
 | 9 | `loras.json` | `config/sdxl/loras.json` | LoRA 配置 |
@@ -234,7 +234,7 @@ ls -R save/config        # 期望看到 README.md + 若干 json/txt + sdxl/
 |---|---|---|
 | 站点域名 | 打开任意页面，浏览器开发者工具看 `/aichat/site-config.js` | 返回 `window.AI_SITE = { host: "你的域名", secure: true }` |
 | 页面连接 | 打开 `aigal?chara=<角色>&uid=test` | 能连上、能对话（不是一直"连接中"） |
-| 图片查看链接（QQ 群侧） | 群里触发一次打码图片 | 链接域名正确 |
+| 图片查看链接（群聊侧） | 群里触发一次打码图片 | 链接域名正确 |
 | 对象存储 | 看启动日志 | 有 `绘画图片存储: 本地+TOS`（配置生效）或 `仅本地`（没配/没读到） |
 | 生图凭据 | 让机器人/绘画页生成一张图 | 能出图，不报鉴权错误 |
 | 角色 tag 库 / LoRA / 参考图 | 生图时看日志或工具列表 | tag 能命中、LoRA 能列出、参考图可用 |

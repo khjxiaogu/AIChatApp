@@ -48,7 +48,7 @@ save/                                  ← 数据根目录（所有东西都在�
 │  ├─ image-generation.json            生图凭据
 │  ├─ voice-tags.txt                   语音情感切分提示词
 │  ├─ local-voice.json / volcano-voice.json  各角色的音色映射
-│  ├─ agents.json                      QQ 群机器人清单
+│  ├─ agents.json                      群聊机器人清单
 │  ├─ crontab.json                     定时任务
 │  └─ sdxl/                            生图相关（tag 库、LoRA、参考图、绘画 agent 提示词）
 ├─ messages.db                         ← 对话索引、权限、额度、账单（SQLite）
@@ -56,7 +56,7 @@ save/                                  ← 数据根目录（所有东西都在�
 ├─ resource/                           ← 立绘、背景等图片资源（网页访问 /aichat/resource/…）
 ├─ voice/                              ← 生成的语音文件（网页访问 /aichat/voice/…）
 ├─ mcp_files/                          ← MCP 生成内容（网页访问 /aichat/mcp/media?file_id=…）
-├─ painter_images/ ircimages/          ← 绘画页 / QQ 群侧图片
+├─ painter_images/ ircimages/          ← 绘画页 / 群聊侧图片
 └─ *.html *.js *.css                   ← 网页页面与公共库
 ```
 

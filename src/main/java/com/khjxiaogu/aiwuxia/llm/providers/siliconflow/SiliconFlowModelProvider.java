@@ -45,6 +45,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.HistoryRequestBuilder;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
+import com.khjxiaogu.aiwuxia.llm.ModelBudget;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
@@ -282,5 +283,22 @@ public class SiliconFlowModelProvider implements ModelProvider{
 	@Override
 	public boolean supportsHinted(AIRequest request) {
 		return request.isModelNamed("silicon");
+	}
+
+	@Override
+	public double budget(AIRequest request) {
+		// 与 createUsage/mapModelName 的模型选择保持一致
+		ModelCategory category = request.hasModelProperty("reasoning") ? ModelCategory.REASONING
+				: request.category;
+		String model = request.modelHint.length > 1 ? request.modelHint[1] : "";
+		switch (model) {
+		case "deepseek3.2":
+			return ModelBudget.ratio(request, 2, 3);
+		case "deepseek3":
+			return category == ModelCategory.REASONING ? ModelBudget.ratio(request, 2, 8)
+					: ModelBudget.ratio(request, 1, 4);
+		default:
+			return ModelBudget.ratio(request, 2, 3);
+		}
 	}
 }

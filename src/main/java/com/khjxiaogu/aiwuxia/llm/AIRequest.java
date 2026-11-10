@@ -143,6 +143,15 @@ public class AIRequest {
     public final int maxToken;
     public final float temperature;
     public final String prefix;
+    /**
+     * 本次请求的大致消费预算倍率，以 DeepSeek Flash 为基准 1。
+     * <p>
+     * 仅在没有模型 {@link #modelHint} 时参与路由：连接器会在支持该请求的提供商中选择
+     * {@link ModelProvider#budget(AIRequest)} 最接近本值的提供商。默认 {@code -1} 表示不按预算
+     * 选择，按提供商的定义顺序取第一个可用的。
+     * </p>
+     */
+    public final double budget;
     
     public final List<HistoryItem> history;
     /**
@@ -186,6 +195,7 @@ public class AIRequest {
         this.history=builder.history;
         this.format=builder.format;
         this.prefix=builder.prefix;
+        this.budget=builder.budget;
         this.toolCallManager=builder.toolCallManager;
         this.storage=builder.storage;
         if(hasModelProperty("reasoning"))
@@ -222,6 +232,7 @@ public class AIRequest {
         this.maxToken = source.maxToken;
         this.temperature = source.temperature;
         this.prefix = source.prefix;
+        this.budget = source.budget;
         this.history = source.history;
         this.toolCallManager = source.toolCallManager;
         this.storage = storage;
@@ -274,6 +285,18 @@ public class AIRequest {
     public String getModelName() {
     	return modelHint.length>0?modelHint[0]:"";
     }
+    /**
+     * 本次请求是否明确指定了模型。
+     * <p>
+     * 指定后路由器优先按模型路由，{@link #budget} 不再参与选择；只有按提示找不到可用提供商时，
+     * 才回退到预算选择。
+     * </p>
+     *
+     * @return 存在非空的模型提示时返回 true
+     */
+    public boolean hasModelHint() {
+        return modelHint.length > 0 && modelHint[0] != null && !modelHint[0].isEmpty();
+    }
     public boolean hasModelProperty(String name) {
     	for(String s:modelHint) {
     		if(name.equals(s))
@@ -308,7 +331,7 @@ public class AIRequest {
     @Override
     public String toString() {
         return "AIRequest [ category=" + category + ", strength=" + strength + ", multimodal="
-                + multimodal + ", taskType=" + taskType + ", stream=" + stream + "]";
+                + multimodal + ", taskType=" + taskType + ", stream=" + stream + ", budget=" + budget + "]";
     }
 
     /**
@@ -336,6 +359,8 @@ public class AIRequest {
         private String modelHint=null;
         private String user="";
         private String prefix;
+        /** 消费预算倍率，-1 表示不按预算路由 */
+        private double budget=-1;
         Builder(String user){
         	this.user=user;
         }
@@ -455,6 +480,20 @@ public class AIRequest {
         }
         public Builder prefix(String prefix) {
             this.prefix = prefix;
+            return this;
+        }
+        /**
+         * 设置消费预算倍率（以 DeepSeek Flash 为基准 1）。
+         * <p>
+         * 没有模型提示时，连接器按本值选择价格最接近的提供商；设为负数（默认 -1）表示
+         * 不按预算选择，按提供商的定义顺序路由。明确指定了模型时本值不生效。
+         * </p>
+         *
+         * @param budget 预算倍率，-1 表示不启用
+         * @return 当前 Builder 实例
+         */
+        public Builder budget(double budget) {
+            this.budget = budget;
             return this;
         }
         /**

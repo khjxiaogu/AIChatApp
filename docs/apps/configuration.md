@@ -167,7 +167,7 @@ save/config/
 ├─ voice-tags.txt           语音情感切分提示词（决定"这句用什么情绪读"）
 ├─ local-voice.json         本地语音音色映射 {角色名: botid}
 ├─ volcano-voice.json       火山语音音色映射 {角色名: voice_type}
-├─ agents.json              QQ 群机器人清单（含 tools / adminId，接群时用）
+├─ agents.json              群聊机器人清单（含 tools / adminId，接群时用）
 ├─ crontab.json             定时任务
 └─ sdxl/
    ├─ character-tags.txt    角色 tag 库（一行一个，生成绘图提示词时按关键词检索）
@@ -180,7 +180,7 @@ save/config/
 
 ### 5.1 Seedance 2.5 视频
 
-QQ 群 agent 的 `tools` 含 `seedvideo` 时注册 `jimeng_video` 工具，后端使用**火山方舟 Seedance 2.5**。
+群聊 agent 的 `tools` 含 `seedvideo` 时注册 `jimeng_video` 工具，后端使用**火山方舟 Seedance 2.5**。
 `save/config/image-generation.json` 除图片的 `accessKey` / `secretKey` 外，还需要视频的 `apiKey`：
 
 ```json
@@ -218,11 +218,11 @@ QQ 群 agent 的 `tools` 含 `seedvideo` 时注册 `jimeng_video` 工具，后�
 
 ```json
 {
-  "botId": 123456,
-  "groupId": 789012,
+  "botId": "123456",
+  "groupId": "789012",
   "name": "fengxiirc",
   "save": "savegroup4-fengxiirc.json",
-  "adminId": 10001,
+  "adminId": "10001",
   "tools": [
     "fetch",
     {"name": "seedvideo", "approval": true}
@@ -231,7 +231,10 @@ QQ 群 agent 的 `tools` 含 `seedvideo` 时注册 `jimeng_video` 工具，后�
 }
 ```
 
-工具执行前会把群号、机器人名、最近发言者、工具名、原因与参数私聊给管理员；管理员回复
+`botId` / `groupId` / `adminId` 等标识统一按字符串处理（旧配置的数字写法仍兼容），
+方便接入非数字 id 的聊天平台。
+
+工具执行前会把会话号（群 id）、机器人名、最近发言者、工具名、原因与参数私聊给管理员；管理员回复
 `允许`/`同意`/`1`/`ok` 放行，回复 `拒绝`/`不同意`/`2`/`no` 拒绝，超时按拒绝处理。
 拒绝时可以回复 `拒绝 原因`（空格、冒号、逗号分隔均可），原因会作为工具结果回传给模型，
 让模型知道具体的拒绝理由。
@@ -245,12 +248,33 @@ QQ 群 agent 的 `tools` 含 `seedvideo` 时注册 `jimeng_video` 工具，后�
 
 ### 5.3 子 agent 单回合限制
 
-NapCat 中启用 `sdxl-agent` / `sdxl-agent-nsfw` 或 `music` 时，对应子 agent 工具
+群聊侧启用 `sdxl-agent` / `sdxl-agent-nsfw` 或 `music` 时，对应子 agent 工具
 （`sdxl_agent`、`find_music`）在**同一回合最多调用一次**，由 `ToolCallManager` 的
 单工具次数限制实现，跨回合自动重新计数。
 
-NapCat 还会限制每个 AI 最多持有 **2 个未完成异步任务**。同一批工具调用中的多个异步工具
+群聊侧还会限制每个 AI 最多持有 **2 个未完成异步任务**。同一批工具调用中的多个异步工具
 一起放行；当已持有任务数达到上限后，后续批次不再允许启动新的异步工具，直到有任务完成。
+
+### 5.4 主动回复判定
+
+默认关闭。在 `agents.json` 的机器人配置里加 `autoReply` 段即可开启：
+
+```json
+"autoReply": {
+  "enabled": true,
+  "intervalMs": 600000,
+  "messageThreshold": 20,
+  "budget": 0.6
+}
+```
+
+- 未被 @ 的群消息先累积：累计到 `messageThreshold` 条（默认 20）立即判定一次，否则每隔
+  `intervalMs`（默认 10 分钟）判定一次；
+- 判定把这段对话作为用户消息发给**关闭思考模式**的模型，让它判断当前角色是否需要主动发言；
+  需要则走正常回复流程并计入配额，不需要则清空本次累计；
+- 判定请求不带模型提示，按 `budget`（默认 Mimo 档位 0.6，DeepSeek Flash 基准 1）选择提供商；
+- 明确指定模型（`modelHint`）的请求优先按模型路由、忽略 `budget`，只有按提示找不到提供商时
+  才回退到预算选择。
 
 **站点域名**单独放在 `save/site.json`：
 
@@ -283,7 +307,7 @@ NapCat 还会限制每个 AI 最多持有 **2 个未完成异步任务**。同�
 | `volcappid` / `volcsecret` | 火山声音复刻 |
 | `sdwebuiUrl` | 本地 SD WebUI 地址 |
 | `svsHost` | 音乐合成服务地址 |
-| `musicBaseUrl` | 音乐文件公开地址前缀，NapCat 模式默认 `http://127.0.0.1:8998/aichat` |
+| `musicBaseUrl` | 音乐文件公开地址前缀，群聊模式默认 `http://127.0.0.1:8998/aichat` |
 
 > 提供商是**按 token 是否存在**决定启用的。一个都不配 → 对话会失败（模型路由错误）。
 
@@ -292,9 +316,9 @@ NapCat 还会限制每个 AI 最多持有 **2 个未完成异步任务**。同�
 | 参数 | 作用 |
 |---|---|
 | `site_host` | 站点对外域名（默认读 `save/site.json`，此项用于临时覆盖） |
-| `napcat_url` / `napcat_token` | QQ 群接入：NapCat 地址与 token |
-| `adminId` | QQ 群工具审核的管理员 QQ（agent 配置里没写时兜底） |
-| `tool_approval_timeout_ms` | QQ 群工具审核等待答复的超时毫秒，默认 120000 |
+| `napcat_url` / `napcat_token` | 默认 NapCat 适配器的接入地址与 token（QQ 群） |
+| `adminId` | 群聊工具审核的管理员账号（agent 配置里没写时兜底） |
+| `tool_approval_timeout_ms` | 群聊工具审核等待答复的超时毫秒，默认 120000 |
 | `cdk_secret` | 兑换码签名密钥 |
 
 ---

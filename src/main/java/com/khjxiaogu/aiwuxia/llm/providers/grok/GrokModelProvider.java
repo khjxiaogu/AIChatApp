@@ -38,6 +38,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
+import com.khjxiaogu.aiwuxia.llm.ModelBudget;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -203,5 +204,11 @@ public class GrokModelProvider implements ModelProvider {
 	@Override
 	public boolean supportsHinted(AIRequest request) {
 		return request.isModelNamed("grok");
+	}
+
+	@Override
+	public double budget(AIRequest request) {
+		// 与 GrokUsage 的单价保持一致：输出 2.5×3.5，提示未命中 1.25×3.5
+		return ModelBudget.ratio(request, 4.375, 8.75);
 	}
 }

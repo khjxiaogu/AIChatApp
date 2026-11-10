@@ -49,6 +49,17 @@ public interface ModelProvider {
      */
     boolean supportsHinted(AIRequest request);
     /**
+     * 估算本次请求在当前提供商下的大致消费预算倍率（以 DeepSeek Flash 为基准 1）。
+     * <p>
+     * 只在请求没有模型提示、且设置了非负 {@link AIRequest#budget} 时用于路由：
+     * 连接器会选择本值最接近请求预算的提供商。
+     * </p>
+     *
+     * @param request 待估算的 AI 请求
+     * @return 消费预算倍率；DeepSeek Flash 的请求返回 1
+     */
+    double budget(AIRequest request);
+    /**
      * 执行 AI 模型调用，并返回输出结果。
      * 该方法可能会阻塞直到模型响应完成或发生 I/O 错误。
      *

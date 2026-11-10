@@ -96,7 +96,7 @@ AI 回复里能看到 `==场景==` 这种标记（本来该被隐藏）
 3. 重启，进入对话打开语音开关。
 
 <a id="sec-qq-group"></a>
-### 接一个 QQ 群
+### 接一个群聊机器人（以 QQ 群为例）
 
 1. 复制一个 `group` 类型的应用目录（如 `save/apps/painterirc`），改 `meta.json`：
    `type` 保持 `group`，必须写 `charaName`，`enabled` 改成 `true`；
@@ -107,7 +107,8 @@ AI 回复里能看到 `==场景==` 这种标记（本来该被隐藏）
    { "name": "你的应用ID", "save": "qq-你的应用ID.json", "voice": "本地" }
    ```
 
-4. 用 NapCat 的启动参数拉起（`-Dnapcat_url` / `-Dnapcat_token`），重启。
+4. 用默认 NapCat 适配器的启动参数拉起（`-Dnapcat_url` / `-Dnapcat_token`），重启；
+   换成其它平台时，实现 `ChatAdapter` 并把实例传给 `NapCatAIConnector`。
 5. 验证：群里 @ 机器人有回复；`save/saveData/qq-*.json` 在增长。
 
 ### 让某个应用完全免费 / 只走付费

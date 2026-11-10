@@ -8,7 +8,7 @@
 | `talk` | 你在 meta 里写的 `name` | `galgame.html` | 立绘角色对话，剧情 + 场景标签 + 语音 |
 | `galgame` | 同上 | `ptrpg.html` | 多幕剧叙事，玩家用自然语言行动 |
 | `trpg` | 同上 | `trpg.html` | 跑团：场景 + 多角色立绘 + 标签校验 |
-| `group` | 同上 | 无（QQ 群） | 群聊机器人 |
+| `group` | 同上 | 无（群聊） | 群聊机器人 |
 | `wuxia` | 武侠模拟器 | 无现成页面 | 修仙/武侠模拟，属性面板驱动 |
 | `write` | 写作 | 无现成页面 | 先出大纲再写正文 |
 | `sql` | sql | 无现成页面 | 根据表定义生成 SQL |
@@ -139,12 +139,13 @@ A市，上午，晴。
 
 ---
 
-## `group` — QQ 群机器人
+## `group` — 群聊机器人
 
-**玩法**：机器人挂在 QQ 群里，@ 它就对话。**没有网页**。
+**玩法**：机器人挂在群聊里，@ 它就对话。默认通过 NapCat / OneBot v11 接入 QQ，其它聊天平台
+实现 `ChatAdapter` 后也能复用同一套群聊逻辑。**没有网页**。
 
 **在哪里配**：`save/config/agents.json` 列出"哪个应用目录 × 哪个群 × 哪个存档文件"，
-然后用 NapCat 相关启动参数拉起（见 [configuration.md §6](configuration.md#sec-startup-args)）。
+然后用默认 NapCat 适配器的启动参数拉起（见 [configuration.md §6](configuration.md#sec-startup-args)）。
 
 **必需文件**：`role.txt`、`charaset.txt`、`rules.txt`、`summary.txt`
 
@@ -156,6 +157,9 @@ A市，上午，晴。
 
 - 群消息为空（纯 @、纯表情）时不会写进历史；
 - 模型正文为空时会退而从"思维链"里找回复，所以思维链里别放不该发出去的内容；
+- 可选 `autoReply`：默认关闭；开启后群里的消息即使没 @ 机器人，也会按时间（默认 10 分钟）
+  或条数（默认 20 条）判定是否需要主动发言，配置见
+  [configuration.md §5.4](configuration.md#54-主动回复判定)；
 - 想同时有网页和群聊？建两个应用目录（不同 `type`），各自写提示词。
 
 ---

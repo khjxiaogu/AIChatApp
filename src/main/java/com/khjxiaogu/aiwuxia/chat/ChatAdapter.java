@@ -15,8 +15,8 @@ import java.util.concurrent.CompletableFuture;
  *   <li>入站事件通过 {@link #setEventHandler(ChatEventHandler)} 注册的处理器回调，
  *       同一连接上的事件串行到达；</li>
  *   <li>{@code chatId} 是控制器用来匹配会话的标识：群消息为群 id，私聊为对方用户 id，统一用字符串。
- *       控制器目前用 {@code AIGroupSession.groupId} 的十进制字符串来比对，所以适配器给出的群
- *       {@code chatId} 应当与配置里的群号一致；</li>
+ *       控制器直接把它与 {@code AIGroupSession.groupId}（同样是字符串）比较，所以适配器给出的
+ *       群 {@code chatId} 应当与配置里的群 id 一致；</li>
  *   <li>发送方法里的 {@code file} 是“适配器能识别的媒体引用”，可能是 http(s) 链接、data URL、
  *       本地文件或协议内部句柄，由适配器自行解释；</li>
  *   <li>发送方法不阻塞，返回的 future 在协议回执到达后以消息 id 完成；失败时异常完成，

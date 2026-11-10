@@ -213,13 +213,19 @@ resp.addUsageListener(state::addUsage);               // ← 计费/用量统计
 | `strength(...)` | `NONE` / `WEAK` / `MEDIUM` / `STRONG` | 推理强度（推理型模型才生效） |
 | `format(...)` | `ResponseFormat.TEXT` / `JSON` | 要求模型输出 JSON（结构化 app 必备） |
 | `multimodal(...)` | `TEXT_ONLY` / `TEXT_IMAGE` / `TEXT_AUDIO` / `TEXT_VIDEO` / `IMAGE_ONLY` | 输入模态 |
-| `modelHint(...)` | 模型标识，如 `deepseek/pro` | 不传则用会话当前模型 |
+| `modelHint(...)` | 模型标识，如 `deepseek/pro` | 不传则用会话当前模型；指定后忽略 `budget` |
+| `budget(double)` | 消费预算倍率，默认 `-1` | 没有模型提示时按预算选提供商（DeepSeek Flash = 1）；`-1` 表示按提供商定义顺序 |
 | `stream(boolean)` / `streamed()` | — | 流式开关 |
 | `temperature(float)` / `maxTokens(int)` | — | 采样温度与上限 |
 | `enableDeepThink()` | — | 开启深度思考 |
 | `prefix(String)` | — | 续写前缀 |
 | `toolCallManager(...)` | — | 显式指定工具集；`builder(state)` 已自动取 |
 | `storage(...)` | `ObjectStorageProvider` | 对象存储；`builder(state)` 自动取 `state.getObjectStorage()` |
+
+**模型选择顺序**：有 `modelHint` 时先按提示路由（忽略 `budget`）；提示找不到可用提供商时，
+若 `budget >= 0`，在支持该请求的提供商中选择 `ModelProvider#budget(request)` 最接近的一个；
+否则按提供商的定义顺序取第一个可用的。轻量任务（语音标注、主动回复判定）默认使用
+`ModelBudget.MIMO`（Mimo 档位，0.6）。
 
 **附件按对象存储 ID 传递**：历史消息里的 `ImageContent` / `AudioContent` / `VideoContent` 只保存对象存储 ID，
 不要自己先换成 public URL 或 base64。模型调用层（`AttachmentResolver`）会用请求上的 `ObjectStorage`：
@@ -366,7 +372,7 @@ public interface AIApplicationFactory {
 
 ## 10. 工具调用（MCP）
 
-QQ 群侧（`NapCatAIConnector`）会给会话挂工具（`SDXLMcp`、`QQMcp`、`FetchMcp`…）。
+群聊侧（`NapCatAIConnector`）会给会话挂工具（`SDXLMcp`、`QQMcp`、`FetchMcp`…）。
 自己写 app 时加工具的标准姿势：
 
 ```java
@@ -400,14 +406,14 @@ state.registerTool(t);                       // 挂到会话，随后 AIRequest.
 - 审批流由 `ToolApprovalManager` / `ToolCallApprover` 控制；生产环境建议挂审批，见 `ManagedToolCallApprover`。
   许可方实现可覆盖 `ToolCallApprover#decide(...)`，拒绝时返回 `ToolApprovalResult.deny("原因")`，
   该原因会作为工具结果回传给模型（只返回 `false` 时回退到 `ToolCallManager#getUnapprovedMessage()`）；
-  答复方可用 `ToolApprovalRequest#deny("原因")` 附带原因，WebSocket/桌面端/QQ 审核均已支持。
+  答复方可用 `ToolApprovalRequest#deny("原因")` 附带原因，WebSocket/桌面端/群聊私聊审核均已支持。
   审批界面默认展示的是一段人可读参数文本（`ToolApprovalRequest#getDisplayArguments()`）：
   `putParam` 的第三个参数就是该文本里的参数名，省略时回退为参数名本身；
 - 内置联网工具：`FetchMcp` 提供 `web_view` / `moegirl_search`；`DeepseekSearchMcp` 提供 `web_search`
   （DeepSeek 官方 Search API，需要 `-Ddeepseektoken`，未配置时不注册，见 README「网页搜索」一节）。
   **按次计费**的外部接口要等确认成功后再记账：搜索每次成功请求折算 2500 等效 token（0.005 元），
   失败、超时与空结果不记账（见 `DeepseekSearchUsage`）；
-- 注意：**内置 app 一个工具都没挂**（`apps/` 里没有 `registerTool` 调用），工具只在 QQ 群侧
+- 注意：**内置 app 一个工具都没挂**（`apps/` 里没有 `registerTool` 调用），工具只在群聊侧
   （`NapCatAIConnector` 按 `tools` 清单注册 SDXL/QQ/Fetch/搜索等）和绘画会话里用。
 
 ---
@@ -459,7 +465,7 @@ qwen.reference(List.of(new QwenImageApi.InputImage(bytes, "ref.png")), "让她�
 - 内部按 README 的工作流节点构造 `/prompt` 图，轮询 `/history` 并下载 `/view`；
 - 生成的 `ImageResult.data` 是图片字节，可直接上传对象存储；
 - 可选 `ResourceLock`：生成、上传、显存释放都会占用资源并自动释放（Qwen 默认 6 份）；
-- `QwenImageMcp` 提供 `qwen_gen_image` / `qwen_edit_image` 两个工具，但**不注册给 NapCat**；
+- `QwenImageMcp` 提供 `qwen_gen_image` / `qwen_edit_image` 两个工具，但**不注册给群聊连接器**；
   其中同步文生图工具会挂到 `SDXLAgent` 的子 agent 工具表，作为“参考底图生成器”使用，
   见 `SDXLAgentMcp.createImage(...)`。
 
@@ -504,7 +510,7 @@ SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，�
 - `download_platform_music` / `download_url_music` 下载到原曲目录；
 - `send_music` 同时查找两个目录；
 - 服务端公开 `GET /aichat/music/original?file=...` 与 `/aichat/music/output?file=...`，
-  代码用 `-DmusicBaseUrl`（NapCat 模式默认 `http://127.0.0.1:8998/aichat`）生成给 localemp 的 HTTP 链接。
+  代码用 `-DmusicBaseUrl`（群聊模式默认 `http://127.0.0.1:8998/aichat`）生成给 localemp 的 HTTP 链接。
 
 ---
 

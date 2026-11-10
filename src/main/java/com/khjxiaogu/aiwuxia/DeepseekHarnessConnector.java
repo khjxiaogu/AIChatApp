@@ -70,8 +70,9 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
 /**
  * 把 Deepseek Harness 通过 NapCat 接入 QQ 的连接器。
  * <p>
- * 本类与 {@link NapCatAIConnector} 方向相反：{@code NapCatAIConnector} 把 NapCat 的 QQ
- * 消息喂给 AIWuxia 自己的 AI 应用；本连接器则让 <b>Deepseek Harness 直接接管 QQ 对话</b>。
+ * 本类与 {@link NapCatAIConnector} 方向相反：{@code NapCatAIConnector} 是通用聊天机器人控制器，
+ * 把聊天平台（默认 NapCat / QQ）的消息喂给 AIWuxia 自己的 AI 应用；本连接器则让
+ * <b>Deepseek Harness 直接接管 QQ 对话</b>。
  * </p>
  * <p>
  * 工作方式：

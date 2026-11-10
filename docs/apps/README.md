@@ -107,7 +107,7 @@ AIWuxia 里的每个「AI 应用」= **一套内置玩法（类型）+ 一个应
 | 查某个类型要哪些文件 | [builtin-apps.md](builtin-apps.md) |
 | 搞清哪个文件是干嘛的 | [files.md](files.md) |
 | 只让部分人能用 / 免费 / 计费 | [configuration.md §1、§3](configuration.md) |
-| 接 QQ 群 | [troubleshooting §2](troubleshooting.md#sec-qq-group) |
+| 接群聊机器人（默认 QQ 群） | [troubleshooting §2](troubleshooting.md#sec-qq-group) |
 | 配音色/域名/存储凭据 | [configuration.md §5、§6](configuration.md) |
 | 应用不出现、没反应、格式乱 | [troubleshooting.md](troubleshooting.md) |
 | 新增玩法类型 / 新页面 | [docs/dev/java-api.md](../dev/java-api.md)（需要编程） |

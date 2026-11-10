@@ -10,7 +10,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 /**
- * QQ agent 的工具配置。
+ * 群聊 agent 的工具配置。
  * <p>
  * 对应 {@code config/agents.json} 中每个机器人的 {@code tools} 字段。为兼容旧配置，
  * 条目仍然可以直接写工具名字符串；需要工具调用审核时，把条目写成对象并加上

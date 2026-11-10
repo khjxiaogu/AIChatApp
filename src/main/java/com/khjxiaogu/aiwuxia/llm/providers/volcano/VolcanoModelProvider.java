@@ -38,6 +38,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ResponseFormat;
 import com.khjxiaogu.aiwuxia.llm.AttachmentResolver;
 import com.khjxiaogu.aiwuxia.llm.ModelProvider;
+import com.khjxiaogu.aiwuxia.llm.ModelBudget;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.Message;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
@@ -313,5 +314,28 @@ public class VolcanoModelProvider implements ModelProvider{
 	@Override
 	public boolean supportsHinted(AIRequest request) {
 		return request.getModelName().startsWith("volces");
+	}
+
+	@Override
+	public double budget(AIRequest request) {
+		// 与 getModelUsage 的模型选择保持一致
+		if (request.hasModelProperty("mini")) {
+			return ModelBudget.ratio(request, 0.1, 1);
+		}
+		if (request.hasModelProperty("lite")) {
+			return ModelBudget.ratio(request, 0.3, 1.8);
+		}
+		if (request.hasModelProperty("pro") || request.hasModelProperty("code")) {
+			return ModelBudget.ratio(request, 1.6, 8);
+		}
+		switch (request.taskType) {
+		case CODE:
+		case LOGIC:
+		case ANALYSIS:
+			return ModelBudget.ratio(request, 1.6, 8);
+		case STORY:
+		default:
+			return ModelBudget.ratio(request, 0.3, 1.8);
+		}
 	}
 }

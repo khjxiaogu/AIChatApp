@@ -53,7 +53,7 @@ public interface ToolCallApprover {
 	 * </p>
 	 * <p>
 	 * 默认实现委托给 {@link #approve(String, String, String, String)}，拒绝时不附带原因；
-	 * 需要向模型说明拒绝原因的实现（例如 {@link ManagedToolCallApprover}、QQ 审核）应覆盖本方法。
+	 * 需要向模型说明拒绝原因的实现（例如 {@link ManagedToolCallApprover}、群聊私聊审核）应覆盖本方法。
 	 * 只实现 {@link #approve(String, String, String)} 的旧代码无需修改。
 	 * </p>
 	 *

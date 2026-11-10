@@ -135,7 +135,7 @@ registry.addSource(new McpToolSource() {
 
 - **结果内容**（`MessageContents`）：只提供给模型进一步处理，可以按顺序包含文本、图片等；
   例如 `SDXLMcp` 的图片生成工具把生成的图片 Content 插在结果文本中间，而不是放进附件；
-- **附件**：用于附加在结果中返回给用户（例如 QQ 发图/发语音），由会话统一处理。
+- **附件**：用于附加在结果中返回给用户（例如群聊里发图/发语音），由会话统一处理。
 
 服务端还会按令牌所属用户暴露 `AIChatService` 中的 SDXL 图片工具（`image_interrogate`、
 `sdxl_gen_image`、`regional_image`、`image_to_image`，以及配置了角色列表时的 `search_character`），
@@ -409,7 +409,7 @@ session.registerTools(CharacterSettingMcp.create(dataFolder));
 3. `McpToolBridge` 把每个远程工具转换为 `ToolData`：名称加前缀并清洗、参数说明取自 `inputSchema`；
 4. 汇总后注册到 Web 聊天会话（当前在线会话与之后新建/加载的会话都会带上这些工具）。
 
-> NapCat 群聊等独立创建、不经过 `AIChatService#loadSession` 的会话不会自动注册，
+> 群聊机器人等独立创建、不经过 `AIChatService#loadSession` 的会话不会自动注册，
 > 需要时可在自己的初始化代码里调用 `state.registerTools(chatService.getMcpClientManager().getTools())`。
 
 工具调用时，本地 `ToolData#tool.run` 把 JSON 文本参数解析为对象，调用远程 `tools/call`，
@@ -453,7 +453,7 @@ String text = client.callTool("mcp_echo", new JsonObject());
 - 工具内部费用无法在调用前预知：固定调用费在调用前校验余额，内部费用只能等工具执行完成后按实际用量补扣，
   因此内部费用可能超过调用前的余额或令牌额度；
 - 旧的单工具价格表 `mcp_tool_price` 与 `/aichat/mcp/price` 接口已不再使用，计费统一为“固定 100 + 内部用量”；
-- 客户端工具自动注册到 Web 聊天会话，NapCat 群聊等独立会话需手动注册（见 3.2）；
+- 客户端工具自动注册到 Web 聊天会话，群聊机器人等独立会话需手动注册（见 3.2）；
 - 客户端只在启动时连接一次，修改 `mcp-client.json` 后需重启；代码内可调用 `getMcpClientManager().reload()` 热重载；
 - `paid_usage_record` 与 `daily_usage` 依赖主服务已建表；独立使用本模块时需自行准备这两张表。
 

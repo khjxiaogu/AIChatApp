@@ -13,7 +13,7 @@ import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
  * QQ 头像相关工具。
  * <p>
  * 这些工具与会话相关（需要群号），但相互之间没有必须共享的实例状态，因此提供独立工厂，
- * 不创建 Provider 类。发送图片等媒体工具在 {@link QQMediaMcp}。
+ * 不创建 Provider 类。发送图片等媒体工具在 {@link MediaOutputMcp}。
  * </p>
  */
 public class QQMcp {

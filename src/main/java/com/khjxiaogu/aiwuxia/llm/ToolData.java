@@ -49,7 +49,7 @@ public class ToolData {
 	public final int maxCalls;
 	/**
 	 * 是否为会话专属工具。
-	 * <p>会话专属工具不会通过公共 MCP 服务端暴露给远程用户，例如 QQ/绘画会话的发送图片工具。</p>
+	 * <p>会话专属工具不会通过公共 MCP 服务端暴露给远程用户，例如群聊/绘画会话的发送图片工具。</p>
 	 */
 	public final boolean sessionOnly;
 	/**

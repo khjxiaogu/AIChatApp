@@ -120,7 +120,7 @@ public class AISession implements ISaveData,AutoCloseable{
 	/**
 	 * 本会话使用的对象存储，可为 null。
 	 * <p>
-	 * 只保存附件 ID，具体地址由模型调用层在发送请求时解析；绘画会话与 QQ 会话会注入各自
+	 * 只保存附件 ID，具体地址由模型调用层在发送请求时解析；绘画会话与群聊会话会注入各自
 	 * 的对象存储，构建 {@link com.khjxiaogu.aiwuxia.llm.AIRequest} 时自动带上。
 	 * </p>
 	 */
@@ -438,7 +438,7 @@ public class AISession implements ISaveData,AutoCloseable{
 	/**
 	 * 会话处理同步工具结果中的单个附件。
 	 * <p>
-	 * 默认不做传输层动作；需要把附件真正发到外部平台（例如 QQ）的会话重写本方法。
+	 * 默认不做传输层动作；需要把附件真正发到外部平台（例如群聊）的会话重写本方法。
 	 * 写入历史上下文由 {@link #handleToolAttachments(List)} 统一完成。
 	 * </p>
 	 *
@@ -527,7 +527,7 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * 异步任务完成时的会话钩子。
 	 * <p>
 	 * 默认只把任务结果中的附件交给 {@link #handleToolAttachments(List)}，并发送状态通知；
-	 * 需要自动续跑的会话（例如 QQ 群聊）重写本方法。
+	 * 需要自动续跑的会话（例如群聊机器人）重写本方法。
 	 * </p>
 	 *
 	 * @param task 已完成的任务

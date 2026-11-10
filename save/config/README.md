@@ -17,7 +17,7 @@ save/
    ├─ voice-tags.txt            # 语音标签提示词
    ├─ local-voice.json          # 本地语音 bot 映射
    ├─ volcano-voice.json        # 火山语音 bot 映射
-   ├─ agents.json               # QQ 群 agent 清单
+   ├─ agents.json               # 群聊 agent 清单
    ├─ crontab.json              # 定时任务
    └─ sdxl/                     # 生图相关
       ├─ character-tags.txt     #   角色 tag 库（提示词关键词）
@@ -38,7 +38,7 @@ save/
 | `voice-tags.txt` | 语音标签提示词。让模型按「谁在说话 + 情感」切分台词，供语音合成使用 | 入库 |
 | `local-voice.json` | 本地语音模型 bot 映射，形如 `{"角色名": "botid"}` | 忽略（部署本地） |
 | `volcano-voice.json` | 火山声音复刻 bot 映射，形如 `{"角色名": "voice_type"}` | 忽略（部署本地） |
-| `agents.json` | QQ 群 agent 清单：`name`（应用名）/ `save`（存档文件）/ `voice` / `tools` / `adminId` 等，`NapCatAIConnector` 启动时读取。`tools` 里可把工具写成 `{"name":"seedvideo","approval":true}` 启用工具调用审核 | 忽略（部署本地） |
+| `agents.json` | 群聊 agent 清单：`name`（应用名）/ `save`（存档文件）/ `voice` / `tools` / `adminId` 等，`NapCatAIConnector` 启动时读取。`tools` 里可把工具写成 `{"name":"seedvideo","approval":true}` 启用工具调用审核 | 忽略（部署本地） |
 | `crontab.json` | 定时任务清单 | 忽略（部署本地） |
 | `svs-voices.json` | SVS 音色角色：`{"角色名": "音频id"}`。`svs_convert` 的 `voice` 传角色名，由这里映射到 localemp.py 的 RVC 模型名/音频 ID；`list_svs_voices` 会列出可用角色。文件每次调用时重新读取 | 入库 |
 | `sdxl/character-tags.txt` | 角色 tag 库（danbooru 风格 tag，一行一个）。生成提示词时按关键词检索，命中就往提示词里补 tag | 入库 |
@@ -101,17 +101,17 @@ save/
   需求自相矛盾、参考图与需求冲突等）时调用并写明 `reason`，本次视频不再提交生成，问题原因直接作为
   `jimeng_video` 的工具结果返回给调用者转告用户。拒绝提示不要写进脚本正文（否则会被当成视频提示词提交）。
 
-## QQ 工具调用审核（`agents.json`）
+## 群聊工具调用审核（`agents.json`）
 
 给某个机器人配置管理员后，可以把指定工具标记为“执行前需要审核”：
 
 ```json
 {
-  "botId": 123456,
-  "groupId": 789012,
+  "botId": "123456",
+  "groupId": "789012",
   "name": "fengxiirc",
   "save": "savegroup4-fengxiirc.json",
-  "adminId": 10001,
+  "adminId": "10001",
   "tools": [
     "fetch",
     "multimodal",
@@ -122,7 +122,8 @@ save/
 }
 ```
 
-- `adminId`：接收私聊审核请求的管理员 QQ；也可以用启动参数 `-DadminId=...` 兜底。
+- `botId` / `groupId` / `adminId` 等标识统一按字符串处理（旧配置的数字写法仍兼容）。
+- `adminId`：接收私聊审核请求的管理员账号；也可以用启动参数 `-DadminId=...` 兜底。
 - `approvalTimeoutMs`：等待答复的毫秒数，默认 120000；也可用 `-Dtool_approval_timeout_ms=...`。
 - `tools` 的字符串条目和旧配置完全兼容；对象条目用 `{"name": "...", "approval": true}`。
 - 条目名写技能名（`seedvideo`）时会展开成该技能注册的全部工具（`jimeng_video`）；
@@ -132,3 +133,31 @@ save/
 - 管理员私聊回复 `允许` / `同意` / `1` / `ok` 放行，回复 `拒绝` / `不同意` / `2` / `no` 拒绝；
   超时按拒绝处理。只有管理员本人私聊答复有效，其它私聊消息仍被忽略。
 - 没配置 `adminId` 时失败关闭：带 `approval` 的工具一律拒绝，不会擅自执行。
+
+## 群聊主动回复判定（`agents.json`）
+
+默认关闭。开启后，没有被 @ 的群消息会先累积起来，按时间或条数触发一次轻量判定：
+
+```json
+"autoReply": {
+  "enabled": true,
+  "intervalMs": 600000,
+  "messageThreshold": 20,
+  "budget": 0.6
+}
+```
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `enabled` | `false` | 是否启用 |
+| `intervalMs` | `600000` | 定时判定间隔（毫秒） |
+| `messageThreshold` | `20` | 消息条数阈值 |
+| `budget` | `0.6` | 判定请求的消费预算倍率（Mimo 档位） |
+
+- 累计达到 `messageThreshold` 条时立即判定；否则每隔 `intervalMs` 判定一次。
+- 判定时把这段对话作为用户消息发给**关闭思考模式**的模型，让它判断当前角色是否需要主动发言；
+  需要则走正常回复流程并计入会话配额，不需要则清空本次累计。
+- 判定请求不带模型提示，按 `budget` 选择提供商（DeepSeek Flash 基准 1）：
+  连接器会在支持该请求的提供商中选 `ModelProvider#budget(request)` 最接近的一个。
+- 明确指定模型（`modelHint`）的请求优先按模型路由、忽略 `budget`；只有按提示找不到提供商时
+  才回退到预算选择。

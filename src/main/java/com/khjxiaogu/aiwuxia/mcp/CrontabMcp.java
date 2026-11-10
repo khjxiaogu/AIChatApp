@@ -38,11 +38,11 @@ public class CrontabMcp implements ToolProvider {
 	    private final List<TodoItem> items;
 	    private final Gson gson;
 	    private final File dataFile;
-	    private final BiConsumer<Long,String> triggerConsumer;
+	    private final BiConsumer<String,String> triggerConsumer;
 	    private final ScheduledExecutorService scheduler;
 	    private static final String DATE_PATTERN = "yyyy-MM-dd HH:mm:ss";
 	    private static class TodoItem {
-	    	long botId;
+	    	String botId;
 	    	String description;
 	        Date triggerTime; 
 
@@ -54,7 +54,7 @@ public class CrontabMcp implements ToolProvider {
 	        }
 
 
-			TodoItem(long botId, String description, Date triggerTime) {
+			TodoItem(String botId, String description, Date triggerTime) {
 				super();
 				this.botId = botId;
 				this.description = description;
@@ -62,7 +62,7 @@ public class CrontabMcp implements ToolProvider {
 			}
 	    }
 
-	    public TimedTodoManager(File storageFilePath, BiConsumer<Long,String> triggerConsumer) throws IOException {
+	    public TimedTodoManager(File storageFilePath, BiConsumer<String,String> triggerConsumer) throws IOException {
 	        this.triggerConsumer = triggerConsumer;
 	        this.dataFile = storageFilePath;
 	        File parentDir = dataFile.getParentFile();
@@ -112,7 +112,7 @@ public class CrontabMcp implements ToolProvider {
 	     * @param triggerTime 触发时间
 	     * @return 是否添加成功（时间不能为过去？允许添加已过期待办，下次扫描会立即触发）
 	     */
-	    public synchronized boolean addTodo(long botId,String description, Date triggerTime) {
+	    public synchronized boolean addTodo(String botId,String description, Date triggerTime) {
 	        if (description == null || description.trim().isEmpty()) {
 	            System.err.println("待办描述不能为空");
 	            return false;
@@ -180,9 +180,9 @@ public class CrontabMcp implements ToolProvider {
 	}
 	static TimedTodoManager manager;
 	/** 机器人 id → 会话，定时触发时通过该会话的工具管理器登记异步任务。 */
-	static final Map<Long, AISession> SESSIONS = new HashMap<>();
+	static final Map<String, AISession> SESSIONS = new HashMap<>();
 	static File savepath;
-	private final long id;
+	private final String id;
 	private final AISession session;
 
 	public static void setPath(File path) {
@@ -211,7 +211,7 @@ public class CrontabMcp implements ToolProvider {
 	 * @param session 当前会话
 	 * @throws IOException 初始化定时器失败
 	 */
-	public CrontabMcp(long id, AISession session) throws IOException {
+	public CrontabMcp(String id, AISession session) throws IOException {
 		init();
 		this.id = id;
 		this.session = session;
@@ -221,8 +221,9 @@ public class CrontabMcp implements ToolProvider {
 	}
 
 	/** 注销一个会话的定时触发绑定。 */
-	public static void unregister(long id, AISession session) {
+	public static void unregister(String id, AISession session) {
 		synchronized (SESSIONS) {
+			// 这里是有意的引用比较：只有当前绑定的仍是同一个会话对象时才移除
 			if (SESSIONS.get(id) == session) {
 				SESSIONS.remove(id);
 			}
@@ -252,7 +253,7 @@ public class CrontabMcp implements ToolProvider {
 	}
 
 	/** 当前机器人 id。 */
-	public long getId() {
+	public String getId() {
 		return id;
 	}
 

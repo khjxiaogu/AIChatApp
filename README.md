@@ -1,7 +1,7 @@
 # AIChatApp
-# AI 对话系统 (AI Chat Application)
+# 通用聊天机器人框架 / AI 对话系统 (AI Chat Application)
 
-一个基于 Java 的 AI 对话框架，支持动态加载多种 AI 应用类型（武侠、Galgame、TRPG、角色对话等），集成了大语言模型（LLM）和本地语音合成服务，提供 WebSocket 和 HTTP 接口供前端调用。系统内置会话管理、历史记录、权限控制、费用统计等功能，可快速构建个性化的 AI 交互应用。
+一个基于 Java 的通用聊天机器人 / AI 对话框架：聊天机器人核心通过 `ChatAdapter` 与平台解耦，默认提供 NapCat / OneBot v11（QQ）适配器，也可接入其它聊天平台；同时支持动态加载多种 AI 应用类型（武侠、Galgame、TRPG、角色对话等），集成了大语言模型（LLM）和本地语音合成服务，提供 WebSocket 和 HTTP 接口供前端调用。系统内置会话管理、历史记录、权限控制、费用统计等功能，可快速构建个性化的 AI 交互应用。
 本文档由AI生成，如有错漏以源代码为准。
 
 ---
@@ -9,13 +9,16 @@
 ## 特性
 
 - **多 AI 应用支持**：通过 `AIApplication` 抽象类和工厂模式，可轻松扩展不同类型的 AI 应用。
+- **通用聊天平台**：聊天机器人核心只依赖 `ChatAdapter` 接口，不绑定任何具体平台；默认提供
+  NapCat / OneBot v11 适配器，接入其它平台只需新增一个适配器实现。
 - **动态加载**：扫描应用目录下的 `meta.json` 配置，自动加载启用的 AI 应用，支持热重载。
 - **会话管理**：每个对话拥有独立的历史记录、状态、推理内容，支持撤回、重新生成等操作。
 - **流式推理**：支持 AI 模型输出推理内容（思维链）和最终内容，并实时推送到前端。
 - **本地语音模型**：集成私有化部署的语音合成服务，通过 WebSocket 连接和 HTTP 回调接收音频数据。
 - **权限与公测**：基于 SQLite 数据库记录用户权限，支持应用级的公测限制（每个用户仅可创建一个对话）。
 - **对话导出**：可将整个对话历史导出为 UTF-8 文本文件（带 BOM 头）。
-- **模型路由**：通过 `ModelProvider` 接口支持多模型提供商（Deepseek、火山引擎等），根据请求类型自动路由。
+- **模型路由**：通过 `ModelProvider` 接口支持多模型提供商（Deepseek、火山引擎等），可按模型提示或
+  **消费预算（budget）** 自动选择最接近的提供商。
 - **网页搜索**：通过 MCP 工具 `web_search` 接入 DeepSeek 官方 Search API（需 `deepseektoken`），
   按成功请求次数准确计费，失败/无结果不计费。
 - **前后端分离**：前端通过 WebSocket 进行实时通信，HTTP 接口用于获取应用列表、对话列表等。
@@ -34,6 +37,18 @@
 
 ---
 
+## 聊天平台适配
+
+聊天机器人部分是一个**通用聊天机器人框架**，与具体平台解耦：
+
+- 控制器 `NapCatAIConnector` 负责会话、历史、工具、审核与回复生成，业务代码不接触任何协议字段；
+- 所有平台相关的连接与收发都通过 `ChatAdapter` 完成，默认实现 `NapcatAdapter` 接入
+  NapCat / OneBot v11（QQ）；
+- 接入其它平台（Discord、Telegram、自建协议等）只需实现 `ChatAdapter` 并传给控制器，
+  消息 id、会话 id、用户 id 全部按字符串处理，不要求是数字。
+
+---
+
 ## 项目结构
 
 ```
@@ -41,7 +56,7 @@
 ├─AIChatService.java           # 核心服务类，处理HTTP/WebSocket请求，管理会话
 ├─AIChatWindow.java            # 测试用Swing窗口
 ├─AIServerMain.java            # 主服务器入口，启动Netty服务
-├─NapCatAIConnector.java       # 与NapCat机器人框架的适配器（把QQ消息交给AIWuxia）
+├─NapCatAIConnector.java       # 通用聊天机器人控制器（经 ChatAdapter 接入平台，默认 NapCat / OneBot v11）
 ├─DeepseekHarnessConnector.java # 把 Deepseek Harness 接到 NapCat（把QQ消息交给 DSH，方向相反）
 │
 ├─apps                         # AI应用相关
@@ -195,7 +210,7 @@ save/
    ├─ voice-tags.txt             # 语音标签提示词（按情感切分台词，供语音合成）
    ├─ local-voice.json           # 本地语音模型 bot 映射 {角色名: botid}
    ├─ volcano-voice.json         # 火山语音复刻 bot 映射 {角色名: voice_type}
-   ├─ agents.json                # QQ 群 agent 清单（name / save / voice / tools / adminId …）
+   ├─ agents.json                # 群聊 agent 清单（name / save / voice / tools / adminId …）
    ├─ crontab.json               # 定时任务
    └─ sdxl/                      # 生图相关
       ├─ character-tags.txt      #   角色 tag 库（一行一个，生成提示词时按关键词检索）
@@ -354,7 +369,7 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 
 | 事项 | 说明 |
 |---|---|
-| 挂载位置 | QQ 群 agent 的 `tools` 含 `fetch` 时注册；绘画会话与绘画 subagent 也注册 |
+| 挂载位置 | 群聊 agent 的 `tools` 含 `fetch` 时注册；绘画会话与绘画 subagent 也注册 |
 | 请求参数 | `query`（必填，≤128 字符，支持 `site:`/`-site:`/`-关键词`/`"精确短语"`/`lang:`/`after:`/`before:` 语法）、`count`（1～20，默认 10） |
 | 返回内容 | 每条结果的标题、链接、`发布时间 · 站点 · 相关度 · 权威度` 与摘要；不返回正文（需要正文用 `web_view` 打开链接） |
 | 计费口径 | 官方按**成功请求次数**计费：每 1000 次 5 元（每次 0.005 元），与 `count`、token 无关；仅 HTTP 200 且 `results` 非空才计费 |
@@ -400,21 +415,29 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 
 ```json
 {
-  "botId": 123456,
-  "groupId": 789012,
+  "botId": "123456",
+  "groupId": "789012",
   "name": "fengxiirc",
-  "adminId": 10001,
+  "adminId": "10001",
   "tools": [
     "fetch",
     {"name": "seedvideo", "approval": true}
   ],
-  "approvalTimeoutMs": 120000
+  "approvalTimeoutMs": 120000,
+  "autoReply": {
+    "enabled": false,
+    "intervalMs": 600000,
+    "messageThreshold": 20,
+    "budget": 0.6
+  }
 }
 ```
 
+- `botId` / `groupId` / `adminId` 等标识统一按**字符串**处理，方便接入非数字 id 的平台；
+  旧配置里的数字写法仍能正常读取。
 - `adminId` 也可以由启动参数 `-DadminId=...` 兜底；`approvalTimeoutMs` 对应
   `-Dtool_approval_timeout_ms=...`。
-- 需要审核的工具在真正执行前，把群号、机器人名、最近发言者、工具名、原因与参数**私聊给管理员**；
+- 需要审核的工具在真正执行前，把会话号（群 id）、机器人名、最近发言者、工具名、原因与参数**私聊给管理员**；
   管理员回复 `允许` / `同意` / `1` / `ok` 放行，回复 `拒绝` / `不同意` / `2` / `no` 拒绝，
   超时按拒绝处理。拒绝时可以回复 `拒绝 原因`（空格、冒号、逗号分隔均可），
   **原因会作为工具结果回传给模型**，模型据此调整后续行为。只有管理员本人的私聊答复有效。
@@ -423,6 +446,28 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
   都可以。没配置 `adminId` 时按失败关闭处理，不会擅自执行。
 - 审核流程复用 `ToolApprovalManager` / `ToolCallApprover`，与 WebSocket 会话的授权弹窗、
   `DeepseekHarnessConnector` 的私聊审批保持同一套语义。
+
+### 群聊主动回复判定（autoReply）
+
+默认关闭。开启后，没有被 @ 的群消息会先累积起来：
+
+- 累计达到 `messageThreshold` 条（默认 20 条）时立即判定一次；
+- 否则每隔 `intervalMs`（默认 10 分钟）判定一次；
+- 判定时把这段时间的对话内容作为用户消息，发给**关闭思考模式**的轻量模型，让它判断当前角色
+  是否需要针对这些消息主动发言；
+- 需要发言时走正常回复流程，并计入该会话的配额；不需要则清空本次累计，继续等待后续消息。
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `enabled` | `false` | 是否启用 |
+| `intervalMs` | `600000` | 定时判定间隔（毫秒） |
+| `messageThreshold` | `20` | 消息条数阈值 |
+| `budget` | `0.6` | 判定请求的消费预算倍率（Mimo 档位） |
+
+判定请求不带模型提示，因此按 `budget` 选择提供商：连接器会在支持该请求的提供商中选
+`ModelProvider#budget(request)` 与本值最接近的一个（基准是 DeepSeek Flash = 1）。
+明确指定模型（`modelHint`）的请求优先按模型路由、忽略 `budget`；只有按提示找不到可用提供商时
+才回退到预算选择。
 
 ### 数据库
 
@@ -481,7 +526,7 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 | `write` | 写作辅助（大纲 + 正文） | — |
 | `sql` | 根据表定义生成 SQL | — |
 | `custom` | 配置型智能体（提示词存在会话里） | `custom.html` |
-| `group` | QQ 群聊机器人（由 `NapCatAIConnector` 拉起） | — |
+| `group` | 群聊机器人（由 `NapCatAIConnector` 拉起，具体平台由 `ChatAdapter` 决定） | — |
 
 > ⚠️ 注意：`meta.json` 的 `name` **不是界面显示名**，只用于加载门槛与传给工厂；
 > 界面显示的是各 app 类 `getName()` 的返回值（所以 `wuxia` 目录写"修仙模拟器"，界面显示"武侠模拟器"）。
@@ -583,7 +628,8 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 
 ### 添加新的模型提供商
 
-1. 实现 `ModelProvider` 接口，实现 `supports` 和 `execute` 方法。
+1. 实现 `ModelProvider` 接口，实现 `supports`、`supportsHinted`、`budget` 和 `execute` 方法；
+   `budget` 返回该请求在当前提供商下的消费倍率（DeepSeek Flash = 1）。
 2. 在 `LLMConnector.initDefault()` 中根据条件（如系统属性）将提供商加入列表。
 
 ### 自定义场景选择器

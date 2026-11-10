@@ -69,10 +69,10 @@ import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.LocalVoiceMcp;
-import com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp;
+import com.khjxiaogu.aiwuxia.mcp.MediaOutputMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
-import com.khjxiaogu.aiwuxia.mcp.PainterMediaMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
+import com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp;
 import com.khjxiaogu.aiwuxia.mcp.client.McpClientManager;
 import com.khjxiaogu.aiwuxia.mcp.server.McpAccessTokenStore;
 import com.khjxiaogu.aiwuxia.mcp.server.McpBuiltinTools;
@@ -541,7 +541,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 */
 	private void initPainterTools() {
 		painterImageRecognitionTool = MultiModalMcp.createImageRecognition(painterStorage);
-		painterSendImageTool = PainterMediaMcp.createSendImage(painterStorage);
+		painterSendImageTool = MediaOutputMcp.createSendImage(painterStorage);
 		// SDXL 图片工具按用户创建（见 painterImageGeneratorFor），这里不再创建全局实例：
 		// 图片 id 直接通过 /painter/image 取图，与具体会话无关，URL 构造器在各用户的工具里共用
 		painterSearchCharacterTool = chara == null ? null : SDXLMcp.createSearchCharacter(chara);
@@ -749,7 +749,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 							continue;
 						}
 						for (ToolData tool : session.getToolCallManager().getTools().values()) {
-							// 会话专属工具（例如 QQ/绘画的发送图片）不暴露给远程 MCP 调用
+							// 会话专属工具（例如群聊/绘画的发送图片）不暴露给远程 MCP 调用
 							if (!tool.sessionOnly && !result.containsKey(tool.name)) {
 								result.put(tool.name, tool);
 							}

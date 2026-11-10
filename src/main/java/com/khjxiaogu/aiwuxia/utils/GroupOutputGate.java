@@ -6,9 +6,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 单个 QQ 群的发送顺序闸门。
+ * 单个群聊会话的发送顺序闸门。
  * <p>
- * 目标：无论工具、模型、语音合成的快慢如何，发往同一个群的消息都按“输入被接纳的先后”顺序发出。
+ * 目标：无论工具、模型、语音合成的快慢如何，发往同一个会话的消息都按“输入被接纳的先后”顺序发出。
  * </p>
  * <p>
  * 用法：消息被接纳时调用 {@link #register()} 取得序号；该轮真正要发送的内容准备好之后调用
@@ -59,7 +59,7 @@ public final class GroupOutputGate {
 	public GroupOutputGate(String group, long timeoutMs) {
 		this.group = group;
 		this.timeoutMs = timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
-		this.worker = new Thread(this::run, "qq-send-order-" + group);
+		this.worker = new Thread(this::run, "chat-send-order-" + group);
 		this.worker.setDaemon(true);
 		this.worker.start();
 	}

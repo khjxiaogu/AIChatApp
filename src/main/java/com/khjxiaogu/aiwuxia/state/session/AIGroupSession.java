@@ -57,8 +57,10 @@ public class AIGroupSession extends AISession {
 		}
 	}
 	public JsonObject config;
-	public long groupId;
-	public long botId;
+	/** 会话所属的聊天/群标识；平台适配器与配置里统一用字符串表示。 */
+	public String groupId;
+	/** 机器人自身的账号标识。 */
+	public String botId;
 	List<QueuedMessage> important=new ArrayList<>();
 	ArrayDeque<QueuedMessage> messageQueue=new ArrayDeque<>();
 	public StringBuilder lastReasoner;
@@ -67,18 +69,18 @@ public class AIGroupSession extends AISession {
 	public File saveData;
 	public boolean outputReaonser;
 	public boolean outputPrice;
-	/** 最近一条有效群消息的发送者 QQ，用于工具审核时告诉管理员是谁触发的。 */
-	public volatile long lastSpeakerId;
+	/** 最近一条有效群消息的发送者账号 id，用于工具审核时告诉管理员是谁触发的。 */
+	public volatile String lastSpeakerId;
 	/** 最近一条有效群消息的发送者昵称/群名片，可能为空。 */
 	public volatile String lastSpeakerName = "";
-	/** 会话处理工具附件的入口，由 QQ 连接器注入；工具本身不直接发送消息。 */
+	/** 会话处理工具附件的入口，由聊天连接器注入；工具本身不直接发送消息。 */
 	private volatile Consumer<MessageContent> toolAttachmentHandler;
-	/** 异步工具任务完成后的会话入口，由 QQ 连接器注入，用于写入通知并触发下一轮。 */
+	/** 异步工具任务完成后的会话入口，由聊天连接器注入，用于写入通知并触发下一轮。 */
 	private volatile Consumer<ToolTask> toolTaskCompletionHandler;
 	public AIGroupSession(String user, ISaveData data,File saveData, AIApplication aiapp,JsonObject config) {
 		super(user, data, aiapp);
-		this.groupId=config.get("groupId").getAsLong();
-		this.botId=config.get("botId").getAsLong();
+		this.groupId=config.get("groupId").getAsString();
+		this.botId=config.get("botId").getAsString();
 		if(config.has("hasReaonser"))
 		this.outputReaonser=config.get("hasReaonser").getAsBoolean();
 		if(config.has("hasPrice"))
@@ -102,7 +104,7 @@ public class AIGroupSession extends AISession {
 	}
 
 	/**
-	 * 设置工具附件处理器（由 QQ 连接器注入）。
+	 * 设置工具附件处理器（由聊天连接器注入）。
 	 *
 	 * @param handler 附件处理器，null 表示不发送附件
 	 */
@@ -111,7 +113,7 @@ public class AIGroupSession extends AISession {
 	}
 
 	/**
-	 * 设置异步工具任务完成处理器（由 QQ 连接器注入）。
+	 * 设置异步工具任务完成处理器（由聊天连接器注入）。
 	 *
 	 * @param handler 任务完成处理器，null 表示使用默认状态通知
 	 */

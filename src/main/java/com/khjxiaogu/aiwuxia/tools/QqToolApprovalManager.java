@@ -7,6 +7,7 @@ import java.util.Deque;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -19,14 +20,18 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 
 /**
- * QQ 群工具调用审核：把需要许可的工具调用私聊给配置的管理员，管理员回复「允许」/「拒绝」。
+ * 群聊工具调用审核：把需要许可的工具调用私聊给配置的管理员，管理员回复「允许」/「拒绝」。
+ * <p>
+ * 类名沿用 {@code QqToolApprovalManager} 以保持调用方不变，但逻辑只依赖
+ * {@link com.khjxiaogu.aiwuxia.chat.ChatAdapter} 暴露的私聊能力，与具体聊天平台无关。
+ * </p>
  * <p>
  * 参考 {@code DeepseekHarnessConnector} 的审批流程：
  * </p>
  * <ol>
  *   <li>工具调用被 {@link ToolCallPermission} 判定为需要审核后，{@link ToolCallManager} 会调用
  *       这里提供的 {@link ToolCallApprover}；</li>
- *   <li>审核请求私聊发给该机器人配置的 {@code adminId}，内容包括群号、机器人名、触发者、
+ *   <li>审核请求私聊发给该机器人配置的 {@code adminId}，内容包括会话号、机器人名、触发者、
  *       工具名、原因和参数；</li>
  *   <li>管理员在私聊里回复「允许」/「同意」/「1」等放行，回复「拒绝」/「不同意」/「2」等拒绝；
  *       拒绝时还可以回复「拒绝 原因」（冒号、逗号、空格分隔均可），原因会作为工具结果回传给模型；</li>
@@ -42,29 +47,29 @@ public class QqToolApprovalManager implements Closeable {
 	/** 默认等待管理员答复的超时：2 分钟。 */
 	public static final long DEFAULT_TIMEOUT_MILLIS = 120000L;
 
-	/** 私聊发送器：把一条文本发给指定 QQ。 */
+	/** 私聊发送器：把一条文本发给指定账号。 */
 	@FunctionalInterface
 	public interface PrivateMessageSender {
 		/**
 		 * 发送一条私聊文本。
 		 *
-		 * @param qq   QQ 号
-		 * @param text 文本
+		 * @param userId 接收者账号 id
+		 * @param text   文本
 		 * @throws Exception 发送失败
 		 */
-		void send(long qq, String text) throws Exception;
+		void send(String userId, String text) throws Exception;
 	}
 
 	/** 一条等待管理员答复的审核请求。 */
 	private static final class PendingApproval {
 		final AIGroupSession session;
-		final long botId;
-		final long adminId;
+		final String botId;
+		final String adminId;
 		final ToolApprovalRequest request;
 		/** 是否已经得到管理员答复或已超时（避免重复处理）。 */
 		boolean answered;
 
-		PendingApproval(AIGroupSession session, long botId, long adminId, ToolApprovalRequest request) {
+		PendingApproval(AIGroupSession session, String botId, String adminId, ToolApprovalRequest request) {
 			this.session = session;
 			this.botId = botId;
 			this.adminId = adminId;
@@ -79,7 +84,7 @@ public class QqToolApprovalManager implements Closeable {
 	/** 待答复请求，按到达顺序排列；私聊回复取最前面的一条。 */
 	private final Deque<PendingApproval> queue = new ArrayDeque<>();
 	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1, runnable -> {
-		Thread thread = new Thread(runnable, "qq-tool-approval");
+		Thread thread = new Thread(runnable, "tool-approval");
 		thread.setDaemon(true);
 		return thread;
 	});
@@ -98,11 +103,11 @@ public class QqToolApprovalManager implements Closeable {
 	 * 为指定会话创建（或复用）许可方。
 	 *
 	 * @param session       会话
-	 * @param adminId       管理员 QQ
+	 * @param adminId       管理员账号 id
 	 * @param timeoutMillis 等待答复的超时毫秒数，小于等于 0 时使用默认值
 	 * @return 可直接交给 {@code ToolCallManager#setApprover} 的许可方
 	 */
-	public ToolCallApprover approverFor(AIGroupSession session, long adminId, long timeoutMillis) {
+	public ToolCallApprover approverFor(AIGroupSession session, String adminId, long timeoutMillis) {
 		long effectiveTimeout = timeoutMillis > 0 ? timeoutMillis : defaultTimeoutMillis;
 		ToolApprovalManager manager;
 		synchronized (managers) {
@@ -116,11 +121,11 @@ public class QqToolApprovalManager implements Closeable {
 				managers.put(session, manager);
 			}
 		}
-		return manager.approverFor("qq-" + session.botId + "-" + session.groupId);
+		return manager.approverFor("chat-" + session.botId + "-" + session.groupId);
 	}
 
 	/** 把一条已排到队首的许可请求私聊给管理员。 */
-	private void requestApproval(AIGroupSession session, long adminId, ToolApprovalRequest request,
+	private void requestApproval(AIGroupSession session, String adminId, ToolApprovalRequest request,
 			long timeoutMillis) {
 		PendingApproval pending = new PendingApproval(session, session.botId, adminId, request);
 		synchronized (queue) {
@@ -138,7 +143,7 @@ public class QqToolApprovalManager implements Closeable {
 				}
 			}
 			request.deny();
-			System.out.println("[QQ工具审核] 审核请求私聊发送失败，已按拒绝处理：" + t);
+			System.out.println("[工具审核] 审核请求私聊发送失败，已按拒绝处理：" + t);
 			return;
 		}
 		// 正常超时由这里先收敛；ToolApprovalManager 自己略晚超时，只作兜底
@@ -167,12 +172,12 @@ public class QqToolApprovalManager implements Closeable {
 	 * 只有「允许/拒绝」这类明确的答复会被消费；其它私聊内容返回 false，由连接器按原逻辑忽略。
 	 * </p>
 	 *
-	 * @param botId    收到私聊的机器人 QQ（来自事件的 {@code self_id}），可为 0
-	 * @param senderId 发消息的 QQ
+	 * @param botId    收到私聊的机器人账号 id（平台侧 self id），未知时为 {@code null}
+	 * @param senderId 发消息的账号 id
 	 * @param text     消息正文
 	 * @return true 表示这条私聊已经被当作审核答复处理
 	 */
-	public boolean answer(long botId, long senderId, String text) {
+	public boolean answer(String botId, String senderId, String text) {
 		ApprovalAnswer answer = parseAnswer(text);
 		if (answer == null) {
 			return false;
@@ -211,10 +216,11 @@ public class QqToolApprovalManager implements Closeable {
 		return true;
 	}
 
-	/** 找到与这条私聊匹配的待答复请求：按机器人 + 管理员匹配；botId 未知时才放宽。 */
-	private PendingApproval findPending(long botId, long senderId) {
+	/** 找到与这条私聊匹配的待答复请求：按机器人 + 管理员匹配；botId 未知（null）时才放宽。 */
+	private PendingApproval findPending(String botId, String senderId) {
 		for (PendingApproval pending : queue) {
-			if (pending.adminId == senderId && (botId <= 0 || pending.botId == botId)) {
+			if (Objects.equals(pending.adminId, senderId)
+					&& (botId == null || Objects.equals(pending.botId, botId))) {
 				return pending;
 			}
 		}
@@ -222,17 +228,17 @@ public class QqToolApprovalManager implements Closeable {
 	}
 
 	/** 组装私聊给管理员的审核问题。 */
-	private String buildQuestion(AIGroupSession session, long adminId, ToolApprovalRequest request,
+	private String buildQuestion(AIGroupSession session, String adminId, ToolApprovalRequest request,
 			long timeoutMillis) {
 		StringBuilder question = new StringBuilder("【工具审核】");
 		question.append("群 ").append(session.groupId).append(" 的机器人「")
 				.append(safeRoleName(session)).append("」准备调用工具「").append(request.getToolName()).append("」。");
-		long speakerId = session.lastSpeakerId;
-		if (speakerId > 0) {
-			if (speakerId == adminId) {
+		String speakerId = session.lastSpeakerId;
+		if (speakerId != null && !speakerId.isEmpty()) {
+			if (speakerId.equals(adminId)) {
 				question.append("最近发言者是你自己。");
 			} else {
-				question.append("最近发言者：群友 QQ ").append(speakerId);
+				question.append("最近发言者：").append(speakerId);
 				if (session.lastSpeakerName != null && !session.lastSpeakerName.trim().isEmpty()) {
 					question.append("（").append(shorten(session.lastSpeakerName.trim(), 40)).append("）");
 				}
@@ -387,11 +393,11 @@ public class QqToolApprovalManager implements Closeable {
 	}
 
 	/** 发送私聊，失败只记录日志，避免拖垮工具调用。 */
-	private void send(long qq, String text) {
+	private void send(String userId, String text) {
 		try {
-			sender.send(qq, text);
+			sender.send(userId, text);
 		} catch (Throwable t) {
-			System.out.println("[QQ工具审核] 私聊发送失败（QQ " + qq + "）：" + t);
+			System.out.println("[工具审核] 私聊发送失败（" + userId + "）：" + t);
 		}
 	}
 

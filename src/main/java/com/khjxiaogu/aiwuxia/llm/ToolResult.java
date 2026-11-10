@@ -20,7 +20,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
  *       默认<b>不</b>展示给用户，需要展示时由工具自己的
  *       {@code ToolCallPresenter.resultDisplay(...)} 生成用户友好内容。</li>
  *   <li><b>附件（{@link #getAttachments()}）</b>：需要附加在结果中返回给用户的图片、音频、视频等，
- *       由会话统一写入当前上下文并按传输方式发送（例如 QQ 发图）。附件不参与模型请求。</li>
+ *       由会话统一写入当前上下文并按传输方式发送（例如群聊发图）。附件不参与模型请求。</li>
  *   <li><b>是否成功（{@link #isSuccess()}）</b>：默认 true；只有明确的简单失败（网络不可达、服务不存在等）
  *       才标记为 false。目前仅 MCP 服务端用它判断是否免除基础调用费，其它调用方可忽略。</li>
  * </ul>

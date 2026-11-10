@@ -216,9 +216,10 @@ public CompletableFuture<Boolean> generateVoice(AISession state, String text, St
 
 ---
 
-## 配方 8：把 app 搬到 QQ 群
+## 配方 8：把 app 接到群聊平台
 
-`group` 类型由 `NapCatAIConnector` 拉起，走 `save/config/agents.json`：
+`group` 类型由通用控制器 `NapCatAIConnector` 拉起，走 `save/config/agents.json`。
+默认使用 NapCat 适配器接入 QQ；接入其它平台时，实现 `ChatAdapter` 并把实例传给控制器即可。
 
 ```json
 [
@@ -229,9 +230,10 @@ public CompletableFuture<Boolean> generateVoice(AISession state, String text, St
 - `name` = `save/apps/` 下的 appid；`save` = 该群会话的存档文件名（在 `save/saveData/` 下）；
 - app 目录必须有 `meta.json`（`type: "group"`）和 `role/charaset/rules/summary` 四个 txt；
 - `meta.charaName` **必需**，是机器人在群里的自称；
-- 群侧工具（生图/搜索/QQ 操作）由 NapCat 按 skill 注册，和网页侧是两套配置。
+- 群聊侧工具（生图/搜索/平台操作）由聊天适配器按 skill 注册，和网页侧是两套配置。
 
-启动：`java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=xxx -cp ... com.khjxiaogu.aiwuxia.NapCatAIConnector`。
+启动（默认 NapCat 适配器）：
+`java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=xxx -cp ... com.khjxiaogu.aiwuxia.NapCatAIConnector`。
 
 验证：群里 @ 机器人能收到回复；日志有 `发送消息成功`；`saveSaveData/qq-myhero.json` 在增长。
 

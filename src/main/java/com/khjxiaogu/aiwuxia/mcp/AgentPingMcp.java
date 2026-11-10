@@ -23,7 +23,7 @@ import com.khjxiaogu.aiwuxia.state.session.AISession;
  * 由目标会话自己的完成监听器处理。
  * </p>
  * <p>
- * <b>按群聊隔离</b>：在线角色表以群号为作用域，{@code online_character} 只列出当前群的角色，
+ * <b>按群聊隔离</b>：在线角色表以群聊标识为作用域，{@code online_character} 只列出当前群的角色，
  * {@code ping_character} 也只能解析当前群的角色。同一个角色名可以同时存在于不同群聊，
  * 互不影响；不同群聊之间既看不到对方，也不能互相呼叫。
  * </p>
@@ -33,7 +33,7 @@ public class AgentPingMcp implements ToolProvider {
 	/**
 	 * 在线角色：作用域 → (角色名 → 会话)。
 	 * <p>
-	 * 群聊会话的作用域是群号，因此同一群里的多个机器人（不同 botId）仍可互相呼叫；
+	 * 群聊会话的作用域是群聊标识，因此同一群里的多个机器人（不同账号）仍可互相呼叫；
 	 * 非群聊会话退化为按会话对象隔离，避免回退成全局可见。
 	 * </p>
 	 */
@@ -61,12 +61,12 @@ public class AgentPingMcp implements ToolProvider {
 	}
 
 	/**
-	 * 会话所属的作用域：群聊会话按群号（不区分 botId，同群多机器人可互相呼叫），
+	 * 会话所属的作用域：群聊会话按群聊标识（不区分机器人，同群多机器人可互相呼叫），
 	 * 其它会话按对象本身隔离。
 	 */
 	private static Object scopeOf(AISession session) {
 		if (session instanceof AIGroupSession) {
-			return Long.valueOf(((AIGroupSession) session).groupId);
+			return ((AIGroupSession) session).groupId;
 		}
 		return session;
 	}
