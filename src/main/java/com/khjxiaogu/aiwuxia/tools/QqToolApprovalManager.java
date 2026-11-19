@@ -13,6 +13,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.khjxiaogu.aiwuxia.chat.ChatButton;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
@@ -20,7 +21,11 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 
 /**
- * 群聊工具调用审核：把需要许可的工具调用私聊给配置的管理员，管理员回复「允许」/「拒绝」。
+ * 群聊工具调用审核：把需要许可的工具调用私聊给配置的管理员。
+ * <p>
+ * 管理员可以直接回复「允许」/「拒绝」；适配器支持卡片时（QQ 官方）优先发送带按钮的审核卡片，
+ * 点击按钮即可。两种方式都只接受该请求配置的管理员，第一个答复生效。
+ * </p>
  * <p>
  * 类名沿用 {@code QqToolApprovalManager} 以保持调用方不变，但逻辑只依赖
  * {@link com.khjxiaogu.aiwuxia.chat.ChatAdapter} 暴露的私聊能力，与具体聊天平台无关。
@@ -60,24 +65,42 @@ public class QqToolApprovalManager implements Closeable {
 		void send(String userId, String text) throws Exception;
 	}
 
+	/** 卡片发送器：官方机器人支持按钮时优先发审核卡片。 */
+	@FunctionalInterface
+	public interface CardSender {
+		/**
+		 * 发送审核卡片。
+		 *
+		 * @param userId   接收者账号 id
+		 * @param markdown 卡片正文
+		 * @param buttons  按钮
+		 * @return true 表示卡片发送成功；false 由调用方退回文本
+		 * @throws Exception 发送失败
+		 */
+		boolean send(String userId, String markdown, java.util.List<ChatButton> buttons) throws Exception;
+	}
+
 	/** 一条等待管理员答复的审核请求。 */
 	private static final class PendingApproval {
+		final String id;
 		final AIGroupSession session;
 		final String botId;
-		final String adminId;
+		final List<String> adminIds;
 		final ToolApprovalRequest request;
 		/** 是否已经得到管理员答复或已超时（避免重复处理）。 */
 		boolean answered;
 
-		PendingApproval(AIGroupSession session, String botId, String adminId, ToolApprovalRequest request) {
+		PendingApproval(AIGroupSession session, String botId, List<String> adminIds, ToolApprovalRequest request) {
+			this.id = java.util.UUID.randomUUID().toString();
 			this.session = session;
 			this.botId = botId;
-			this.adminId = adminId;
+			this.adminIds = adminIds;
 			this.request = request;
 		}
 	}
 
 	private final PrivateMessageSender sender;
+	private final CardSender cardSender;
 	private final long defaultTimeoutMillis;
 	/** 每个会话一个许可管理器，保证同一会话的请求串行询问。 */
 	private final Map<AIGroupSession, ToolApprovalManager> managers = new IdentityHashMap<>();
@@ -95,7 +118,17 @@ public class QqToolApprovalManager implements Closeable {
 	 * @param defaultTimeoutMillis 默认等待答复的超时毫秒数，小于等于 0 表示不等待（直接拒绝）
 	 */
 	public QqToolApprovalManager(PrivateMessageSender sender, long defaultTimeoutMillis) {
+		this(sender, null, defaultTimeoutMillis);
+	}
+
+	/**
+	 * @param sender              私聊文本发送器
+	 * @param cardSender          审核卡片发送器，可为 null
+	 * @param defaultTimeoutMillis 默认等待答复的超时毫秒数
+	 */
+	public QqToolApprovalManager(PrivateMessageSender sender, CardSender cardSender, long defaultTimeoutMillis) {
 		this.sender = sender;
+		this.cardSender = cardSender;
 		this.defaultTimeoutMillis = defaultTimeoutMillis > 0 ? defaultTimeoutMillis : DEFAULT_TIMEOUT_MILLIS;
 	}
 
@@ -108,7 +141,22 @@ public class QqToolApprovalManager implements Closeable {
 	 * @return 可直接交给 {@code ToolCallManager#setApprover} 的许可方
 	 */
 	public ToolCallApprover approverFor(AIGroupSession session, String adminId, long timeoutMillis) {
+		return approverFor(session, adminId == null ? java.util.Collections.<String>emptyList()
+				: java.util.Collections.singletonList(adminId), timeoutMillis);
+	}
+
+	/**
+	 * 多个管理员：请求私聊给每个人，第一个回复生效。
+	 *
+	 * @param session       会话
+	 * @param adminIds      管理员列表
+	 * @param timeoutMillis 超时毫秒
+	 * @return 许可方
+	 */
+	public ToolCallApprover approverFor(AIGroupSession session, List<String> adminIds, long timeoutMillis) {
 		long effectiveTimeout = timeoutMillis > 0 ? timeoutMillis : defaultTimeoutMillis;
+		final List<String> admins = adminIds == null ? java.util.Collections.<String>emptyList()
+				: java.util.Collections.unmodifiableList(new ArrayList<>(adminIds));
 		ToolApprovalManager manager;
 		synchronized (managers) {
 			manager = managers.get(session);
@@ -116,7 +164,7 @@ public class QqToolApprovalManager implements Closeable {
 				// 给 ToolApprovalManager 留一点余量：正常超时由下面的定时任务先收敛，
 				// 避免管理器的超时与队列清理之间出现“旧请求挡住新答复”的窗口
 				manager = new ToolApprovalManager(
-						request -> requestApproval(session, adminId, request, effectiveTimeout),
+						request -> requestApproval(session, admins, request, effectiveTimeout),
 						effectiveTimeout + 2000L);
 				managers.put(session, manager);
 			}
@@ -124,18 +172,36 @@ public class QqToolApprovalManager implements Closeable {
 		return manager.approverFor("chat-" + session.botId + "-" + session.groupId);
 	}
 
-	/** 把一条已排到队首的许可请求私聊给管理员。 */
-	private void requestApproval(AIGroupSession session, String adminId, ToolApprovalRequest request,
+	/** 把一条已排到队首的许可请求私聊给所有管理员。 */
+	private void requestApproval(AIGroupSession session, List<String> adminIds, ToolApprovalRequest request,
 			long timeoutMillis) {
-		PendingApproval pending = new PendingApproval(session, session.botId, adminId, request);
+		PendingApproval pending = new PendingApproval(session, session.botId, adminIds, request);
 		synchronized (queue) {
 			queue.addLast(pending);
 			pendingCount.incrementAndGet();
 		}
-		try {
-			sender.send(adminId, buildQuestion(session, adminId, request, timeoutMillis));
-		} catch (Throwable t) {
-			// 发不出去就失败关闭，别让工具调用白等一个超时
+		int sent = 0;
+		for (String adminId : adminIds) {
+			try {
+				String question = buildQuestion(session, adminId, request, timeoutMillis);
+				boolean cardSent = false;
+				if (cardSender != null) {
+					try {
+						cardSent = cardSender.send(adminId, question, cardButtons(pending));
+					} catch (Throwable t) {
+						System.out.println("[工具审核] 审核卡片发送失败，退回文本：" + adminId + "，" + t);
+					}
+				}
+				if (!cardSent) {
+					sender.send(adminId, question);
+				}
+				sent++;
+			} catch (Throwable t) {
+				System.out.println("[工具审核] 审核请求私聊发送失败：" + adminId + "，" + t);
+			}
+		}
+		if (sent == 0) {
+			// 一个都发不出去就失败关闭，别让工具调用白等一个超时
 			synchronized (queue) {
 				pending.answered = true;
 				if (queue.remove(pending)) {
@@ -143,7 +209,7 @@ public class QqToolApprovalManager implements Closeable {
 				}
 			}
 			request.deny();
-			System.out.println("[工具审核] 审核请求私聊发送失败，已按拒绝处理：" + t);
+			System.out.println("[工具审核] 审核请求没有发送成功，已按拒绝处理");
 			return;
 		}
 		// 正常超时由这里先收敛；ToolApprovalManager 自己略晚超时，只作兜底
@@ -151,7 +217,7 @@ public class QqToolApprovalManager implements Closeable {
 		scheduler.schedule(() -> onTimeout(pending), delay, TimeUnit.MILLISECONDS);
 	}
 
-	/** 超时：拒绝请求、移出队列并私聊告知管理员。 */
+	/** 超时：拒绝请求、移出队列并私聊告知所有管理员。 */
 	private void onTimeout(PendingApproval pending) {
 		synchronized (queue) {
 			if (pending.answered) {
@@ -163,7 +229,9 @@ public class QqToolApprovalManager implements Closeable {
 			}
 		}
 		pending.request.deny();
-		send(pending.adminId, "【工具审核】超时未答复，已按拒绝处理。工具：「" + pending.request.getToolName() + "」");
+		for (String adminId : pending.adminIds) {
+			send(adminId, "【工具审核】超时未答复，已按拒绝处理。工具：「" + pending.request.getToolName() + "」");
+		}
 	}
 
 	/**
@@ -182,45 +250,98 @@ public class QqToolApprovalManager implements Closeable {
 		if (answer == null) {
 			return false;
 		}
-		PendingApproval target = null;
+		PendingApproval target;
 		synchronized (queue) {
 			target = findPending(botId, senderId);
-			if (target == null) {
-				return false;
-			}
-			if (target.answered) {
+			if (target == null || target.answered) {
 				return false;
 			}
 			queue.remove(target);
 			pendingCount.decrementAndGet();
 			target.answered = true;
 		}
-		boolean accepted = answer.allowed ? target.request.approve()
-				: target.request.deny(answer.reason);
+		complete(target, answer.allowed, answer.reason);
+		return true;
+	}
+
+	/**
+	 * 处理审核卡片按钮回调。
+	 *
+	 * @param botId    收到互动的机器人账号（官方为 AppID）
+	 * @param senderId 点击按钮的账号 id
+	 * @param data     按钮的 {@code data}
+	 * @return true 表示已命中一条待审核请求
+	 */
+	public boolean answerButton(String botId, String senderId, String data) {
+		if (data == null || data.isEmpty()) {
+			return false;
+		}
+		String[] parts = data.split(":", 3);
+		if (parts.length < 3 || !"tool".equals(parts[0])) {
+			return false;
+		}
+		PendingApproval target;
+		synchronized (queue) {
+			target = findPendingById(parts[1]);
+			if (target == null || target.answered || !target.adminIds.contains(senderId)) {
+				return false;
+			}
+			if (botId != null && !Objects.equals(target.botId, botId)) {
+				return false;
+			}
+			queue.remove(target);
+			pendingCount.decrementAndGet();
+			target.answered = true;
+		}
+		complete(target, "allow".equals(parts[2]), null);
+		return true;
+	}
+
+	private void complete(PendingApproval target, boolean allowed, String reason) {
+		boolean accepted = allowed ? target.request.approve() : target.request.deny(reason);
 		if (!accepted) {
-			send(target.adminId, "【工具审核】该请求已超时或已处理，本次答复未生效。");
-			return true;
+			for (String adminId : target.adminIds) {
+				send(adminId, "【工具审核】该请求已超时或已处理，本次答复未生效。");
+			}
+			return;
 		}
 		StringBuilder reply = new StringBuilder("【工具审核】已")
-				.append(answer.allowed ? "允许" : "拒绝")
+				.append(allowed ? "允许" : "拒绝")
 				.append("工具「").append(target.request.getToolName()).append("」");
-		if (answer.allowed) {
+		if (allowed) {
 			reply.append("执行。");
 		} else {
-			if (answer.reason != null) {
-				reply.append("，拒绝原因：").append(answer.reason);
+			if (reason != null) {
+				reply.append("，拒绝原因：").append(reason);
 			}
 			reply.append("。");
 		}
-		send(target.adminId, reply.toString());
-		return true;
+		for (String adminId : target.adminIds) {
+			send(adminId, reply.toString());
+		}
+	}
+
+	/** 审核卡片上的两个按钮。 */
+	private static List<ChatButton> cardButtons(PendingApproval pending) {
+		return java.util.Arrays.asList(
+				new ChatButton("allow", "允许", "已允许", "tool:" + pending.id + ":allow", 1),
+				new ChatButton("deny", "拒绝", "已拒绝", "tool:" + pending.id + ":deny", 3));
 	}
 
 	/** 找到与这条私聊匹配的待答复请求：按机器人 + 管理员匹配；botId 未知（null）时才放宽。 */
 	private PendingApproval findPending(String botId, String senderId) {
 		for (PendingApproval pending : queue) {
-			if (Objects.equals(pending.adminId, senderId)
+			if (pending.adminIds.contains(senderId)
 					&& (botId == null || Objects.equals(pending.botId, botId))) {
+				return pending;
+			}
+		}
+		return null;
+	}
+
+	private PendingApproval findPendingById(String id) {
+		for (PendingApproval pending : queue) {
+			if (pending.id.equals(id)) {
 				return pending;
 			}
 		}
@@ -258,7 +379,7 @@ public class QqToolApprovalManager implements Closeable {
 		if (arguments != null && !arguments.trim().isEmpty()) {
 			question.append("\n参数：\n").append(shorten(arguments.trim(), 600));
 		}
-		question.append("\n直接回复「允许」或「拒绝」；拒绝时可回复「拒绝 原因」，原因会转告模型。（")
+		question.append("\n直接回复「允许」/「拒绝」，或点击下方按钮；拒绝时可回复「拒绝 原因」，原因会转告模型。（")
 				.append(timeoutMillis / 1000L).append(" 秒内有效）");
 		return question.toString();
 	}

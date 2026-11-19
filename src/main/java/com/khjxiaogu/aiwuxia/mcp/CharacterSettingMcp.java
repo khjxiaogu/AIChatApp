@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -303,7 +304,7 @@ public class CharacterSettingMcp implements ToolProvider {
         if (args == null) {
             return "参数格式错误：需要 JSON 对象，例如 {\"query\":\"枫茜\"}。";
         }
-        String query = string(args, "query");
+        String query = JsonConfig.getString(args, "query");
         if (query == null || query.trim().isEmpty()) {
             return "参数格式错误：query 不能为空。";
         }
@@ -315,11 +316,11 @@ public class CharacterSettingMcp implements ToolProvider {
         if (args == null) {
             return "参数格式错误：需要 JSON 对象，例如 {\"character\":\"姚枫茜\",\"work\":\"\"}。";
         }
-        String character = string(args, "character");
+        String character = JsonConfig.getString(args, "character");
         if (character == null || character.trim().isEmpty()) {
             return "参数格式错误：character 不能为空。";
         }
-        return setting(dataFolder, character, string(args, "work"));
+        return setting(dataFolder, character, JsonConfig.getString(args, "work"));
     }
 
     private static JsonObject parseArguments(String arguments) {
@@ -329,14 +330,6 @@ public class CharacterSettingMcp implements ToolProvider {
         } catch (RuntimeException ex) {
             return null;
         }
-    }
-
-    private static String string(JsonObject object, String key) {
-        if (object == null || !object.has(key) || object.get(key).isJsonNull()
-                || !object.get(key).isJsonPrimitive()) {
-            return null;
-        }
-        return object.get(key).getAsString();
     }
 
     // ==================== 索引读取 ====================

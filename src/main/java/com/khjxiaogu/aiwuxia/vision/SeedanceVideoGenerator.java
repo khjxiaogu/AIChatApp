@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.vision;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -52,7 +53,7 @@ import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
  * <tr><td>videoRatio</td><td>9:16</td><td>画幅，默认竖版 9:16</td></tr>
  * <tr><td>videoFps</td><td>24</td><td>计费用输出帧率；Seedance 默认 24fps，实际不同时改这里</td></tr>
  * <tr><td>videoWidth / videoHeight</td><td>按分辨率/画幅推导</td><td>计费用输出尺寸，可选覆盖</td></tr>
- * <tr><td>videoGenerateAudio</td><td>true</td><td>是否生成音频</td></tr>
+ * <tr><td>videoGenerateAudio</td><td>已强制 false</td><td>所有视频 MCP 均禁用音频，配置该项不再生效</td></tr>
  * <tr><td>videoWatermark</td><td>false</td><td>是否加水印</td></tr>
  * <tr><td>videoPollIntervalMs</td><td>5000</td><td>轮询间隔毫秒</td></tr>
  * <tr><td>videoMaxPollAttempts</td><td>360</td><td>最大轮询次数（默认约 30 分钟）</td></tr>
@@ -92,7 +93,7 @@ public class SeedanceVideoGenerator {
 		JsonObject cfg = config == null ? new JsonObject() : config;
 		String configuredKey = firstString(cfg, "apiKey", "arkApiKey", null);
 		if (configuredKey == null) {
-			configuredKey = primitiveString(cfg, "videoApiKey");
+			configuredKey = JsonConfig.getString(cfg, "videoApiKey");
 		}
 		String key = configuredKey == null ? null : configuredKey.trim();
 		// 允许配置里直接粘贴 "Bearer xxx"，避免请求头出现两个 Bearer
@@ -102,14 +103,14 @@ public class SeedanceVideoGenerator {
 		this.apiKey = key;
 		this.baseUrl = trimTrailingSlash(firstString(cfg, "videoBaseUrl", "arkBaseUrl", DEFAULT_BASE_URL));
 		this.model = firstString(cfg, "videoModel", "arkVideoModel", DEFAULT_MODEL);
-		int configuredDuration = intValue(cfg, "videoDuration", 10);
+		int configuredDuration = JsonConfig.getInt(cfg, "videoDuration", 10);
 		// 本工具需求：单条视频最大 15 秒；未配置、0、负数都按默认 10 秒，超过 15 秒按 15 秒处理
 		this.duration = Math.max(4, Math.min(15, configuredDuration > 0 ? configuredDuration : 10));
 		this.resolution = normalizeResolution(firstString(cfg, "videoResolution", "480p"));
 		this.ratio = firstString(cfg, "videoRatio", "9:16");
 		int[] derivedSize = dimensions(this.ratio, resolutionShortSide(this.resolution));
-		int configuredWidth = intValue(cfg, "videoWidth", 0);
-		int configuredHeight = intValue(cfg, "videoHeight", 0);
+		int configuredWidth = JsonConfig.getInt(cfg, "videoWidth", 0);
+		int configuredHeight = JsonConfig.getInt(cfg, "videoHeight", 0);
 		if (configuredWidth > 0 && configuredHeight > 0) {
 			this.width = configuredWidth;
 			this.height = configuredHeight;
@@ -118,13 +119,14 @@ public class SeedanceVideoGenerator {
 			this.height = derivedSize[1];
 		}
 		// 计费用帧率；Seedance 默认 24fps，实际输出不同时可通过 videoFps 校准
-		int configuredFps = intValue(cfg, "videoFps", 24);
+		int configuredFps = JsonConfig.getInt(cfg, "videoFps", 24);
 		this.fps = Math.max(1, Math.min(120, configuredFps > 0 ? configuredFps : 24));
-		this.generateAudio = boolValue(cfg, "videoGenerateAudio", true);
-		this.watermark = boolValue(cfg, "videoWatermark", false);
-		this.pollIntervalMs = Math.max(1000, longValue(cfg, "videoPollIntervalMs", 5000));
+		// 所有视频生成 MCP 均禁用音频：即使配置里写了 videoGenerateAudio=true 也不生成
+		this.generateAudio = false;
+		this.watermark = JsonConfig.getBool(cfg, "videoWatermark", false);
+		this.pollIntervalMs = Math.max(1000, JsonConfig.getLong(cfg, "videoPollIntervalMs", 5000));
 		this.maxPollAttempts = (int) Math.min(Integer.MAX_VALUE,
-				Math.max(1, longValue(cfg, "videoMaxPollAttempts", 720*3)));
+				Math.max(1, JsonConfig.getLong(cfg, "videoMaxPollAttempts", 720*3)));
 	}
 
 	/** API Key 是否已配置。 */
@@ -452,56 +454,11 @@ public class SeedanceVideoGenerator {
 	}
 
 	/** 取第一个非空字符串字段。 */
-	private static String firstString(JsonObject object, String key, String alias, String fallback) {		String value = primitiveString(object, key);
+	private static String firstString(JsonObject object, String key, String alias, String fallback) {		String value = JsonConfig.getString(object, key);
 		if (value == null || value.trim().isEmpty()) {
-			value = primitiveString(object, alias);
+			value = JsonConfig.getString(object, alias);
 		}
 		return value == null || value.trim().isEmpty() ? fallback : value.trim();
-	}
-
-	/** 读取字符串字段。 */
-	private static String primitiveString(JsonObject object, String key) {
-		if (object == null || key == null || !object.has(key) || object.get(key).isJsonNull()) {
-			return null;
-		}
-		JsonElement element = object.get(key);
-		return element.isJsonPrimitive() ? element.getAsString() : null;
-	}
-
-	/** 读取整数字段。 */
-	private static int intValue(JsonObject object, String key, int fallback) {
-		if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
-			return fallback;
-		}
-		try {
-			return object.get(key).getAsInt();
-		} catch (RuntimeException e) {
-			return fallback;
-		}
-	}
-
-	/** 读取长整数字段。 */
-	private static long longValue(JsonObject object, String key, long fallback) {
-		if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
-			return fallback;
-		}
-		try {
-			return object.get(key).getAsLong();
-		} catch (RuntimeException e) {
-			return fallback;
-		}
-	}
-
-	/** 读取布尔字段。 */
-	private static boolean boolValue(JsonObject object, String key, boolean fallback) {
-		if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
-			return fallback;
-		}
-		try {
-			return object.get(key).getAsBoolean();
-		} catch (RuntimeException e) {
-			return fallback;
-		}
 	}
 
 	/** 分辨率字符串转短边像素（480p/720p/1080p）。 */

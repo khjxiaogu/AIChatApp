@@ -227,6 +227,96 @@
             color: #5b6e8c;
             font-size: 0.75rem;
         }
+        /* 视频卡片：与图片同风格，原生控件 + 说明与下载/全屏入口 */
+        .message-video {
+            margin-top: 8px;
+            max-width: 300px;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            background: #0b1220;
+            overflow: hidden;
+        }
+        .message-video video {
+            width: 100%;
+            max-height: 420px;
+            display: block;
+            background: #000;
+        }
+        .video-placeholder {
+            padding: 22px 12px;
+            text-align: center;
+            color: #93a3b8;
+            font-size: 0.75rem;
+            background: #0f172a;
+        }
+        .video-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 6px 10px;
+            background: #f8fafc;
+            border-top: 1px solid #e2e8f0;
+            font-size: 0.72rem;
+            color: #5b6e8c;
+        }
+        .video-meta-label {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .video-actions {
+            display: flex;
+            gap: 10px;
+            flex: none;
+        }
+        .video-link {
+            color: #1e6fdf;
+            text-decoration: none;
+            font-size: 0.72rem;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .video-link:hover {
+            text-decoration: underline;
+        }
+        /* 异步长任务（视频生成）提示：输入框上方常驻，避免用户以为没反应 */
+        .pending-tasks {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 8px 12px 0;
+        }
+        .pending-task {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: fit-content;
+            max-width: 100%;
+            padding: 5px 12px;
+            border-radius: 999px;
+            background: #f1f5f9;
+            font-size: 0.75rem;
+            color: #5b6e8c;
+        }
+        .pending-task .pending-spinner {
+            flex: none;
+            width: 10px;
+            height: 10px;
+            border: 2px solid #cbd5e1;
+            border-top-color: #1e6fdf;
+            border-radius: 50%;
+            animation: historySpin 0.8s linear infinite;
+        }
+        .pending-task .pending-name {
+            font-weight: 600;
+            color: #334155;
+        }
+        .pending-task .pending-elapsed {
+            color: #8196b0;
+            font-variant-numeric: tabular-nums;
+        }
 
         /* 输入区域 */
         .input-area {
@@ -380,12 +470,14 @@
             z-index: 10000;
             cursor: pointer;
         }
-        .fullscreen-overlay img {
+        .fullscreen-overlay img,
+        .fullscreen-overlay video {
             max-width: 95vw;
             max-height: 95vh;
             object-fit: contain;
             border-radius: 8px;
             box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+            background: #000;
         }
         /* 全屏图片的描述与下载：文件名取自图片描述 */
         .fullscreen-caption {
@@ -737,7 +829,7 @@
             word-break: break-word;
         }
 
-        /* ---- 图片安全模式：对话里的图片深度模糊，全屏查看时保持清晰 ---- */
+        /* ---- 图片安全模式：对话里的图片/视频深度模糊，全屏查看时保持清晰 ---- */
         .image-safe .message-image {
             overflow: hidden;
         }
@@ -746,7 +838,12 @@
             transform: scale(1.06);
             transition: filter 0.2s;
         }
-        .image-safe .fullscreen-overlay img {
+        .image-safe .message-video video {
+            filter: blur(16px);
+            transition: filter 0.2s;
+        }
+        .image-safe .fullscreen-overlay img,
+        .image-safe .fullscreen-overlay video {
             filter: none;
             transform: none;
         }
@@ -815,6 +912,32 @@
         html:not(.day-mode) .message-image {
             border-color: #2b333e;
             background: #1a212a;
+        }
+        html:not(.day-mode) .message-video {
+            border-color: #2b333e;
+            background: #0b1220;
+        }
+        html:not(.day-mode) .video-meta {
+            background: #1d242d;
+            border-top-color: #2b333e;
+            color: #93a3b8;
+        }
+        html:not(.day-mode) .video-link {
+            color: #9dc0ff;
+        }
+        html:not(.day-mode) .pending-task {
+            background: #1d242d;
+            color: #93a3b8;
+        }
+        html:not(.day-mode) .pending-task .pending-name {
+            color: #dbe8ff;
+        }
+        html:not(.day-mode) .pending-task .pending-elapsed {
+            color: #8b9bb0;
+        }
+        html:not(.day-mode) .pending-task .pending-spinner {
+            border-color: #33404e;
+            border-top-color: #9dc0ff;
         }
         html:not(.day-mode) .quote-block,
         html:not(.day-mode) .quote-preview {
@@ -1004,7 +1127,7 @@
         <div v-else-if="historyTopReached && !hasMoreHistory" class="history-tip">没有更多历史记录了</div>
         <div v-for="(msg, idx) in messages" :key="msg._key || (msg._id != null ? 'm' + msg._id : 'n' + idx)" :class="['message', msg.role === 'user' ? 'user-message' : 'assistant-message']">
             <div class="message-bubble">
-                <!-- 用户消息：支持文本和图片 -->
+                <!-- 用户消息：支持文本、图片与视频 -->
                 <div v-if="msg.role === 'user'">
                     <div v-for="(part, pIdx) in msg.contentItems" :key="'u'+pIdx">
                         <div v-if="part.type === 'quote'" class="quote-block">
@@ -1012,14 +1135,7 @@
                             <div class="quote-block-text">{{ part.content }}</div>
                         </div>
                         <div v-if="part.type === 'text'" style="white-space: pre-wrap;">{{ part.content }}</div>
-                        <div v-if="part.type === 'image'" class="message-image">
-                            <img v-if="part.image_url" :src="part.image_url" :alt="part.description || '用户上传图片'" :title="part.description || ''" @click.stop="openFullscreen(part.image_url, part.description)" style="cursor:pointer" />
-                            <div v-else class="image-placeholder">加载中...</div>
-                            <div v-if="part.description" class="image-caption">{{ part.description }}</div>
-                        </div>
-                        <div v-if="part.type === 'video'" class="message-image">
-                            <video :src="part.video_url" controls style="width:100%;"></video>
-                        </div>
+                        <painter-media v-if="part.type === 'image' || part.type === 'video'" :part="part"></painter-media>
                     </div>
                     <button v-if="!aiGenerating&&idx==messages.length-1" class="btn-generate" @click="triggerGenerate" :disabled="!aiConnected" :title="aiConnected ? '按当前对话生成' : '连接断开，暂时无法生成'">生成</button>
                     <div class="message-quote-bar">
@@ -1052,14 +1168,7 @@
                                 <div v-if="seg.expanded && hasToolDetail(seg)" class="tool-detail">
                                     <div v-for="(part, dIdx) in seg.detail" :key="'d' + dIdx">
                                         <div v-if="part.type === 'text'" class="tool-detail-text">{{ part.content }}</div>
-                                        <div v-else-if="part.type === 'image'" class="message-image">
-                                            <img v-if="part.image_url" :src="part.image_url" :alt="part.description || '工具详情图片'" :title="part.description || ''" @click.stop="openFullscreen(part.image_url, part.description)" style="cursor:pointer" />
-                                            <div v-else class="image-placeholder">加载中...</div>
-                                            <div v-if="part.description" class="image-caption">{{ part.description }}</div>
-                                        </div>
-                                        <div v-else-if="part.type === 'video'" class="message-image">
-                                            <video :src="part.video_url" controls style="width:100%;"></video>
-                                        </div>
+                                        <painter-media v-else-if="part.type === 'image' || part.type === 'video'" :part="part"></painter-media>
                                     </div>
                                 </div>
                             </div>
@@ -1072,14 +1181,7 @@
                             <div class="quote-block-text">{{ item.content }}</div>
                         </div>
                         <div v-if="item.type === 'text' && item.content" class="final-content">{{ item.content }}</div>
-                        <div v-if="item.type === 'image'" class="message-image">
-                            <img v-if="item.image_url" :src="item.image_url" :alt="item.description || 'AI生成的图片'" :title="item.description || ''" @click.stop="openFullscreen(item.image_url, item.description)" style="cursor:pointer" />
-                            <div v-else class="image-placeholder">加载中...</div>
-                            <div v-if="item.description" class="image-caption">{{ item.description }}</div>
-                        </div>
-                        <div v-if="item.type === 'video'" class="message-image">
-                            <video :src="item.video_url" controls style="width:100%;"></video>
-                        </div>
+                        <painter-media v-if="item.type === 'image' || item.type === 'video'" :part="item"></painter-media>
                     </div>
                     <!-- 本轮配额用量：历史记录随消息下发 token_cost，实时轮次由 done.tokens 补到本条 -->
                     <div v-if="msg.tokenCost > 0" class="turn-tokens" title="本轮对话消耗的配额">本轮配额 {{ formatTurnTokens(msg.tokenCost) }}</div>
@@ -1109,6 +1211,14 @@
             </div>
             <div class="quote-preview-body">{{ quoteMessage.text }}</div>
         </div>
+        <!-- 异步长任务（视频生成）：本轮回复已结束也继续显示，完成后由服务端补发视频消息 -->
+        <div v-if="aiTasks && aiTasks.length" class="pending-tasks">
+            <div v-for="task in aiTasks" :key="task.id" class="pending-task">
+                <span class="pending-spinner"></span>
+                <span><span class="pending-name">{{ aiTaskName(task) }}</span> 生成中…</span>
+                <span class="pending-elapsed">{{ aiTaskElapsed(task) }}</span>
+            </div>
+        </div>
         <div class="input-row">
             <textarea v-model="inputText" rows="1" placeholder="输入消息..." @keydown.ctrl.enter="sendTextMessage" @keydown.meta.enter="sendTextMessage"></textarea>
             <!-- 连接断开时发送/停止/图片一律禁用；设置属于本地功能，始终可用 -->
@@ -1117,15 +1227,18 @@
 			<button @click="aiSendStop" v-if="aiGenerating" :disabled="!aiConnected || aiStopping" :class="{ 'btn-waiting': aiStopping }">{{ aiStopping ? '停止中…' : '停止' }}</button>
 
             <button @click="triggerFileUpload" :disabled="!aiConnected || aiGenerationBusy" :title="!aiConnected ? '连接断开，暂时无法上传图片' : (aiGenerationBusy ? '正在生成，无法上传图片' : '上传图片')">图片</button>
+            <button @click="triggerVideoUpload" :disabled="!aiConnected || aiGenerationBusy" :title="!aiConnected ? '连接断开，暂时无法上传视频' : (aiGenerationBusy ? '正在生成，无法上传视频' : '上传视频')">视频</button>
 			<button @click="openSettings" title="设置">设置</button>
             <input type="file" ref="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none" :disabled="!aiConnected || aiGenerationBusy" @change="onFileSelected" />
+            <input type="file" ref="videoInput" accept="video/mp4,video/webm,video/quicktime" style="display: none" :disabled="!aiConnected || aiGenerationBusy" @change="onVideoSelected" />
         </div>
     </div>
-    <!-- 全屏看图 -->
-    <div class="fullscreen-overlay" v-if="fullscreenImage" @click="closeFullscreen">
-        <img :src="fullscreenImage" :alt="fullscreenDescription || '图片预览'" :title="fullscreenDescription || ''" />
-        <div v-if="fullscreenDescription" class="fullscreen-caption">{{ fullscreenDescription }}</div>
-        <a class="fullscreen-download" :href="fullscreenImage" :download="imageDownloadName(fullscreenDescription)" @click.prevent.stop="downloadImage(fullscreenImage, fullscreenDescription)">下载图片</a>
+    <!-- 全屏查看图片/视频 -->
+    <div class="fullscreen-overlay" v-if="fullscreenMedia" @click="closeFullscreen">
+        <video v-if="fullscreenMedia.kind === 'video'" :src="fullscreenMedia.url" controls autoplay playsinline @click.stop></video>
+        <img v-else :src="fullscreenMedia.url" :alt="fullscreenMedia.description || '图片预览'" :title="fullscreenMedia.description || ''" />
+        <div v-if="fullscreenMedia.description" class="fullscreen-caption">{{ fullscreenMedia.description }}</div>
+        <a class="fullscreen-download" :href="fullscreenMedia.url" :download="mediaDownloadName(fullscreenMedia.description, fullscreenMedia.kind)" @click.prevent.stop="downloadMedia(fullscreenMedia.url, fullscreenMedia.description, fullscreenMedia.kind)">下载{{ fullscreenMedia.kind === 'video' ? '视频' : '图片' }}</a>
     </div>
 
     <!-- 设置弹窗：主题 / 图片安全 / 模型 -->
@@ -1144,7 +1257,7 @@
                     <span class="setting-switch-knob"></span>
                 </button>
             </div>
-            <p>图片安全模式开启后，对话中的图片会被深度模糊，点击图片全屏查看原图。</p>
+            <p>图片安全模式开启后，对话中的图片和视频会被深度模糊，点击图片/视频全屏查看原图。</p>
             <!-- 模型切换要经服务端生效，连接断开时整块置灰 -->
             <div class="setting-model" :class="{ 'is-disabled': !aiConnected }">
                 <h4 class="setting-subtitle">选择模型</h4>
@@ -1205,15 +1318,15 @@ function getOrCreateConversationId(on_loaded) {
 // WebSocket 连接的建立、重连与心跳由公共协议层（ai-protocol.js + heartbeat.js）负责，
 // 本页只需要提供 aiSocketUrl() 并实现各帧钩子。
 
-// 图片上传 - 调用真实后端接口
+// 图片/视频上传 - 调用真实后端接口
 // 失败时返回 { code:-1, httpStatus, message }，其中 message 为可展示的真实失败原因
-async function realUploadImage(file, conversationId) {
+async function postPainterMedia(url, field, file, conversationId) {
     const formData = new FormData();
     formData.append('conversation_id', conversationId);
-    formData.append('image', file);
+    formData.append(field, file);
     let resp;
     try {
-        resp = await fetch('painter/uploadImage', { method: 'POST', body: formData });
+        resp = await fetch(url, { method: 'POST', body: formData });
     } catch (err) {
         // 请求根本没发出去（断网、跨域、被拦截等）
         return { code: -1, httpStatus: 0, message: '网络请求失败：' + (err && err.message ? err.message : String(err)) };
@@ -1227,12 +1340,7 @@ async function realUploadImage(file, conversationId) {
         data = null;
     }
     if (resp.ok && data && data.code === 0) {
-        const reader = new FileReader();
-        const previewDataUrl = await new Promise((resolve) => {
-            reader.onload = (e) => resolve(e.target.result);
-            reader.readAsDataURL(file);
-        });
-        return { code: 0, imageId: data.imageId, previewDataUrl };
+        return { code: 0, data: data };
     }
     // 依次尝试：后端消息字段 -> 响应原文（去掉HTML标签）-> HTTP状态文本
     let reason = data && (data.message || data.msg || data.error);
@@ -1250,10 +1358,104 @@ async function realUploadImage(file, conversationId) {
     };
 }
 
-// 根据图片ID获取图片URL - 调用真实后端接口（站点地址来自 site-config.js，未配置时跟随页面域名）
-async function fetchImageById(imageId, conversationId) {
+async function realUploadImage(file, conversationId) {
+    const res = await postPainterMedia('painter/uploadImage', 'image', file, conversationId);
+    if (res.code !== 0) return res;
+    return { code: 0, imageId: res.data.imageId };
+}
+
+async function realUploadVideo(file, conversationId) {
+    const res = await postPainterMedia('painter/uploadVideo', 'video', file, conversationId);
+    if (res.code !== 0) return res;
+    return { code: 0, videoId: res.data.videoId };
+}
+
+// 输入上限（与服务端一致）：视频最多 200MB，超过时前端直接提示，避免白等一次上传
+const MAX_UPLOAD_VIDEO_BYTES = 200 * 1024 * 1024;
+
+// 根据图片/视频 ID 生成取用地址（站点地址来自 site-config.js，未配置时跟随页面域名）
+// 图片与视频都是内容寻址的对象存储 id，Content-Type 由服务端按文件内容推断
+function fetchImageById(imageId) {
     return `${aiSiteHttpBase()}/aichat/painter/image?image_id=${encodeURIComponent(imageId)}`;
 }
+
+function fetchVideoById(videoId) {
+    return `${aiSiteHttpBase()}/aichat/painter/video?video_id=${encodeURIComponent(videoId)}`;
+}
+
+/**
+ * 判断一个媒体地址是否已经是可以直接播放/显示的地址。
+ * <p>对象存储 id 是 72 位内容哈希（可带扩展名），需要换成本站取用地址；
+ * 即梦等云端生成的视频直接给出 http(s) 地址，data URL 也能直接用。</p>
+ */
+function isMediaUrl(value) {
+    return /^(https?:|data:|blob:)/i.test(String(value == null ? '' : value));
+}
+
+/**
+ * 媒体内容组件：图片/视频的统一渲染（说明、下载、全屏、加载失败占位）。
+ * <p>
+ * 用户内容、工具详情、助手内容三处共用同一份实现：视频支持（对象存储 id → 播放地址、
+ * 说明、下载、全屏）只在这里维护一次，避免漏掉某个位置。
+ * </p>
+ */
+Vue.component('painter-media', {
+    props: {
+        part: { type: Object, required: true },
+    },
+    template: `
+        <div class="media-part">
+            <div v-if="part.type === 'image'" class="message-image">
+                <img v-if="part.image_url && !imageError" :src="part.image_url"
+                     :alt="part.description || '对话图片'" :title="part.description || ''"
+                     style="cursor:pointer" @click.stop="openImage" @error="imageError = true" />
+                <div v-if="!part.image_url || imageError" class="image-placeholder">{{ imageError ? '图片加载失败' : '加载中...' }}</div>
+                <div v-if="part.description" class="image-caption">{{ part.description }}</div>
+            </div>
+            <div v-else-if="part.type === 'video'" class="message-video">
+                <video v-if="part.video_url && !videoError" :src="part.video_url" controls playsinline preload="metadata"
+                       @error="videoError = true" @loadedmetadata="onLoadedMetadata"></video>
+                <div v-if="!part.video_url || videoError" class="video-placeholder">{{ videoError ? '视频无法播放或已被清理' : '视频加载中...' }}</div>
+                <div class="video-meta">
+                    <span class="video-meta-label" :title="part.description || ''">{{ part.description || '生成视频' }}<template v-if="durationText"> · {{ durationText }}</template></span>
+                    <span class="video-actions">
+                        <a v-if="part.video_url" class="video-link" href="#" title="下载视频" @click.prevent="download">下载</a>
+                        <a v-if="part.video_url" class="video-link" href="#" title="全屏查看视频" @click.prevent="openVideo">全屏</a>
+                    </span>
+                </div>
+            </div>
+        </div>
+    `,
+    data: function () {
+        return {
+            imageError: false,
+            videoError: false,
+            durationText: '',
+        };
+    },
+    methods: {
+        openImage: function () {
+            if (this.part.image_url)
+                this.$root.openFullscreen(this.part.image_url, this.part.description);
+        },
+        openVideo: function () {
+            if (this.part.video_url)
+                this.$root.openVideoFullscreen(this.part.video_url, this.part.description);
+        },
+        download: function () {
+            this.$root.downloadMedia(this.part.video_url, this.part.description, 'video');
+        },
+        onLoadedMetadata: function (e) {
+            var seconds = e && e.target ? e.target.duration : 0;
+            if (!isFinite(seconds) || seconds <= 0)
+                return;
+            var total = Math.round(seconds);
+            var minutes = Math.floor(total / 60);
+            var rest = total % 60;
+            this.durationText = minutes + ':' + (rest < 10 ? '0' + rest : rest);
+        },
+    },
+});
 
 // Vue 主应用
 var main=new Vue({
@@ -1268,9 +1470,8 @@ var main=new Vue({
         quoteMessage: null,
         selectedFile: null,
         uploadedImageId: null,
-        fullscreenImage: null,
-        // 全屏图片的网页描述（同时作为下载文件名来源）
-        fullscreenDescription: '',
+        // 全屏查看的媒体：{kind:'image'|'video', url, description}，null 表示未打开
+        fullscreenMedia: null,
         // 侧边栏
         showSidebar: false,
         chatList: [],
@@ -1285,7 +1486,7 @@ var main=new Vue({
     async mounted() {
         this._onKeydown = (e) => {
             if (e.key !== 'Escape') return;
-            if (this.fullscreenImage) this.closeFullscreen();
+            if (this.fullscreenMedia) this.closeFullscreen();
             else if (this.showSettings) this.closeSettings();
         };
         document.addEventListener('keydown', this._onKeydown);
@@ -1416,44 +1617,59 @@ var main=new Vue({
             if (state !== 'connected') this.aiGenerating = false;
         },
         aiOnPopState() {
-            // 浏览器后退：全屏图片开着时只关闭它
+            // 浏览器后退：全屏查看开着时只关闭它
             this._fullscreenPushed = false;
-            this.fullscreenImage = null;
-            this.fullscreenDescription = '';
+            this.fullscreenMedia = null;
         },
-        // ------------------------- 全屏看图
-        // 打开时压入一条历史记录，使浏览器"后退"只关闭图片而不会离开页面
+        // ------------------------- 全屏看图片/视频
+        // 打开时压入一条历史记录，使浏览器"后退"只关闭媒体而不会离开页面
         openFullscreen(url, description) {
+            this.openFullscreenMedia('image', url, description);
+        },
+        openVideoFullscreen(url, description) {
+            this.openFullscreenMedia('video', url, description);
+        },
+        openFullscreenMedia(kind, url, description) {
             if (!url) return;
-            if (!this.fullscreenImage) {
+            if (!this.fullscreenMedia) {
                 try {
                     history.pushState({ painterFullscreen: true }, '');
                     this._fullscreenPushed = true;
                 } catch (err) {
                     // 受限环境（如 file:// 或沙箱 iframe）可能不允许 pushState，降级为普通开关
                     this._fullscreenPushed = false;
-                    console.warn('pushState 失败，浏览器后退键无法只关闭图片', err);
+                    console.warn('pushState 失败，浏览器后退键无法只关闭媒体', err);
                 }
             }
-            this.fullscreenImage = url;
-            this.fullscreenDescription = description || '';
+            this.fullscreenMedia = { kind: kind === 'video' ? 'video' : 'image', url: url, description: description || '' };
         },
-        // 把图片描述转换为安全的下载文件名：去掉路径分隔符等非法字符，限制长度
-        imageDownloadName(description, mime) {
-            const raw = String(description || 'aiwuxia-image')
+        // 把描述转换为安全的下载文件名：去掉路径分隔符等非法字符，限制长度
+        // kind 为 video 时按 blob MIME / 地址后缀判断扩展名，其余按图片处理
+        mediaDownloadName(description, kind, mime, url) {
+            const fallback = kind === 'video' ? 'aiwuxia-video' : 'aiwuxia-image';
+            const raw = String(description || fallback)
                 .replace(/[\\/:*?"<>|\r\n\t]+/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim();
-            const base = raw.slice(0, 60) || 'aiwuxia-image';
+            const base = raw.slice(0, 60) || fallback;
             const type = String(mime || '');
-            const ext = type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0 ? '.jpg'
-                : type.indexOf('webp') >= 0 ? '.webp'
-                : type.indexOf('gif') >= 0 ? '.gif'
-                : '.png';
+            const source = String(url || '');
+            let ext;
+            if (kind === 'video') {
+                ext = type.indexOf('webm') >= 0 || /\.webm(\?|$)/i.test(source) ? '.webm'
+                    : type.indexOf('quicktime') >= 0 || /\.mov(\?|$)/i.test(source) ? '.mov'
+                    : '.mp4';
+            } else {
+                ext = type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0 ? '.jpg'
+                    : type.indexOf('webp') >= 0 ? '.webp'
+                    : type.indexOf('gif') >= 0 ? '.gif'
+                    : type.indexOf('svg') >= 0 ? '.svg'
+                    : '.png';
+            }
             return base + ext;
         },
-        // 用描述作为文件名下载图片；跨域或接口不支持 fetch 时退回打开原图
-        async downloadImage(url, description) {
+        // 用描述作为文件名下载媒体；跨域或接口不支持 fetch 时退回打开原地址
+        async downloadMedia(url, description, kind) {
             if (!url) return;
             try {
                 const resp = await fetch(url, { credentials: 'include' });
@@ -1462,31 +1678,36 @@ var main=new Vue({
                 const objectUrl = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = objectUrl;
-                a.download = this.imageDownloadName(description, blob.type);
+                a.download = this.mediaDownloadName(description, kind, blob.type, url);
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
                 setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
             } catch (e) {
-                console.warn('下载图片失败，改为打开原图', e);
+                console.warn('下载失败，改为打开原地址', e);
                 window.open(url, '_blank');
             }
         },
+        // 兼容旧调用
+        imageDownloadName(description, mime) {
+            return this.mediaDownloadName(description, 'image', mime, '');
+        },
+        downloadImage(url, description) {
+            return this.downloadMedia(url, description, 'image');
+        },
         // 关闭并消费掉压入的历史记录，避免历史栈里残留多余条目
         closeFullscreen() {
-            if (!this.fullscreenImage) return;
-            this.fullscreenImage = null;
-            this.fullscreenDescription = '';
+            if (!this.fullscreenMedia) return;
+            this.fullscreenMedia = null;
             if (this._fullscreenPushed) {
                 this._fullscreenPushed = false;
                 history.back();
             }
         },
-        // 浏览器后退：全屏图片开着时只关闭它
+        // 浏览器后退：全屏查看开着时只关闭它
         onPopState() {
             this._fullscreenPushed = false;
-            this.fullscreenImage = null;
-            this.fullscreenDescription = '';
+            this.fullscreenMedia = null;
         },
         // ------------------------- 设置：模型 / 主题 / 图片安全
         openSettings() {
@@ -1752,11 +1973,24 @@ var main=new Vue({
                 } else if (item.type === 'text') {
                     this.pushTextPart(result, item.text || '');
                 } else if (item.type === 'image') {
-                    const p = { type: 'image', image_id: item.image_url, image_url: null, description: item.description || '' };
-                    result.contentItems.push(p);
+                    // 图片/视频的地址字段可能已经是远端地址（云端生成），也可能是对象存储 id（本站存储）
+                    const raw = item.image_url || item.image_id || '';
+                    const absolute = isMediaUrl(raw);
+                    result.contentItems.push({
+                        type: 'image',
+                        image_id: absolute ? '' : raw,
+                        image_url: absolute ? raw : (raw ? fetchImageById(raw) : ''),
+                        description: item.description || '',
+                    });
                 } else if (item.type === 'video') {
-                    const p = { type: 'video', video_url: item.video_url, description: item.description || '' };
-                    result.contentItems.push(p);
+                    const raw = item.video_url || item.video_id || '';
+                    const absolute = isMediaUrl(raw);
+                    result.contentItems.push({
+                        type: 'video',
+                        video_id: absolute ? '' : raw,
+                        video_url: absolute ? raw : (raw ? fetchVideoById(raw) : ''),
+                        description: item.description || '',
+                    });
                 } else {
                     const t = item.description || item.result || '';
                     this.pushTextPart(result, t);
@@ -1767,13 +2001,11 @@ var main=new Vue({
         async resolvePartUrls(parts) {
             if (!parts) return;
             for (const part of parts) {
+                // 兼容旧结构：只有 id、还没换成地址的图片/视频
                 if (part.type === 'image' && part.image_id && !part.image_url) {
-                    try {
-                        part.image_url = await fetchImageById(part.image_id, this.conversationId);
-                    } catch(e) {
-                        console.error("加载图片失败", e);
-                        part.image_url = '';
-                    }
+                    part.image_url = fetchImageById(part.image_id);
+                } else if (part.type === 'video' && part.video_id && !part.video_url) {
+                    part.video_url = fetchVideoById(part.video_id);
                 }
             }
             this.$forceUpdate();
@@ -1795,7 +2027,7 @@ var main=new Vue({
         },
         // 根据图片ID获取真实URL
         async loadImageById(imageId) {
-            return await fetchImageById(imageId, this.conversationId);
+            return fetchImageById(imageId);
         },
         // 引用按钮是否显示：消息要有正文；本轮还没生成的用户输入（列表最后一条用户消息）先不显示
         canQuoteMessage(msg, idx) {
@@ -1860,7 +2092,7 @@ var main=new Vue({
                 this.scrollToBottom(true);
             }
         },
-        // 触发文件选择（本轮生成/停止中一律禁止上传）
+        // 触发通道选择（本轮生成/停止中一律禁止上传）
         triggerFileUpload() {
             if (this.aiGenerationBusy) {
                 this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
@@ -1868,11 +2100,19 @@ var main=new Vue({
             }
             this.$refs.fileInput.click();
         },
+        triggerVideoUpload() {
+            if (this.aiGenerationBusy) {
+                this.aiToast("正在生成，本轮结束前无法上传视频", { kind: 'warn' });
+                return;
+            }
+            this.$refs.videoInput.click();
+        },
         async onFileSelected(e) {
             const file = e.target.files[0];
+            // 清空input value 以便重新选择同一文件可触发
+            this.$refs.fileInput.value = '';
             // 选择文件期间可能已经开始生成（例如生成按钮先被点到），这里再挡一次
             if (this.aiGenerationBusy) {
-                this.$refs.fileInput.value = '';
                 this.aiToast("正在生成，本轮结束前无法上传图片", { kind: 'warn' });
                 return;
             }
@@ -1881,36 +2121,45 @@ var main=new Vue({
                 this.aiToast("请选择图片文件", { kind: 'warn' });
                 return;
             }
-            // 显示本地预览
-            const reader = new FileReader();
-            reader.onload = async (ev) => {
-                    // 调用图片上传接口（独立接口，不通过websocket），携带对话ID
-                    try {
-                        const res = await realUploadImage(file, this.conversationId);
-                    if (res.code === 0) {
-                        this.uploadedImageId = res.imageId;
-                        // 可选在聊天记录里单独展示一条图片消息？已在上传后自动添加上下文，不需要额外动作，但为了交互体验，显示一个系统提示
-                        // 但需求未强制，不过为了用户清楚，提醒图片已加入上下文，并且不影响聊天界面原有的消息，我这里不冗余插入消息，但预览保留
-                        // 同时此图片会加入服务端上下文，下次AI回复会理解该图片 (模拟代码已经支持上下文概念)
-                        // 展示一个临时toast风格
-                        this.aiToast("图片已上传，已加入对话上下文，可继续发送文字提问");
-                    } else {
-                        this.showUploadError(res);
-                    }
-                } catch (err) {
-                    console.error("上传异常", err);
-                    this.showUploadError({ message: (err && err.message ? err.message : String(err)) });
-                }
-            };
-            reader.readAsDataURL(file);
-            // 清空input value 以便重新选择同一文件可触发
-            this.$refs.fileInput.value = '';
+            const res = await realUploadImage(file, this.conversationId);
+            if (res.code === 0) {
+                this.uploadedImageId = res.imageId;
+                this.aiToast("图片已上传，已加入对话上下文，可继续发送文字提问");
+            } else {
+                this.showUploadError(res, '图片');
+            }
+        },
+        async onVideoSelected(e) {
+            const file = e.target.files[0];
+            this.$refs.videoInput.value = '';
+            if (this.aiGenerationBusy) {
+                this.aiToast("正在生成，本轮结束前无法上传视频", { kind: 'warn' });
+                return;
+            }
+            if (!file) return;
+            if (!file.type.startsWith('video/')) {
+                this.aiToast("请选择视频文件（mp4 / webm）", { kind: 'warn' });
+                return;
+            }
+            if (file.size > MAX_UPLOAD_VIDEO_BYTES) {
+                this.aiToast("视频过大，最大支持 " + Math.floor(MAX_UPLOAD_VIDEO_BYTES / 1024 / 1024) + "MB", { kind: 'warn' });
+                return;
+            }
+            this.aiToast("视频上传中，请稍候…", { kind: 'info' });
+            const res = await realUploadVideo(file, this.conversationId);
+            if (res.code === 0) {
+                this.aiToast("视频已上传，已加入对话上下文");
+                this.scrollToBottom(true);
+            } else {
+                this.showUploadError(res, '视频');
+            }
         },
         // 上传失败：把后端返回的真实原因展示出来，便于定位问题
-        showUploadError(res) {
+        showUploadError(res, kind) {
             const reason = (res && res.message) ? res.message : '未知错误';
-            console.error("图片上传失败：", res);
-            this.aiToast("图片上传失败：" + reason, {kind:'error'});
+            const label = kind || '文件';
+            console.error(label + "上传失败：", res);
+            this.aiToast(label + "上传失败：" + reason, {kind:'error'});
         },
         scrollToBottom(force) {
             // 正在插入更早的历史记录时不要抢滚动位置

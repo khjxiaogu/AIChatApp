@@ -18,14 +18,23 @@
  *     }});
  *
  * 统一下行协议（服务端 -> 浏览器，全部带 type）：
- *   status{generating,[conversation_id,price,tokens,isVoiceEnabled,isVoiceSupported,isVoiceUsable,models,modelTree,model]}
+ *   status{generating,[conversation_id,price,tokens,isVoiceEnabled,isVoiceSupported,isVoiceUsable,models,modelTree,model,tasks[]]}
  *   model{model} / voice{isVoiceEnabled?|isVoiceSupported?|isVoiceUsable?} / notice{content}
  *   sendResult{msgId,ok,reason}（对某次发送的确认/拒收，只发给发起连接）
  *   sendbox{action:"refill",content,msgId?,requestId?}（有条件回填，不再表示清空）
  *   message{id,title,content[]} / content{id,content[]} / remove{id} / batch_messages{messages[],prepend,hasMore,oldestId,newestId}
  *   thinking{content} / tool_call{tool_name} / audio{id,audioId} / done{price,tokens} / scene{scene,scene_data}
+ *   task{state:"created"|"done"|"failed",id,tool,name,time[,message]}（异步工具任务，视频生成等长任务）
  *   input{input,prompt} / toolApproval{...} / toolApprovalResult{...} / local_request{...} / pong{id}
- * 其中 content[] 为结构化内容数组（{type:"text",text}/{type:"image",image_url}/...）；
+ * 其中 content[] 为结构化内容数组：
+ *   {type:"text",text}
+ *   {type:"image",image_url:<对象存储 id>,description?}（由页面按 id 换成本站图片地址）
+ *   {type:"video",video_url:<对象存储 id 或 http 地址>,description?}
+ *   视频的 video_url 可能是远端 http(s) 地址（即梦等云端生成），也可能是对象存储 id
+ *   （本地 H3 生成，绘画页通过 /aichat/painter/video?video_id= 播放）；
+ * 异步任务：
+ *   task 帧用于增量通知；status.tasks[] 是重连/刷新后的全量快照
+ *   （每项 {id,tool,name,time}），页面据此显示“视频生成中”。
  * tokens 为本轮新增的配额用量（当轮累计 getEquivantTokens 的增加值，只有数值、不带明细）；
  * 历史记录（batch_messages 的每一项）另带 token_cost，表示该条记录所属轮次的配额用量
  * （标准化后为 aiOnBatch 收到的 items[].tokenCost），实时轮次的同一个值由 done.tokens 下发。
@@ -168,6 +177,9 @@
 				aiVoiceUsable: false,      // 当前语音服务是否在线可用（status.isVoiceUsable / voice.isVoiceUsable）
 				aiModel: '',               // 当前生效模型标识（status.model / model.model，空为默认模型）
 				aiModelTree: [],           // 可用模型目录树（status.modelTree）
+				// ---- 异步工具任务（视频生成等长任务）：由 task 帧增量维护，status.tasks 恢复全量 ----
+				aiTasks: [],               // [{id,tool,name,time,message}]，空数组表示没有运行中的任务
+				aiTaskClock: 0,            // 任务计时用的节拍（每秒更新，页面用 aiTaskElapsed 显示已等待时长）
 				// ---- 场景图片：地址 + 加载状态都由公共层维护，模板直接绑定 aiImages / aiImageLists ----
 				aiImages: images,          // 各槽位首图 {front:'', side:'', back:''}，单图场景直接绑定这个
 				aiImageLists: imageLists,  // 各槽位完整图片列表 {front:[...], ...}，多角色站位等场景绑定这个
@@ -252,6 +264,10 @@
 			}
 			this._aiResolvePending = false;
 			this.aiHideRefillChip();
+			if (this._aiTaskTimer) {
+				clearInterval(this._aiTaskTimer);
+				this._aiTaskTimer = null;
+			}
 			this.aiCancelPipeline();
 			this.aiRevealClear();
 			this.aiDisconnect();
@@ -307,6 +323,16 @@
 			aiOnToolApprovalResult: function (frame) {},
 			/** 音频生成完成 */
 			aiOnAudio: function (frame) {},
+			/**
+			 * 异步工具任务状态变化（创建/完成/失败）。
+			 * <p>
+			 * 公共层已把结果合并进 {@code aiTasks}，页面一般只需在这里做提示
+			 * （例如“视频已生成”），不需要自己维护任务列表。
+			 * </p>
+			 *
+			 * @param {Object} frame task 帧
+			 */
+			aiOnTask: function (frame) {},
 			/** 思考过程增量（绘画前端） */
 			aiOnThinking: function (frame) {},
 			/** 工具调用展示（绘画前端） */
@@ -1887,6 +1913,11 @@
 					case 'audio':
 						this.aiOnAudio(frame);
 						return;
+					case 'task':
+						// 异步工具任务（视频生成等长任务）：创建时加入列表，结束时移除
+						this.aiApplyTask(frame);
+						this.aiOnTask(frame);
+						return;
 					default:
 						this.aiOnFrame(frame);
 				}
@@ -1921,6 +1952,103 @@
 					this.aiModel = frame.model || '';
 				if (frame.modelTree)
 					this.aiModelTree = frame.modelTree;
+				// 重连/刷新后的运行中任务全量快照（增量由 task 帧维护）
+				if (Array.isArray(frame.tasks))
+					this.aiApplyTaskSnapshot(frame.tasks);
+			},
+			/**
+			 * 把一条 task 帧合并进 {@code aiTasks}。
+			 * <p>
+			 * {@code created}（或未知状态）加入/更新任务；{@code done}、{@code failed}、
+			 * {@code cancelled} 从列表移除。完成提示由页面在 {@link #aiOnTask} 里决定。
+			 * </p>
+			 *
+			 * @param {Object} frame task 帧
+			 */
+			aiApplyTask: function (frame) {
+				if (!frame || !frame.id)
+					return;
+				if (!this.aiTasks)
+					this.aiTasks = [];
+				var state = frame.state || 'created';
+				var ended = state === 'done' || state === 'failed' || state === 'cancelled';
+				var index = -1;
+				for (var i = 0; i < this.aiTasks.length; i++) {
+					if (this.aiTasks[i].id === frame.id) {
+						index = i;
+						break;
+					}
+				}
+				if (ended) {
+					if (index >= 0)
+						this.aiTasks.splice(index, 1);
+				} else {
+					var item = {
+						id: frame.id,
+						tool: frame.tool || '',
+						name: frame.name || frame.tool || '任务',
+						time: Number(frame.time) || Date.now(),
+						message: frame.message || '',
+					};
+					if (index >= 0)
+						this.aiTasks.splice(index, 1, item);
+					else
+						this.aiTasks.push(item);
+				}
+				this.aiSyncTaskClock();
+			},
+			/**
+			 * 用 status.tasks 全量替换运行中的任务列表。
+			 *
+			 * @param {Array} tasks 任务数组
+			 */
+			aiApplyTaskSnapshot: function (tasks) {
+				var list = [];
+				for (var i = 0; i < tasks.length; i++) {
+					var task = tasks[i];
+					if (!task || !task.id)
+						continue;
+					list.push({
+						id: task.id,
+						tool: task.tool || '',
+						name: task.name || task.tool || '任务',
+						time: Number(task.time) || Date.now(),
+						message: task.message || '',
+					});
+				}
+				this.aiTasks = list;
+				this.aiSyncTaskClock();
+			},
+			/**
+			 * 按需启停任务计时器：有任务时每秒刷新 {@code aiTaskClock}，没有任务时停止。
+			 */
+			aiSyncTaskClock: function () {
+				var active = !!(this.aiTasks && this.aiTasks.length);
+				if (active && !this._aiTaskTimer && typeof setInterval === 'function') {
+					var self = this;
+					this.aiTaskClock = Date.now();
+					this._aiTaskTimer = setInterval(function () {
+						self.aiTaskClock = Date.now();
+					}, 1000);
+				} else if (!active && this._aiTaskTimer) {
+					clearInterval(this._aiTaskTimer);
+					this._aiTaskTimer = null;
+				}
+			},
+			/** 任务已等待时长（配合 aiTaskClock 每秒刷新），例如“1 分 05 秒”。 */
+			aiTaskElapsed: function (task) {
+				var started = task && task.time ? Number(task.time) : (this.aiTaskClock || Date.now());
+				var seconds = Math.max(0, Math.floor(((this.aiTaskClock || Date.now()) - started) / 1000));
+				var minutes = Math.floor(seconds / 60);
+				var rest = seconds % 60;
+				return minutes > 0 ? minutes + ' 分 ' + (rest < 10 ? '0' + rest : rest) + ' 秒'
+					: rest + ' 秒';
+			},
+			/** 任务的展示名称（优先用服务端下发的用户友好简述）。 */
+			aiTaskName: function (task) {
+				if (!task)
+					return '任务';
+				return task.name || task.tool || '任务';
 			},
 			/** 用户角色的显示名，用于没有 role 字段的老数据 */
 			aiUserTitle: '你',
@@ -2028,6 +2156,9 @@
 				this._aiDraftMsgId = null;
 				this._aiDraftText = null;
 				this._aiPendingRefill = null;
+				// 异步任务属于旧会话：切换后不能再显示
+				this.aiTasks = [];
+				this.aiSyncTaskClock();
 				this.aiHideRefillChip();
 			},
 			/**

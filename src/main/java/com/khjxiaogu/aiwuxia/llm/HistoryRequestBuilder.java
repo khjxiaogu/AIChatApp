@@ -19,9 +19,11 @@ import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.ServerToolUseContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 
 public class HistoryRequestBuilder {
 	public static class ToolCallSerilizer implements JsonSerializer<ToolCall>{
@@ -38,15 +40,49 @@ public class HistoryRequestBuilder {
 
 	}
 	public static Gson gs=new GsonBuilder().registerTypeHierarchyAdapter(ToolCall.class, new ToolCallSerilizer()).create();
+	/**
+	 * 构造 OpenAI 兼容的 messages 数组，不回传服务端联网工具的调用记录。
+	 * <p>
+	 * 供不认识 {@code server_tool_use} 的提供者（火山方舟、SiliconFlow、MiMo 等）使用：
+	 * 这类记录会降级成 {@link ServerToolUseContent#toText()} 给出的占位文本，
+	 * 与普通思考内容一样被截断，不会把官方原始块塞进请求。
+	 * </p>
+	 *
+	 * @param request 请求
+	 * @return messages 数组
+	 */
 	public static JsonArray createRequest(AIRequest request) {
+		return createRequest(request, false);
+	}
+
+	/**
+	 * 构造 OpenAI 兼容的 messages 数组。
+	 * <p>
+	 * {@code replayServerToolCalls} 为 {@code true} 时，把历史里 DeepSeek 服务端联网工具的调用记录
+	 * （{@link ServerToolUseContent}）原样挂到该轮助手消息的 {@code server_tool_calls} 字段上：
+	 * 官方要求把上一轮的调用原样回传，{@code read_link} 的网页正文（{@code signature}）才能拼回上下文。
+	 * 为 {@code false} 时这些记录改为占位文本，其余模型据此仍能看到“这一轮查过什么”。
+	 * </p>
+	 *
+	 * @param request                请求
+	 * @param replayServerToolCalls  是否原样回传服务端联网工具的调用记录
+	 * @return messages 数组
+	 */
+	public static JsonArray createRequest(AIRequest request, boolean replayServerToolCalls) {
 		JsonArray messages=new JsonArray();
 		AttachmentResolver resolver=AttachmentResolver.of(request);
 		for(HistoryItem hi:request.history) {
+			// 本条记录写入的第一条消息下标：服务端联网调用只能挂到本条记录自己的助手消息上
+			int firstMessage=messages.size();
 			boolean shouldContainReasoner=false;
 			boolean shouldSkipContent=false;
+			JsonArray serverToolCalls=new JsonArray();
 			if(hi.getReasoningContent()!=null&&!hi.getReasoningContent().isEmpty()) {
 				for(MessageContent msgc:hi.getReasoningContent()) {
-					if(msgc instanceof ToolContent) {
+					// 服务端联网调用的记录也要走“按段重建消息”的路径：
+					// 回传模式下要原样挂回 server_tool_calls，其它模型则要换成占位文本，
+					// 两种模式都不能让它跟着普通记录被折叠掉
+					if(msgc instanceof ToolContent||msgc instanceof ServerToolUseContent) {
 						shouldContainReasoner=true;
 						break;
 					}
@@ -63,6 +99,27 @@ public class HistoryRequestBuilder {
 							}else {
 	
 								messages.add(createReasonerMessage("",((ToolCallContent) msgc).getToolCalls()));
+							}
+						}else if(msgc instanceof ServerToolUseContent){
+							ServerToolUseContent serverToolUse=(ServerToolUseContent) msgc;
+							if(replayServerToolCalls) {
+								// 原样累积，最后统一挂到本条记录的助手消息上
+								for(JsonElement step:serverToolUse.getServerToolCalls()) {
+									serverToolCalls.add(step);
+								}
+							}else {
+								// 其它模型不认识 server_tool_use：换成带截断的占位文本，
+								// 有上一条助手消息就并入它的思考，保持一条消息对应一轮回答
+								String placeholder=serverToolUse.toText();
+								if(hasPrevious) {
+									JsonObject previous=messages.get(messages.size()-1).getAsJsonObject();
+									String reasoning=JsonConfig.getString(previous, "reasoning_content");
+									previous.addProperty("reasoning_content",
+											reasoning==null||reasoning.isEmpty()?placeholder:reasoning+"\n"+placeholder);
+								}else {
+									hasPrevious=true;
+									messages.add(createReasonerMessage(placeholder,null));
+								}
 							}
 						}else {
 							hasPrevious=true;
@@ -82,7 +139,10 @@ public class HistoryRequestBuilder {
 				msg.add("content", createMessageContent(hi.getContextContent(), request, resolver));
 				messages.add(msg);
 			}
-			
+
+			if(serverToolCalls.size()>0) {
+				attachServerToolCalls(messages, firstMessage, serverToolCalls);
+			}
 		}
 		
 		if(request.prefix!=null&&request.category!=ModelCategory.REASONING) {
@@ -93,6 +153,40 @@ public class HistoryRequestBuilder {
 			messages.add(msg);
 		}
 		return messages;
+	}
+
+	/**
+	 * 把一轮服务端联网工具的调用记录挂到本轮最后一条助手消息上。
+	 * <p>
+	 * 官方的多轮要求是“把上一条 assistant 消息连同 {@code server_tool_calls} 原样回传”，
+	 * 所以这里优先复用本轮已经构造出来的助手消息（通常就是带最终回答的那条），
+	 * 只在极端情况下（本轮没有任何助手消息）才补一条空内容的助手消息。
+	 * </p>
+	 *
+	 * @param messages        已构造的 messages 数组
+	 * @param from            本条记录写出的第一条消息下标
+	 * @param serverToolCalls 本轮累积的服务端调用（为空时不做任何事）
+	 */
+	private static void attachServerToolCalls(JsonArray messages, int from, JsonArray serverToolCalls) {
+		if(serverToolCalls==null||serverToolCalls.size()==0) {
+			return;
+		}
+		for(int i=messages.size()-1;i>=from;i--) {
+			if(!messages.get(i).isJsonObject()) {
+				continue;
+			}
+			JsonObject message=messages.get(i).getAsJsonObject();
+			if(!Role.ASSISTANT.getRoleName().equals(JsonConfig.getString(message, "role"))) {
+				continue;
+			}
+			message.add("server_tool_calls", serverToolCalls);
+			return;
+		}
+		JsonObject message=new JsonObject();
+		message.addProperty("role", Role.ASSISTANT.getRoleName());
+		message.addProperty("content", "");
+		message.add("server_tool_calls", serverToolCalls);
+		messages.add(message);
 	}
 
 	/**

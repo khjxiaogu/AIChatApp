@@ -26,6 +26,14 @@ public final class IncomingMessage {
 	private final String messageId;
 	/** 被 @ 的用户 id 列表（不含 @全体）。 */
 	private final List<String> mentionedIds;
+	/**
+	 * 这条消息是否直接 @ 了机器人。
+	 * <p>
+	 * 有些协议（例如 QQ 官方群 @ 机器人事件）会把 @ 机器人的前缀从正文里去掉，且 @ 列表里
+	 * 不包含机器人自身；这时只能由适配器直接说明“这条消息是对机器人说的”。
+	 * </p>
+	 */
+	private final boolean mentionsBot;
 	/** 这条消息回复的消息 id，没有回复时为 null。 */
 	private final String replyToMessageId;
 	/** 归一化后的内容块，按消息里的顺序排列。 */
@@ -40,6 +48,7 @@ public final class IncomingMessage {
 		this.senderName = builder.senderName;
 		this.messageId = builder.messageId;
 		this.mentionedIds = Collections.unmodifiableList(new ArrayList<>(builder.mentionedIds));
+		this.mentionsBot = builder.mentionsBot;
 		this.replyToMessageId = builder.replyToMessageId;
 		this.contents = Collections.unmodifiableList(new ArrayList<>(builder.contents));
 		this.raw = builder.raw;
@@ -72,6 +81,11 @@ public final class IncomingMessage {
 	/** 是否 @ 了指定用户。 */
 	public boolean isMentioned(String userId) {
 		return userId != null && mentionedIds.contains(userId);
+	}
+
+	/** 这条消息是否直接 @ 了机器人（由适配器判定）。 */
+	public boolean isMentionsBot() {
+		return mentionsBot;
 	}
 
 	public String getReplyToMessageId() {
@@ -111,6 +125,7 @@ public final class IncomingMessage {
 		private String senderName = "";
 		private String messageId = "";
 		private String replyToMessageId;
+		private boolean mentionsBot;
 		private JsonObject raw;
 		private final List<String> mentionedIds = new ArrayList<>();
 		private final List<IncomingContent> contents = new ArrayList<>();
@@ -142,6 +157,11 @@ public final class IncomingMessage {
 
 		public Builder replyToMessageId(String replyToMessageId) {
 			this.replyToMessageId = replyToMessageId;
+			return this;
+		}
+
+		public Builder mentionsBot(boolean mentionsBot) {
+			this.mentionsBot = mentionsBot;
 			return this;
 		}
 

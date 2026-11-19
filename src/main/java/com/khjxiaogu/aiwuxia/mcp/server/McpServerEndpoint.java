@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp.server;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -101,7 +102,7 @@ public class McpServerEndpoint implements CallBack {
             ObjectStorageProvider mediaStorage) {
         this.registry = registry;
         this.store = store;
-        this.serverName = serverName == null ? "AIWuxia-MCP" : serverName;
+        this.serverName = serverName == null ? "MCP" : serverName;
         this.mediaStorage = mediaStorage;
         this.server = new McpServer(registry, store, this.serverName, serverVersion, mediaUrlResolver);
     }
@@ -242,7 +243,7 @@ public class McpServerEndpoint implements CallBack {
             return;
         }
         applySessionHeader(request, response,
-                McpProtocol.METHOD_INITIALIZE.equals(stringField(requestObject, "method")));
+                McpProtocol.METHOD_INITIALIZE.equals(JsonConfig.getString(requestObject, "method")));
         writeJson(response, 200, reply);
     }
 
@@ -258,7 +259,7 @@ public class McpServerEndpoint implements CallBack {
                 continue;
             }
             JsonObject requestObject = element.getAsJsonObject();
-            if (McpProtocol.METHOD_INITIALIZE.equals(stringField(requestObject, "method"))) {
+            if (McpProtocol.METHOD_INITIALIZE.equals(JsonConfig.getString(requestObject, "method"))) {
                 hasInitialize = true;
             }
             JsonObject reply = dispatch(requestObject, token, clientIp);
@@ -283,7 +284,7 @@ public class McpServerEndpoint implements CallBack {
      * @return 响应对象；通知返回 null
      */
     private JsonObject dispatch(JsonObject request, McpAccessTokenStore.Token token, String clientIp) {
-        if (McpProtocol.METHOD_TOOLS_CALL.equals(stringField(request, "method"))) {
+        if (McpProtocol.METHOD_TOOLS_CALL.equals(JsonConfig.getString(request, "method"))) {
             // 调试：确认客户端到底发了什么 tools/call 请求；过长时截断，避免日志被大参数淹没
             String raw = request.toString();
             System.out.println("[MCP] <- tools/call " + (raw.length() > 2000 ? raw.substring(0, 2000) + "..." : raw));
@@ -495,7 +496,7 @@ public class McpServerEndpoint implements CallBack {
     private void createToken(Request request, Response response) throws McpException {
         JsonObject body = readJsonObject(request);
         String uid = requireUid(request);
-        String name = stringField(body, "name");
+        String name = JsonConfig.getString(body, "name");
         Integer quotaLimit = intField(body, "quotaLimit");
         Long expiresAt = longField(body, "expiresAt");
         Integer expiresInDays = intField(body, "expiresInDays");
@@ -738,18 +739,9 @@ public class McpServerEndpoint implements CallBack {
         return uid.trim();
     }
 
-    /** 读取字符串字段。 */
-    private static String stringField(JsonObject object, String key) {
-        if (object == null || !object.has(key) || object.get(key).isJsonNull()
-                || !object.get(key).isJsonPrimitive()) {
-            return null;
-        }
-        return object.get(key).getAsString();
-    }
-
     /** 读取整数字段。 */
     private static Integer intField(JsonObject object, String key) {
-        String text = stringField(object, key);
+        String text = JsonConfig.getString(object, key);
         if (text == null) {
             return null;
         }
@@ -762,7 +754,7 @@ public class McpServerEndpoint implements CallBack {
 
     /** 读取长整数字段。 */
     private static Long longField(JsonObject object, String key) {
-        String text = stringField(object, key);
+        String text = JsonConfig.getString(object, key);
         if (text == null) {
             return null;
         }

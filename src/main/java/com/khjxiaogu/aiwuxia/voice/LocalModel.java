@@ -98,6 +98,23 @@ public class LocalModel {
     }
 
     /**
+     * 通用模型请求方法，可指定等待本地模型回传的上限。
+     * <p>
+     * 视频生成这类长任务必须放大 {@code timeoutMs}，否则会按默认 5 分钟判为超时。
+     * </p>
+     *
+     * @param modelType 请求的模型类型
+     * @param reqid     请求唯一 ID
+     * @param request   完整的请求 JSON 对象
+     * @param timeoutMs 等待上限（毫秒），非正数时使用默认值
+     * @return 包含响应数据的 CompletableFuture
+     */
+    public static CompletableFuture<ModelGenerationResult> require(ModelType modelType, String reqid, JsonObject request,
+            long timeoutMs) {
+        return lhs.require(modelType, reqid, request, timeoutMs);
+    }
+
+    /**
      * 通用模型请求方法，支持按用户取用本地模型。
      * <p>
      * 用户自己接入的本地模型优先；用户没有在线连接时回退到共享连接池。

@@ -33,6 +33,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.apps.AICodexAgentMain;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
@@ -51,7 +52,15 @@ public class AIGroupSession extends AISession {
 	private static class QueuedMessage {
 		final boolean important;
 		final List<Supplier<MessageContent>> getter;
+		/** 协议消息 id，用于撤回时从缓冲区移除，可为 null。 */
+		final String messageId;
+
 		QueuedMessage(boolean important, List<Supplier<MessageContent>> getter) {
+			this(null, important, getter);
+		}
+
+		QueuedMessage(String messageId, boolean important, List<Supplier<MessageContent>> getter) {
+			this.messageId = messageId;
 			this.important = important;
 			this.getter = getter;
 		}
@@ -161,8 +170,19 @@ public class AIGroupSession extends AISession {
         }
     }
 	public void addMessage(List<Supplier<MessageContent>> msg,boolean important) {
+		addMessage(null, msg, important);
+	}
+
+	/**
+	 * 追加一条待处理消息批次，并记录协议消息 id。
+	 *
+	 * @param messageId 协议消息 id，可为 null；撤回时用它从缓冲区移除
+	 * @param msg       消息内容
+	 * @param important 是否重要（超过队列上限时保留）
+	 */
+	public void addMessage(String messageId, List<Supplier<MessageContent>> msg, boolean important) {
 		synchronized(queueLock) {
-			messageQueue.add(new QueuedMessage(important,msg));
+			messageQueue.add(new QueuedMessage(messageId, important, msg));
 			if(messageQueue.size()>10) {
 				QueuedMessage ctx=messageQueue.pollFirst();
 				if(ctx.important)
@@ -170,7 +190,78 @@ public class AIGroupSession extends AISession {
 			}
 		}
 	}
+
+	/**
+	 * 是否显式发送模式：正文不自动发出，必须调用 send_group / send_private 等工具。
+	 * <p>
+	 * 配置了 {@code explicitSend} 时以配置为准；否则 codex agent 默认开启，其它 agent 默认关闭。
+	 * </p>
+	 *
+	 * @return true 表示显式发送
+	 */
+	public boolean isExplicitSend() {
+		if (config != null && config.has("explicitSend") && !config.get("explicitSend").isJsonNull()) {
+			try {
+				return config.get("explicitSend").getAsBoolean();
+			} catch (RuntimeException ignored) {
+				// 配置写错时按应用类型判断
+			}
+		}
+		return getAiapp() instanceof AICodexAgentMain;
+	}
+
+	/**
+	 * 只保留最近 N 条待处理消息（公屏上下文默认只保留最近 10 条）。
+	 *
+	 * @param max 最大条数
+	 */
+	public void trimQueue(int max) {
+		if (max <= 0) {
+			return;
+		}
+		synchronized (queueLock) {
+			while (important.size() + messageQueue.size() > max) {
+				if (!important.isEmpty()) {
+					important.remove(0);
+				} else {
+					messageQueue.pollFirst();
+				}
+			}
+		}
+	}
+
+	/**
+	 * 撤回时从待处理缓冲区移除一条消息（已经交给 AI 的不处理）。
+	 *
+	 * @param messageId 协议消息 id
+	 * @return true 表示确实移除了
+	 */
+	public boolean removeQueuedMessage(String messageId) {
+		if (messageId == null || messageId.isEmpty()) {
+			return false;
+		}
+		synchronized (queueLock) {
+			boolean removed = false;
+			java.util.Iterator<QueuedMessage> iterator = messageQueue.iterator();
+			while (iterator.hasNext()) {
+				if (messageId.equals(iterator.next().messageId)) {
+					iterator.remove();
+					removed = true;
+				}
+			}
+			iterator = important.iterator();
+			while (iterator.hasNext()) {
+				if (messageId.equals(iterator.next().messageId)) {
+					iterator.remove();
+					removed = true;
+				}
+			}
+			return removed;
+		}
+	}
 	public MessageContents getPrompt() {
+		// 先把监听器（例如 doclib 的待注入通知）放进消息队列，再开始组装 prompt。
+		fireBeforePrompt();
 		MutableMessageContents content;
 		synchronized(queueLock) {
 	        DateFormat formatter = DateFormat.getDateTimeInstance();

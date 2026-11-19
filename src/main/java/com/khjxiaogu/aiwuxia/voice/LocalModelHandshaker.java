@@ -24,10 +24,12 @@
 package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,6 +41,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import com.google.gson.JsonArray;
@@ -47,8 +50,12 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.voice.protocol.FileChunkAssembler;
+import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol;
+import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol.FileChunk;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.QueryStringDecoder;
@@ -60,8 +67,9 @@ import io.netty.util.AttributeKey;
  * 并提供向服务端发送请求并等待响应的能力。支持多种模型类型的调用。
  * 客户端连接时通过 URL 参数 {@code model_type} 声明支持的模型类型（逗号分隔），
  * 调用者指定模型类型后，系统自动选择合适的连接发送请求。
- * 内置类型包括 {@link ModelType#AUDIO}（语音合成）、{@link ModelType#SDXL}（图像生成）
- * 与 {@link ModelType#SVS}（歌声合成，参数见 {@link SvsOptions}）。
+ * 内置类型包括 {@link ModelType#AUDIO}（语音合成）、{@link ModelType#SDXL}（图像生成）、
+ * {@link ModelType#SVS}（歌声合成，参数见 {@link SvsOptions}）、{@link ModelType#QWEN}（Qwen 生图）
+ * 与 {@link ModelType#H3}（MiniMax H3 视频生成）。
  * 内部维护按模型类型分组的连接池，支持多路复用；每个请求通过唯一的请求 ID 关联，并支持超时等待。
  * <p>
  * 连接还可以通过 URL 参数 {@code uid} 声明归属用户：带 {@code uid} 的连接只服务该用户，
@@ -71,6 +79,48 @@ import io.netty.util.AttributeKey;
  * </p>
  */
 public class LocalModelHandshaker implements WebsocketEvents {
+
+    /**
+     * 通用模型请求的默认等待上限：5 分钟。
+     * <p>
+     * 图片、语音这类任务足够；视频生成等长任务需要通过带 {@code timeoutMs} 的重载放大上限。
+     * </p>
+     */
+    public static final long DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60 * 1000L;
+
+    /** 进度协商：收到一次进度上报后默认把任务超时延长到 3 分钟之后。 */
+    public static final long DEFAULT_PROGRESS_TIMEOUT_MS = 3 * 60 * 1000L;
+
+    /** 二进制文件分块默认空闲超时：60 秒没有新分块就判定失败。 */
+    public static final long DEFAULT_FILE_TIMEOUT_MS = 60 * 1000L;
+
+    /** 读取进度上报对应的时间延长，可用 {@code -DlocalModelProgressTimeoutMs} 覆盖。 */
+    private static long readProgressTimeout() {
+        String raw = System.getProperty("localModelProgressTimeoutMs", "").trim();
+        if (raw.isEmpty()) {
+            return DEFAULT_PROGRESS_TIMEOUT_MS;
+        }
+        try {
+            long value = Long.parseLong(raw);
+            return value > 0 ? value : DEFAULT_PROGRESS_TIMEOUT_MS;
+        } catch (NumberFormatException ex) {
+            return DEFAULT_PROGRESS_TIMEOUT_MS;
+        }
+    }
+
+    /** 读取文件分块空闲超时，可用 {@code -DlocalModelFileTimeoutMs} 覆盖。 */
+    private static long readFileTimeout() {
+        String raw = System.getProperty("localModelFileTimeoutMs", "").trim();
+        if (raw.isEmpty()) {
+            return DEFAULT_FILE_TIMEOUT_MS;
+        }
+        try {
+            long value = Long.parseLong(raw);
+            return value >= 5000L ? value : DEFAULT_FILE_TIMEOUT_MS;
+        } catch (NumberFormatException ex) {
+            return DEFAULT_FILE_TIMEOUT_MS;
+        }
+    }
 
     /** Channel 属性键，用于在连接上存储当前所有活跃请求的 Future */
     private static final AttributeKey<ConcurrentLinkedQueue<CompletableFuture<ModelGenerationResult>>> RESULTS_KEY = AttributeKey.valueOf("localModelResults");
@@ -96,6 +146,31 @@ public class LocalModelHandshaker implements WebsocketEvents {
     private final Map<Channel, String> channelUsers = new ConcurrentHashMap<>();
     /** 请求 ID 到 Future 的映射，用于在收到响应时完成 Future */
     private final Map<String, CompletableFuture<ModelGenerationResult>> ars = new ConcurrentHashMap<>();
+    /**
+     * 请求 ID → 下发该请求的连接。
+     * <p>
+     * 结果必须回到发来请求的那条连接：同一个连接器可以同时接入多个服务器，服务器也可能有
+     * 多条连接；只按 reqid 匹配会让其它连接投来的结果完成本连接的任务。这里记录来源，
+     * 收到文本响应或二进制分块时校验，不一致就丢弃并记日志。
+     * </p>
+     */
+    private final Map<String, Channel> requestChannels = new ConcurrentHashMap<>();
+    /** 连接 → 客户端标识（{@code client_id}）；重连后仍是同一个值，用于接续断线前的任务。 */
+    private final Map<Channel, String> channelClients = new ConcurrentHashMap<>();
+    /** 请求 ID → 下发该请求的客户端标识；为重连后补发的结果提供来源校验。 */
+    private final Map<String, String> requestClients = new ConcurrentHashMap<>();
+    /** 每个进行中请求的可延长截止时间；收到进度上报时由 {@link #handleProgress(JsonObject)} 推后。 */
+    private final Map<String, AtomicLong> requestDeadlines = new ConcurrentHashMap<>();
+    /** 通过 {@link #registerTask(String)} 注册的外部任务截止时间，同样可被进度上报延长。 */
+    private final Map<String, AtomicLong> registrationDeadlines = new ConcurrentHashMap<>();
+    /** 最近一次上报的任务状态（queued / running），用于诊断与日志。 */
+    private final Map<String, String> taskStatus = new ConcurrentHashMap<>();
+    /** 正在接收的二进制文件分块：reqid → 组装器 + 来源连接。 */
+    private final Map<String, PendingFile> pendingFiles = new ConcurrentHashMap<>();
+    /** 收到一次进度上报后，把任务超时延长到这个时间之后（毫秒）。 */
+    private final long progressTimeoutMs = readProgressTimeout();
+    /** 文件分块接收的空闲超时：超过这个时间没有新分块就失败并丢弃已收到的块（毫秒）。 */
+    private final long fileTimeoutMs = readFileTimeout();
     /** 全局在线连接计数 */
     private volatile int totalConnections = 0;
 
@@ -213,6 +288,12 @@ public class LocalModelHandshaker implements WebsocketEvents {
             public void onMessage(Channel conn, String message) {
                 LocalModelHandshaker.this.onMessage(conn, message);
             }
+
+            @Override
+            public void onMessage(Channel conn, ByteBuf content) {
+                // 结果文件的二进制分块必须继续转发：默认实现是空方法，漏掉会让结果被静默丢弃
+                LocalModelHandshaker.this.onMessage(conn, content);
+            }
         };
     }
 
@@ -236,75 +317,517 @@ public class LocalModelHandshaker implements WebsocketEvents {
             rawUid = parseRawUid(handshake.uri());
         }
         String uid = normalizeUid(rawUid);
-        // 打印实际接入的 uid，便于核对接入用户与 session 用户是否一致
+        // client_id 是连接器自己生成的稳定标识：重连后仍是同一个值，用于接续断线前的任务
+        String clientId = parseClientId(handshake.uri());
+        // 打印实际接入的 uid 与 client，便于核对接入用户、以及重连后是否认回同一个客户端
         System.err.println("[LocalModel] connected from " + conn.remoteAddress().toString()
                 + " uid=" + (rawUid == null ? "(none)" : rawUid)
                 + (uid == null ? " (shared)" : " (user-bound)")
+                + " client=" + (clientId == null ? "(none)" : clientId)
                 + " provider: " + Arrays.toString(modelTypes.toArray()));
         channelModelTypes.put(conn, modelTypes);
-        if (uid == null) {
-            for (ModelType type : modelTypes) {
-                typedPools.computeIfAbsent(type, k -> new LinkedBlockingQueue<>()).offer(conn);
-                typedCounts.merge(type, 1, Integer::sum);
-            }
-        } else {
+        if (clientId != null) {
+            channelClients.put(conn, clientId);
+        }
+        if (uid != null) {
             channelUsers.put(conn, uid);
-            Map<ModelType, BlockingQueue<Channel>> pools = userPools.computeIfAbsent(uid,
-                    k -> new ConcurrentHashMap<>());
-            Map<ModelType, Integer> counts = userCounts.computeIfAbsent(uid, k -> new ConcurrentHashMap<>());
-            for (ModelType type : modelTypes) {
-                pools.computeIfAbsent(type, k -> new LinkedBlockingQueue<>()).offer(conn);
-                counts.merge(type, 1, Integer::sum);
+        }
+        registerTypes(conn, uid, modelTypes);
+        totalConnections++;
+        // 同一客户端重连：把断线时保留的任务续上，等待连接器补发暂存的结果
+        revivePendingTasks(conn, clientId);
+    }
+
+    /**
+     * 从握手 URL 解析客户端的稳定标识；没有时返回 {@code null}。
+     *
+     * @param uri 握手地址
+     * @return 客户端标识或 null
+     */
+    private static String parseClientId(String uri) {
+        try {
+            QueryStringDecoder decoder = new QueryStringDecoder(uri);
+            List<String> values = decoder.parameters().get("client_id");
+            if (values != null && !values.isEmpty()) {
+                String value = values.get(0);
+                if (value != null) {
+                    value = value.trim();
+                    if (!value.isEmpty() && value.length() <= 256) {
+                        return value;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // 解析失败时视为没有 client_id
+        }
+        return null;
+    }
+
+    /**
+     * 同一客户端重连后，为它断线前仍在等待的任务延长超时。
+     * <p>
+     * 连接器在断线期间把结果放在缓冲区，重连后会立即补发；这里延长截止时间，避免补发前
+     * 任务先被判定超时。只有声明了 {@code client_id} 的连接才有这个待遇，浏览器页面等
+     * 一次性连接仍然在断开时立即失败。
+     * </p>
+     *
+     * @param conn     新连接
+     * @param clientId 客户端标识，可为 null
+     */
+    private void revivePendingTasks(Channel conn, String clientId) {
+        if (clientId == null) {
+            return;
+        }
+        int revived = 0;
+        long target = System.currentTimeMillis() + progressTimeoutMs;
+        for (Map.Entry<String, String> entry : requestClients.entrySet()) {
+            if (clientId.equals(entry.getValue())) {
+                extendDeadline(requestDeadlines.get(entry.getKey()), target);
+                revived++;
             }
         }
-        totalConnections++;
+        if (revived > 0) {
+            System.out.println("[LocalModelDeploy] 客户端重连，为 " + revived + " 个等待中的任务延长超时：client="
+                    + clientId);
+        }
     }
 
     @Override
     public void onClose(Channel conn) {
+        String clientId = channelClients.remove(conn);
         ConcurrentLinkedQueue<CompletableFuture<ModelGenerationResult>> futures = conn.attr(RESULTS_KEY).getAndSet(null);
         if (futures != null) {
-            for (CompletableFuture<ModelGenerationResult> f : futures) {
-                f.completeExceptionally(new IOException("connection closed"));
+            if (!futures.isEmpty()) {
+                if (clientId != null) {
+                    // 连接器声明了 client_id：它会在重连后补发暂存结果，任务先保留，等超时自然失败
+                    System.err.println("[LocalModelDeploy] 连接断开：" + conn.remoteAddress() + " client=" + clientId
+                            + "，保留 " + futures.size() + " 个任务等待重连补发");
+                } else {
+                    System.err.println("[LocalModelDeploy] 连接断开：" + conn.remoteAddress() + "，正在等待的 "
+                            + futures.size() + " 个任务将失败");
+                    for (CompletableFuture<ModelGenerationResult> f : futures) {
+                        f.completeExceptionally(new IOException("connection closed"));
+                    }
+                }
             }
         }
         String uid = channelUsers.remove(conn);
         Set<ModelType> types = channelModelTypes.remove(conn);
-        if (types != null) {
-            if (uid == null) {
-                for (ModelType type : types) {
-                    BlockingQueue<Channel> pool = typedPools.get(type);
-                    if (pool != null) pool.remove(conn);
-                    typedCounts.merge(type, -1, Integer::sum);
-                }
-            } else {
-                Map<ModelType, BlockingQueue<Channel>> pools = userPools.get(uid);
-                Map<ModelType, Integer> counts = userCounts.get(uid);
-                for (ModelType type : types) {
-                    if (pools != null) {
-                        BlockingQueue<Channel> pool = pools.get(type);
-                        if (pool != null) pool.remove(conn);
-                    }
-                    if (counts != null) counts.merge(type, -1, Integer::sum);
-                }
-            }
-        }
+        unregisterTypes(conn, uid, types);
+        // 连接断了：该连接上未收全的文件分块全部丢弃
+        pendingFiles.entrySet().removeIf(entry -> entry.getValue().channel == conn);
         totalConnections--;
     }
 
     @Override
     public void onMessage(Channel conn, String message) {
-        JsonObject jo = JsonParser.parseString(message).getAsJsonObject();
-        CompletableFuture<ModelGenerationResult> future = ars.remove(jo.get("reqid").getAsString());
+        JsonObject jo = LocalModelProtocol.parse(message);
+        if (jo == null) {
+            return;
+        }
+        if (LocalModelProtocol.isProgress(jo)) {
+            // 进度协商报文不结束任务，只延长对应任务的超时
+            handleProgress(jo);
+            return;
+        }
+        if (LocalModelProtocol.isCapabilities(jo)) {
+            // 运行期能力集合变更报文：更新该连接在各模型类型连接池中的登记
+            handleCapabilities(conn, jo);
+            return;
+        }
+        String reqid = LocalModelProtocol.reqid(jo);
+        if (reqid.isEmpty()) {
+            return;
+        }
+        CompletableFuture<ModelGenerationResult> future = ars.get(reqid);
+        if (future != null && !isExpectedSource(reqid, conn)) {
+            // 结果来自另一条连接：丢弃，避免把 A 服务器/连接的结果交给 B 的任务
+            System.err.println("[LocalModelDeploy] 忽略来自其它连接的文本响应：reqid=" + reqid + " 来源="
+                    + conn.remoteAddress() + " 期望=" + describeChannel(requestChannels.get(reqid)));
+            return;
+        }
         if (future != null) {
-            if (jo.has("error")) {
-                future.completeExceptionally(new IOException(jo.get("error").getAsString()));
+            ars.remove(reqid);
+            clearProgressState(reqid);
+            if (jo.has(LocalModelProtocol.FIELD_ERROR)) {
+                String error = jo.get(LocalModelProtocol.FIELD_ERROR).getAsString();
+                System.err.println("[LocalModelDeploy] 收到错误响应：reqid=" + reqid + " 错误=" + error);
+                future.completeExceptionally(new IOException(error));
             } else {
-                byte[] data = Base64.getDecoder().decode(jo.get("data").getAsString());
-                String format = jo.has("format") ? jo.get("format").getAsString() : "mp3";
+                System.out.println("[LocalModelDeploy] 收到文本响应：reqid=" + reqid + " 大小=" + message.length() + "B");
+                byte[] data = Base64.getDecoder().decode(jo.get(LocalModelProtocol.FIELD_DATA).getAsString());
+                String format = jo.has(LocalModelProtocol.FIELD_FORMAT)
+                        ? jo.get(LocalModelProtocol.FIELD_FORMAT).getAsString() : "mp3";
                 future.complete(new ModelGenerationResult(data, format));
             }
+        } else {
+            // 任务已超时/已完成，或响应发到了别的连接上；以前这里完全静默，排查时看不出结果已经回来
+            System.err.println("[LocalModelDeploy] 收到文本响应但没有等待中的任务（可能已超时或已完成）：reqid="
+                    + reqid + " 大小=" + message.length() + "B");
         }
+    }
+
+    /**
+     * 响应是否来自下发请求的接收端。
+     * <p>
+     * 先按连接精确匹配；连接断开重连后 Channel 会变，此时只要新连接声明的 {@code client_id}
+     * 与请求下发给的客户端一致，也认为来源正确（这正对应连接器缓冲后补发的结果）。
+     * 没有登记来源的任务（HTTP 回调、{@link #registerTask(String)}）只按 reqid 匹配。
+     * </p>
+     */
+    private boolean isExpectedSource(String reqid, Channel conn) {
+        Channel expected = requestChannels.get(reqid);
+        if (expected == conn) {
+            return true;
+        }
+        String expectedClient = requestClients.get(reqid);
+        if (expectedClient != null) {
+            return expectedClient.equals(channelClients.get(conn));
+        }
+        return expected == null;
+    }
+
+    /** 日志用的连接描述。 */
+    private static String describeChannel(Channel conn) {
+        if (conn == null) {
+            return "(unknown)";
+        }
+        try {
+            return conn.remoteAddress() == null ? String.valueOf(conn.id()) : conn.remoteAddress().toString();
+        } catch (Throwable t) {
+            return String.valueOf(conn.id());
+        }
+    }
+
+    /**
+     * 处理二进制报文：只用于结果文件的分块传输。
+     * <p>
+     * 帧格式见 {@link LocalModelProtocol}（{@code [magic][reqidLen][reqid][formatLen][format]
+     * [current][total][content]}）。收齐全部分块后才完成任务；任一块非法/超时则整个任务失败，
+     * 已收到的分块被丢弃。
+     * </p>
+     *
+     * @param conn    连接
+     * @param content 二进制内容
+     */
+    @Override
+    public void onMessage(Channel conn, ByteBuf content) {
+        if (content == null) {
+            return;
+        }
+        byte[] frame = new byte[content.readableBytes()];
+        content.getBytes(content.readerIndex(), frame);
+        FileChunk chunk = LocalModelProtocol.parseFileChunk(frame);
+        if (chunk == null) {
+            System.err.println("[LocalModelDeploy] 丢弃非法二进制报文（" + frame.length + " 字节）");
+            return;
+        }
+        handleFileChunk(conn, chunk);
+    }
+
+    /**
+     * 接收一个文件分块。
+     *
+     * @param conn  来源连接
+     * @param chunk 分块
+     */
+    private void handleFileChunk(Channel conn, FileChunk chunk) {
+        String reqid = chunk.reqid;
+        if (!ars.containsKey(reqid)) {
+            // 请求已经完成或超时：迟到的分块直接丢弃
+            System.err.println("[LocalModelDeploy] 收到分块但没有等待中的任务（可能已超时或已完成）：reqid="
+                    + reqid + " " + chunk.current + "/" + chunk.total + " " + chunk.content.length + "B");
+            return;
+        }
+        if (!isExpectedSource(reqid, conn)) {
+            // 分块来自另一条连接：丢弃，避免跨服务器/跨连接投递结果
+            System.err.println("[LocalModelDeploy] 忽略来自其它连接的结果分块：reqid=" + reqid + " 来源="
+                    + describeChannel(conn) + " 期望=" + describeChannel(requestChannels.get(reqid))
+                    + " " + chunk.current + "/" + chunk.total + " " + chunk.content.length + "B");
+            return;
+        }
+        PendingFile pending = pendingFiles.get(reqid);
+        if (pending == null) {
+            try {
+                long deadline = System.currentTimeMillis() + fileTimeoutMs;
+                FileChunkAssembler assembler = FileChunkAssembler.start(chunk, deadline);
+                pending = new PendingFile(assembler, conn);
+                pendingFiles.put(reqid, pending);
+                scheduleFileTimeout(reqid, pending);
+                System.out.println("[LocalModelDeploy] 开始接收结果：reqid=" + reqid + " format=" + chunk.format
+                        + " 分块=" + chunk.total + " 首块=" + chunk.content.length + "B");
+            } catch (IllegalArgumentException ex) {
+                failFileTransfer(reqid, "文件分块非法：" + ex.getMessage());
+                return;
+            }
+        } else {
+            try {
+                pending.assembler.accept(chunk);
+                pending.assembler.touch(System.currentTimeMillis() + fileTimeoutMs);
+            } catch (IllegalArgumentException ex) {
+                failFileTransfer(reqid, "文件分块不匹配：" + ex.getMessage());
+                return;
+            }
+        }
+        // 收到分块说明任务仍在推进，延长整个请求的截止时间
+        extendRequestDeadline(reqid);
+        if (pending.assembler.isComplete()) {
+            pendingFiles.remove(reqid);
+            try {
+                byte[] data = pending.assembler.assemble();
+                completeFileTransfer(reqid, data, pending.assembler.format());
+            } catch (IllegalStateException ex) {
+                failFileTransfer(reqid, "文件拼接失败：" + ex.getMessage());
+            }
+        }
+    }
+
+    /** 收齐全部分块后完成任务。 */
+    private void completeFileTransfer(String reqid, byte[] data, String format) {
+        CompletableFuture<ModelGenerationResult> future = ars.remove(reqid);
+        clearProgressState(reqid);
+        if (future != null) {
+            System.out.println("[LocalModelDeploy] 结果接收完成：reqid=" + reqid + " format=" + format + " 大小="
+                    + (data == null ? 0 : data.length) + "B");
+            future.complete(new ModelGenerationResult(data, format));
+        } else {
+            System.err.println("[LocalModelDeploy] 结果接收完成但没有等待中的任务（可能已超时）：reqid=" + reqid
+                    + " 大小=" + (data == null ? 0 : data.length) + "B");
+        }
+    }
+
+    /** 分块接收失败：完成任务异常并丢弃已收到的分块。 */
+    private void failFileTransfer(String reqid, String reason) {
+        PendingFile pending = pendingFiles.remove(reqid);
+        CompletableFuture<ModelGenerationResult> future = ars.remove(reqid);
+        clearProgressState(reqid);
+        if (pending != null) {
+            System.err.println("[LocalModelDeploy] 文件接收失败：" + reason + "（已收到 "
+                    + pending.assembler.received() + "/" + pending.assembler.total() + " 块）");
+        }
+        if (future != null) {
+            future.completeExceptionally(new IOException(reason));
+        }
+    }
+
+    /** 安排一次分块接收超时检查；每收到新分块都会推后截止时间并重新排期。 */
+    private void scheduleFileTimeout(String reqid, PendingFile pending) {
+        long delay = Math.max(1000L, pending.assembler.deadline() - System.currentTimeMillis());
+        TIMER.schedule(() -> {
+            if (pendingFiles.get(reqid) != pending) {
+                return;
+            }
+            long remaining = pending.assembler.deadline() - System.currentTimeMillis();
+            if (remaining > 0) {
+                scheduleFileTimeout(reqid, pending);
+                return;
+            }
+            failFileTransfer(reqid, "文件分块接收超时（已收到 " + pending.assembler.received() + "/"
+                    + pending.assembler.total() + " 块），丢弃已接收分块");
+        }, delay, TimeUnit.MILLISECONDS);
+    }
+
+    /** 收到分块/进度时延长请求截止时间。 */
+    private void extendRequestDeadline(String reqid) {
+        long target = System.currentTimeMillis() + progressTimeoutMs;
+        extendDeadline(requestDeadlines.get(reqid), target);
+        extendDeadline(registrationDeadlines.get(reqid), target);
+    }
+
+    /** 正在接收的文件分块。 */
+    private static final class PendingFile {
+        final FileChunkAssembler assembler;
+        final Channel channel;
+
+        PendingFile(FileChunkAssembler assembler, Channel channel) {
+            this.assembler = assembler;
+            this.channel = channel;
+        }
+    }
+
+    /**
+     * 处理能力集合变更报文。
+     * <p>
+     * 报文形如 {@code {"type":"capabilities","model_types":["qwen","h3"]}}。服务端先把该连接
+     * 从旧的类型连接池里摘除（正在执行的任务不受影响），再按新集合登记，最后回一条同样的报文作为确认。
+     * </p>
+     *
+     * @param conn    连接
+     * @param message 能力集合报文
+     */
+    private void handleCapabilities(Channel conn, JsonObject message) {
+        Set<ModelType> requested = new LinkedHashSet<>();
+        for (String name : LocalModelProtocol.modelTypes(message)) {
+            ModelType type = ModelType.fromString(name);
+            if (type != null) {
+                requested.add(type);
+            }
+        }
+        Set<ModelType> old = channelModelTypes.get(conn);
+        if (old == null) {
+            // 未知连接（例如握手尚未完成）：直接按新集合登记
+            old = Collections.emptySet();
+        }
+        String uid = channelUsers.get(conn);
+        unregisterTypes(conn, uid, old);
+        channelModelTypes.put(conn, requested);
+        registerTypes(conn, uid, requested);
+        List<String> names = new ArrayList<>(requested.size());
+        for (ModelType type : requested) {
+            names.add(type.name().toLowerCase());
+        }
+        System.out.println("[LocalModelDeploy] 能力集合变更：" + names
+                + " uid=" + (uid == null ? "(shared)" : uid));
+        conn.writeAndFlush(new TextWebSocketFrame(LocalModelProtocol.capabilities(names).toString()));
+    }
+
+    /** 把连接登记到各模型类型的连接池。 */
+    private void registerTypes(Channel conn, String uid, Set<ModelType> types) {
+        if (types == null || types.isEmpty()) {
+            return;
+        }
+        if (uid == null) {
+            for (ModelType type : types) {
+                typedPools.computeIfAbsent(type, k -> new LinkedBlockingQueue<>()).offer(conn);
+                typedCounts.merge(type, 1, Integer::sum);
+            }
+        } else {
+            Map<ModelType, BlockingQueue<Channel>> pools = userPools.computeIfAbsent(uid,
+                    k -> new ConcurrentHashMap<>());
+            Map<ModelType, Integer> counts = userCounts.computeIfAbsent(uid, k -> new ConcurrentHashMap<>());
+            for (ModelType type : types) {
+                pools.computeIfAbsent(type, k -> new LinkedBlockingQueue<>()).offer(conn);
+                counts.merge(type, 1, Integer::sum);
+            }
+        }
+    }
+
+    /** 把连接从各模型类型的连接池里摘除。 */
+    private void unregisterTypes(Channel conn, String uid, Set<ModelType> types) {
+        if (types == null || types.isEmpty()) {
+            return;
+        }
+        if (uid == null) {
+            for (ModelType type : types) {
+                BlockingQueue<Channel> pool = typedPools.get(type);
+                if (pool != null) {
+                    pool.remove(conn);
+                }
+                typedCounts.merge(type, -1, Integer::sum);
+            }
+        } else {
+            Map<ModelType, BlockingQueue<Channel>> pools = userPools.get(uid);
+            Map<ModelType, Integer> counts = userCounts.get(uid);
+            for (ModelType type : types) {
+                if (pools != null) {
+                    BlockingQueue<Channel> pool = pools.get(type);
+                    if (pool != null) {
+                        pool.remove(conn);
+                    }
+                }
+                if (counts != null) {
+                    counts.merge(type, -1, Integer::sum);
+                }
+            }
+        }
+    }
+
+    /** 是否是进度上报报文（{@code {"type":"progress","reqid":...}}）。 */
+    private static boolean isProgress(JsonObject message) {
+        if (message == null || !message.has("type") || message.get("type").isJsonNull()) {
+            return false;
+        }
+        return "progress".equalsIgnoreCase(message.get("type").getAsString());
+    }
+
+    /**
+     * 处理本地模型连接器的进度上报。
+     * <p>
+     * 报文形如 {@code {"type":"progress","reqid":"...","status":"queued|running",
+     * "progress":0.35,"message":"..."}}。服务端只做两件事：
+     * </p>
+     * <ol>
+     *   <li>记录任务状态，便于诊断；</li>
+     *   <li>把该任务的超时推后到 {@code now + progressTimeoutMs}（只会延后，不会提前）。</li>
+     * </ol>
+     *
+     * @param message 进度报文
+     */
+    private void handleProgress(JsonObject message) {
+        if (!message.has("reqid") || message.get("reqid").isJsonNull()) {
+            return;
+        }
+        String reqid = message.get("reqid").getAsString();
+        if (reqid == null || reqid.isEmpty()) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() + progressTimeoutMs;
+        extendDeadline(requestDeadlines.get(reqid), deadline);
+        extendDeadline(registrationDeadlines.get(reqid), deadline);
+        String status = message.has("status") && !message.get("status").isJsonNull()
+                ? message.get("status").getAsString().trim() : "running";
+        if (status.isEmpty()) {
+            status = "running";
+        }
+        String detail = message.has("message") && !message.get("message").isJsonNull()
+                ? message.get("message").getAsString().trim() : "";
+        if (message.has("progress") && !message.get("progress").isJsonNull()) {
+            try {
+                detail = (detail + " " + Math.round(message.get("progress").getAsDouble() * 100) + "%").trim();
+            } catch (RuntimeException ignored) {
+                // progress 不是数字时忽略进度，不影响状态与超时
+            }
+        }
+        String previous = taskStatus.put(reqid, status);
+        if (!status.equals(previous)) {
+            System.out.println("[LocalModelDeploy] 任务进度：" + reqid + " → " + status
+                    + (detail.isEmpty() ? "" : "（" + detail + "）"));
+        }
+    }
+
+    /** 把截止时间向后推，只增不减；{@code deadline} 为 null 时忽略。 */
+    private static void extendDeadline(AtomicLong deadline, long target) {
+        if (deadline == null) {
+            return;
+        }
+        deadline.accumulateAndGet(target, Math::max);
+    }
+
+    /** 清理任务相关的进度、截止时间与未完成的分块接收状态。 */
+    private void clearProgressState(String reqid) {
+        requestDeadlines.remove(reqid);
+        registrationDeadlines.remove(reqid);
+        requestChannels.remove(reqid);
+        requestClients.remove(reqid);
+        taskStatus.remove(reqid);
+        pendingFiles.remove(reqid);
+    }
+
+    /**
+     * 任务最近一次上报的状态（{@code queued} / {@code running} 等），没有上报时返回 null。
+     *
+     * @param reqid 请求 ID
+     * @return 状态字符串或 null
+     */
+    public String getTaskStatus(String reqid) {
+        return reqid == null ? null : taskStatus.get(reqid);
+    }
+
+    /**
+     * 任务距离超时还剩多少毫秒；任务不存在时返回 -1。
+     *
+     * @param reqid 请求 ID
+     * @return 剩余毫秒数，或 -1
+     */
+    public long getTaskRemainingMillis(String reqid) {
+        if (reqid == null) {
+            return -1;
+        }
+        AtomicLong deadline = requestDeadlines.get(reqid);
+        if (deadline == null) {
+            deadline = registrationDeadlines.get(reqid);
+        }
+        return deadline == null ? -1 : deadline.get() - System.currentTimeMillis();
     }
 
     /**
@@ -317,6 +840,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
     public boolean onMessage(String reqid, byte[] data, String format) {
         CompletableFuture<ModelGenerationResult> future = ars.remove(reqid);
         if (future != null) {
+            clearProgressState(reqid);
             future.complete(new ModelGenerationResult(data, format != null ? format : "mp3"));
             return true;
         }
@@ -324,18 +848,42 @@ public class LocalModelHandshaker implements WebsocketEvents {
     }
 
     /**
-     * 注册一个外部任务，返回 Future 等待后续通过 {@link #onMessage(String, byte[], String)} 完成。
-     * 5 分钟无响应自动超时。
+     * 注册一个外部任务，返回 Future 等待后续通过 {@link #onMessage(String, byte[], String)}
+     * 或进度上报完成。默认 5 分钟无响应自动超时；本地模型连接器只要持续上报进度，超时就会被延后。
      */
     public CompletableFuture<ModelGenerationResult> registerTask(String reqid) {
         CompletableFuture<ModelGenerationResult> future = new CompletableFuture<>();
         ars.put(reqid, future);
+        AtomicLong deadline = new AtomicLong(System.currentTimeMillis() + DEFAULT_REQUEST_TIMEOUT_MS);
+        registrationDeadlines.put(reqid, deadline);
+        scheduleRegistrationTimeout(reqid, future, deadline);
+        return future;
+    }
+
+    /**
+     * 安排一次外部任务超时检查；截止时间被进度上报推后时自动重新排期。
+     *
+     * @param reqid    请求 ID
+     * @param future   等待中的 Future
+     * @param deadline 可延长的截止时间
+     */
+    private void scheduleRegistrationTimeout(String reqid, CompletableFuture<ModelGenerationResult> future,
+            AtomicLong deadline) {
+        long delay = Math.max(1000L, deadline.get() - System.currentTimeMillis());
         TIMER.schedule(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            long remaining = deadline.get() - System.currentTimeMillis();
+            if (remaining > 0) {
+                scheduleRegistrationTimeout(reqid, future, deadline);
+                return;
+            }
             if (future.completeExceptionally(new IOException("Task registration timeout"))) {
                 ars.remove(reqid);
+                clearProgressState(reqid);
             }
-        }, 5, TimeUnit.MINUTES);
-        return future;
+        }, delay, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -470,7 +1018,21 @@ public class LocalModelHandshaker implements WebsocketEvents {
      * @return 包含响应数据的 {@link CompletableFuture}
      */
     public CompletableFuture<ModelGenerationResult> require(ModelType modelType, String reqid, JsonObject request) {
-        return require(null, modelType, reqid, request);
+        return require(null, modelType, reqid, request, DEFAULT_REQUEST_TIMEOUT_MS);
+    }
+
+    /**
+     * 通用模型请求方法（不带用户，可指定等待上限）。
+     *
+     * @param modelType 请求的模型类型
+     * @param reqid     请求唯一 ID
+     * @param request   完整的请求 JSON 对象
+     * @param timeoutMs 等待本地模型回传的上限（毫秒），非正数时使用默认值
+     * @return 包含响应数据的 {@link CompletableFuture}
+     */
+    public CompletableFuture<ModelGenerationResult> require(ModelType modelType, String reqid, JsonObject request,
+            long timeoutMs) {
+        return require(null, modelType, reqid, request, timeoutMs);
     }
 
     /**
@@ -489,9 +1051,32 @@ public class LocalModelHandshaker implements WebsocketEvents {
      */
     public CompletableFuture<ModelGenerationResult> require(String uid, ModelType modelType, String reqid,
             JsonObject request) {
+        return require(uid, modelType, reqid, request, DEFAULT_REQUEST_TIMEOUT_MS);
+    }
+
+    /**
+     * 通用模型请求方法，支持按用户取用本地模型，并自定义等待上限。
+     * <p>
+     * 取用顺序与 {@link #require(String, ModelType, String, JsonObject)} 相同。视频生成等长任务
+     * 需要显式放大 {@code timeoutMs}，否则会在默认上限到达时把仍在生成的请求判为超时。
+     * </p>
+     *
+     * @param uid       用户标识，可为 null 或空（只使用共享连接池）
+     * @param modelType 请求的模型类型
+     * @param reqid     请求唯一 ID
+     * @param request   完整的请求 JSON 对象
+     * @param timeoutMs 等待本地模型回传的上限（毫秒），非正数时使用默认值
+     * @return 包含响应数据的 {@link CompletableFuture}
+     */
+    public CompletableFuture<ModelGenerationResult> require(String uid, ModelType modelType, String reqid,
+            JsonObject request, long timeoutMs) {
         final String targetUser = uid == null || uid.isEmpty() ? null : uid;
-        if (!hasOnlineService(targetUser, modelType))
+        final long waitMillis = timeoutMs > 0 ? timeoutMs : DEFAULT_REQUEST_TIMEOUT_MS;
+        if (!hasOnlineService(targetUser, modelType)) {
+            System.err.println("[LocalModelDeploy] 没有可用的本地模型连接：type=" + modelType + " uid="
+                    + (targetUser == null ? "(shared)" : targetUser) + " reqid=" + reqid);
             return CompletableFuture.failedFuture(new IOException("no local model found for type: " + modelType));
+        }
 
         request.addProperty("reqid", reqid);
         if (!request.has("type")) {
@@ -507,28 +1092,68 @@ public class LocalModelHandshaker implements WebsocketEvents {
                         throw new IOException("no local model found for type: " + modelType);
 
                     ch = acquireChannel(targetUser, modelType);
-                    if (ch == null) continue;
+                    if (ch == null) {
+                        System.err.println("[LocalModelDeploy] 等待可用连接超时，继续重试：reqid=" + reqid + " type="
+                                + modelType + " uid=" + (targetUser == null ? "(shared)" : targetUser));
+                        continue;
+                    }
                     // 取到的连接可能已经关闭而尚未从池中移除，跳过它重新取
-                    if (!ch.isOpen() || !ch.isActive()) continue;
+                    if (!ch.isOpen() || !ch.isActive()) {
+                        System.err.println("[LocalModelDeploy] 取到已关闭的连接，跳过：reqid=" + reqid + " channel="
+                                + ch.remoteAddress());
+                        continue;
+                    }
 
                     future = new CompletableFuture<>();
                     ars.put(reqid, future);
+                    // 记录请求来源：连接 + 客户端标识。断线重连后客户端标识不变，可用于接续任务
+                    requestChannels.put(reqid, ch);
+                    String clientId = channelClients.get(ch);
+                    if (clientId != null) {
+                        requestClients.put(reqid, clientId);
+                    }
+                    // 截止时间可变：连接器在生成期间持续上报进度，服务端据此延长超时
+                    AtomicLong deadline = new AtomicLong(System.currentTimeMillis() + waitMillis);
+                    requestDeadlines.put(reqid, deadline);
                     addFuture(ch, future);
-                    ch.writeAndFlush(new TextWebSocketFrame(request.toString()));
+                    // 请求体可能很大（例如图生图的参考图），只序列化一次
+                    String payload = request.toString();
+                    System.out.println("[LocalModelDeploy] 下发请求：reqid=" + reqid + " type=" + modelType + " uid="
+                            + (targetUser == null ? "(shared)" : targetUser) + " channel=" + ch.remoteAddress()
+                            + " 超时=" + waitMillis + "ms 报文=" + payload.length() + "B");
+                    long sentAt = System.currentTimeMillis();
+                    ch.writeAndFlush(new TextWebSocketFrame(payload));
 
-                    long endTime = System.currentTimeMillis() + 1000 * 60 * 5;
                     while (true) {
+                        long remaining = deadline.get() - System.currentTimeMillis();
+                        if (remaining <= 0) {
+                            System.err.println("[LocalModelDeploy] 请求超时：reqid=" + reqid + " type=" + modelType
+                                    + " 已等待=" + (System.currentTimeMillis() - sentAt) + "ms（进度上报会延长超时）");
+                            throw new IOException("Connection timeout");
+                        }
                         try {
-                            return future.get(endTime - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+                            ModelGenerationResult result = future.get(remaining, TimeUnit.MILLISECONDS);
+                            System.out.println("[LocalModelDeploy] 任务完成：reqid=" + reqid + " type=" + modelType
+                                    + " 大小=" + (result.bodyData == null ? 0 : result.bodyData.length) + "B 用时="
+                                    + (System.currentTimeMillis() - sentAt) + "ms");
+                            return result;
                         } catch (java.util.concurrent.TimeoutException e) {
-                            if (!ch.isOpen() || !ch.isActive() || System.currentTimeMillis() >= endTime)
+                            // 等待期间可能刚收到进度上报，重新按最新截止时间判断
+                            if (!ch.isOpen() || !ch.isActive()
+                                    || System.currentTimeMillis() >= deadline.get()) {
+                                System.err.println("[LocalModelDeploy] 连接已关闭或超时：reqid=" + reqid + " type="
+                                        + modelType + " 已等待=" + (System.currentTimeMillis() - sentAt) + "ms");
                                 throw new IOException("Connection timeout");
+                            }
                         }
                     }
                 } catch (Exception e) {
+                    System.err.println("[LocalModelDeploy] 任务失败：reqid=" + reqid + " type=" + modelType + " 错误="
+                            + e);
                     throw new RuntimeException(e);
                 } finally {
                     ars.remove(reqid);
+                    clearProgressState(reqid);
                     if (ch != null) {
                         if (future != null) removeFuture(ch, future);
                         releaseChannel(ch);

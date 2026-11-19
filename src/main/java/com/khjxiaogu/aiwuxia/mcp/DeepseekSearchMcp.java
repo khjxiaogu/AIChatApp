@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -22,6 +23,7 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekSearchUsage;
+import com.khjxiaogu.aiwuxia.llm.providers.deepseek.DeepseekServerTools;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
@@ -35,9 +37,20 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
  * 返回标题、链接、发布时间、权威度与长摘要。
  * </p>
  * <p>
+ * <b>何时还会用到本工具</b>：DeepSeek 对话模型已经改用官方的服务端联网工具
+ * （{@code deepseek_web_search}，见 {@link DeepseekServerTools}），在 DeepSeek 请求里本工具
+ * 既不会下发给模型、也不会被调用。它现在只服务于两类场景：
+ * </p>
+ * <ul>
+ *   <li>会话由其它模型提供商（火山方舟、Grok、SiliconFlow、MiMo）执行时，模型没有原生的联网能力；</li>
+ *   <li>DeepSeek 请求需要 JSON 输出（{@code response_format=json_object}）或续写（{@code prefix}），
+ *       官方不允许与联网工具同时使用，此时退回客户端搜索。</li>
+ * </ul>
+ * <p>
  * <b>计费</b>：Search 接口按成功请求次数计费（每 1000 次 5 元），与返回条数无关；只有 HTTP 200
  * 且 {@code results} 非空的请求才会计费。因此这里只在拿到“非空结果”后写入一次
  * {@link DeepseekSearchUsage}，失败、超时、空结果一律不记账，保证按官方口径准确计费。
+ * 服务端联网工具不走本路径，也<b>不产生任何用量</b>：官方已取消服务端搜索的按次计费。
  * </p>
  */
 public class DeepseekSearchMcp {
@@ -69,6 +82,10 @@ public class DeepseekSearchMcp {
 	 * 未配置 {@code deepseektoken} 时返回空集合：接口必然 401，不注册工具可以避免模型白调、
 	 * 也避免把错误提示喂进上下文。
 	 * </p>
+	 * <p>
+	 * 注册后同时充当“本会话允许联网搜索”的开关：DeepSeek 模型看到该工具注册了，
+	 * 就会改用官方服务端联网工具 {@code deepseek_web_search}，不再调用本工具。
+	 * </p>
 	 *
 	 * @return 工具集合，可能为空
 	 */
@@ -76,7 +93,7 @@ public class DeepseekSearchMcp {
 		if (token().isEmpty()) {
 			return null;
 		}
-		return new ToolData.Builder("web_search",
+		return new ToolData.Builder(DeepseekServerTools.CLIENT_SEARCH_TOOL,
 				"用 DeepSeek 搜索引擎搜索网页，返回标题、链接、发布时间、权威度与摘要。"
 						+ "需要最新信息、新闻、事实核查或资料查找时使用；常识与闲聊不要调用。"
 						+ "query 支持 site:/ -site:/ -关键词/ \"精确短语\"/ lang:/ after:/ before: 等语法；")
@@ -125,8 +142,8 @@ public class DeepseekSearchMcp {
 				return "参数格式错误：需要一个包含 query 的 JSON 对象。";
 			}
 			JsonObject args = parsed.getAsJsonObject();
-			query = str(args, "query");
-			count = parseCount(str(args, "count"));
+			query = JsonConfig.getString(args, "query");
+			count = parseCount(JsonConfig.getString(args, "count"));
 		} catch (RuntimeException e) {
 			return "参数格式错误：请按 {\"query\":\"...\",\"count\":\"10\"} 的格式提供参数。";
 		}
@@ -255,9 +272,9 @@ public class DeepseekSearchMcp {
 			}
 			JsonObject result = element.getAsJsonObject();
 			index++;
-			String title = text(result, "title");
+			String title = JsonConfig.getTrimmed(result, "title");
 			sb.append('\n').append(index).append(". ").append(title.isEmpty() ? "(无标题)" : title).append('\n');
-			String url = text(result, "url");
+			String url = JsonConfig.getTrimmed(result, "url");
 			if (!url.isEmpty()) {
 				sb.append("   链接：").append(url).append('\n');
 			}
@@ -265,9 +282,9 @@ public class DeepseekSearchMcp {
 			if (!meta.isEmpty()) {
 				sb.append("   信息：").append(meta).append('\n');
 			}
-			String summary = text(result, "summary");
+			String summary = JsonConfig.getTrimmed(result, "summary");
 			if (summary.isEmpty()) {
-				summary = text(result, "snippet");
+				summary = JsonConfig.getTrimmed(result, "snippet");
 			}
 			if (!summary.isEmpty()) {
 				sb.append("   摘要：").append(summary).append('\n');
@@ -280,11 +297,11 @@ public class DeepseekSearchMcp {
 	/** 拼装单条结果的辅助信息：发布时间 · 站点 · 相关度 · 权威度。 */
 	private static String meta(JsonObject result) {
 		List<String> parts = new ArrayList<>();
-		String date = text(result, "date");
+		String date = JsonConfig.getTrimmed(result, "date");
 		if (!date.isEmpty()) {
 			parts.add(date.length() >= 10 ? date.substring(0, 10) : date);
 		}
-		String site = text(result, "site_name");
+		String site = JsonConfig.getTrimmed(result, "site_name");
 		if (!site.isEmpty()) {
 			parts.add(site);
 		}
@@ -297,24 +314,6 @@ public class DeepseekSearchMcp {
 			parts.add("权威度 " + authority.getAsInt());
 		}
 		return String.join(" · ", parts);
-	}
-
-	/** 结果里的字符串字段，缺失时返回空串。 */
-	private static String text(JsonObject obj, String key) {
-		String value = str(obj, key);
-		return value == null ? "" : value.trim();
-	}
-
-	/** 取 JSON 字符串字段（只接受原始类型），缺失或类型不符返回 null。 */
-	private static String str(JsonObject obj, String key) {
-		if (obj == null || !obj.has(key)) {
-			return null;
-		}
-		JsonElement element = obj.get(key);
-		if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
-			return null;
-		}
-		return element.getAsString();
 	}
 
 	/** 解析模型给出的 count：缺失、非法或非数字时取默认值，越界时截断。 */
@@ -374,9 +373,9 @@ public class DeepseekSearchMcp {
 		String getServerMessage() {
 			JsonObject error = errorObject(body);
 			if (error != null) {
-				String message = str(error, "message");
-				String type = str(error, "type");
-				String code = str(error, "code");
+				String message = JsonConfig.getString(error, "message");
+				String type = JsonConfig.getString(error, "type");
+				String code = JsonConfig.getString(error, "code");
 				StringBuilder sb = new StringBuilder();
 				if (message != null && !message.trim().isEmpty()) {
 					sb.append(message.trim());

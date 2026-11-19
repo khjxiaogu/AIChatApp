@@ -3,6 +3,9 @@
 /messages.db
 /resource/
 /voice/
+/multi/
+/config/multi.json
+/config/multi-prompts/
 /logs/
 /painter_images/
 /ircimages/
@@ -16,6 +19,7 @@
 /config/local-voice.json
 /config/volcano-voice.json
 /config/agents.json
+/config/private-chat.json
 /config/crontab.json
 /config/sdxl/loras.json
 /config/sdxl/reference-images.json

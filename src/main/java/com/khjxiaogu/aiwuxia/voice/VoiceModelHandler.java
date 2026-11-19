@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
@@ -54,15 +55,56 @@ public class VoiceModelHandler {
 	 * @throws IOException 当调用音频大模型服务过程中发生输入输出异常时抛出，如网络连接失败、服务响应异常等
 	 */
 	public static CompletableFuture<ModelGenerationResult> getAudioData(String modelHint,String roleName, String uid, String text, String messageId, Consumer<UsageIntf<?>> usageListener){
-		return models.stream()
-    	        .filter(p -> p.isHinted(modelHint))
-    	        .filter(p -> p.canProcessVoice(roleName))
-    	        .findFirst()
-    	        .or(()->models.stream()
-    	                .filter(p -> p.canProcessVoice(roleName))
-    	                .findFirst()).orElseThrow(() -> new ModelRouteException("No voice model found for request: " + roleName))
-    	        .getAudioData(roleName, uid, text, messageId,usageListener);
+		Optional<VoiceModel> selected = models == null ? Optional.empty()
+				: models.stream()
+						.filter(p -> p.isHinted(modelHint))
+						.filter(p -> p.canProcessVoice(roleName))
+						.findFirst();
+		if (!selected.isPresent() && models != null) {
+			selected = models.stream()
+					.filter(p -> p.canProcessVoice(roleName))
+					.findFirst();
+		}
+		if (!selected.isPresent()) {
+			warnNoVoiceModel(roleName, modelHint);
+			throw new ModelRouteException("No voice model found for request: " + roleName);
+		}
+		return selected.get().getAudioData(roleName, uid, text, messageId,usageListener);
 	};
+	/** 上一次“没有可用语音模型”告警的时间，避免每条回复都刷日志。 */
+	private static volatile long lastNoVoiceWarnAt;
+
+	/** 记录一次“没有可用语音模型”，并说明各后端的状态；最多每分钟一条。 */
+	private static void warnNoVoiceModel(String roleName, String modelHint) {
+		long now = System.currentTimeMillis();
+		if (now - lastNoVoiceWarnAt < 60_000L) {
+			return;
+		}
+		lastNoVoiceWarnAt = now;
+		StringBuilder message = new StringBuilder("[Voice] 没有可用语音模型：角色「").append(roleName).append('」');
+		if (modelHint != null && !modelHint.isEmpty()) {
+			message.append("，指定模型「").append(modelHint).append('」');
+		}
+		if (models == null || models.isEmpty()) {
+			message.append("；未注册任何后端（检查 -DlocalVoiceToken / -Dmimotoken / -Dvolcsecret）");
+		} else {
+			message.append("；后端状态：");
+			for (VoiceModel model : models) {
+				message.append(model.getClass().getSimpleName()).append('=');
+				if (model instanceof LocalVoiceApi) {
+					message.append(LocalModel.hasOnlineService(ModelType.AUDIO) ? "在线" : "无 audio 客户端");
+				} else {
+					try {
+						message.append(model.canProcessVoice(roleName) ? "可用" : "角色未配置");
+					} catch (RuntimeException ex) {
+						message.append("配置异常");
+					}
+				}
+				message.append(' ');
+			}
+		}
+		System.err.println(message);
+	}
 	public static boolean hasSupportedAudio(String roleName){
 		return models.stream()
     	                .filter(p -> p.canProcessVoice(roleName))
@@ -143,5 +185,14 @@ public class VoiceModelHandler {
 			models.add(new MimoVoiceApi(dataFolder));
 		if(System.getProperty("volcsecret")!=null)
 			models.add(new VolcanoVoiceApi(dataFolder));
+		StringBuilder names = new StringBuilder();
+		for (VoiceModel model : models) {
+			if (names.length() > 0) {
+				names.append(", ");
+			}
+			names.append(model.getClass().getSimpleName());
+		}
+		System.out.println("[Voice] 已注册语音后端：" + (names.length() == 0 ? "无（检查 -DlocalVoiceToken / -Dmimotoken / -Dvolcsecret）" : names)
+				+ "；本地 audio 客户端在线=" + LocalModel.hasOnlineService(ModelType.AUDIO));
 	}
 }

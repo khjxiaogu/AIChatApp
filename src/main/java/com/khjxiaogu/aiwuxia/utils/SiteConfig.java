@@ -27,7 +27,6 @@ import java.io.File;
 import java.util.Locale;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -209,11 +208,11 @@ public final class SiteConfig {
 			return of(null);
 		try {
 			JsonObject cfg = JsonParser.parseString(FileUtil.readString(file)).getAsJsonObject();
-			String ws = getString(cfg, "ws_host");
+			String ws = JsonConfig.getNonBlankString(cfg, "ws_host");
 			if (ws == null || ws.isEmpty())
-				ws = getString(cfg, "wsHost");
-			SiteConfig site = of(getString(cfg, "host"), ws);
-			String reader = getString(cfg, "reader_host");
+				ws = JsonConfig.getNonBlankString(cfg, "wsHost");
+			SiteConfig site = of(JsonConfig.getNonBlankString(cfg, "host"), ws);
+			String reader = JsonConfig.getNonBlankString(cfg, "reader_host");
 			if (reader != null && !reader.isEmpty())
 				return new SiteConfig(site.host, site.secure, of(reader).host, site.wsHost, site.wsSecure);
 			return site;
@@ -225,13 +224,6 @@ public final class SiteConfig {
 			}
 			return of(null);
 		}
-	}
-
-	private static String getString(JsonObject cfg, String key) {
-		JsonElement el = cfg.get(key);
-		if (el == null || el.isJsonNull() || !el.isJsonPrimitive())
-			return null;
-		return el.getAsString().trim();
 	}
 
 	/**

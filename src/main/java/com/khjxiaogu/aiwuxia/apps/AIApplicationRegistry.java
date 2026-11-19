@@ -46,6 +46,8 @@ public class AIApplicationRegistry {
 		register("trpg",(base,folder,name,meta)->new AITRPGSceneMain(base,folder, name, meta));
 		register("wuxia",(base,folder,name,meta)->new AIWuxiaMain(folder));
 		register("custom",(base,folder,name,meta)->new AICustomMain(folder, meta));
+		// Codex 编排 agent：自己不写代码，通过 codex_* 工具把任务交给本机 Codex
+		register("codex",(base,folder,name,meta)->new AICodexAgentMain(base, folder, name, meta));
 		
 	}
 	private AIApplicationRegistry() {

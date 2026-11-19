@@ -136,7 +136,18 @@ public class VolcanoModelProvider implements ModelProvider{
 				}else if(msgc instanceof ImageContent) {
 					
 					msgjo.addProperty("type", "image_url");
-					msgjo.addProperty("image_url", imagePayload(resolver.resolveUrl(((ImageContent)msgc).getImageUrl())));
+					String imageUrl = ((ImageContent) msgc).getImageUrl();
+					String resolved = resolver.resolveUrl(imageUrl);
+					String payload = imagePayload(resolved);
+					// 有些存储拿不到 http 地址，或返回的是存储 id/本地路径；
+					// 火山只接受 http(s)/base64，这里退回收取原始字节转 base64。
+					if (!isHttpUrl(resolved) && !resolved.regionMatches(true, 0, "data:", 0, 5)) {
+						String base64 = resolver.resolveBase64(imageUrl);
+						if (base64 != null && !base64.isEmpty() && !base64.equals(imageUrl)) {
+							payload = imagePayload(base64);
+						}
+					}
+					msgjo.addProperty("image_url", payload);
 				}else{
 
 					msgjo.addProperty("type", "text");
@@ -180,7 +191,7 @@ public class VolcanoModelProvider implements ModelProvider{
 				.header("Content-Type", "application/json")
 				.header("Authorization", "Bearer "+System.getProperty("volcmodeltoken"))
 	
-				.post(true).send(tosend).readJson();
+				.post().send(tosend).readJson();
 		//System.out.println(ppgs.toJson(retjs));
 		VolcanoRespScheme resp = gs.fromJson(retjs, VolcanoRespScheme.class);
 		if(resp.choices.get(0).message.reasoning_content!=null) {
@@ -213,8 +224,9 @@ public class VolcanoModelProvider implements ModelProvider{
 					.header("Accept", "text/event-stream")
 					.header("Authorization", "Bearer "+System.getProperty("volcmodeltoken"))
 					.readTimeout(SSE_READ_TIMEOUT_MS)
-
-					.post(true).send(tosend).readSSE((ev,s)->{
+					// 用 post() 而不是 post(true)：让 send() 能在连接前写入 Content-Length，
+					// 避免带图片时请求体较大、网关提前断开导致 “Error writing to server”
+					.post().send(tosend).readSSE((ev,s)->{
 						// 火山方舟随分块返回用量：已经收到过用量时中断可以提前结束，立即把当前消耗记进输出再停读。
 						// 还没收到过用量就继续读下去，等用量到达（或整轮结束）再收尾，保证计费不错账
 						if(readable.isInterrupted() && usageReported.get()) {
@@ -290,25 +302,31 @@ public class VolcanoModelProvider implements ModelProvider{
 	/**
 	 * 把图片地址转换成火山方舟接口可接受的 image_url。
 	 * <p>
-	 * 本地对象存储返回的是 {@code data:image/png;base64,...} 形式的 data URL；
-	 * 方舟会把整串内容当成 base64 解码，从而报 “Invalid base64 image_url”。
-	 * 这里去掉 data URL 头，只传纯 base64；普通 HTTP(S) 链接原样返回。
+	 * 方舟的 Base64 输入要求完整 data URL 前缀：
+	 * {@code data:image/{格式};base64,{Base64}}；HTTP(S) 链接原样返回。
+	 * 对象存储 ID/本地路径无法直接访问时，调用方会退回收取字节得到的裸 Base64，
+	 * 这里补一个通用 JPEG 前缀。
 	 * </p>
 	 */
 	private static String imagePayload(String imageUrl) {
-		if (imageUrl == null || imageUrl.isEmpty()
-				|| !imageUrl.regionMatches(true, 0, "data:", 0, 5)) {
+		if (imageUrl == null || imageUrl.isEmpty()) {
 			return imageUrl;
 		}
-		int comma = imageUrl.indexOf(',');
-		if (comma < 0) {
+		if (imageUrl.regionMatches(true, 0, "data:", 0, 5)
+				|| isHttpUrl(imageUrl)) {
 			return imageUrl;
 		}
-		String header = imageUrl.substring(0, comma);
-		if (!header.toLowerCase().contains(";base64")) {
-			return imageUrl;
+		// 裸 Base64：方舟要求带 data URL 前缀
+		if (imageUrl.length() > 100 && imageUrl.matches("[A-Za-z0-9+/=\\s]+")) {
+			return "data:image/jpeg;base64," + imageUrl.replaceAll("\\s+", "");
 		}
-		return imageUrl.substring(comma + 1);
+		return imageUrl;
+	}
+
+	private static boolean isHttpUrl(String value) {
+		return value != null
+				&& (value.regionMatches(true, 0, "http://", 0, 7)
+						|| value.regionMatches(true, 0, "https://", 0, 8));
 	}
 
 	@Override

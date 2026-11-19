@@ -31,6 +31,7 @@ import com.khjxiaogu.webserver.annotations.GetBy;
 import com.khjxiaogu.webserver.annotations.HttpMethod;
 import com.khjxiaogu.webserver.annotations.HttpPath;
 import com.khjxiaogu.webserver.annotations.Query;
+import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 import com.khjxiaogu.webserver.web.AbstractServiceClass;
 import com.khjxiaogu.webserver.web.lowlayer.Request;
 import com.khjxiaogu.webserver.web.lowlayer.Response;
@@ -50,6 +51,53 @@ import com.khjxiaogu.webserver.wrappers.inadapters.DataIn;
  * </ul>
  */
 public class VoiceModelLocalServer extends AbstractServiceClass {
+
+    /** 本地模型服务的默认 HTTP 端口；聊天入口不再占用，单独运行的模型服务可直接使用。 */
+    public static final int DEFAULT_PORT = 8998;
+
+    /**
+     * 本地模型产出回调的完整路径（本服务挂载在 {@code /aichat} 下）。
+     * <p>
+     * 与 {@code LocalModelConnectionService#DEPLOY_PATH}（WebSocket 接入）配对使用：
+     * localemp 等本地服务把生成结果 POST 到这个地址。
+     * </p>
+     */
+    public static final String DEPLOY_DATA_PATH = "/aichat/kh$localModelDeployData";
+
+    /**
+     * 在后台线程启动本地模型部署服务（默认端口 {@value #DEFAULT_PORT}）。
+     * <p>
+     * 提供 {@code /kh$localModelDeploy}（WebSocket 接入）与
+     * {@code /kh$localModelDeployData}（模型产出回调）。本地模型服务单独运行
+     * （{@code LocalModelConnectionService}）时由它启动：localemp 等本地服务把结果 POST
+     * 回来，就能唤醒本进程里 {@link LocalModel#lhs} 等待中的任务。聊天入口不再启动这套服务。
+     * </p>
+     *
+     * @param dataFolder 运行数据目录（save/），用于 404 页面
+     * @param port       HTTP 端口
+     */
+    public static void startInBackground(File dataFolder, int port) {
+        Thread thread = new Thread(() -> {
+            try {
+                BasicWebServerBuilder.build().createURIRoot().createWrapper(new VoiceModelLocalServer())
+                        .rule("/aichat").complete().complete()
+                        .setNotFound(new File(dataFolder, "404.html"))
+                        .compile().serverHttp(port).info("http服务端已开启");
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }, "local-model-http");
+        thread.start();
+    }
+
+    /**
+     * 以默认端口 {@value #DEFAULT_PORT} 在后台线程启动本地模型部署服务。
+     *
+     * @param dataFolder 运行数据目录（save/）
+     */
+    public static void startInBackground(File dataFolder) {
+        startInBackground(dataFolder, DEFAULT_PORT);
+    }
 
     /**
      * WebSocket 端点，用于与本地模型服务建立长连接。

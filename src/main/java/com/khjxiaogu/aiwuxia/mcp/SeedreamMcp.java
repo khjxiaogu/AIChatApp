@@ -84,7 +84,7 @@ public class SeedreamMcp {
 						for (String refImg : refs) {
 							if (refImg.length() == 72) {
 								if (tos.exists(refImg.trim(), output == null ? null : output::addUsage)) {
-									links.add(tos.getPublicUrl(refImg.trim(), output == null ? null : output::addUsage));
+									links.add(tos.getPreferredUrl(refImg.trim(), output == null ? null : output::addUsage));
 								} else {
 									errors.add("参考图" + refImg.trim() + "已清理或不存在；");
 								}
@@ -336,7 +336,7 @@ public class SeedreamMcp {
 			try {
 				if (!tos.exists(id, output == null ? null : output::addUsage))
 					return "参数错误：参考图" + id + "已清理或不存在。";
-				links.add(tos.getPublicUrl(id, output == null ? null : output::addUsage));
+				links.add(tos.getPreferredUrl(id, output == null ? null : output::addUsage));
 			} catch (IOException e) {
 				e.printStackTrace();
 				return "参考图处理失败";
@@ -411,7 +411,7 @@ public class SeedreamMcp {
 						try {
 							if (!tos.exists(name, output == null ? null : output::addUsage))
 								return "参考图" + name + "已清理或不存在。";
-							link = tos.getPublicUrl(name, output == null ? null : output::addUsage);
+							link = tos.getPreferredUrl(name, output == null ? null : output::addUsage);
 						} catch (IOException e) {
 							e.printStackTrace();
 							return "参考图处理失败";

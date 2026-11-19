@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -129,19 +130,19 @@ public class QwenImageMcp implements ToolProvider {
 			CompletableFuture<ToolResult> future = CompletableFuture.supplyAsync(() -> {
 				try {
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-					String prompt = stringField(jo, "prompt", "");
+					String prompt = JsonConfig.getNonBlankString(jo, "prompt", "");
 					if (prompt.isEmpty()) {
 						return ToolResult.text("参数错误：缺少提示词 prompt。");
 					}
-					boolean fast = boolField(jo, "fast", false);
-					String ratio = stringField(jo, "resolution", "3:4");
+					boolean fast = JsonConfig.getBool(jo, "fast", false);
+					String ratio = JsonConfig.getNonBlankString(jo, "resolution", "3:4");
 					int[] size = dimensions(ratio, fast);
 					// 步数/CFG/种子固定，不由模型设置
 					int steps = fast ? QwenImageApi.FAST_STEPS : QwenImageApi.DEFAULT_STEPS;
 					float cfg = QwenImageApi.DEFAULT_CFG;
 					long seed = QwenImageApi.randomSeed();
 					List<QwenImageApi.ImageResult> images = api.textToImage(prompt,
-							stringField(jo, "negative", ""), size[0], size[1], steps, cfg, seed, 1024, fast, true);
+							JsonConfig.getNonBlankString(jo, "negative", ""), size[0], size[1], steps, cfg, seed, 1024, fast, true);
 					return uploadResults(tos, images, "图片生成成功", output);
 				} catch (IllegalArgumentException ex) {
 					return ToolResult.text("参数错误：" + ex.getMessage());
@@ -168,11 +169,11 @@ public class QwenImageMcp implements ToolProvider {
 				.tool((data, output, manager) -> CompletableFuture.supplyAsync(() -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-						String prompt = stringField(jo, "prompt", "");
+						String prompt = JsonConfig.getNonBlankString(jo, "prompt", "");
 						if (prompt.isEmpty()) {
 							return ToolResult.text("参数错误：缺少提示词 prompt。");
 						}
-						List<String> references = splitReferences(stringField(jo, "reference", ""));
+						List<String> references = splitReferences(JsonConfig.getNonBlankString(jo, "reference", ""));
 						if (references.isEmpty()) {
 							return ToolResult.text("参数错误：缺少参考图 reference。");
 						}
@@ -190,16 +191,16 @@ public class QwenImageMcp implements ToolProvider {
 							inputs.add(new QwenImageApi.InputImage(tos.download(id,
 									output == null ? null : output::addUsage), id + ".png"));
 						}
-						boolean fast = boolField(jo, "fast", false);
+						boolean fast = JsonConfig.getBool(jo, "fast", false);
 						int steps = fast ? QwenImageApi.FAST_STEPS : QwenImageApi.DEFAULT_STEPS;
 						float cfg = QwenImageApi.DEFAULT_CFG;
 						long seed = QwenImageApi.randomSeed();
 						List<QwenImageApi.ImageResult> images;
 						if (inputs.size() == 1) {
-							images = api.edit(inputs.get(0), prompt, stringField(jo, "negative", ""), steps, cfg,
+							images = api.edit(inputs.get(0), prompt, JsonConfig.getNonBlankString(jo, "negative", ""), steps, cfg,
 									seed, 1024, fast, true);
 						} else {
-							images = api.reference(inputs, prompt, stringField(jo, "negative", ""), steps, cfg,
+							images = api.reference(inputs, prompt, JsonConfig.getNonBlankString(jo, "negative", ""), steps, cfg,
 									seed, 1024, fast, true);
 						}
 						return uploadResults(tos, images, "图片生成成功", output);
@@ -215,7 +216,7 @@ public class QwenImageMcp implements ToolProvider {
 	/**
 	 * 画面比例 → 实际尺寸。普通模式长边 1024，极速模式长边 768，避免默认图过大。
 	 */
-	private static int[] dimensions(String ratio, boolean fast) {
+	static int[] dimensions(String ratio, boolean fast) {
 		String key = ratio == null ? "" : ratio.trim();
 		if (fast) {
 			switch (key) {
@@ -250,7 +251,7 @@ public class QwenImageMcp implements ToolProvider {
 	}
 
 	/** 上传生成图片并把 ID 与图片内容写入工具结果。 */
-	private static ToolResult uploadResults(ObjectStorageProvider tos, List<QwenImageApi.ImageResult> images,
+	static ToolResult uploadResults(ObjectStorageProvider tos, List<QwenImageApi.ImageResult> images,
 			String prefix, AIOutput output) throws IOException {
 		if (images == null || images.isEmpty()) {
 			return ToolResult.failure(prefix + "失败：服务没有返回图片。");
@@ -274,7 +275,7 @@ public class QwenImageMcp implements ToolProvider {
 	}
 
 	/** 拆分参考图 ID。 */
-	private static List<String> splitReferences(String raw) {
+	static List<String> splitReferences(String raw) {
 		List<String> references = new ArrayList<>();
 		if (raw == null) {
 			return references;
@@ -288,30 +289,7 @@ public class QwenImageMcp implements ToolProvider {
 		return references;
 	}
 
-	private static String stringField(JsonObject json, String key, String fallback) {
-		if (json == null || !json.has(key) || json.get(key).isJsonNull()) {
-			return fallback;
-		}
-		String value = json.get(key).getAsString();
-		return value == null ? fallback : value.trim();
-	}
-
-	private static boolean boolField(JsonObject json, String key, boolean fallback) {
-		if (json == null || !json.has(key) || json.get(key).isJsonNull()) {
-			return fallback;
-		}
-		try {
-			String raw = json.get(key).getAsString().trim();
-			if (raw.isEmpty()) {
-				return fallback;
-			}
-			return Boolean.parseBoolean(raw) || "1".equals(raw) || "是".equals(raw);
-		} catch (RuntimeException ex) {
-			return fallback;
-		}
-	}
-
-	private static String rootMessage(Throwable ex) {
+	static String rootMessage(Throwable ex) {
 		Throwable cause = ex;
 		while (cause != null && cause.getCause() != null && cause.getCause() != cause) {
 			cause = cause.getCause();

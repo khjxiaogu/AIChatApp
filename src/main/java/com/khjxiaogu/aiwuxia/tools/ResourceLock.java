@@ -6,6 +6,10 @@ import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 资源阻塞锁：支持按任意数量申请/释放资源，资源不足时阻塞调用线程。
+ * <p>
+ * 除了固定份数的 {@link #acquire(int)}，还提供 {@link #acquireAtLeast(int)}：先等到最低份数可用，
+ * 再一次性占满当前全部剩余资源，供 H3 这类“必须独占显存”的重模型使用。
+ * </p>
  */
 public class ResourceLock {
 
@@ -54,6 +58,60 @@ public class ResourceLock {
             }
             available -= amount;
             return new ResourcePermit(amount);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * 申请资源：先等到至少 {@code minimum} 份可用，然后一次性占满当前全部剩余资源。
+     * <p>
+     * 面向 H3 这类“必须独占显存”的重模型：资源不足 {@code minimum} 份时一直等待，满足后
+     * 不再给其它任务留余量（本次占用数 = 等待结束时 {@link #available()} 的值）。释放时按实际
+     * 占用数归还，因此等待期间别人释放的资源也会一并归还。
+     * </p>
+     *
+     * @param minimum 最低资源要求，必须 > 0 且 <= {@link #total()}
+     * @return 资源占用锁，使用完毕后必须调用 {@link ResourcePermit#release()} 或
+     *         使用 try-with-resources 释放
+     * @throws IllegalArgumentException {@code minimum} 非法，或锁容量本身小于 {@code minimum}
+     */
+    public ResourcePermit acquireAtLeast(int minimum) {
+        if (minimum <= 0) {
+            throw new IllegalArgumentException("minimum must be positive");
+        }
+        if (minimum > total) {
+            throw new IllegalArgumentException("资源锁容量为 " + total + "，不足最低要求 " + minimum + " 份");
+        }
+
+        lock.lock();
+        try {
+            while (available < minimum) {
+                try {
+                    sufficient.await();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                    Thread.currentThread().interrupt();
+                    throw new IllegalArgumentException("interrupted");
+                }
+            }
+            int amount = available;
+            available = 0;
+            return new ResourcePermit(amount);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * 资源总量（构造时指定）。
+     *
+     * @return 资源锁的总容量
+     */
+    public int total() {
+        lock.lock();
+        try {
+            return total;
         } finally {
             lock.unlock();
         }

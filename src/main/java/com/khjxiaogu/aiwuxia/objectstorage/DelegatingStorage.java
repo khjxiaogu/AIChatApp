@@ -29,18 +29,31 @@ public class DelegatingStorage implements ObjectStorageProvider {
 		return result;
 	}
 
+	/**
+	 * 对象键以本地存储为准（媒体文件不带后缀）；远端按需在 {@link #getHttpUrl} 时惰性同步。
+	 */
 	@Override
-	public String getUrl(String fn,Consumer<UsageIntf<?>> addUsage) throws IOException {
-		return local.getUrl(fn,addUsage);
+	public String uploadIfNotExists(byte[] data, String extension, Consumer<UsageIntf<?>> addUsage)
+			throws IOException {
+		return local.uploadIfNotExists(data, extension, addUsage);
 	}
 
 	@Override
-	public String getPublicUrl(String fn,Consumer<UsageIntf<?>> addUsage) throws IOException {
+	public String getDataUrl(String fn,Consumer<UsageIntf<?>> addUsage) throws IOException {
+		return local.getDataUrl(fn,addUsage);
+	}
+
+	@Override
+	public String getHttpUrl(String fn,Consumer<UsageIntf<?>> addUsage) throws IOException {
+		// 远端不支持公网地址时直接返回 null，让调用方退回 data URL
+		if (remote.getHttpUrl(fn,addUsage) == null) {
+			return null;
+		}
 		if (!remote.exists(fn,addUsage)) {
 			byte[] data = local.download(fn,addUsage);
 			remote.upload(fn, data,addUsage);
 		}
-		return remote.getPublicUrl(fn,addUsage);
+		return remote.getHttpUrl(fn,addUsage);
 	}
 
 	@Override

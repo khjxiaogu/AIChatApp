@@ -118,6 +118,11 @@ public class ToolCallManager {
 	private String groupLimitMessage = DEFAULT_GROUP_LIMIT_MESSAGE;
 	/** 不受任何调用次数限制的工具名称。 */
 	private final Set<String> unlimitedTools = new LinkedHashSet<>();
+	/**
+	 * 只豁免“工具调用轮次上限”的工具名称。
+	 * <p>文档库/知识库/历史记录检索这类查询、读取、写入操作不占用模型可用的工具轮次，但单工具次数上限仍然生效。</p>
+	 */
+	private final Set<String> roundExemptTools = new LinkedHashSet<>();
 	/** 权限监听器：按注册顺序逐个询问，结果按“拒绝 > 询问 > 允许 > 忽略”合并。 */
 	private final List<ToolCallPermission> permissionListeners = new ArrayList<>();
 	/** 许可方，可为 null（此时需要许可的调用按不予许可处理）。 */
@@ -183,6 +188,10 @@ public class ToolCallManager {
 		ToolRegistration old = registrations.get(tool.name);
 		int oldGroup = old == null ? 0 : old.getGroupId();
 		registrations.put(tool.name, new ToolRegistration(tool, async && !disableAsyncTasks, effectiveMax));
+		// 文档库 / 知识库 / 历史记录检索不计入“工具调用轮次上限”，避免大量读写把模型卡在轮次上限。
+		if (tool.name.startsWith("doc_") || tool.name.startsWith("kb_") || tool.name.startsWith("history_")) {
+			roundExemptTools.add(tool.name);
+		}
 		pruneGroup(oldGroup);
 		return this;
 	}
@@ -354,6 +363,7 @@ public class ToolCallManager {
 	public ToolCallManager unregisterTool(String toolName) {
 		if (toolName != null) {
 			ToolRegistration old = registrations.remove(toolName);
+			roundExemptTools.remove(toolName);
 			if (old != null) {
 				pruneGroup(old.getGroupId());
 			}
@@ -370,6 +380,7 @@ public class ToolCallManager {
 		registrations.clear();
 		groupMaxCalls.clear();
 		pendingMaxCalls.clear();
+		roundExemptTools.clear();
 		return this;
 	}
 
@@ -986,6 +997,66 @@ public class ToolCallManager {
 	 */
 	public boolean isUnlimited(String toolName) {
 		return toolName != null && unlimitedTools.contains(toolName);
+	}
+
+	/**
+	 * 只豁免轮次上限的工具集合（只读视图）。
+	 */
+	public Set<String> getRoundExemptTools() {
+		return Collections.unmodifiableSet(roundExemptTools);
+	}
+
+	/**
+	 * 指定工具是否豁免“工具调用轮次上限”。不限次工具也返回 true。
+	 * <p>豁免轮次不代表不限次数：总次数、单工具次数、共享组次数仍然生效。</p>
+	 *
+	 * @param toolName 工具名称
+	 * @return 是否不计入轮次、且轮次超限后仍可执行
+	 */
+	public boolean isRoundExempt(String toolName) {
+		return toolName != null && (isUnlimited(toolName) || roundExemptTools.contains(toolName));
+	}
+
+	/**
+	 * 声明单个工具豁免工具调用轮次上限（不影响其它次数限制）。
+	 *
+	 * @param toolName 工具名称
+	 * @return 本管理器，便于链式调用
+	 */
+	public ToolCallManager addRoundExemptTool(String toolName) {
+		if (toolName != null) {
+			roundExemptTools.add(toolName);
+		}
+		return this;
+	}
+
+	/**
+	 * 批量声明豁免轮次上限的工具。
+	 *
+	 * @param toolNames 工具名称集合，可为 null（等价于清空）
+	 * @return 本管理器，便于链式调用
+	 */
+	public ToolCallManager setRoundExemptTools(Collection<String> toolNames) {
+		roundExemptTools.clear();
+		if (toolNames != null) {
+			for (String toolName : toolNames) {
+				addRoundExemptTool(toolName);
+			}
+		}
+		return this;
+	}
+
+	/**
+	 * 取消某个工具的轮次豁免。
+	 *
+	 * @param toolName 工具名称
+	 * @return 本管理器，便于链式调用
+	 */
+	public ToolCallManager removeRoundExemptTool(String toolName) {
+		if (toolName != null) {
+			roundExemptTools.remove(toolName);
+		}
+		return this;
 	}
 
 	/**

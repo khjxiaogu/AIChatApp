@@ -30,13 +30,13 @@ import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
-import com.khjxiaogu.aiwuxia.tools.ResourceLock;
-import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
+import com.khjxiaogu.aiwuxia.voice.LocalModelHandshaker;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.voice.ModelType;
 
 import kotlin.text.Charsets;
 
@@ -51,28 +51,26 @@ public class MusicMcp implements ToolProvider {
 	private final String urlbase;
 	private final String voiceId;
 	private final String name;
-	private final ResourceLock lock;
 	private final ObjectStorageProvider tos;
 	private final File svsVoicesConfig;
 
-	public MusicMcp(File localFolder, String voiceId, String name, ResourceLock lock) {
-		this(localFolder, voiceId, name, lock, null, null);
+	public MusicMcp(File localFolder, String voiceId, String name) {
+		this(localFolder, voiceId, name, null, null);
 	}
 
-	public MusicMcp(File localFolder, String voiceId, String name, ResourceLock lock, ObjectStorageProvider tos,
+	public MusicMcp(File localFolder, String voiceId, String name, ObjectStorageProvider tos,
 			File svsVoicesConfig) {
-		this(localFolder, voiceId, name, lock, tos, svsVoicesConfig,
+		this(localFolder, voiceId, name, tos, svsVoicesConfig,
 				System.getProperty("musicBaseUrl", DEFAULT_BASE_URL));
 	}
 
-	public MusicMcp(File localFolder, String voiceId, String name, ResourceLock lock, ObjectStorageProvider tos,
+	public MusicMcp(File localFolder, String voiceId, String name, ObjectStorageProvider tos,
 			File svsVoicesConfig, String urlbase) {
 		this.localFolder = localFolder;
 		this.outputFolder = new File(localFolder, "output");
 		this.urlbase = stripTrailingSlash(urlbase == null || urlbase.trim().isEmpty() ? DEFAULT_BASE_URL : urlbase);
 		this.voiceId = voiceId;
 		this.name = name;
-		this.lock = lock;
 		this.tos = tos;
 		this.svsVoicesConfig = svsVoicesConfig;
 		localFolder.mkdirs();
@@ -154,7 +152,8 @@ public class MusicMcp implements ToolProvider {
 					}
 				}).build());
 		String svsHost = System.getProperty("svsHost");
-		if (svsHost != null) {
+		// 平台搜索/下载不依赖本地模型；歌唱合成改走 SVS 模型通道，因此 svsHost 只是兼容开关
+		if (svsHost != null || LocalModel.hasOnlineService(ModelType.SVS)) {
 			tools.add(new ToolData.Builder("search_music", "从音乐平台搜索歌曲列表。")
 					.putParam("keyword", "歌曲搜索关键词，需要包含歌名，歌手等信息。", "歌曲关键词")
 					.tool((data) -> {
@@ -320,33 +319,32 @@ public class MusicMcp implements ToolProvider {
 		return tools;
 	}
 
-	/** 调用 localemp 把指定 HTTP 音频转换为角色歌声，并写入合成目录。 */
+	/** 通过本地模型通道把指定 HTTP 音频转换为角色歌声，并写入合成目录。 */
 	private CompletableFuture<ToolResult> singFromUrl(String url, File fileout, AIOutput output) {
 		if (fileout.isFile()) {
 			return CompletableFuture.completedFuture(ToolResult.text(
 					"文件名：" + fileout.getName() + "\n信息：合成目录中已存在同名歌曲，未重复生成。"));
 		}
-		String svsHost = System.getProperty("svsHost");
-		if (svsHost == null || svsHost.trim().isEmpty()) {
-			return CompletableFuture.completedFuture(ToolResult.text("信息：未配置 svsHost，无法合成。"));
+		if (voiceId == null || voiceId.trim().isEmpty()) {
+			return CompletableFuture.completedFuture(ToolResult.text("信息：当前角色没有配置歌声音色，无法合成。"));
 		}
-		if (!SvsMcp.isSvsServiceOnline(svsHost)) {
-			return CompletableFuture.completedFuture(ToolResult.text("信息：本地歌声合成服务不在线，请先启动 localemp.py。"));
+		if (!LocalModel.hasOnlineService(ModelType.SVS)) {
+			return CompletableFuture.completedFuture(ToolResult.text(
+					"信息：本地歌声合成服务未连接（SVS 通道），请先启动 LocalModelConnectionService。"));
 		}
+		LocalModelHandshaker.SvsOptions options;
+		try {
+			options = LocalModelHandshaker.SvsOptions.builder()
+					.voice(voiceId)
+					// 同时带旧字段，兼容仍只读 timbre 的本地实现
+					.timbre(voiceId);
+		} catch (IllegalArgumentException ex) {
+			return CompletableFuture.completedFuture(
+					ToolResult.text("信息：当前角色歌声音色无效（" + ex.getMessage() + "）。"));
+		}
+		// 生成交给本地模型连接服务（SvsLocalModelClient → localemp.py），聊天进程不再直接访问 svsHost
 		String reqid = UUID.randomUUID().toString();
-		CompletableFuture<ModelGenerationResult> cf = LocalModel.registerTask(reqid);
-		CompletableFuture.runAsync(() -> {
-			try (ResourcePermit l = lock.acquire(4)) {
-				System.out.println(HttpRequestBuilder.create("http", svsHost)
-						.url("?url=" + URLEncoder.encode(url, Charsets.UTF_8) + "&voice="
-								+ URLEncoder.encode(voiceId, Charsets.UTF_8) + "&reqid=" + reqid)
-						.get().readString());
-			} catch (IOException e) {
-				e.printStackTrace();
-				cf.completeExceptionally(e);
-			}
-		});
-		return cf.thenApply(vg -> {
+		return LocalModel.requireSvs(reqid, url, null, options).thenApply(vg -> {
 			try {
 				FileUtil.transfer(vg.bodyData, fileout);
 				return ToolResult.text("文件名：" + fileout.getName() + "\n信息：角色歌声已生成并放入合成目录。");
@@ -354,7 +352,7 @@ public class MusicMcp implements ToolProvider {
 				e.printStackTrace();
 				return ToolResult.failure("信息：保存合成歌曲失败，" + e.getMessage());
 			}
-		});
+		}).exceptionally(ex -> ToolResult.failure("信息：歌声合成失败，" + ex.getMessage()));
 	}
 
 	/** 把本地文件转换为服务端公开的 HTTP 链接，供 localemp 下载。 */
@@ -547,8 +545,8 @@ public class MusicMcp implements ToolProvider {
 							subManager.registerTool(tool);
 						}
 					}
-					// 子 agent 接入 SVS MCP：既可以转换外部音频，也可以查询可用音色
-					SvsMcp svs = new SvsMcp(tos, lock, svsVoicesConfig);
+					// 子 agent 接入 SVS 模型通道：既可以转换外部音频，也可以查询可用音色
+					SvsLocalModelMcp svs = new SvsLocalModelMcp(tos, svsVoicesConfig);
 					for (ToolData tool : svs.getTools()) {
 						subManager.registerTool(tool);
 					}

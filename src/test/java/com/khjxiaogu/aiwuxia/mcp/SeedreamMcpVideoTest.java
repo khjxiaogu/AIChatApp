@@ -477,12 +477,12 @@ public class SeedreamMcpVideoTest {
 		}
 
 		@Override
-		public String getUrl(String fn, Consumer<UsageIntf<?>> addUsage) throws IOException {
-			return getPublicUrl(fn, addUsage);
+		public String getDataUrl(String fn, Consumer<UsageIntf<?>> addUsage) throws IOException {
+			return publicUrls.get(fn);
 		}
 
 		@Override
-		public String getPublicUrl(String fn, Consumer<UsageIntf<?>> addUsage) throws IOException {
+		public String getHttpUrl(String fn, Consumer<UsageIntf<?>> addUsage) throws IOException {
 			return publicUrls.get(fn);
 		}
 	}

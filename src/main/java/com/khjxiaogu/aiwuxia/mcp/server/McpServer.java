@@ -120,7 +120,7 @@ public class McpServer {
      *
      * @param registry      工具注册表
      * @param store         令牌与计费存储
-     * @param serverName    服务名称，null 时使用 {@code AIWuxia-MCP}
+     * @param serverName    服务名称，null 时使用 {@code MCP}
      * @param serverVersion 服务版本，null 时使用 {@code 0.0.1}
      */
     public McpServer(McpToolRegistry registry, McpAccessTokenStore store, String serverName, String serverVersion) {
@@ -132,7 +132,7 @@ public class McpServer {
      *
      * @param registry        工具注册表
      * @param store           令牌与计费存储
-     * @param serverName      服务名称，null 时使用 {@code AIWuxia-MCP}
+     * @param serverName      服务名称，null 时使用 {@code MCP}
      * @param serverVersion   服务版本，null 时使用 {@code 0.0.1}
      * @param mediaUrlResolver 多媒体 id → 链接解析器，可为 null
      */
@@ -140,7 +140,7 @@ public class McpServer {
             MediaUrlResolver mediaUrlResolver) {
         this.registry = registry == null ? new McpToolRegistry() : registry;
         this.store = store;
-        this.serverName = serverName == null ? "AIWuxia-MCP" : serverName;
+        this.serverName = serverName == null ? "MCP" : serverName;
         this.serverVersion = serverVersion == null ? "0.0.1" : serverVersion;
         this.mediaUrlResolver = mediaUrlResolver;
         // 通用异步任务查询工具：所有 tool.async == true 的 MCP 工具都会返回 task_id
@@ -423,7 +423,7 @@ public class McpServer {
         result.add("capabilities", capabilities);
         result.add("serverInfo", serverInfo);
         result.addProperty("instructions",
-                "本服务把 AIWuxia 的 ToolData 以 MCP 工具形式提供。每次调用固定扣除 " + CALL_COST
+                "本服务把本程序注册的 ToolData 以 MCP 工具形式提供。每次调用固定扣除 " + CALL_COST
                         + " 额外配额，工具内部产生的用量（模型调用、图片/视频生成、搜索、存储等）按实际用量另行结算。");
         return result;
     }
@@ -770,7 +770,9 @@ public class McpServer {
                 property.addProperty("type", "string");
                 property.addProperty("description", entry.getValue() == null ? "" : entry.getValue());
                 properties.add(entry.getKey(), property);
-                required.add(entry.getKey());
+                if (!tool.isOptionalParam(entry.getKey())) {
+                    required.add(entry.getKey());
+                }
             }
         }
         JsonObject schema = new JsonObject();

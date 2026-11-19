@@ -411,6 +411,10 @@ state.registerTool(t);                       // 挂到会话，随后 AIRequest.
   `putParam` 的第三个参数就是该文本里的参数名，省略时回退为参数名本身；
 - 内置联网工具：`FetchMcp` 提供 `web_view` / `moegirl_search`；`DeepseekSearchMcp` 提供 `web_search`
   （DeepSeek 官方 Search API，需要 `-Ddeepseektoken`，未配置时不注册，见 README「网页搜索」一节）。
+  **DeepSeek `deepseek-flash` 请求不会真正调用这个工具**：提供者会把它换成官方服务端工具 `deepseek_web_search`
+  （搜索在服务端完成，客户端不执行工具，也不产生按次用量）；`deepseek-v4-pro` 不使用该优化，它与其它模型、
+  以及 DeepSeek 的 JSON 输出 / `prefix` 续写请求一样走 MCP 工具。服务端调用记录保存在 `ServerToolUseContent` 里，
+  下一轮原样回传 `server_tool_calls`，其它模型则降级成占位文本。
   **按次计费**的外部接口要等确认成功后再记账：搜索每次成功请求折算 2500 等效 token（0.005 元），
   失败、超时与空结果不记账（见 `DeepseekSearchUsage`）；
 - 注意：**内置 app 一个工具都没挂**（`apps/` 里没有 `registerTool` 调用），工具只在群聊侧
@@ -469,6 +473,92 @@ qwen.reference(List.of(new QwenImageApi.InputImage(bytes, "ref.png")), "让她�
   其中同步文生图工具会挂到 `SDXLAgent` 的子 agent 工具表，作为“参考底图生成器”使用，
   见 `SDXLAgentMcp.createImage(...)`。
 
+### 10.2.1 MiniMax H3 视频（ComfyUI）
+
+`com.khjxiaogu.aiwuxia.vision.H3VideoApi` 与 Qwen 共用同一个 ComfyUI（默认 `8188`），按
+`api/graphs/h3-*.json` 的节点图构造视频工作流：
+
+```java
+H3VideoApi h3 = new H3VideoApi("http://127.0.0.1:8188")
+        .setModelTier(H3VideoApi.ModelTier.NVFP4)   // INT8 / NVFP4，NVFP4 权重 10.86GB
+        .setSteps(6)                                // 默认跟随档位：int8=8、NVFP4=6
+        .setSparse(true)                            // 稀疏注意力，默认开
+        .setAudioEnabled(false)                     // 视频 MCP 全部禁用音频
+        .setResourceLock(resourceLock, 0);          // 0 表示：至少 8 份，然后占满剩余
+List<H3VideoApi.VideoResult> videos = h3.textToVideo("黄昏天台，镜头缓慢推近", 864, 480,
+        H3VideoApi.snapFrames(5), H3VideoApi.randomSeed(), true);
+h3.video("她转头微笑", 864, 480, 124, seed,
+        new H3VideoApi.InputImage(first, "a.png"), null, true);
+```
+
+- 宽高必须是 **32** 的倍数；帧数必须是 **17k+5**：`snapFrames(秒)` 按 24fps 换算后向上吸附，
+  `normalizeFrames(帧)` 规整已有帧数（5 秒→124 帧、10 秒→243、15 秒→362）；
+- 步数默认 8（int8）/ 6（NVFP4），采样 `euler` + `simple`、走 `BasicGuider`，**没有 CFG、也不能加负面词**；
+- 默认**不生成音频**：`setAudioEnabled(false)` 时工作流不加载音频 VAE、不做音频解码，输出无声 mp4；
+  只有显式打开时才使用 fp32 音频 VAE；
+- 默认 90 分钟超时；`/free` 在提交前挂一次性标记，任务结束卸载模型（16GB 卡靠分层卸载跑 19.5GB 权重）；
+- 资源锁：int8 档先等到至少 `MIN_RESOURCE_AMOUNT = 8` 份，再一次性占满当前剩余全部资源
+  （`ResourceLock.acquireAtLeast`）；NVFP4 档固定占用 `NVFP4_RESOURCE_AMOUNT = 10` 份；
+- `downloadVideos` 不依赖具体输出字段名，凡是 history 输出里“含 filename 的对象”都会下载；
+  新工作流还会输出首帧/末帧 png（节点 16~19），`runOutput(...)` 返回 `H3Output`
+  （`videos` + `firstFrame` / `lastFrame`），`downloadVideos` / `downloadImages` 分别按扩展名过滤；
+- 视频截帧：`buildVideoFrame(已上传视频名, batch_index)` 对应 `api/graphs/video-frame.json`，
+  `extractFrame(InputImage, batch_index)` / `extractFrameUnlocked(...)` 上传视频并返回
+  `ImageResult`；`batch_index=0` 首帧、`-1` 末帧、`-2` 倒数第二帧；
+- `com.khjxiaogu.aiwuxia.vision.H3LocalModelHandler`（`model_type=h3`）把请求转成 ComfyUI 调用，
+  生成的 mp4 以**原始字节 + `format=mp4`** 回传（连接器再按二进制分块发送）；请求里的 `seconds`
+  由处理器再吸附成帧数，`frames` 优先；`action=extract_frame` 时返回 png；请求可带
+  `first_video` / `last_video`（视频 Base64），处理器先截帧再作为 H3 的首/尾帧；排队与生成阶段通过
+  `ProgressReporter` 上报 `queued` / `running` 与进度；旧版本的 JSON `{"videos":[...]}` 形式仍可解析；
+- `com.khjxiaogu.aiwuxia.mcp.H3VideoMcp` 提供两种生成模式和一个截帧工具，生成模式暴露提示词、
+  参考图（1 张首帧 / 2 张首尾帧）、参考视频（`video`，1 个取首末帧、2 个取首/末）、
+  画面比例（16:9/9:16/1:1/4:3/3:4）和时长：
+  - `h3_gen_video`（int8，8 步，1~15 秒，默认 5，画布 864×480 一档）；
+  - `h3_gen_anim`（NVFP4，6 步，1~8 秒，默认 3，画布 640×352 一档）；
+  - `video_extract_frame`（`video` + 可选 `frame`，0 首帧、-1 末帧、-2 倒数第二帧，返回图片 id）。
+  尺寸、帧数换算、步数、采样、种子、模型、显存释放全部由代码固定。视频生成耗时远超图片，
+  工具通过 `LocalModel.require(..., timeoutMs)` 把等待上限放大到 90 分钟，并依赖进度协商在生成
+  期间不断续期，避免被默认 5 分钟判超时；
+- 计费：生成成功后由 `H3VideoUsage` 按算力时长上报配额，**每 1 小时 = 1,000,000 配额**。
+  公式见 `H3VideoUsage` 类注释；`-Dh3DiskMBps` 可校准磁盘读吞吐（默认 1000 MB/s）。
+
+### 10.2.2 H3 视频子 agent
+
+`com.khjxiaogu.aiwuxia.mcp.H3VideoAgentMcp` 与 `SDXLAgentMcp` 同构：对主模型只暴露一个
+`h3_video_agent` 工具（参数 `prompt` + 可选 `reference` / `video`），内部跑一个子 agent：
+
+- 内层工具：`h3_gen_video` 与 `h3_gen_anim`（同步版本，`H3VideoMcp.createGenerateTool(tos, false, mode)`）、
+  `video_extract_frame`（视频截帧）、`qwen_gen_image`（没有参考图时先出首帧）、`image_recognition`、
+  `web_view` / `web_search`、`search_character`；每种视频模式最多生成 2 次；
+- 子 agent 最多 6 轮、最多生成 2 次视频、最多生成 2 张首帧，`setDisableAsyncTasks(true)`；
+- 聊天进程不持有资源锁：视频排队与显存占用由本地模型服务一侧的 `H3LocalModelHandler` 负责；
+- 子 agent 的系统提示词取 `config/h3/agent/{role,charaset,rules}.txt`（都可缺省），缺省时用内置
+  “视频导演”提示词，并始终追加“必须等工具真实返回、必须输出视频 id、视频一律无声”的硬性要求；
+- 子 agent 内的工具结果只回到子 agent，因此工具会收集内层产生的 `VideoContent`，在子 agent
+  结束后作为外层工具附件返回；内层视频的算力用量也会补记到外层 `AIOutput`，不会漏计费；
+- 与直接注册 `h3_gen_video` 的区别：主模型不需要懂 H3 提示词写法，也不用自己决定比例/时长，
+  适合“给我来一段……”这类模糊需求；确定参数时直接用 `h3video` 技能更省 token。
+
+同步版本的工具在调用线程里直接执行（不再嵌套线程池任务），避免子 agent 与生成任务同时
+占用公共线程池造成并发阻塞。
+
+### 10.2.3 H3 子 agent 真实调用
+
+`H3VideoAgentRunner`（`src/main/java/.../mcp/`）是真实调用入口，不是测试：
+
+- 常量输入提示词和 `target/pic1.png` 参考图；
+- 使用真实大模型、真实 `H3VideoAgentMcp`、真实 `h3_gen_video` / `h3_gen_anim`；
+- 要求本地模型服务已连上 H3 通道、ComfyUI 与权重可用；
+- 对象存储与生产一致（有 TOS 配置时本地 + TOS）。
+
+```powershell
+java -Ddeepseektoken=你的key -Dfile.encoding=UTF-8 `
+  -cp "target/classes;target/aiwx_lib/*" `
+  com.khjxiaogu.aiwuxia.mcp.H3VideoAgentRunner
+```
+
+运行后会实际生成视频并打印视频 id。
+
 ### 10.3 SVS（歌声转换）
 
 `com.khjxiaogu.aiwuxia.mcp.SvsMcp` 从 `MusicMcp` 的 SVS 流程复制而来，但与音乐平台无关：
@@ -486,9 +576,9 @@ SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，�
 资源锁与其它本地模型共享。
 
 另外两套 LocalModel 接入：
-- `com.khjxiaogu.aiwuxia.voice.SvsLocalModelClient`：以 `model_type=svs` 连接服务器，
+- `com.khjxiaogu.aiwuxia.vision.SvsLocalModelHandler`：注册到统一管理器的 `svs` 处理器，
   调用 localemp.py 前用 `LocalModel.registerTask(reqid)` 注册回调任务（与 `MusicMcp` 一致），
-  等 localemp 的 HTTP 回调完成后把音频通过 WebSocket 回传（客户端需与服务器在同一 JVM）；
+  等 localemp 的 HTTP 回调完成后把音频通过本地模型通道回传（处理器需与服务器在同一 JVM）；
 - `com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp`：使用 `LocalModel.requireSvs` 的 SVS MCP，
   已在 `AIChatService` 的 MCP 注册表中注册。`svs_convert` 声明为异步工具，MCP 层会立即返回
   `task_id`，再用通用 `mcp_task_result` 轮询获取音频。
@@ -511,6 +601,55 @@ SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，�
 - `send_music` 同时查找两个目录；
 - 服务端公开 `GET /aichat/music/original?file=...` 与 `/aichat/music/output?file=...`，
   代码用 `-DmusicBaseUrl`（群聊模式默认 `http://127.0.0.1:8998/aichat`）生成给 localemp 的 HTTP 链接。
+
+### 10.5 本地模型通道（传输 / 协议 / 会话 / 模型调用分层）
+
+`LocalModelConnectionService` 进程同时接入两条部署通道：
+
+| 通道 | 地址 | 入口 |
+|---|---|---|
+| 配置的远端 | `-DlocalModelServer=host:port`，缺省按 `site.json` / `--site-host` | 对外聊天服务器 |
+| 本机网关 | `ws://127.0.0.1:8997/aichat/kh$localModelDeploy`（`-DlocalModelPort` 可改） | `NapCatAIConnector` 启动的 `LocalModelGateway` |
+
+**每条通道只建一条连接**，所有模型共用；分层职责：
+
+| 层 | 类 | 职责 |
+|---|---|---|
+| 传输 | `voice.transport.LocalModelTransport`（SPI）、`WebSocketLocalModelTransport`、`LocalModelTransportFactory` | 只管连接与文本收发。新增协议（TCP 自定义帧、stdio、IPC…）实现接口 + 工厂即可，业务层零改动 |
+| 协议 | `voice.protocol.LocalModelProtocol` | 请求 / 响应 / 进度 / 能力集合报文的字段与编解码，服务端与连接器共用 |
+| 会话 | `voice.LocalModelClient` | 一条连接 + “模型类型 → 处理器”表：按请求的 `type` 分发、进度心跳、重连、按类型健康检查 |
+| 模型调用 | `vision.SDXLLocalModelHandler` / `SvsLocalModelHandler` / `QwenLocalModelHandler` / `H3LocalModelHandler`、`voice.AudioLocalModelHandler` | 只把请求翻译成 SD WebUI / localemp / ComfyUI / TTS 调用 |
+
+- 各处理器由 `LocalModelConnectionService.createHandlers()` 统一注册，不再各自建连接；
+  配置了 `-DttsUrl` 时才注册 `audio`；
+- **结果文件走二进制分块**：处理器返回原始字节（`png` / `mp4` / `mp3` / `json`），连接器按
+  `[LMF1][reqidLen][reqid][formatLen][format][current][total][content]` 的二进制帧发送，
+  每块内容体最大 5 MiB（`LocalModelProtocol.DEFAULT_FILE_CHUNK_SIZE`），超过自动分包。
+  服务端用 `FileChunkAssembler` 收齐 `1..total` 后才完成任务；`-DlocalModelFileTimeoutMs`
+  （默认 60 秒）内没有新分块则任务失败并丢弃已收到的块，连接断开同样丢弃。
+  旧的文本 Base64 响应仍然兼容；
+- 进度协商：处理器用 `ProgressReporter` 上报状态，语义固定——`queued` = 正在等待本地资源锁
+  （排队），`running` = 请求已经正式下发给对应的本地软件（SD WebUI / localemp / ComfyUI / TTS，
+  执行中），另有可选的进度比例。连接器默认每 20 秒（`-DlocalModelProgressIntervalMs`）自动心跳；
+  服务端收到 `progress` 报文后把该任务超时延长到现在 + 3 分钟（`-DlocalModelProgressTimeoutMs`），
+  `registerTask` 注册的外部任务同样适用；
+- 能力集合：连接 URL 的 `model_type` 是初始值，运行期 `LocalModelClient.setModelTypes(...)`（或
+  `LocalModelConnectionService.setModelTypes(...)`）发送
+  `{"type":"capabilities","model_types":[...]}`，服务器更新连接池并回执；
+- 健康检查按类型独立：某类本地服务连续失败只把该类型移出能力集合，连接与其它模型不受影响，
+  恢复后自动重新加入；
+- 资源锁只在**模型服务**一侧（`LocalModelConnectionService` 持有的 `ResourceLock`），聊天进程的
+  MCP 不再加锁。H3 处理器 `H3LocalModelHandler` 使用“至少 8 份后占满剩余全部资源”。
+
+`NapCatAIConnector` 注册的 `sdxl` / `sdxl-nsfw` / `sdxl-agent` / `svs` / `qwen` / `h3video` /
+`h3video-agent` 工具都走
+`LocalModel` 通道（`SDXLMcp.createRemoteLocalModel`、`SvsLocalModelMcp`、`QwenLocalModelMcp`、
+`H3VideoMcp`、`H3VideoAgentMcp`），
+不再直接访问上面三个本地 HTTP 服务，也不持有资源锁；模型服务没启动时工具会提示“本地模型服务未连接”。
+语音回复仍走 `VoiceModelHandler` → `LocalVoiceApi` → `LocalModel.requireAudio(ModelType.AUDIO)`；
+`VoiceModelHandler.init` 会在启动时打印已注册的语音后端与 audio 在线状态，找不到可用的语音模型时
+每分钟最多打印一条 `[Voice] 没有可用语音模型…` 诊断。`qwen` / `h3video` / `h3video-agent` 是技能名，
+要在 `save/config/agents.json` 之类的 `tools` 里显式启用。
 
 ---
 

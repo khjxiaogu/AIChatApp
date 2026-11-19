@@ -87,7 +87,7 @@ public class MimoModelProvider implements ModelProvider{
 		JsonObject main=new JsonObject();
 		main.addProperty("name", schema.name);
 		main.addProperty("description", schema.description);
-		main.addProperty("strict", true);
+		main.addProperty("strict", schema.optionalParams.isEmpty());
 		JsonObject parameters=new JsonObject();
 		parameters.addProperty("type", "object");
 		parameters.addProperty("additionalProperties", false);
@@ -98,7 +98,8 @@ public class MimoModelProvider implements ModelProvider{
 			prop.addProperty("type","string");
 			prop.addProperty("description", ent.getValue());
 			properties.add(ent.getKey(), prop);
-			required.add(ent.getKey());
+			if(!schema.isOptionalParam(ent.getKey()))
+				required.add(ent.getKey());
 		}
 		parameters.add("properties", properties);
 		parameters.add("required", required);

@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.chat;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -102,47 +103,15 @@ public class AutoReplyJudge {
 			double budget = ModelBudget.MIMO;
 			if (config != null && config.has("autoReply") && config.get("autoReply").isJsonObject()) {
 				JsonObject jo = config.getAsJsonObject("autoReply");
-				enabled = readBoolean(jo, "enabled", enabled);
+				enabled = JsonConfig.getBool(jo, "enabled", enabled);
 				// 间隔太短会让判定过于频繁，最低 30 秒
-				interval = Math.max(30_000L, readLong(jo, "intervalMs", interval));
-				threshold = Math.max(1, (int) readLong(jo, "messageThreshold", threshold));
-				budget = readDouble(jo, "budget", budget);
+				interval = Math.max(30_000L, JsonConfig.getLong(jo, "intervalMs", interval));
+				threshold = Math.max(1, (int) JsonConfig.getLong(jo, "messageThreshold", threshold));
+				budget = JsonConfig.getDouble(jo, "budget", budget);
 			}
 			return new Settings(enabled, interval, threshold, budget);
 		}
 
-		private static boolean readBoolean(JsonObject jo, String key, boolean fallback) {
-			try {
-				if (jo.has(key) && jo.get(key).isJsonPrimitive()) {
-					return jo.get(key).getAsBoolean();
-				}
-			} catch (RuntimeException e) {
-				// 配置写错时用默认值
-			}
-			return fallback;
-		}
-
-		private static long readLong(JsonObject jo, String key, long fallback) {
-			try {
-				if (jo.has(key) && jo.get(key).isJsonPrimitive()) {
-					return jo.get(key).getAsLong();
-				}
-			} catch (RuntimeException e) {
-				// 配置写错时用默认值
-			}
-			return fallback;
-		}
-
-		private static double readDouble(JsonObject jo, String key, double fallback) {
-			try {
-				if (jo.has(key) && jo.get(key).isJsonPrimitive()) {
-					return jo.get(key).getAsDouble();
-				}
-			} catch (RuntimeException e) {
-				// 配置写错时用默认值
-			}
-			return fallback;
-		}
 	}
 
 	/** 一条待判定的群消息。 */
@@ -307,11 +276,18 @@ public class AutoReplyJudge {
 		}
 		workers.execute(() -> {
 			boolean needReply;
-			try {
-				needReply = askForReply(pending.session, pending.settings.budget, lines);
-			} catch (Throwable t) {
-				System.err.println("[主动回复判定] 判定失败：" + t);
-				needReply = false;
+			if (pending.session.isExplicitSend()) {
+				// 显式发送模式：不再让 AI 判断要不要说话，到阈值/间隔就直接触发一轮
+				System.out.println("[主动回复判定] 角色「" + roleName(pending.session)
+						+ "」为显式发送模式，跳过 AI 判定，直接触发");
+				needReply = true;
+			} else {
+				try {
+					needReply = askForReply(pending.session, pending.settings.budget, lines);
+				} catch (Throwable t) {
+					System.err.println("[主动回复判定] 判定失败：" + t);
+					needReply = false;
+				}
 			}
 			boolean trigger;
 			synchronized (pending) {

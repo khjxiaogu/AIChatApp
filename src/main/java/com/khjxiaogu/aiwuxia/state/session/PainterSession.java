@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.state.session;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
@@ -10,12 +11,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.AIChatService;
 import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
 import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
@@ -29,7 +32,9 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.ServerToolUseContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
+import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
@@ -42,7 +47,7 @@ import io.netty.channel.Channel;
  * <p>
  * 连接管理、鉴权计费、生成生命周期、消息帧与历史分页全部复用 {@link WebSocketAISession}，
  * 本类只保留绘画前端特有的指令处理（按 {@link #PAINTER_OPERATIONS} 分发）、
- * 思考流展示与图片工具链。
+ * 思考流展示、图片工具链与视频等异步长任务的结算与下发。
  * </p>
  */
 public class PainterSession extends WebSocketAISession {
@@ -67,7 +72,7 @@ public class PainterSession extends WebSocketAISession {
 
 	static {
 		PAINTER_OPERATIONS.put("message", (jo, state, conn) -> {
-			String msgId = optionalString(jo, "msgId");
+			String msgId = JsonConfig.getNonBlankString(jo, "msgId");
 			// 重连/超时重放：同一条待生成输入只写一次
 			if (state.isAcceptedMessage(msgId)) {
 				state.acknowledgeMessage(conn, msgId, true, null);
@@ -108,11 +113,11 @@ public class PainterSession extends WebSocketAISession {
 		PAINTER_OPERATIONS.put("revert", (jo, state, conn) -> {
 			// 撤回最后一轮：与对话前端共用父类实现，动作在会话命令线程中执行；
 			// 回填只发回发起请求的连接，避免多标签页互相覆盖输入框
-			state.requestRevert(optionalString(jo, "requestId"), conn);
+			state.requestRevert(JsonConfig.getNonBlankString(jo, "requestId"), conn);
 		});
 		PAINTER_OPERATIONS.put("regen", (jo, state, conn) -> {
 			// 重新生成最后一条回复
-			state.requestRegen(optionalString(jo, "requestId"), conn);
+			state.requestRegen(JsonConfig.getNonBlankString(jo, "requestId"), conn);
 		});
 	}
 
@@ -385,6 +390,18 @@ public class PainterSession extends WebSocketAISession {
                     }
                     frameSink.accept(frame.end().toString());
                 }
+            } else if (current instanceof ServerToolUseContent) {
+                // DeepSeek 服务端联网工具：按工具调用帧下发，参数用带截断的占位文本
+                ServerToolUseContent serverToolUse = (ServerToolUseContent) current;
+                JsonObjectBuilder<JsonObject> frame = JsonBuilder.object()
+                    .add("type", "tool_call")
+                    .add("tool_name", serverToolUse.getBrief())
+                    .add("tool", serverToolUse.getToolName());
+                String detail = serverToolUse.toText();
+                if (!detail.isEmpty()) {
+                    frame.add("content", contentsToJson(new MutableMessageContents(detail)));
+                }
+                frameSink.accept(frame.end().toString());
             }
         }
     }
@@ -437,5 +454,207 @@ public class PainterSession extends WebSocketAISession {
             .add("type", "content")
             .add("content", contentsToJson(new MutableMessageContents(content)))
             .end().toString());
+    }
+
+    // ==================== 异步长任务（视频生成） ====================
+
+    /**
+     * 异步工具任务创建：把任务状态下发给绘画前端。
+     * <p>
+     * 视频生成（H3 / 即梦）耗时几分钟，本轮回复往往先结束；前端据此在输入框上方一直显示
+     * “视频生成中”，避免用户以为没有响应而重复发起。任务完成后由
+     * {@link #handleToolTaskCompleted(ToolTask)} 下发结果。
+     * </p>
+     *
+     * @param task 新任务
+     */
+    @Override
+    protected void handleToolTaskCreated(ToolTask task) {
+        if (task == null) {
+            return;
+        }
+        sendFrame(taskFrame("created", task, null).toString());
+    }
+
+    /**
+     * 异步工具任务结束：在会话命令线程里结算，先下发任务状态，再把结果附件写入历史。
+     * <p>
+     * 任务通常在本轮回复结束之后才完成（视频生成需要数分钟），此时本轮写入上下文已经关闭，
+     * 直接交给父类会把附件写进一条已经结束的记录里而丢失。因此这里续写最后一条助手回复
+     * （最后一条不是助手时新起一条）：前端收到更新后的 {@code message} 帧后重新渲染这条回复，
+     * 视频就此出现在本轮结果里，历史里也能重新加载出来。
+     * </p>
+     *
+     * @param task 已结束的任务（成功或失败）
+     */
+    @Override
+    protected void handleToolTaskCompleted(ToolTask task) {
+        if (task == null) {
+            return;
+        }
+        try {
+            getCommandExec().submit(() -> publishTaskResult(task));
+        } catch (Throwable t) {
+            parent.getLogger().printStackTrace(t);
+        }
+    }
+
+    /**
+     * 结算一次异步任务：下发状态帧，并把结果附件写入历史。
+     *
+     * @param task 已结束的任务
+     */
+    private void publishTaskResult(ToolTask task) {
+        boolean failed = task.isFailed() || task.isCancelled();
+        String message = failed ? taskFailureMessage(task)
+            : task.getResult() == null ? "" : task.getResult().getText();
+        sendFrame(taskFrame(failed ? "failed" : "done", task, message).toString());
+        if (failed) {
+            sendNotice("媒体生成失败：" + (message == null || message.isEmpty() ? "未知错误" : message));
+            releaseIfIdle();
+            return;
+        }
+        List<MessageContent> attachments = task.getResult() == null ? null
+            : task.getResult().getAttachments();
+        if (attachments == null || attachments.isEmpty()) {
+            if (message != null && !message.isEmpty()) {
+                sendNotice(message);
+            }
+            releaseIfIdle();
+            return;
+        }
+        HistoryWriteContext current = getCurrentWrite();
+        if (current != null && !current.isResolved()) {
+            // 本轮还在写入（例如视频在本轮结束前就生成完）：直接追加到当前回复，保持顺序
+            for (MessageContent attachment : attachments) {
+                if (attachment != null) {
+                    current.append(attachment, false);
+                }
+            }
+        } else {
+            // 本轮已经结束：续写最后一条助手回复（最后一条不是助手时新起一条）。
+            // 续写而不是新开记录，能让视频留在原来那轮回复里：撤回/重新生成仍按
+            // “助手回复 ↔ 用户请求”配对处理，不会把视频当成一轮独立对话。
+            try (HistoryWriteContext write = continueWrite(Role.ASSISTANT)) {
+                for (MessageContent attachment : attachments) {
+                    if (attachment != null) {
+                        write.append(attachment, false);
+                    }
+                }
+                // 上下文里补一句文本：下一轮对话时模型知道上一轮已经生成过视频。
+                // 明确说明视频 id 不能当参考图：视频与图片共用同一套内容哈希 id，
+                // 直接拿视频 id 做参考图会让图生视频/即梦收到非图片数据。
+                String ids = attachmentIds(attachments);
+                write.appendContext(ids.isEmpty() ? "（视频已生成）"
+                    : "（视频已生成，视频id：" + ids + "；视频 id 不能作为图片参考图使用）");
+            }
+            flush();
+        }
+        sendNotice("视频已生成");
+        releaseIfIdle();
+    }
+
+    /**
+     * 释放会话前的判断：没有连接、也没有仍在运行的后台任务时才释放。
+     * <p>
+     * 视频生成在本轮回复结束后还会继续几分钟，因此本轮结束时不能直接释放会话：会话关闭会取消
+     * 后台任务，用户刷新回来就看不到结果。这里等最后一个任务完成、视频已写入历史之后再释放。
+     * </p>
+     */
+    private void releaseIfIdle() {
+        if (conn.isEmpty() && getToolCallManager().getRunningTasks().isEmpty()) {
+            parent.markRelease(this);
+        }
+    }
+
+    /**
+     * 本轮结束时若仍有后台任务在运行，先不释放会话（否则任务会被取消）。
+     * <p>
+     * 任务全部结束后由 {@link #releaseIfIdle()} 在命令线程里释放；期间用户重新打开页面则恢复正常，
+     * 由下一次生成结束时的常规流程释放。
+     * </p>
+     *
+     * @return 没有后台任务时返回 {@code true}
+     */
+    @Override
+    protected boolean canReleaseWhenIdle() {
+        return getToolCallManager().getRunningTasks().isEmpty();
+    }
+
+    /**
+     * 失败任务的说明文本。
+     *
+     * @param task 失败的任务
+     * @return 可展示的失败原因
+     */
+    private static String taskFailureMessage(ToolTask task) {
+        Throwable error = task.getError();
+        if (error != null && error.getMessage() != null && !error.getMessage().isEmpty()) {
+            return error.getMessage();
+        }
+        return task.isCancelled() ? "任务已取消" : "未知错误";
+    }
+
+    /**
+     * 拼接附件里的视频 id（用于写入上下文，让模型记得生成过哪些视频）。
+     *
+     * @param attachments 附件列表
+     * @return 逗号分隔的视频 id，没有视频时为空串
+     */
+    private static String attachmentIds(List<MessageContent> attachments) {
+        StringBuilder ids = new StringBuilder();
+        for (MessageContent attachment : attachments) {
+            if (!(attachment instanceof VideoContent)) {
+                continue;
+            }
+            if (ids.length() > 0) {
+                ids.append(',');
+            }
+            ids.append(((VideoContent) attachment).getVideoUrl());
+        }
+        return ids.toString();
+    }
+
+    /**
+     * 构造异步任务帧：{@code {type:"task", state, id, tool, name, time, message?}}。
+     *
+     * @param state   任务状态：{@code created} / {@code done} / {@code failed}
+     * @param task    任务
+     * @param message 附加说明，可为 null
+     * @return 下行帧
+     */
+    private static JsonObject taskFrame(String state, ToolTask task, String message) {
+        JsonObjectBuilder<JsonObject> frame = JsonBuilder.object()
+            .add("type", "task")
+            .add("state", state)
+            .add("id", task.getId() == null ? "" : task.getId())
+            .add("tool", task.getToolName() == null ? "" : task.getToolName())
+            .add("name", task.getDisplay() == null ? "" : task.getDisplay().getBrief())
+            .add("time", task.getCreatedAt());
+        if (message != null && !message.isEmpty()) {
+            frame.add("message", message);
+        }
+        return frame.end();
+    }
+
+    /**
+     * 往 {@code status} 帧里附带仍在运行的任务，供重连/刷新后恢复“视频生成中”的提示。
+     * <p>
+     * 没有任务时也下发空数组：重连期间任务可能已经结束，前端需要靠这份全量快照清掉旧提示，
+     * 缺字段会被当成“没有变化”。
+     * </p>
+     */
+    @Override
+    protected JsonObject statusExtras() {
+        List<ToolTask> running = getToolCallManager().getRunningTasks();
+        JsonArray tasks = new JsonArray();
+        if (running != null) {
+            for (ToolTask task : running) {
+                tasks.add(taskFrame("running", task, null));
+            }
+        }
+        JsonObject extras = new JsonObject();
+        extras.add("tasks", tasks);
+        return extras;
     }
 }

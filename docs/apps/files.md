@@ -56,7 +56,7 @@ save/                                  ← 数据根目录（所有东西都在�
 ├─ resource/                           ← 立绘、背景等图片资源（网页访问 /aichat/resource/…）
 ├─ voice/                              ← 生成的语音文件（网页访问 /aichat/voice/…）
 ├─ mcp_files/                          ← MCP 生成内容（网页访问 /aichat/mcp/media?file_id=…）
-├─ painter_images/ ircimages/          ← 绘画页 / 群聊侧图片
+├─ painter_images/ ircimages/          ← 绘画页 / 群聊侧的图片与视频（内容哈希，无扩展名）
 └─ *.html *.js *.css                   ← 网页页面与公共库
 ```
 

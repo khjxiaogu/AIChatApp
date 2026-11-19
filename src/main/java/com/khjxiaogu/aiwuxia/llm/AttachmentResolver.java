@@ -107,8 +107,9 @@ public final class AttachmentResolver {
 	/**
 	 * 把附件引用解析为模型可访问的 URL。
 	 * <p>
-	 * 先规范化成对象存储 ID，再通过对象存储取公开地址。本地存储返回的 data URL 会用文件头
-	 * 修正 MIME（对象存储 ID 不一定带扩展名），避免把图片当成 {@code application/octet-stream}。
+	 * 先规范化成对象存储 ID，再优先取公网 http 地址；存储不支持公网地址（例如本地存储）时
+	 * 退回 data URL，并按文件头修正 MIME（对象存储 ID 不一定带扩展名），避免把图片当成
+	 * {@code application/octet-stream}。
 	 * </p>
 	 *
 	 * @param reference 附件引用，可为 null
@@ -120,18 +121,15 @@ public final class AttachmentResolver {
 			return id;
 		}
 		try {
-			String url = storage.getPublicUrl(id, addUsage);
-			if (url == null || url.isEmpty()) {
-				return id;
+			String url = storage.getHttpUrl(id, addUsage);
+			if (url != null && !url.isEmpty()) {
+				return url;
 			}
-			if (url.startsWith("data:")) {
-				// 本地存储按扩展名猜 MIME，无扩展名的内容哈希会得到 octet-stream，这里用真实字节修正
-				byte[] data = storage.download(id, addUsage);
-				if (data != null && data.length > 0) {
-					return toDataUrl(data);
-				}
+			byte[] data = storage.download(id, addUsage);
+			if (data != null && data.length > 0) {
+				return toDataUrl(data);
 			}
-			return url;
+			return id;
 		} catch (Throwable ex) {
 			return id;
 		}

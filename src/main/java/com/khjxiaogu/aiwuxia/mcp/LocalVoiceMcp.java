@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
@@ -131,8 +132,8 @@ public final class LocalVoiceMcp implements ToolProvider {
 					String text;
 					try {
 						JsonObject json = JsonParser.parseString(data).getAsJsonObject();
-						role = stringField(json, "role");
-						text = stringField(json, "text");
+						role = JsonConfig.getTrimmed(json, "role");
+						text = JsonConfig.getTrimmed(json, "text");
 					} catch (Throwable ex) {
 						return CompletableFuture.completedFuture(ToolResult.text("参数格式错误：需要 JSON 对象。"));
 					}
@@ -215,14 +216,6 @@ public final class LocalVoiceMcp implements ToolProvider {
 			return "flac";
 		}
 		return "mp3";
-	}
-
-	/** 读取字符串参数，缺失或 null 时返回空串。 */
-	private static String stringField(JsonObject json, String key) {
-		if (json == null || !json.has(key) || json.get(key).isJsonNull()) {
-			return "";
-		}
-		return json.get(key).getAsString().trim();
 	}
 
 	/** 取最内层异常的可读信息。 */

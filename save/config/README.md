@@ -28,13 +28,18 @@ save/
          ├─ charaset.txt        #     角色设定（提示词用）
          ├─ character-list.txt  #     角色设定索引（作品/角色/别名/设定，工具数据源）
          └─ rules.txt           #     生成规则
+   └─ h3/                       # 本地 H3 视频相关
+      └─ agent/                 #   视频 agent 提示词（可缺省）
+         ├─ role.txt            #     角色
+         ├─ charaset.txt        #     人物设定（可选）
+         └─ rules.txt           #     生成规则
 ```
 
 | 文件 | 用途 | 是否入库 |
 |---|---|---|
 | `object-storage.json` | 对象存储凭据：`region` / `endpoint` / `bucket` / `accessKey` / `secretKey`。存在则绘画图片转存对象存储，否则只存本地 `painter_images`、`ircimages` | 忽略（含密钥） |
 | `image-generation.json` | 图片/视频生成凭据。图片（Seedream/即梦）用 `accessKey` / `secretKey`；视频改用即梦 **Seedance 2.5**（火山方舟 Ark API），需要额外配置 `apiKey`，可选 `videoModel`（默认 `doubao-seedance-2-5-260628`）、`videoDuration`（默认 10 秒，最大 15 秒）、`videoResolution`（默认 480p）、`videoRatio`（默认 9:16）等，详见下方「Seedance 2.5 视频」 | 忽略（含密钥） |
-| `jimeng-video.txt` | 即梦视频脚本提示词：`seedvideo` 工具把它作为视频脚本 agent 的系统提示词（内置参考图名字会追加在后面），agent 产出的整段脚本就是视频生成提示词。内置参考图由脚本 agent 自行挑选并附加，调用者只给想法（可选再补非内置的72位图片id，作为图1开始的外部参考图）。文件不存在时退回工具内置提示词；旧文件名 `jimeng_video.txt` 仍兼容 | 入库 |
+| `jimeng-video.txt` | 即梦视频脚本提示词：群聊 `seedvideo` 与绘画页（配置了视频 `apiKey` 时自动注册 `jimeng_video`）都把它作为视频脚本 agent 的系统提示词（内置参考图名字会追加在后面），agent 产出的整段脚本就是视频生成提示词。内置参考图由脚本 agent 自行挑选并附加，调用者只给想法（可选再补非内置的72位图片id，作为图1开始的外部参考图）。文件不存在时退回工具内置提示词；旧文件名 `jimeng_video.txt` 仍兼容 | 入库 |
 | `voice-tags.txt` | 语音标签提示词。让模型按「谁在说话 + 情感」切分台词，供语音合成使用 | 入库 |
 | `local-voice.json` | 本地语音模型 bot 映射，形如 `{"角色名": "botid"}` | 忽略（部署本地） |
 | `volcano-voice.json` | 火山声音复刻 bot 映射，形如 `{"角色名": "voice_type"}` | 忽略（部署本地） |
@@ -46,6 +51,7 @@ save/
 | `sdxl/reference-images.json` | 参考图：`{"名称": "图片地址"}`，供 Seedream 生图/生视频带参考图；生视频时这些名字会列进脚本 agent 的提示词，由 agent 自行选用 | 忽略（部署本地） |
 | `sdxl/agent/` | 绘画 agent 提示词：`role.txt`（角色）、`charaset.txt`（设定）、`rules.txt`（规则） | `rules.txt` 入库，`role.txt`、`charaset.txt` 忽略（含个人信息） |
 | `sdxl/agent/character-list.txt` | 角色设定索引：`[work]` 作品、`[public]` 公共设定、`[character]` 角色设定与 `别名：`（人类可读，格式见文件头注释）。角色设定工具的数据来源，不依赖 `charaset.txt` | 入库 |
+| `h3/agent/` | 视频子 agent 提示词：群聊 `h3video-agent` 与绘画会话（`h3_video_agent`）共用。`role.txt`（角色）、`charaset.txt`（人物设定，可选）、`rules.txt`（规则）。三个文件都不存在时使用 `H3VideoAgentMcp` 内置的“视频导演”提示词；文件存在则按 `role + charaset + rules` 拼接，并自动追加“必须等工具真实返回、必须输出视频 id、视频一律无声（禁用音频）”的硬性要求 | 按需（建议 `rules.txt` 入库） |
 
 ## 从旧位置迁移
 
@@ -82,12 +88,13 @@ save/
   "videoDuration": 10,
   "videoResolution": "720p",
   "videoRatio": "9:16",
-  "videoGenerateAudio": true,
+  "videoGenerateAudio": false,
   "videoWatermark": false
 }
 ```
 
 - `apiKey` 也可以写成 `arkApiKey`；未配置时视频工具会返回明确的失败提示，图片工具不受影响。
+- **所有视频生成 MCP 均禁用音频**：`videoGenerateAudio` 已强制为 `false`，配置成 `true` 也不会生效。
 - `videoDuration` 支持 4-15 秒，默认 10 秒；超过 15 秒按 15 秒处理，不再使用 `-1` 自动时长。
   `jimeng_video` 工具调用时可用 `duration` 参数覆盖默认值（同样只接受 4-15 的整数），该时长会同时提供给脚本 agent 和视频接口。
 - 视频计费：`视频token = 输出宽 × 输出高 × 输出帧率 × 输出时长 / 1024`，官方价 **70 元/百万视频 token**。

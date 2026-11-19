@@ -73,6 +73,7 @@ public interface MessageContents extends Iterable<MessageContent> {
 		types.put("video", VideoContent.class);
 		types.put("tool", ToolContent.class);
 		types.put("tool_call", ToolCallContent.class);
+		types.put("server_tool_use", ServerToolUseContent.class);
 		return types;
 	});
 

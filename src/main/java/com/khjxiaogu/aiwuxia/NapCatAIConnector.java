@@ -31,7 +31,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -39,6 +38,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -51,9 +51,12 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
@@ -69,14 +72,32 @@ import com.khjxiaogu.aiwuxia.apps.AIApplication;
 import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.AIGroupApplication;
 import com.khjxiaogu.aiwuxia.chat.ChatAdapter;
+import com.khjxiaogu.aiwuxia.chat.ChatButton;
 import com.khjxiaogu.aiwuxia.chat.ChatEventHandler;
+import com.khjxiaogu.aiwuxia.chat.ChatInteraction;
 import com.khjxiaogu.aiwuxia.chat.AutoReplyJudge;
 import com.khjxiaogu.aiwuxia.chat.IncomingContent;
 import com.khjxiaogu.aiwuxia.chat.IncomingMessage;
 import com.khjxiaogu.aiwuxia.chat.NapcatAdapter;
+import com.khjxiaogu.aiwuxia.chat.QqOfficialAdapter;
+import com.khjxiaogu.aiwuxia.codex.CodexConfig;
+import com.khjxiaogu.aiwuxia.codex.CodexReviewHandler;
+import com.khjxiaogu.aiwuxia.codex.CodexRuntime;
+import com.khjxiaogu.aiwuxia.codex.CodexService;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.ToolResult;
+import com.khjxiaogu.aiwuxia.llm.ToolProvider;
+import com.khjxiaogu.aiwuxia.doclib.DocAgent;
+import com.khjxiaogu.aiwuxia.doclib.DocLibraryConfig;
+import com.khjxiaogu.aiwuxia.doclib.DocLibraryMcp;
+import com.khjxiaogu.aiwuxia.doclib.DocLibraryRegistry;
+import com.khjxiaogu.aiwuxia.doclib.DocLibraryRuntime;
+import com.khjxiaogu.aiwuxia.mcp.chat.MessageMcp;
+import com.khjxiaogu.aiwuxia.mcp.chat.GroupChatHost;
+import com.khjxiaogu.aiwuxia.mcp.chat.GroupChatMcp;
+import com.khjxiaogu.aiwuxia.mcp.knowledge.KnowledgeBaseMcp;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPermission;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
@@ -84,6 +105,9 @@ import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
 import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
+import com.khjxiaogu.aiwuxia.mcp.history.HistorySearchMcp;
+import com.khjxiaogu.aiwuxia.mcp.H3VideoAgentMcp;
+import com.khjxiaogu.aiwuxia.mcp.H3VideoMcp;
 import com.khjxiaogu.aiwuxia.mcp.MediaOutputMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.MusicMcp;
@@ -94,6 +118,9 @@ import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfiguration;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
 import com.khjxiaogu.aiwuxia.mcp.SvsMcp;
+import com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp;
+import com.khjxiaogu.aiwuxia.mcp.QwenLocalModelMcp;
+import com.khjxiaogu.aiwuxia.mcp.codex.CodexMcp;
 import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
@@ -114,14 +141,12 @@ import com.khjxiaogu.aiwuxia.tools.ToolSettings;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.GroupOutputGate;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.vision.ImageNoise;
-import com.khjxiaogu.aiwuxia.vision.SDXLLocalModelClient;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
-import com.khjxiaogu.aiwuxia.voice.SvsLocalModelClient;
+import com.khjxiaogu.aiwuxia.voice.LocalModelGateway;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
-import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
-import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
 
 /**
  * 通用聊天机器人控制器。
@@ -135,8 +160,20 @@ import com.khjxiaogu.webserver.builder.BasicWebServerBuilder;
  * 类名沿用 {@code NapCatAIConnector} 以保持调用方不变，但本类不再直接依赖任何 NapCat 协议字段：
  * OneBot 事件解析、echo 回执、群消息发送都在 {@link NapcatAdapter} 里。
  * </p>
+ * <p>
+ * 本类只做公屏群聊：私聊接管（白名单、防抖、send_private、私聊移交）是多 agent 架构的能力，
+ * 见 {@link com.khjxiaogu.aiwuxia.multi.MultiAgentConnector}。私聊消息在本类里只用于
+ * 工具审核 / Codex 审批与 ask_user 的答复，其余交给 {@link #handleMultiPrivateMessage} 扩展点。
+ * </p>
+ * <p>
+ * 本地模型不由本类执行：SDXL / SVS / Qwen 的客户端与部署端点都在
+ * {@link com.khjxiaogu.aiwuxia.voice.LocalModelConnectionService} 进程里。本类只启动一个
+ * {@link com.khjxiaogu.aiwuxia.voice.LocalModelGateway 本机模型网关}（默认
+ * {@code ws://127.0.0.1:8997}），模型服务既连配置的远端、也连这个网关；本类注册的工具
+ * （sdxl / svs / qwen / 语音等）通过 {@code LocalModel} 通道使用这些模型。
+ * </p>
  */
-public class NapCatAIConnector {
+public class NapCatAIConnector implements GroupChatHost {
 	/** 协议适配器：平台相关的连接与收发全部经过它。 */
 	private final ChatAdapter adapter;
 	List<AIGroupSession> states=new ArrayList<>();
@@ -158,6 +195,44 @@ public class NapCatAIConnector {
 	};
 	ObjectStorageProvider tos;
 	private final File dataFolder;
+
+	/** 等待用户回答的询问。 */
+	private static final class PendingQuestion {
+		final String id;
+		final AIGroupSession state;
+		final boolean group;
+		final String target;
+		final String botId;
+		final List<String> options;
+		final boolean allowFreeText;
+		final boolean multiSelect;
+		final java.util.Set<Integer> selected = java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<>());
+		final CompletableFuture<ToolResult> future = new CompletableFuture<>();
+		ScheduledFuture<?> timeout;
+
+		PendingQuestion(String id, AIGroupSession state, boolean group, String target, String botId,
+				List<String> options, boolean allowFreeText, boolean multiSelect) {
+			this.id = id;
+			this.state = state;
+			this.group = group;
+			this.target = target;
+			this.botId = botId;
+			this.options = options;
+			this.allowFreeText = allowFreeText;
+			this.multiSelect = multiSelect;
+		}
+	}
+
+	/** 显式发送模式的会话：正文不自动发出，必须调用发送工具。 */
+	private final Set<AIGroupSession> explicitSessions = ConcurrentHashMap.newKeySet();
+	/** 询问用户后等待回答的最长时间：5 分钟。 */
+	private static final long QUESTION_TIMEOUT_MS = 300_000L;
+	private final Map<String, PendingQuestion> pendingQuestions = new ConcurrentHashMap<>();
+	private final ScheduledExecutorService questionScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+		Thread t = new Thread(r, "qq-question");
+		t.setDaemon(true);
+		return t;
+	});
 	JsonObject imgKey = new JsonObject();
 	/**
 	 * 准备/收尾线程池：只做语音合成、消息组装、回执等待等“不关心顺序”的活。
@@ -178,6 +253,9 @@ public class NapCatAIConnector {
 	 * </p>
 	 */
 	private final Map<AIGroupSession, Queue<MessageContent>> pendingToolAttachments = new ConcurrentHashMap<>();
+	/** 每个会话最近成功发出的消息 id，供撤回/删除使用。 */
+	private final Map<AIGroupSession, Deque<String>> recentSentMessageIds = new ConcurrentHashMap<>();
+	private static final int MAX_RECENT_SENT_MESSAGES = 20;
 	/** 单个会话最多暂存的工具附件数量，防止一直排不到发送时无限堆积。 */
 	private static final int MAX_PENDING_TOOL_ATTACHMENTS = 16;
 	/** 重量级子 agent 每回合最多调用一次。 */
@@ -193,6 +271,14 @@ public class NapCatAIConnector {
 	 */
 	private static final long ATTACHMENT_ACK_WAIT_MS = 5_000L;
 	private final ResourceLock resourceLock = new ResourceLock(12);
+	/**
+	 * 本机模型网关：把本地模型部署通道开在回环端口，供 {@code LocalModelConnectionService} 接入。
+	 * <p>
+	 * 端口默认 {@value LocalModelGateway#DEFAULT_PORT}，可用 {@code -DlocalModelPort} 覆盖；
+	 * 端口被占用时只记日志，不影响聊天本身，只是本地模型工具会提示服务未连接。
+	 * </p>
+	 */
+	private final LocalModelGateway localModelGateway;
 	/** 工具调用审核：需要审核的工具私聊管理员确认。 */
 	private final QqToolApprovalManager toolApproval;
 	/**
@@ -224,7 +310,7 @@ public class NapCatAIConnector {
 	 */
 	public NapCatAIConnector(File dataFolder, String url,
 			String token, AIGroupSession... states) throws JsonSyntaxException, IOException, InterruptedException {
-		this(dataFolder, new NapcatAdapter(url, token), states);
+		this(dataFolder, new NapcatAdapter(url, token, dataFolder), states);
 	}
 
 	/**
@@ -238,27 +324,42 @@ public class NapCatAIConnector {
 			throws JsonSyntaxException, IOException, InterruptedException {
 		this.adapter = adapter;
 		this.dataFolder = dataFolder;
-		// 本地模型部署地址：站点域名默认读 save/site.json，可用 --site-host / -Dsite_host 覆盖
-		SDXLLocalModelClient lmc=new SDXLLocalModelClient(URI.create(SiteConfig.resolve(dataFolder).webSocketUrl(SiteConfig.DEFAULT_HOST, "/aichat/kh$localModelDeploy")), resourceLock, true, 1000);
-		SvsLocalModelClient svs=new SvsLocalModelClient(URI.create(SiteConfig.resolve(dataFolder).webSocketUrl(SiteConfig.DEFAULT_HOST, "/aichat/kh$localModelDeploy")), resourceLock, true, 1000);
-		lmc.connectBlocking();
-		svs.connectBlocking();
+		LocalModelGateway gateway = null;
+		try {
+			gateway = LocalModelGateway.start(dataFolder);
+		} catch (Throwable t) {
+			System.err.println("[LocalModel] 本机模型网关启动失败（" + t
+					+ "），本地模型工具将提示服务未连接；可用 -D" + LocalModelGateway.PORT_PROPERTY + " 换端口");
+		}
+		this.localModelGateway = gateway;
 		try {
 			File tosConfigFile = ConfigPaths.objectStorage(dataFolder);
 			if (tosConfigFile.exists()) {
 				JsonObject tosCfg = JsonParser.parseString(FileUtil.readString(tosConfigFile)).getAsJsonObject();
 				tos = new DelegatingStorage(new File(dataFolder, "ircimages"), new TOStorage(tosCfg));
-				System.out.println("绘画图片存储: 本地+TOS");
+				System.out.println("绘画图片存储: 本地+TOv");
 			} else {
 				tos = new LocalStorage(new File(dataFolder, "ircimages"));
 				System.out.println("绘画图片存储: 仅本地");
 			}
 		} catch (Exception e) {
 			tos = new LocalStorage(new File(dataFolder, "ircimages"));
-			System.out.println("绘画图片存储: 仅本地 (TOS初始化失败)");
+			System.out.println("绘画图片存储: 仅本地 (TOv初始化失败)");
 		}
-		imgKey = JsonParser.parseString(FileUtil.readString(ConfigPaths.imageGeneration(dataFolder))).getAsJsonObject();
+		try {
+			imgKey = JsonParser.parseString(FileUtil.readString(ConfigPaths.imageGeneration(dataFolder))).getAsJsonObject();
+		} catch (Exception e) {
+			imgKey = null;
+			System.out.println("找不到配置文件，seedimage已禁用");
+		}
 		this.toolApproval = new QqToolApprovalManager(this::sendPrivateText,
+				(userId, markdown, buttons) -> {
+					if (!adapter.supportsCard()) {
+						return false;
+					}
+					adapter.sendPrivateCard(userId, markdown, buttons).get(10, TimeUnit.SECONDS);
+					return true;
+				},
 				QqToolApprovalManager.DEFAULT_TIMEOUT_MILLIS);
 		// 先注册事件处理器再连接，避免漏掉刚连上时的消息
 		adapter.setEventHandler(new ChatEventHandler() {
@@ -278,17 +379,307 @@ public class NapCatAIConnector {
 			}
 
 			@Override
-			public void onGroupMessage(IncomingMessage message) {
-				NapCatAIConnector.this.handleGroupMessage(message);
+			public void onGroupMessage(IncomingMessage msg) {
+				// 处理群消息：归一化内容 -> 会话历史 -> 触发回复；协议字段（message 段、
+				// raw.elements、@ 列表、回复 id）已经在适配器里归一化。
+				// 有等待回答的询问时，群里的文字回复优先作为答案
+				if (answerQuestionText(true, msg.getChatId(), msg.getSenderId(), msg.getPlainText())) {
+					return;
+				}
+				// 多 agent 架构：配置过的公开群由 MultiAgentConnector 接管
+				if (handleMultiGroupMessage(msg)) {
+					return;
+				}
+				String groupId = msg.getChatId();
+				// self_id 是这条输入来自哪个机器人；@ 列表里的机器人再和本群配置的 botId 比对。
+				// 只有“被 @ 的那台机器人”的会话处理这条消息，避免 B 机器人替 A 抢答；
+				// 没有 @ 任何机器人的消息（包括正文里写「@角色名」）仍交给各会话按角色名判断。
+				final String selfId = msg.getSelfId();
+				// 先解析 @ 列表与“回复了我”：没有被显式 @ 时，回复消息才算 @
+				Set<String> containsAt = new HashSet<>();
+				for (String at : msg.getMentionedIds()) {
+					if (at != null && !at.isEmpty()) {
+						containsAt.add(at);
+					}
+				}
+				// 本群配置的全部 botId：用来区分“@ 了某个机器人”与“@ 了普通群友”。
+				Set<String> groupBotIds = new HashSet<>();
+				for (AIGroupSession candidate : states) {
+					if (Objects.equals(groupId, candidate.groupId) && candidate.botId != null
+							&& !candidate.botId.isEmpty()) {
+						groupBotIds.add(candidate.botId);
+					}
+				}
+				// 被 @ 的机器人 id：@ 列表里能对上配置的 botId 的才算。
+				Set<String> atBotIds = new HashSet<>();
+				for (String at : containsAt) {
+					if (groupBotIds.contains(at)) {
+						atBotIds.add(at);
+					}
+				}
+				// 这条消息是否 @ 了本连接的机器人：适配器明确声明，或 @ 列表里直接是 self_id。
+				final boolean atByAdapter = msg.isMentionsBot();
+				final boolean selfMentioned = atByAdapter
+						|| (selfId != null && !selfId.isEmpty() && containsAt.contains(selfId));
+				boolean ambiguousBotAt = false;
+				if (selfMentioned) {
+					if (selfId == null || selfId.isEmpty()) {
+						// 平台没给 self_id：无法归属，按本群所有会话来。
+						ambiguousBotAt = true;
+					} else if (groupBotIds.contains(selfId)) {
+						atBotIds.add(selfId);
+					} else if (atBotIds.isEmpty()) {
+						// 配置里没有 self_id 这台机器人（例如官方 AppID 与机器人 mention 的 id 形态不同）：
+						// 精确归属不了，按本群所有会话处理，至少保证“@ 机器人”能应答。
+						ambiguousBotAt = true;
+					}
+				}
+				final boolean anyBotAt = ambiguousBotAt || !atBotIds.isEmpty();
+				if (anyBotAt) {
+					System.out.println("[QQ] 群 " + groupId + " 的 @ 指向机器人：" + atBotIds
+							+ (ambiguousBotAt ? "（无法精确归属，按本群会话处理）" : "") + "，self=" + selfId);
+				}
+				String replyMsgId = msg.getReplyToMessageId();
+				String replyId = null;
+				if (replyMsgId != null && !replyMsgId.isEmpty()) {
+					synchronized (messageOwner) {
+						replyId = messageOwner.get(replyMsgId);
+					}
+					if (containsAt.isEmpty() && replyId != null) {
+						containsAt.add(replyId);
+					}
+				}
+				outer: for (AIGroupSession state : states) {
+					if (!Objects.equals(groupId, state.groupId)) {
+						continue;
+					}
+					// @ 了机器人时只有被 @ 的那台机器人的会话参与；其它 botId 的会话连上下文都不进。
+					boolean atMe = ambiguousBotAt || atBotIds.contains(state.botId);
+					if (anyBotAt && !atMe) {
+						continue;
+					}
+					String senderid = msg.getSenderId();
+					// 忽略机器人自己发的消息
+					if (Objects.equals(senderid, state.botId)) {
+						continue;
+					}
+					boolean containsAtMe = atMe;
+					String sender = msg.getSenderName();
+					List<Supplier<MessageContent>> mes = new ArrayList<>();
+					String senderName = "<message senderName=\"" + sender + "\" senderId=\"" + senderid
+							+ "\" messageId=\"" + msg.getMessageId() + "\">";
+					mes.add(() -> new PlainText(senderName));
+					if (containsAtMe) {
+						mes.add(() -> new PlainText("@" + state.getRoleName(Role.ASSISTANT)));
+					}
+					boolean hasText = false;
+					StringBuilder textContent = new StringBuilder();
+					for (IncomingContent content : msg.getContents()) {
+						if (content instanceof IncomingContent.QuoteBlock) {
+							IncomingContent.QuoteBlock quote = (IncomingContent.QuoteBlock) content;
+							String quoteId = quote.getMessageId().isEmpty()
+									? (replyMsgId == null ? "" : replyMsgId)
+									: quote.getMessageId();
+							String quoteText = "<quote messageId=\"" + quoteId + "\" senderId=\"" + quote.getSenderId()
+									+ "\">" + quote.getText() + "</quote>";
+							mes.add(() -> new PlainText(quoteText));
+							// 引用的是机器人自己的消息（且不是本次连接发出去的）也算 @
+							if (replyId == null && Objects.equals(quote.getSenderId(), state.botId)) {
+								containsAtMe = true;
+							}
+						} else if (content instanceof IncomingContent.TextBlock) {
+							hasText = true;
+							String messageLine = ((IncomingContent.TextBlock) content).getText();
+							textContent.append(messageLine);
+							if (!containsAtMe && !anyBotAt
+									&& messageLine.contains("@" + state.getRoleName(Role.ASSISTANT))) {
+								containsAtMe = true;
+								System.out.println("[QQ] 正文 @角色名 触发：" + state.getRoleName(Role.ASSISTANT)
+										+ "（群 " + groupId + "）");
+							}
+							mes.add(() -> new PlainText(messageLine));
+						} else if (content instanceof IncomingContent.ImageBlock) {
+							IncomingContent.ImageBlock image = (IncomingContent.ImageBlock) content;
+							hasText = true;
+							String summary = "（" + image.getSummary() + "）";
+							String ref = image.getUrl();
+							mes.add(() -> {
+								try {
+									byte[] data = adapter.fetchMedia(ref);
+									String path = tos.uploadIfNotExists(data, state::addUsage);
+									return new PlainText("<image id=\"" + path + "\" />");
+								} catch (Exception e) {
+									e.printStackTrace();
+								}
+								return new PlainText(summary);
+							});
+						}
+					}
+					// 管理员指令：配置了管理员、且发送者确实是其中之一时才处理
+					boolean isAdmin = false;
+					for (String id : JsonConfig.getIds(state.config, "adminId", System.getProperty("adminId", ""))) {
+						if (id.equals(senderid)) {
+							isAdmin = true;
+							break;
+						}
+					}
+					if (isAdmin) {
+						if (containsAtMe) {
+							if (textContent.toString().contains("##清理上下文")) {
+								try {
+									((AIGroupApplication) state.getAiapp()).compactHistory(state);
+									// 不等待回执：这里运行在协议事件线程上，等回执会把自己卡住
+									adapter.sendText(chatId(state), "已处理");
+								} catch (Exception e) {
+									e.printStackTrace();
+								}
+								continue outer;
+							}
+						}
+					}
+					if (hasText) {
+						mes.add(() -> new PlainText("</message>"));
+						state.addMessage(msg.getMessageId(), mes, false);
+						// 主动回复判定只累积文本；纯图片消息用占位文本表示
+						String judgeText = textContent.toString().trim();
+						if (judgeText.isEmpty()) {
+							judgeText = "（图片或媒体消息）";
+						}
+						autoReply.onMessage(state, sender, senderid, judgeText);
+					}
+					// int hours=new Date().getHours();
+					// if(hours<6)
+					// containsAtMe=false;
+					if (containsAtMe) {
+						// 记录本轮触发者，工具审核时告诉管理员是谁发起的；未知发送者用 null 表示
+						state.lastSpeakerId = senderid == null || senderid.isEmpty() ? null : senderid;
+						state.lastSpeakerName = sender;
+
+						adapter.react(msg.getMessageId(), "424");
+						submitMessage(state);
+					}
+				}
 			}
 
 			@Override
 			public void onPrivateMessage(IncomingMessage message) {
-				NapCatAIConnector.this.handlePrivateMessage(message);
+				// 处理私聊事件：审批/询问答复优先消费；其余交给多 agent 扩展点（基类不做私聊接管）
+				String text = message.getPlainText();
+				if (text.isEmpty()) {
+					return;
+				}
+				// 平台不提供自身账号时用 null 表示“未知”，而不是 0 或空串
+				String selfId = message.getSelfId().isEmpty() ? null : message.getSelfId();
+				// Codex 审批答复优先消费：只有管理员本人、且有对应待审批任务时才会命中
+				if (CodexRuntime.answerApproval(selfId == null ? "" : selfId, message.getSenderId(), text)) {
+					return;
+				}
+				if (toolApproval.answer(selfId, message.getSenderId(), text)) {
+					return;
+				}
+				// 有等待回答的询问时，私聊文字优先作为答案
+				if (answerQuestionText(false, null, message.getSenderId(), text)) {
+					return;
+				}
+				// 多 agent 架构：配置过的私聊用户交给对应的私人 agent（私聊路由/白名单由子类实现）
+				handleMultiPrivateMessage(message);
+			}
+
+			@Override
+			public void onInteraction(ChatInteraction interaction) {
+				// 处理按钮互动：按钮 data 已编码审批类型、任务 id 和决定
+				if (interaction == null) {
+					return;
+				}
+				String data = interaction.getButtonData();
+				String operator = interaction.getOperatorId();
+				if (data == null || data.isEmpty() || operator == null || operator.isEmpty()) {
+					return;
+				}
+				if (data.startsWith("ask:")) {
+					String[] parts = data.split(":", 3);
+					if (parts.length < 3) {
+						return;
+					}
+					PendingQuestion pending = pendingQuestions.get(parts[1]);
+					if (pending == null) {
+						return;
+					}
+					if ("done".equals(parts[2])) {
+						if (!pending.multiSelect) {
+							return;
+						}
+						String selected = selectedLabels(pending);
+						if (selected.isEmpty()) {
+							sendQuestionText(pending.group, pending.target, "还没有选择任何选项。");
+						} else {
+							answerQuestion(parts[1], "用户选择：" + selected);
+						}
+						return;
+					}
+					int index;
+					try {
+						index = Integer.parseInt(parts[2]);
+					} catch (NumberFormatException ex) {
+						return;
+					}
+					if (index < 0 || index >= pending.options.size()) {
+						return;
+					}
+					if (pending.multiSelect) {
+						pending.selected.add(index);
+						sendQuestionText(pending.group, pending.target,
+								"已选择：" + selectedLabels(pending) + "；选好后回复/点击「确认」。");
+					} else {
+						answerQuestion(parts[1], "用户选择：" + pending.options.get(index));
+					}
+					return;
+				}
+				if (data.startsWith("tool:")) {
+					toolApproval.answerButton(interaction.getSelfId(), operator, data);
+					return;
+				}
+				if (data.startsWith("codex:")) {
+					String[] parts = data.split(":", 3);
+					if (parts.length < 3) {
+						return;
+					}
+					CodexService service = CodexRuntime.getService();
+					if (service != null) {
+						service.answerApproval(interaction.getSelfId(), operator, parts[2], parts[1]);
+					}
+				}
+			}
+
+			@Override
+			public void onGroupRecall(String groupId, String messageId, String operatorId, String senderId) {
+				// 群消息撤回：从各会话的待处理缓冲区移除（已提交给 AI 的不处理）
+				long gid = parseLong(groupId, -1);
+				if (gid <= 0 || messageId == null || messageId.isEmpty()) {
+					return;
+				}
+				for (AIGroupSession state : states) {
+					if (state.groupId != null && state.groupId.equals(String.valueOf(gid))
+							&& state.removeQueuedMessage(messageId)) {
+						System.out.println("[QQ] 撤回消息已从缓冲区移除：" + messageId + "（群 " + gid + "）");
+					}
+				}
+			}
+
+			@Override
+			public void onPrivateRecall(String userId, String messageId) {
+				// 私聊撤回：交给子类处理（多 agent 架构会从待触发缓冲区里移除）
+				handleMultiPrivateRecall(userId, messageId);
 			}
 		});
 		System.out.println("聊天适配器：" + adapter.getName());
-		connectAdapter();
+		try {
+			adapter.connect();
+		} catch (IOException | InterruptedException e) {
+			throw e;
+		} catch (Exception e) {
+			throw new IOException("聊天适配器连接失败：" + adapter.getName(), e);
+		}
 		for(AIGroupSession sess:states) {
 
 			// 历史里的图片只保存对象存储 ID，模型调用层用本会话的存储把它们解析成可访问地址
@@ -333,20 +724,6 @@ public class NapCatAIConnector {
 	}
 
 	/**
-	 * 连接适配器，把协议层的异常统一成构造器声明的 {@link IOException}。
-	 */
-	private void connectAdapter() throws IOException, InterruptedException {
-		try {
-			adapter.connect();
-		} catch (IOException e) {
-			throw e;
-		} catch (InterruptedException e) {
-			throw e;
-		} catch (Exception e) {
-			throw new IOException("聊天适配器连接失败：" + adapter.getName(), e);
-		}
-	}
-	/**
 	 * 记录一条刚发出的消息及其发送方机器人。
 	 *
 	 * @param mid 消息 id，为空时忽略
@@ -357,15 +734,6 @@ public class NapCatAIConnector {
 			return;
 		synchronized (messageOwner) {
 			messageOwner.put(mid, bid);
-		}
-	}
-
-	/** 查一条自己发出的消息属于哪个机器人，找不到返回 {@code null}。 */
-	private String findBid(String mid) {
-		if (mid == null || mid.isEmpty())
-			return null;
-		synchronized (messageOwner) {
-			return messageOwner.get(mid);
 		}
 	}
 
@@ -436,89 +804,12 @@ public class NapCatAIConnector {
 		}
 	}
 
-	/** 暂存区里还没有发出去的工具附件。 */
-	private List<MessageContent> drainToolAttachments(AIGroupSession state) {
-		Queue<MessageContent> queue = pendingToolAttachments.get(state);
-		if (queue == null || queue.isEmpty()) {
-			return Collections.emptyList();
-		}
-		List<MessageContent> drained = new ArrayList<>();
-		MessageContent content;
-		while ((content = queue.poll()) != null) {
-			drained.add(content);
-		}
-		return drained;
-	}
-
 	/**
-	 * 图片附件里保存的是图片 id（对象存储键）；也兼容历史数据里可能出现的 http(s) 链接或
+	 * 媒体附件里保存的是对象存储 id（对象存储键）；也兼容历史数据里可能出现的 http(s) 链接或
 	 * data URL。
 	 */
-	private static boolean isDirectImageUrl(String ref) {
+	private static boolean isDirectMediaUrl(String ref) {
 		return ref != null && (ref.startsWith("http://") || ref.startsWith("https://") || ref.startsWith("data:"));
-	}
-
-	/**
-	 * 把图片 id 解析成可直接交给 NapCat 的 {@code file} 字段。
-	 * <p>
-	 * 已经是 URL / data URL 的原样返回；图片 id 则从对象存储取数据并转成 data URL。
-	 * </p>
-	 */
-	private String imageFileForSend(String ref) throws IOException {
-		if (isDirectImageUrl(ref)) {
-			return ref;
-		}
-		if (ref == null || ref.isEmpty()) {
-			throw new IOException("图片 id 为空");
-		}
-		return tos.getUrl(ref, null);
-	}
-
-	/**
-	 * 图片 id 对应的可公开访问链接，用于受限图片的“查看原图”页面。
-	 * <p>
-	 * 只有拿到真正的公网地址时才返回；本地存储只能给出 data URL，这种情况返回 null
-	 * （把整张图塞进链接没有意义，也会让消息体爆掉）。
-	 * </p>
-	 */
-	private String publicImageUrl(String ref) {
-		if (ref == null || ref.isEmpty()) {
-			return null;
-		}
-		if (ref.startsWith("http://") || ref.startsWith("https://")) {
-			return ref;
-		}
-		if (ref.startsWith("data:")) {
-			return null;
-		}
-		try {
-			String url = tos.getPublicUrl(ref, null);
-			return url != null && !url.startsWith("data:") ? url : null;
-		} catch (Throwable t) {
-			return null;
-		}
-	}
-
-	/**
-	 * 读取图片原始字节，支持图片 id、http(s) 链接与 data URL。
-	 */
-	private byte[] loadImageBytes(String ref) throws IOException {
-		if (ref == null || ref.isEmpty()) {
-			throw new IOException("图片内容为空");
-		}
-		if (ref.startsWith("data:")) {
-			int comma = ref.indexOf(',');
-			if (comma < 0) {
-				throw new IOException("图片 data URL 格式错误");
-			}
-			return Base64.getDecoder().decode(ref.substring(comma + 1));
-		}
-		if (ref.startsWith("http://") || ref.startsWith("https://")) {
-			try (InputStream in = FileUtil.fetch(ref)) {
-				return FileUtil.readAll(in);
-			}
-		}
-		return tos.download(ref, null);
 	}
 
 	/** 会话在适配器里的聊天标识（与 {@code AIGroupSession.groupId} 对应）。 */
@@ -526,11 +817,98 @@ public class NapCatAIConnector {
 		return state.groupId;
 	}
 
+	/** 私聊会话的 user id（{@code private:<user>}），群会话返回 null。 */
+	private static String privateUserId(AIGroupSession state) {
+		String id = state.groupId;
+		return id != null && id.startsWith("private:") ? id.substring("private:".length()) : null;
+	}
+
+	/** 记录本会话成功发出的消息 id。 */
+	protected void recordSentMessage(AIGroupSession state, String messageId) {
+		if (state == null || messageId == null || messageId.isEmpty()) {
+			return;
+		}
+		Deque<String> ids = recentSentMessageIds.computeIfAbsent(state,
+				key -> new ConcurrentLinkedDeque<>());
+		ids.addLast(messageId);
+		while (ids.size() > MAX_RECENT_SENT_MESSAGES) {
+			ids.pollFirst();
+		}
+	}
+
+	/** 这条消息是否是本会话发出的（撤回只允许删自己的消息）。 */
+	public boolean wasSentBy(AIGroupSession state, String messageId) {
+		Deque<String> ids = recentSentMessageIds.get(state);
+		return ids != null && messageId != null && ids.contains(messageId);
+	}
+
+	/** 本会话最近发出的消息 id，最新的在前。 */
+	public List<String> recentSentMessages(AIGroupSession state) {
+		Deque<String> ids = recentSentMessageIds.get(state);
+		if (ids == null || ids.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<String> list = new ArrayList<>(ids);
+		Collections.reverse(list);
+		return list;
+	}
+
+	/**
+	 * 撤回本会话发出的一条消息。
+	 *
+	 * @param state     会话
+	 * @param messageId 消息 id；为空时撤回最近一条
+	 * @return 给调用方看的结果
+	 */
+	public String recallMessage(AIGroupSession state, String messageId) throws Exception {
+		if (!adapter.supportsRecall()) {
+			return "当前协议不支持撤回消息";
+		}
+		String target = messageId == null ? "" : messageId.trim();
+		if (target.isEmpty()) {
+			List<String> recent = recentSentMessages(state);
+			if (recent.isEmpty()) {
+				return "没有可撤回的消息";
+			}
+			target = recent.get(0);
+		}
+		if (!wasSentBy(state, target)) {
+			return "只能撤回本会话自己发送的消息";
+		}
+		String privateUser = privateUserId(state);
+		if (privateUser != null) {
+			adapter.recallPrivateMessage(privateUser, target).get(30, TimeUnit.SECONDS);
+		} else {
+			adapter.recallMessage(chatId(state), target).get(30, TimeUnit.SECONDS);
+		}
+		Deque<String> ids = recentSentMessageIds.get(state);
+		if (ids != null) {
+			ids.remove(target);
+		}
+		return "已撤回消息：" + target;
+	}
+
 	/** 组装一条纯文本回复的发送动作。 */
 	private SendCall textSend(AIGroupSession state, String text) {
 		final String target = chatId(state);
+		final String privateUser = privateUserId(state);
 		final String content = text == null ? "" : text;
+		if (privateUser != null) {
+			return () -> privateTextSend(privateUser, content);
+		}
 		return () -> adapter.sendText(target, content);
+	}
+
+	/** 私聊文本转成 future，供附件发送失败时走统一的发送队列。 */
+	private CompletableFuture<String> privateTextSend(String userId, String text) {
+		try {
+			adapter.sendPrivateText(userId, text);
+			return CompletableFuture.completedFuture(null);
+		} catch (Throwable t) {
+			CompletableFuture<String> failed = new CompletableFuture<>();
+			failed.completeExceptionally(t);
+			return failed;
+		}
 	}
 
 	/**
@@ -542,14 +920,46 @@ public class NapCatAIConnector {
 	 */
 	private List<SendCall> buildToolAttachmentSends(AIGroupSession state, MessageContent content) {
 		final String target = chatId(state);
+		final String privateUser = privateUserId(state);
 		List<SendCall> sends = new ArrayList<>(2);
 		if (content instanceof ImageContent) {
 			ImageContent image = (ImageContent) content;
 			String ref = image.getImageUrl();
 			if (image.isCensored()) {
-				String readerUrl = publicImageUrl(ref);
+				// 受限图片只发缩略图；「查看原图」链接只在拿到真正的公网地址时才有
+				final String readerUrl;
+				if (ref == null || ref.isEmpty() || ref.startsWith("data:")) {
+					readerUrl = null;
+				} else if (ref.startsWith("http://") || ref.startsWith("https://")) {
+					readerUrl = ref;
+				} else {
+					String url;
+					try {
+						url = tos.getHttpUrl(ref, null);
+					} catch (Throwable t) {
+						url = null;
+					}
+					readerUrl = url != null && !url.startsWith("data:") ? url : null;
+				}
 				try {
-					byte[] raw = loadImageBytes(ref);
+					// 取原图字节：兼容图片 id、http(s) 链接与 data URL
+					if (ref == null || ref.isEmpty()) {
+						throw new IOException("图片内容为空");
+					}
+					final byte[] raw;
+					if (ref.startsWith("data:")) {
+						int comma = ref.indexOf(',');
+						if (comma < 0) {
+							throw new IOException("图片 data URL 格式错误");
+						}
+						raw = Base64.getDecoder().decode(ref.substring(comma + 1));
+					} else if (ref.startsWith("http://") || ref.startsWith("https://")) {
+						try (InputStream in = FileUtil.fetch(ref)) {
+							raw = FileUtil.readAll(in);
+						}
+					} else {
+						raw = tos.download(ref, null);
+					}
 					BufferedImage bi = ImageIO.read(new ByteArrayInputStream(raw));
 					if (bi == null) {
 						throw new IOException("无法解析图片内容");
@@ -561,26 +971,62 @@ public class NapCatAIConnector {
 					}
 					final String thumbUrl = FileUtil.toDataUrl(thumb);
 					final String caption = readerUrl;
-					sends.add(() -> adapter.sendImage(target, thumbUrl, caption));
+					sends.add(() -> privateUser != null
+							? adapter.sendPrivateImage(privateUser, thumbUrl, caption)
+							: adapter.sendImage(target, thumbUrl, caption));
 				} catch (Exception e) {
 					e.printStackTrace();
-					sends.add(textSend(state, readerUrl != null ? readerUrl : "受限图片发送失败：图片不存在"));
+					sends.add(privateUser != null
+							? () -> privateTextSend(privateUser, readerUrl != null ? readerUrl : "受限图片发送失败：图片不存在")
+							: textSend(state, readerUrl != null ? readerUrl : "受限图片发送失败：图片不存在"));
 				}
 			} else {
 				try {
-					final String file = imageFileForSend(ref);
-					sends.add(() -> adapter.sendImage(target, file, null));
+					// 图片 id 换成可直接下载的地址；已经是 URL / data URL 的原样返回
+					final String file;
+					if (isDirectMediaUrl(ref)) {
+						file = ref;
+					} else if (ref == null || ref.isEmpty()) {
+						throw new IOException("图片 id 为空");
+					} else {
+						file = tos.getPreferredUrl(ref, null);
+					}
+					sends.add(() -> privateUser != null
+							? adapter.sendPrivateImage(privateUser, file, null)
+							: adapter.sendImage(target, file, null));
 				} catch (Exception e) {
 					e.printStackTrace();
-					sends.add(textSend(state, "图片发送失败：图片不存在"));
+					sends.add(privateUser != null
+							? () -> privateTextSend(privateUser, "图片发送失败：图片不存在")
+							: textSend(state, "图片发送失败：图片不存在"));
 				}
 			}
 		} else if (content instanceof VideoContent) {
-			final String file = ((VideoContent) content).getVideoUrl();
-			sends.add(() -> adapter.sendVideo(target, file));
+			try {
+				// 视频 id 换成可直接下载的地址；已有的 http(s) 链接原样返回
+				String videoRef = ((VideoContent) content).getVideoUrl();
+				final String file;
+				if (isDirectMediaUrl(videoRef)) {
+					file = videoRef;
+				} else if (videoRef == null || videoRef.isEmpty()) {
+					throw new IOException("视频 id 为空");
+				} else {
+					file = tos.getPreferredUrl(videoRef, null);
+				}
+				sends.add(() -> privateUser != null
+						? adapter.sendPrivateVideo(privateUser, file)
+						: adapter.sendVideo(target, file));
+			} catch (Exception e) {
+				e.printStackTrace();
+				sends.add(privateUser != null
+						? () -> privateTextSend(privateUser, "视频发送失败：视频不存在")
+						: textSend(state, "视频发送失败：视频不存在"));
+			}
 		} else if (content instanceof AudioContent) {
 			final String file = ((AudioContent) content).getAudioUrl();
-			sends.add(() -> adapter.sendRecord(target, file));
+			sends.add(() -> privateUser != null
+					? adapter.sendPrivateRecord(privateUser, file)
+					: adapter.sendRecord(target, file));
 		}
 		return sends;
 	}
@@ -627,6 +1073,7 @@ public class NapCatAIConnector {
 	public String sendImageMessage(AIGroupSession state, String image, String description, boolean censored)
 			throws Exception {
 		final String target = chatId(state);
+		final String privateUser = privateUserId(state);
 		if (censored) {
 			String readerUrl = SiteConfig.resolve(dataFolder).readerUrl(SiteConfig.DEFAULT_READER_HOST,
 					"/works/imgView.html?img=" + URLEncoder.encode(image, StandardCharsets.UTF_8));
@@ -636,12 +1083,19 @@ public class NapCatAIConnector {
 					BufferedImage bo = shrinkToQuarter(bi);
 					ImageIO.write(bo, "jpg", baos);
 				}
-				String mid = adapter.sendImage(target, FileUtil.toDataUrl(baos.toByteArray()), readerUrl).get();
+				String mid = privateUser != null
+						? adapter.sendPrivateImage(privateUser, FileUtil.toDataUrl(baos.toByteArray()), readerUrl).get()
+						: adapter.sendImage(target, FileUtil.toDataUrl(baos.toByteArray()), readerUrl).get();
 				appendMid(mid, state.botId);
+				recordSentMessage(state, mid);
 				return "发送图片成功，消息id：" + mid;
 			} catch (Exception e2) {
 				e2.printStackTrace();
 				try {
+					if (privateUser != null) {
+						adapter.sendPrivateText(privateUser, readerUrl);
+						return "发送图片成功";
+					}
 					String mid = adapter.sendText(target, readerUrl).get();
 					appendMid(mid, state.botId);
 					return "发送图片成功，消息id：" + mid;
@@ -651,22 +1105,33 @@ public class NapCatAIConnector {
 				}
 			}
 		}
-		String mid = adapter.sendImage(target, image, null).get();
+		String mid = privateUser != null
+				? adapter.sendPrivateImage(privateUser, image, null).get()
+				: adapter.sendImage(target, image, null).get();
 		appendMid(mid, state.botId);
+		recordSentMessage(state, mid);
 		return "发送图片消息id：" + mid;
 	}
 
 	/** 发送视频消息。 */
 	public String sendVideoMessage(AIGroupSession state, String video) throws Exception {
-		String mid = adapter.sendVideo(chatId(state), video).get();
+		String privateUser = privateUserId(state);
+		String mid = privateUser != null
+				? adapter.sendPrivateVideo(privateUser, video).get()
+				: adapter.sendVideo(chatId(state), video).get();
 		appendMid(mid, state.botId);
+		recordSentMessage(state, mid);
 		return "发送生成视频消息成功，消息id：" + mid;
 	}
 
 	/** 发送音频消息。 */
 	public String sendAudioMessage(AIGroupSession state, String audio) throws Exception {
-		String mid = adapter.sendRecord(chatId(state), audio).get();
+		String privateUser = privateUserId(state);
+		String mid = privateUser != null
+				? adapter.sendPrivateRecord(privateUser, audio).get()
+				: adapter.sendRecord(chatId(state), audio).get();
 		appendMid(mid, state.botId);
+		recordSentMessage(state, mid);
 		return "发送音频消息id：" + mid;
 	}
 	public void registerSkills(AIGroupSession state,File dataFolder,JsonObject config) throws IOException {
@@ -695,10 +1160,10 @@ public class NapCatAIConnector {
 			}
 		}
 		Map<String,String> emojis=new HashMap<>();
-		if(config.has("emojis")) {
-			JsonObject jo=config.get("emojis").getAsJsonObject();
-			for(String je:jo.keySet()) {
-				emojis.put(je,jo.get(je).getAsString());
+		JsonObject emojiConfig = JsonConfig.getObject(config, "emojis");
+		if (emojiConfig != null) {
+			for (String emojiName : emojiConfig.keySet()) {
+				emojis.put(emojiName, emojiConfig.get(emojiName).getAsString());
 			}
 		}
 		state.setToolAttachmentHandler(content -> sendToolAttachment(state, content));
@@ -729,12 +1194,15 @@ public class NapCatAIConnector {
 		}
 
 		if (toolSettings.isEnabled("qq")) {
-			ToolData avatar = QQMcp.createAvatarFetch(tos);
+			ToolData avatar = QQMcp.createAvatarFetch(adapter, tos);
 			state.registerTool(avatar);
 			recordTool(toolNamesBySkill, "qq", avatar);
-			ToolData groupAvatar = QQMcp.createAvatarGroupRecognition(state.groupId, tos);
+			ToolData groupAvatar = QQMcp.createAvatarGroupRecognition(state.groupId, adapter, tos);
 			state.registerTool(groupAvatar);
 			recordTool(toolNamesBySkill, "qq", groupAvatar);
+			ToolData recall = MessageMcp.recallMessage(this, state);
+			state.registerTool(recall);
+			recordTool(toolNamesBySkill, "qq", recall);
 			ToolData sendImage = MediaOutputMcp.createSendImageForChat(tos);
 			state.registerTool(sendImage);
 			recordTool(toolNamesBySkill, "qq", sendImage);
@@ -744,7 +1212,8 @@ public class NapCatAIConnector {
 		}
 
 		if (toolSettings.isEnabled("sdxl")) {
-			SDXLMcp sdxl = SDXLMcp.createLocal(tos, lora, false, resourceLock);
+			// 通过本地模型通道调用：具体请求由 LocalModelConnectionService 的 sdxl 客户端执行
+			SDXLMcp sdxl = SDXLMcp.createRemoteLocalModel(tos, lora, false);
 			state.registerTools(sdxl);
 			recordTools(toolNamesBySkill, "sdxl", sdxl.getTools());
 			if (charas != null) {
@@ -754,7 +1223,7 @@ public class NapCatAIConnector {
 			}
 		}
 		if (toolSettings.isEnabled("sdxl-nsfw")) {
-			SDXLMcp sdxl = SDXLMcp.createLocal(tos, lora, true, resourceLock);
+			SDXLMcp sdxl = SDXLMcp.createRemoteLocalModel(tos, lora, true);
 			state.registerTools(sdxl);
 			recordTools(toolNamesBySkill, "sdxl-nsfw", sdxl.getTools());
 			if (charas != null) {
@@ -765,14 +1234,12 @@ public class NapCatAIConnector {
 		}
 
 		if (toolSettings.isEnabled("sdxl-agent")) {
-			ToolData agent = SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, false,
-					resourceLock);
+			ToolData agent = SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, false);
 			state.registerTool(agent);
 			recordTool(toolNamesBySkill, "sdxl-agent", agent);
 		}
 		if (toolSettings.isEnabled("sdxl-agent-nsfw")) {
-			ToolData agent = SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, true,
-					resourceLock);
+			ToolData agent = SDXLAgentMcp.createImage(ConfigPaths.sdxlAgent(dataFolder), tos, lora, charas, true);
 			state.registerTool(agent);
 			recordTool(toolNamesBySkill, "sdxl-agent-nsfw", agent);
 		}
@@ -783,23 +1250,44 @@ public class NapCatAIConnector {
 			recordTools(toolNamesBySkill, "cron", cron.getTools());
 		}
 		if (toolSettings.isEnabled("music")) {
-			MusicMcp music = new MusicMcp(new File(dataFolder, "music"), config.get("voice").getAsString(),
-					state.getRoleName(Role.ASSISTANT), resourceLock, tos, ConfigPaths.svsVoices(dataFolder));
+			MusicMcp music = new MusicMcp(new File(dataFolder, "music"),
+					JsonConfig.getString(config, "voice", ""),
+					state.getRoleName(Role.ASSISTANT), tos, ConfigPaths.svsVoices(dataFolder));
 			state.registerTools(music);
 			recordTools(toolNamesBySkill, "music", music.getTools());
 		}
 		if (toolSettings.isEnabled("svs")) {
-			// SVS 独立于音乐平台：输入音频链接，voice 传角色名，由配置文件映射到音频 ID
-			SvsMcp svs = new SvsMcp(tos, resourceLock, ConfigPaths.svsVoices(dataFolder));
+			// SVS 独立于音乐平台：输入音频链接，voice 传角色名，由配置文件映射到音频 ID；
+			// 生成交给本地模型通道（SvsLocalModelClient），与直接访问 localemp 的 SvsMcp 区分。
+			SvsLocalModelMcp svs = new SvsLocalModelMcp(tos, ConfigPaths.svsVoices(dataFolder));
 			state.registerTools(svs);
 			recordTools(toolNamesBySkill, "svs", svs.getTools());
 		}
-		if (toolSettings.isEnabled("seedimage")) {
+		if (toolSettings.isEnabled("qwen")) {
+			// Qwen-Image 2.1 通过本地模型通道生成，聊天进程不需要访问 ComfyUI
+			QwenLocalModelMcp qwen = new QwenLocalModelMcp(tos);
+			state.registerTools(qwen);
+			recordTools(toolNamesBySkill, "qwen", qwen.getTools());
+		}
+		if (toolSettings.isEnabled("h3video")) {
+			// MiniMax H3 视频同样走本地模型通道（model_type=h3），与 Qwen 共用 ComfyUI；
+			// 聊天进程不加锁：显存与排队由本地模型连接服务负责
+			H3VideoMcp h3 = new H3VideoMcp(tos);
+			state.registerTools(h3);
+			recordTools(toolNamesBySkill, "h3video", h3.getTools());
+		}
+		if (toolSettings.isEnabled("h3video-agent")) {
+			// 视频导演子 agent：扩写提示词、选比例/时长后调用内层 h3_gen_video
+			ToolData agent = H3VideoAgentMcp.createVideo(ConfigPaths.h3Agent(dataFolder), tos, charas);
+			state.registerTool(agent);
+			recordTool(toolNamesBySkill, "h3video-agent", agent);
+		}
+		if (toolSettings.isEnabled("seedimage")&&imgKey!=null) {
 			ToolData image = SeedreamMcp.createImage(imgKey, refimage, tos);
 			state.registerTool(image);
 			recordTool(toolNamesBySkill, "seedimage", image);
 		}
-		if (toolSettings.isEnabled("seedvideo")) {
+		if (toolSettings.isEnabled("seedvideo")&&imgKey!=null) {
 			// 即梦视频脚本提示词由 config/jimeng-video.txt 提供，缺失时工具内部退回内置提示词
 			File videoPrompt = ConfigPaths.jimengVideo(dataFolder);
 			ToolData video = SeedreamMcp.createVideo(imgKey, refimage, tos,
@@ -810,21 +1298,414 @@ public class NapCatAIConnector {
 		AgentPingMcp ping = new AgentPingMcp(state.getRoleName(Role.ASSISTANT), state);
 		state.registerTools(ping);
 		recordTools(toolNamesBySkill, "agent-ping", ping.getTools());
-		applyAgentTurnLimits(state, toolSettings);
-		applyToolApproval(state, config, toolSettings, toolNamesBySkill);
-	}
+		// 记录检索：群聊/私聊、多 agent、codex 等会话本来就会经过这里注册工具，
+		// 压缩历史后可用 history_search / history_get 找回已从上下文隐藏但没有删除的旧记录；
+		// 没有启用工具的会话不会走到这里，保持原样。
+		state.registerTools(HistorySearchMcp.forSession(state));
+		if (toolSettings.isEnabled("codex")) {
+			// Codex 编程代理：工具来自全局 CodexService（一个 app-server 进程），按「机器人+群」隔离线程；
+			// 审批走私聊管理员，答复由私聊事件处理器（onPrivateMessage）消费。
+			try {
+				List<String> codexAdminIds = JsonConfig.getIds(config, "adminId", System.getProperty("adminId", ""));
+				// 多 agent 私聊会话没有显式 adminId 时，默认审核人就是该私聊用户
+				if (codexAdminIds.isEmpty() && state.groupId != null
+						&& state.groupId.startsWith("private:")) {
+					String user = state.groupId.substring("private:".length()).trim();
+					if (!user.isEmpty()) {
+						codexAdminIds.add(user);
+					}
+				}
+				String codexAdminId = codexAdminIds.isEmpty() ? "" : codexAdminIds.get(0);
+				CodexRuntime.setReviewHandler(new CodexReviewHandler() {
+					@Override
+					public void onReview(CodexReviewHandler.Notice notice) {
+						if (notice == null) {
+							return;
+						}
+						AIGroupSession target = findByOwner(notice.owner);
+						if (target == null) {
+							CodexService service = CodexRuntime.getService();
+							if (service != null) {
+								service.escalateReview(notice.taskId, "no-session");
+							}
+							return;
+						}
+						StringBuilder sb = new StringBuilder();
+						sb.append("<codex-approval task_id=\"").append(escapeXmlText(notice.taskId))
+								.append("\" thread=\"").append(escapeXmlText(notice.threadId))
+								.append("\" kind=\"").append(escapeXmlText(notice.kind)).append("\">\n");
+						sb.append("Codex 请求").append("file".equals(notice.kind) ? "修改文件" : "执行命令").append("：\n");
+						if (notice.title != null && !notice.title.isEmpty()) {
+							sb.append(notice.title).append('\n');
+						}
+						if (notice.detail != null && !notice.detail.isEmpty()) {
+							sb.append(notice.detail).append('\n');
+						}
+						sb.append("逐字核对命令/参数/路径是否真正正确、是否安全、是否与当前任务一致：\n");
+						sb.append("- 合理且安全：调用 codex_review_approval，task_id=\"").append(escapeXmlText(notice.taskId))
+								.append("\"，decision=\"approve\"，reason 写关键依据；\n");
+						sb.append("- 不确定/危险/越界/联网/读取凭据：decision=\"ask_user\" 交给用户；\n");
+						sb.append("- 明显错误或恶意：decision=\"reject\"。\n");
+						sb.append("</codex-approval>");
+						try {
+							target.addMessage(Arrays.asList(() -> new PlainText(sb.toString())), true);
+							submitMessage(target);
+						} catch (Throwable t) {
+							t.printStackTrace();
+							CodexService service = CodexRuntime.getService();
+							if (service != null) {
+								service.escalateReview(notice.taskId, "notify-failed");
+							}
+						}
+					}
 
-	/**
-	 * 子 agent 单回合调用上限：SDXLAgent 与 Music 子 agent 每回合最多调用一次，
-	 * 避免模型在同一回合反复启动重量级子 agent。
-	 */
-	private static void applyAgentTurnLimits(AIGroupSession state, ToolSettings toolSettings) {
+					@Override
+					public void onResolved(CodexReviewHandler.Notice notice, String decision, String note) {
+						if (notice == null || "agent".equals(note)) {
+							return;
+						}
+						AIGroupSession target = findByOwner(notice.owner);
+						if (target == null) {
+							return;
+						}
+						String label;
+						switch (decision == null ? "" : decision) {
+							case "accept":
+								label = "已允许";
+								break;
+							case "acceptForSession":
+								label = "已允许（本会话记住）";
+								break;
+							case "decline":
+								label = "已拒绝";
+								break;
+							case "cancel":
+								label = "已拒绝并中断";
+								break;
+							default:
+								label = "已处理（" + decision + "）";
+								break;
+						}
+						StringBuilder text = new StringBuilder();
+						text.append("<codex-approval-result task_id=\"").append(escapeXmlText(notice.taskId))
+								.append("\" thread=\"").append(escapeXmlText(notice.threadId))
+								.append("\" decision=\"").append(escapeXmlText(decision))
+								.append("\" note=\"").append(escapeXmlText(note)).append("\">\n");
+						text.append("Codex 审批结果：").append(label).append('\n');
+						if (notice.title != null && !notice.title.isEmpty()) {
+							text.append(notice.title).append('\n');
+						}
+						text.append("</codex-approval-result>");
+						try {
+							target.addMessage(Arrays.asList(() -> new PlainText(text.toString())), true);
+						} catch (Throwable t) {
+							t.printStackTrace();
+						}
+					}
+				});
+				CodexConfig codexConfig = CodexConfig.fromAgent(dataFolder, config);
+				String codexOwner = "qq:" + state.botId + ":" + state.groupId;
+				// 审批私聊发送器：官方机器人支持卡片时先发按钮卡片
+				CodexRuntime.PrivateTextSender codexTextSender = new CodexRuntime.PrivateTextSender() {
+					@Override
+					public void send(String userId, String text) throws Exception {
+						sendPrivateText(userId, text);
+					}
+
+					@Override
+					public boolean sendCard(String userId, String markdown, List<ChatButton> buttons) throws Exception {
+						if (!adapter.supportsCard()) {
+							return false;
+						}
+						adapter.sendPrivateCard(userId, markdown, buttons).get(10, TimeUnit.SECONDS);
+						return true;
+					}
+				};
+				CodexMcp codex = CodexRuntime.mcpFor(codexOwner,
+						codexConfig, codexTextSender, codexAdminId, true, tos);
+				if (codex != null) {
+					state.registerTools(codex);
+					recordTools(toolNamesBySkill, "codex", codex.getTools());
+					if (CodexRuntime.getService() != null) {
+						CodexRuntime.getService().setOwnerAdmins(codexOwner, codexAdminIds);
+						if (codexConfig != null) {
+							CodexRuntime.getService().setOwnerOpenApproval(codexOwner, codexConfig.openApproval);
+						}
+					}
+					System.out.println("[QQ] Codex 已接入：群 " + state.groupId + "，管理员 " + codexAdminIds
+							+ "，开放审核 " + (codexConfig != null && codexConfig.openApproval)
+							+ "，工作目录 " + codex.getService().getConfig().cwd.getPath());
+				} else {
+					System.out.println("[QQ] codex 技能已启用，但 Codex 配置被禁用（检查 codex 段或 -Dcodex_enabled）");
+				}
+			} catch (Throwable ex) {
+				ex.printStackTrace();
+				System.out.println("[QQ] Codex 初始化失败：" + ex.getMessage());
+			}
+		}
+		if (toolSettings.isEnabled("knowledge")) {
+			File root = knowledgeRoot(state);
+			File personal = personalKnowledgeRoot(state);
+			if (root != null) {
+				ToolProvider knowledge = personal == null
+						? KnowledgeBaseMcp.forProject(root)
+						: KnowledgeBaseMcp.forPrivate(root, personal);
+				state.registerTools(knowledge);
+				recordTools(toolNamesBySkill, "knowledge", knowledge.getTools());
+				System.out.println("[QQ] 知识库已接入：" + state.getRoleName(Role.ASSISTANT)
+						+ "，目录 " + root.getPath());
+			}
+		}
+		if (toolSettings.isEnabled("doclib")) {
+			try {
+				DocLibraryConfig dlCfg = DocLibraryConfig.forAgent(dataFolder, config);
+				DocLibraryRuntime lib = DocLibraryRegistry.open(dataFolder, dlCfg);
+				DocAgent dlAgent = lib.register(state, dlCfg, () -> submitMessage(state));
+				ToolProvider doclib = DocLibraryMcp.forAgent(lib, dlAgent, dlCfg);
+				state.registerTools(doclib);
+				recordTools(toolNamesBySkill, "doclib", doclib.getTools());
+				System.out.println("[QQ] 文档库已接入：" + dlAgent.displayName
+						+ "，库 " + dlCfg.id + "，目录 " + lib.root().getPath());
+			} catch (Throwable t) {
+				t.printStackTrace();
+				System.out.println("[QQ] 文档库接入失败：" + t.getMessage());
+			}
+		}
+		if (isExplicitSend(state, config)) {
+			explicitSessions.add(state);
+			ToolProvider chat = createChatTools(state, config);
+			if (chat != null) {
+				state.registerTools(chat);
+				recordTools(toolNamesBySkill, "chat", chat.getTools());
+				List<String> chatToolNames = new ArrayList<>();
+				for (ToolData tool : chat.getTools()) {
+					chatToolNames.add(tool.name);
+				}
+				System.out.println("[QQ] 聊天工具已注册：" + chatToolNames);
+				System.out.println("[QQ] 显式发送已启用：" + agentName(state));
+			}
+		}
+		// 子 agent 单回合调用上限：SDXLAgent 与 Music 子 agent 每回合最多调用一次，
+		// 避免模型在同一回合反复启动重量级子 agent。
 		if (toolSettings.isEnabled("sdxl-agent") || toolSettings.isEnabled("sdxl-agent-nsfw")) {
 			state.getToolCallManager().setToolCallLimit("sdxl_agent", AGENT_TURN_LIMIT);
 		}
 		if (toolSettings.isEnabled("music")) {
 			state.getToolCallManager().setToolCallLimit("find_music", AGENT_TURN_LIMIT);
 		}
+		// 审核名单里可能写技能名，也可能直接写工具名；统一展开成真实工具名
+		Set<String> needApproval = new LinkedHashSet<>();
+		for (String configured : toolSettings.getApproval()) {
+			Set<String> names = toolNamesBySkill.get(configured);
+			if (names != null && !names.isEmpty()) {
+				needApproval.addAll(names);
+			} else if (state.getToolCallManager().hasTool(configured)) {
+				needApproval.add(configured);
+			}
+		}
+		if (needApproval.isEmpty()) {
+			if (!toolSettings.getApproval().isEmpty()) {
+				System.out.println("[聊天] 工具审核配置未匹配到已注册工具：" + toolSettings.getApproval());
+			}
+		} else {
+			List<String> adminIds = JsonConfig.getIds(config, "adminId", System.getProperty("adminId", ""));
+			state.getToolCallManager().addPermissionListener(ToolCallPermission.requireApproval(needApproval,
+					"该工具会产生外部副作用或消耗额度，需要管理员审核"));
+			// 统一未批准时回传给模型的文案，避免落到 ToolCallManager 的默认提示
+			state.getToolCallManager().setUnapprovedMessage(
+					"管理员未批准本次工具调用，请改用其它方式或先询问用户。");
+			if (adminIds.isEmpty()) {
+				String denyReason = "需要审核的工具未配置管理员（adminId），已拒绝执行。";
+				// 用带原因的失败关闭：拒绝原因会直接回传给模型，而不是只落在通用提示里
+				state.getToolCallManager().setApprover(ToolCallApprover.denyAll(denyReason));
+				state.getToolCallManager().setUnapprovedMessage(denyReason);
+				System.out.println("[聊天] 工具审核已启用，但未配置 adminId，需要审核的工具将被拒绝：" + needApproval);
+			} else {
+				// 审核超时：agent 配置 approvalTimeoutMs 优先，其次 -Dtool_approval_timeout_ms
+				long timeout;
+				String raw = JsonConfig.getNonBlankString(config, "approvalTimeoutMs");
+				Long configuredTimeout = null;
+				if (raw != null) {
+					try {
+						configuredTimeout = Long.valueOf(Math.max(5000, Long.parseLong(raw)));
+					} catch (RuntimeException e) {
+						// 配置写错时继续尝试系统属性
+					}
+				}
+				if (configuredTimeout != null) {
+					timeout = configuredTimeout.longValue();
+				} else {
+					try {
+						timeout = Math.max(5000,
+								Long.parseLong(System.getProperty("tool_approval_timeout_ms", "120000").trim()));
+					} catch (RuntimeException e) {
+						timeout = QqToolApprovalManager.DEFAULT_TIMEOUT_MILLIS;
+					}
+				}
+				state.getToolCallManager().setApprover(toolApproval.approverFor(state, adminIds, timeout));
+				System.out.println("[聊天] 工具审核已启用：管理员 " + adminIds + "，超时 " + timeout + "ms，工具 "
+						+ needApproval);
+			}
+		}
+	}
+
+	// ==================== 显式发送 ====================
+
+	/** 会话是否处于「正文不自动发送、必须用工具发」的模式。 */
+	private static boolean isExplicitSend(AIGroupSession state, JsonObject config) {
+		// 以会话自身判断为准：配置 explicitSend，或 codex agent 默认开启
+		return state.isExplicitSend();
+	}
+
+	/**
+	 * 显式发送模式下注册的聊天工具。
+	 * <p>
+	 * 基类只提供公屏发送与询问用户；需要私聊能力的子类（多 agent 架构）覆盖本方法换成
+	 * 私聊工具集。
+	 * </p>
+	 *
+	 * @param state  会话
+	 * @param config 会话配置
+	 * @return 工具集；返回 null 表示不注册
+	 */
+	protected ToolProvider createChatTools(AIGroupSession state, JsonObject config) {
+		return GroupChatMcp.create(this, state);
+	}
+
+	/** agent 名称：优先配置 name，其次应用名。 */
+	protected static String agentName(AIGroupSession state) {
+		return JsonConfig.getNonBlankString(state.config, "name", state.getAiapp().getName());
+	}
+
+	/** 显式发送：公屏（当前群）。 */
+	public String sendExplicitGroup(AIGroupSession state, String text) throws Exception {
+		return sendExplicitGroupTo(state, state.groupId, text);
+	}
+
+	/** 显式发送：公屏（指定群）；私聊 agent 只能发到自己有上下文权限的群。 */
+	public String sendExplicitGroupTo(AIGroupSession state, String groupId, String text) throws Exception {
+		if (text == null || text.trim().isEmpty()) {
+			throw new IllegalArgumentException("群消息内容为空");
+		}
+		if (groupId == null || groupId.trim().isEmpty()) {
+			throw new IllegalArgumentException("群 id 为空");
+		}
+		String targetGroup = groupId.trim();
+		if (state instanceof com.khjxiaogu.aiwuxia.multi.MultiAgentSession
+				&& !((com.khjxiaogu.aiwuxia.multi.MultiAgentSession) state).canSeeGroup(targetGroup)) {
+			throw new IllegalArgumentException("当前会话没有该群的上下文权限");
+		}
+		String mid = adapter.sendText(targetGroup, text).get(60, TimeUnit.SECONDS);
+		appendMid(mid, state.botId);
+		recordSentMessage(state, mid);
+		onMultiGroupMessageSent(state, targetGroup, text);
+		return "已发送到群 " + targetGroup + (mid == null || mid.isEmpty() ? "" : "，消息id：" + mid);
+	}
+
+	private static String escapeXmlText(String text) {
+		if (text == null) {
+			return "";
+		}
+		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+				.replace("\"", "&quot;");
+	}
+
+	/** 字符串 id 转 long；空/非法时返回默认值。 */
+	private static long parseLong(String value, long fallback) {
+		if (value == null || value.trim().isEmpty()) {
+			return fallback;
+		}
+		try {
+			return Long.parseLong(value.trim());
+		} catch (RuntimeException ex) {
+			return fallback;
+		}
+	}
+
+	/** 按 {@code qq:botId:groupId} 找会话。 */
+	private AIGroupSession findByOwner(String owner) {
+		if (owner == null || owner.isEmpty()) {
+			return null;
+		}
+		for (AIGroupSession state : states) {
+			if (owner.equals("qq:" + state.botId + ":" + state.groupId)) {
+				return state;
+			}
+		}
+		return null;
+	}
+
+	/** 多 agent 扩展点：某个 agent 的一轮 AI 处理结束（无论成功失败）。 */
+	protected void onAiTurnFinished(AIGroupSession state) {
+	}
+
+	/** 多 agent 扩展点：某个 agent 成功向指定群发送一条消息。 */
+	protected void onMultiGroupMessageSent(AIGroupSession from, String groupId, String text) {
+		onMultiGroupMessageSent(from, text);
+	}
+
+	/** 多 agent 扩展点：某个 agent 成功向公屏发送一条消息。 */
+	protected void onMultiGroupMessageSent(AIGroupSession from, String text) {
+	}
+
+	/** 知识库根目录：优先 config 的 knowledgeRoot，其次 codex cwd，最后进程工作目录。 */
+	protected File knowledgeRoot(AIGroupSession state) {
+		JsonObject config = state == null ? null : state.config;
+		String configured = JsonConfig.getNonBlankString(config, "knowledgeRoot");
+		if (configured != null) {
+			return new File(configured);
+		}
+		CodexConfig codex = CodexConfig.fromAgent(dataFolder, config);
+		if (codex != null) {
+			return codex.cwd;
+		}
+		return new File(System.getProperty("user.dir", "."));
+	}
+
+	/** 当前会话的个人知识库目录；配置 {@code personalKnowledge} 时启用可写个人库。 */
+	protected File personalKnowledgeRoot(AIGroupSession state) {
+		JsonObject config = state == null ? null : state.config;
+		String path = JsonConfig.getNonBlankString(config, "personalKnowledge");
+		return path == null ? null : new File(path);
+	}
+
+	/**
+	 * 多 agent 扩展点：返回 true 表示这条群消息已被接管，普通群聊逻辑不再处理。
+	 *
+	 * @param msg 群消息
+	 * @return 是否已处理
+	 */
+	protected boolean handleMultiGroupMessage(IncomingMessage msg) {
+		return false;
+	}
+
+	/**
+	 * 多 agent 扩展点：返回 true 表示这条私聊已被接管，普通私聊逻辑不再处理。
+	 *
+	 * @param msg 私聊消息
+	 * @return 是否已处理
+	 */
+	protected boolean handleMultiPrivateMessage(IncomingMessage msg) {
+		return false;
+	}
+
+	/**
+	 * 多 agent 扩展点：私聊撤回事件（用于把被撤回的消息从待触发缓冲区里移除）。
+	 *
+	 * @param userId    私聊对象
+	 * @param messageId 被撤回的消息 id
+	 */
+	protected void handleMultiPrivateRecall(String userId, String messageId) {
+	}
+
+	/** 当前会话列表（多 agent 子类用于路由）。 */
+	protected List<AIGroupSession> getSessions() {
+		return states;
+	}
+
+	/** 对象存储（多 agent 子类保存媒体用）。 */
+	protected ObjectStorageProvider getStorage() {
+		return tos;
 	}
 
 	/** 记录技能注册出来的一个工具。 */
@@ -848,95 +1729,6 @@ public class NapCatAIConnector {
 		}
 		for (ToolData tool : tools) {
 			recordTool(toolNamesBySkill, skill, tool);
-		}
-	}
-
-	/**
-	 * 按工具配置接入审核：{@code tools} 里带 {@code approval:true} 的工具在真正执行前私聊管理员确认。
-	 * <p>
-	 * 配置里写的是技能名（{@code seedvideo}）或真实工具名（{@code jimeng_video}）都可以：
-	 * 技能名会展开成该技能实际注册的全部工具名。没有配置 {@code adminId} 时失败关闭：
-	 * 需要审核的工具一律拒绝，并回传给模型明确原因。
-	 * </p>
-	 *
-	 * @param state            会话
-	 * @param config           agent 配置
-	 * @param toolSettings     已解析的工具配置
-	 * @param toolNamesBySkill 技能名到实际工具名的映射
-	 */
-	private void applyToolApproval(AIGroupSession state, JsonObject config, ToolSettings toolSettings,
-			Map<String, Set<String>> toolNamesBySkill) {
-		// 审核名单里可能写技能名，也可能直接写工具名；统一展开成真实工具名
-		Set<String> needApproval = new LinkedHashSet<>();
-		for (String configured : toolSettings.getApproval()) {
-			Set<String> names = toolNamesBySkill.get(configured);
-			if (names != null && !names.isEmpty()) {
-				needApproval.addAll(names);
-			} else if (state.getToolCallManager().hasTool(configured)) {
-				needApproval.add(configured);
-			}
-		}
-		if (needApproval.isEmpty()) {
-			if (!toolSettings.getApproval().isEmpty()) {
-				System.out.println("[聊天] 工具审核配置未匹配到已注册工具：" + toolSettings.getApproval());
-			}
-			return;
-		}
-		String adminId = readAdminId(config);
-		state.getToolCallManager().addPermissionListener(ToolCallPermission.requireApproval(needApproval,
-				"该工具会产生外部副作用或消耗额度，需要管理员审核"));
-		// 统一未批准时回传给模型的文案，避免落到 ToolCallManager 的默认提示
-		state.getToolCallManager().setUnapprovedMessage(
-				"管理员未批准本次工具调用，请改用其它方式或先询问用户。");
-		if (adminId == null) {
-			String denyReason = "需要审核的工具未配置管理员（adminId），已拒绝执行。";
-			// 用带原因的失败关闭：拒绝原因会直接回传给模型，而不是只落在通用提示里
-			state.getToolCallManager().setApprover(ToolCallApprover.denyAll(denyReason));
-			state.getToolCallManager().setUnapprovedMessage(denyReason);
-			System.out.println("[聊天] 工具审核已启用，但未配置 adminId，需要审核的工具将被拒绝：" + needApproval);
-			return;
-		}
-		long timeout = readApprovalTimeout(config);
-		state.getToolCallManager().setApprover(toolApproval.approverFor(state, adminId, timeout));
-		System.out.println("[聊天] 工具审核已启用：管理员 " + adminId + "，超时 " + timeout + "ms，工具 " + needApproval);
-	}
-
-	/**
-	 * 读取 agent 配置里的管理员账号；缺省时回退到 {@code -DadminId=...}。
-	 * <p>
-	 * 未配置时返回 {@code null}（兼容旧配置里的 {@code 0}）。
-	 * </p>
-	 */
-	private static String readAdminId(JsonObject config) {
-		JsonElement configured = config == null ? null : config.get("adminId");
-		if (configured != null && !configured.isJsonNull() && configured.isJsonPrimitive()) {
-			String raw = configured.getAsString().trim();
-			if (!raw.isEmpty() && !"0".equals(raw)) {
-				return raw;
-			}
-		}
-		String fallback = System.getProperty("adminId", "").trim();
-		return fallback.isEmpty() || "0".equals(fallback) ? null : fallback;
-	}
-
-	/** 读取审核超时：agent 配置 {@code approvalTimeoutMs} 优先，其次 {@code -Dtool_approval_timeout_ms}。 */
-	private static long readApprovalTimeout(JsonObject config) {
-		JsonElement configured = config == null ? null : config.get("approvalTimeoutMs");
-		if (configured != null && !configured.isJsonNull() && configured.isJsonPrimitive()) {
-			try {
-				String raw = configured.getAsString().trim();
-				if (!raw.isEmpty()) {
-					return Math.max(5000, Long.parseLong(raw));
-				}
-			} catch (RuntimeException e) {
-				// 配置写错时继续尝试系统属性
-			}
-		}
-		try {
-			long value = Long.parseLong(System.getProperty("tool_approval_timeout_ms", "120000").trim());
-			return Math.max(5000, value);
-		} catch (RuntimeException e) {
-			return QqToolApprovalManager.DEFAULT_TIMEOUT_MILLIS;
 		}
 	}
 
@@ -964,143 +1756,209 @@ public class NapCatAIConnector {
 	}
 
 	/**
-	 * 处理私聊事件：只有管理员对工具审核的「允许/拒绝」会被消费，其它私聊一律忽略。
+	 * 兼容旧调用：QQ 号是数字时转成字符串。
 	 *
-	 * @param message 归一化后的私聊消息
+	 * @param qq   QQ 号
+	 * @param text 文本
+	 * @throws Exception 发送失败
 	 */
-	private void handlePrivateMessage(IncomingMessage message) {
-		String text = message.getPlainText();
-		if (text.isEmpty()) {
-			return;
-		}
-		// 平台不提供自身账号时用 null 表示“未知”，而不是 0 或空串
-		String selfId = message.getSelfId().isEmpty() ? null : message.getSelfId();
-		toolApproval.answer(selfId, message.getSenderId(), text);
+	public void sendPrivateText(long qq, String text) throws Exception {
+		sendPrivateText(String.valueOf(qq), text);
 	}
 
 	/**
-	 * 处理群消息：归一化内容 -> 会话历史 -> 触发回复。
-	 * <p>
-	 * 这里只关心业务：消息属于哪个会话、是否 @ 了机器人、要不要触发一轮回复。协议字段
-	 * （message 段、raw.elements、@ 列表、回复 id）已经在适配器里归一化。
-	 * </p>
-	 *
-	 * @param msg 归一化后的群消息
+	 * 询问用户：发一张带选项按钮的卡片（适配器支持时），用户点按钮或直接回复；
+	 * 结果通过异步工具任务的 future 返回，随后由系统触发下一轮 AI。
 	 */
-	private void handleGroupMessage(IncomingMessage msg) {
-		String groupId = msg.getChatId();
-		// 先解析 @ 列表与“回复了我”：没有被显式 @ 时，回复消息才算 @
-		Set<String> containsAt = new HashSet<>();
-		for (String at : msg.getMentionedIds()) {
-			if (at != null && !at.isEmpty()) {
-				containsAt.add(at);
-			}
+	public CompletableFuture<ToolResult> askUser(AIGroupSession state, String question, List<String> options,
+			boolean allowFreeText, boolean multiSelect) {
+		CompletableFuture<ToolResult> failed = new CompletableFuture<>();
+		boolean group = state != null && state.groupId != null && !state.groupId.startsWith("private:");
+		String target = group ? state.groupId : (state == null ? "" : state.groupId);
+		if (!group && target.startsWith("private:")) {
+			target = target.substring("private:".length());
 		}
-		String replyMsgId = msg.getReplyToMessageId();
-		String replyId = null;
-		if (replyMsgId != null && !replyMsgId.isEmpty()) {
-			replyId = findBid(replyMsgId);
-			if (containsAt.isEmpty() && replyId != null) {
-				containsAt.add(replyId);
-			}
-		}
-		outer: for (AIGroupSession state : states) {
-			if (!Objects.equals(groupId, state.groupId)) {
-				continue;
-			}
-			String senderid = msg.getSenderId();
-			// 忽略机器人自己发的消息
-			if (Objects.equals(senderid, state.botId)) {
-				continue;
-			}
-			boolean containsAtMe = containsAt.contains(state.botId);
-			String sender = msg.getSenderName();
-			List<Supplier<MessageContent>> mes = new ArrayList<>();
-			String senderName = "<message senderName=\"" + sender + "\" senderId=\"" + senderid
-					+ "\" messageId=\"" + msg.getMessageId() + "\">";
-			mes.add(() -> new PlainText(senderName));
-			if (containsAtMe) {
-				mes.add(() -> new PlainText("@" + state.getRoleName(Role.ASSISTANT)));
-			}
-			boolean hasText = false;
-			StringBuilder textContent = new StringBuilder();
-			for (IncomingContent content : msg.getContents()) {
-				if (content instanceof IncomingContent.QuoteBlock) {
-					IncomingContent.QuoteBlock quote = (IncomingContent.QuoteBlock) content;
-					String quoteId = quote.getMessageId().isEmpty()
-							? (replyMsgId == null ? "" : replyMsgId)
-							: quote.getMessageId();
-					String quoteText = "<quote messageId=\"" + quoteId + "\" senderId=\"" + quote.getSenderId()
-							+ "\">" + quote.getText() + "</quote>";
-					mes.add(() -> new PlainText(quoteText));
-					// 引用的是机器人自己的消息（且不是本次连接发出去的）也算 @
-					if (replyId == null && Objects.equals(quote.getSenderId(), state.botId)) {
-						containsAtMe = true;
-					}
-				} else if (content instanceof IncomingContent.TextBlock) {
-					hasText = true;
-					String messageLine = ((IncomingContent.TextBlock) content).getText();
-					textContent.append(messageLine);
-					if (!containsAtMe && messageLine.contains("@" + state.getRoleName(Role.ASSISTANT))) {
-						containsAtMe = true;
-					}
-					mes.add(() -> new PlainText(messageLine));
-				} else if (content instanceof IncomingContent.ImageBlock) {
-					IncomingContent.ImageBlock image = (IncomingContent.ImageBlock) content;
-					hasText = true;
-					String summary = "（" + image.getSummary() + "）";
-					String ref = image.getUrl();
-					mes.add(() -> {
-						try {
-							byte[] data = adapter.fetchMedia(ref);
-							String path = tos.uploadIfNotExists(data, state::addUsage);
-							return new PlainText("<image id=\"" + path + "\" />");
-						} catch (Exception e) {
-							e.printStackTrace();
-						}
-						return new PlainText(summary);
-					});
-				}
-			}
-			// 管理员指令：只有配置了管理员、且发送者确实是该管理员时才处理
-			String adminId = readAdminId(state.config);
-			if (adminId != null && adminId.equals(senderid)) {
-				if (containsAtMe) {
-					if (textContent.toString().contains("##清理上下文")) {
-						try {
-							((AIGroupApplication) state.getAiapp()).compactHistory(state);
-							// 不等待回执：这里运行在协议事件线程上，等回执会把自己卡住
-							adapter.sendText(chatId(state), "已处理");
-						} catch (Exception e) {
-							e.printStackTrace();
-						}
-						continue outer;
-					}
-				}
-			}
-			if (hasText) {
-				mes.add(() -> new PlainText("</message>"));
-				state.addMessage(mes, false);
-				// 主动回复判定只累积文本；纯图片消息用占位文本表示
-				String judgeText = textContent.toString().trim();
-				if (judgeText.isEmpty()) {
-					judgeText = "（图片或媒体消息）";
-				}
-				autoReply.onMessage(state, sender, senderid, judgeText);
-			}
-			// int hours=new Date().getHours();
-			// if(hours<6)
-			// containsAtMe=false;
-			if (containsAtMe) {
-				// 记录本轮触发者，工具审核时告诉管理员是谁发起的；未知发送者用 null 表示
-				state.lastSpeakerId = senderid == null || senderid.isEmpty() ? null : senderid;
-				state.lastSpeakerName = sender;
 
-				adapter.react(msg.getMessageId(), "424");
-				submitMessage(state);
+		if (target == null || target.isEmpty()) {
+			failed.complete(ToolResult.text("找不到询问对象"));
+			return failed;
+		}
+		String id = "ask-" + UUID.randomUUID().toString().replace("-", "");
+		PendingQuestion pending = new PendingQuestion(id, state, group, target,
+				state == null ? "" : state.botId, options == null ? new ArrayList<>() : new ArrayList<>(options),
+				allowFreeText, multiSelect);
+		pendingQuestions.put(id, pending);
+
+		StringBuilder text = new StringBuilder(question == null ? "请选择：" : question).append('\n');
+		for (int i = 0; i < pending.options.size(); i++) {
+			text.append(i + 1).append(". ").append(pending.options.get(i)).append('\n');
+		}
+		if (allowFreeText) {
+			text.append("也可以直接回复文字。");
+		}
+		if (multiSelect && !pending.options.isEmpty()) {
+			text.append("可多选；选好后点「确认」或回复「确认」。");
+		}
+		List<ChatButton> buttons = new ArrayList<>();
+		for (int i = 0; i < pending.options.size(); i++) {
+			buttons.add(new ChatButton("ask-" + i, pending.options.get(i), "已选择",
+					"ask:" + id + ":" + i, 1));
+		}
+		if (multiSelect && !buttons.isEmpty()) {
+			buttons.add(new ChatButton("ask-done", "确认", "已确认", "ask:" + id + ":done", 2));
+		}
+		final String targetId = target;
+		if (adapter.supportsCard() && !buttons.isEmpty()) {
+			CompletableFuture<String> sent = group
+					? adapter.sendGroupCard(targetId, text.toString(), buttons)
+					: adapter.sendPrivateCard(targetId, text.toString(), buttons);
+			sent.whenComplete((mid, err) -> {
+				if (err != null) {
+					sendQuestionText(group, targetId, text.toString());
+				}
+			});
+		} else {
+			sendQuestionText(group, targetId, text.toString());
+		}
+		pending.timeout = questionScheduler.schedule(
+				() -> answerQuestion(id, "（等待回答超时）"), QUESTION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+		return pending.future;
+	}
+
+	private void sendQuestionText(boolean group, String target, String text) {
+		try {
+			if (group) {
+				adapter.sendText(target, text);
+			} else {
+				adapter.sendPrivateText(target, text);
 			}
+		} catch (Throwable t) {
+			t.printStackTrace();
 		}
 	}
+
+	/** 完成一个询问；text 为空表示超时。 */
+	public boolean answerQuestion(String id, String text) {
+		PendingQuestion pending = pendingQuestions.remove(id);
+		if (pending == null) {
+			return false;
+		}
+		if (pending.timeout != null) {
+			pending.timeout.cancel(false);
+		}
+		pending.future.complete(ToolResult.text(text == null ? "用户已取消" : text));
+		return true;
+	}
+
+	/** 用户文字回复时消费等待中的询问；返回 true 表示已消费。 */
+	private boolean answerQuestionText(boolean group, String groupId, String userId, String text) {
+		if (text == null || text.trim().isEmpty()) {
+			return false;
+		}
+		String value = text.trim();
+		for (PendingQuestion pending : pendingQuestions.values()) {
+			if (pending.group != group) {
+				continue;
+			}
+			if (group && (groupId == null || !pending.target.equals(groupId))) {
+				continue;
+			}
+			if (!group && (userId == null || !pending.target.equals(userId))) {
+				continue;
+			}
+			if (pending.multiSelect) {
+				if ("确认".equals(value) || "done".equalsIgnoreCase(value)) {
+					String selected = selectedLabels(pending);
+					if (selected.isEmpty()) {
+						sendQuestionText(group, pending.target, "还没有选择任何选项。");
+					} else {
+						return answerQuestion(pending.id, "用户选择：" + selected);
+					}
+					return true;
+				}
+				// 解析多选：序号（可多个，用逗号/顿号/空白分隔）或选项文案
+				java.util.List<Integer> indices = new ArrayList<>();
+				for (String token : value.split("[,，、\\s|]+")) {
+					String tokenValue = token.trim();
+					if (tokenValue.isEmpty()) {
+						continue;
+					}
+					try {
+						int index = Integer.parseInt(tokenValue) - 1;
+						if (index >= 0 && index < pending.options.size() && !indices.contains(index)) {
+							indices.add(index);
+						}
+						continue;
+					} catch (NumberFormatException ignored) {
+						// 继续按文案匹配
+					}
+					for (int i = 0; i < pending.options.size(); i++) {
+						String option = pending.options.get(i);
+						if (option.equalsIgnoreCase(tokenValue) || option.contains(tokenValue)
+								|| tokenValue.contains(option)) {
+							if (!indices.contains(i)) {
+								indices.add(i);
+							}
+							break;
+						}
+					}
+				}
+				if (!indices.isEmpty()) {
+					pending.selected.addAll(indices);
+					sendQuestionText(group, pending.target,
+							"已选择：" + selectedLabels(pending) + "；选好后回复/点击「确认」。");
+					return true;
+				}
+				if (pending.allowFreeText) {
+					return answerQuestion(pending.id, "用户回复：" + value);
+				}
+				sendQuestionText(group, pending.target, "请回复选项序号（可多个，用逗号分隔），选好后回复「确认」。");
+				return true;
+			}
+			// 单选：先按序号，再按选项文案匹配
+			String selected = null;
+			try {
+				int index = Integer.parseInt(value) - 1;
+				if (index >= 0 && index < pending.options.size()) {
+					selected = pending.options.get(index);
+				}
+			} catch (NumberFormatException ignored) {
+				// 不是序号，继续按文本匹配
+			}
+			if (selected == null) {
+				for (String option : pending.options) {
+					if (option.equalsIgnoreCase(value) || option.contains(value) || value.contains(option)) {
+						selected = option;
+						break;
+					}
+				}
+			}
+			if (selected != null) {
+				return answerQuestion(pending.id, "用户选择：" + selected);
+			}
+			if (pending.allowFreeText) {
+				return answerQuestion(pending.id, "用户回复：" + value);
+			}
+			sendQuestionText(group, pending.target, "请从上面的选项中选择；如需自由回复，请让 agent 允许自由回复。");
+			return true;
+		}
+		return false;
+	}
+
+	private static String selectedLabels(PendingQuestion pending) {
+		StringBuilder text = new StringBuilder();
+		for (int index : pending.selected) {
+			if (index < 0 || index >= pending.options.size()) {
+				continue;
+			}
+			if (text.length() > 0) {
+				text.append("、");
+			}
+			text.append(pending.options.get(index));
+		}
+		return text.toString();
+	}
+
 	public void notifyOtherAgents(AIGroupSession state,String msg,String mid) {
 		for(AIGroupSession sess:states) {
 			if(state!=sess&&Objects.equals(state.groupId,sess.groupId))
@@ -1135,53 +1993,98 @@ public class NapCatAIConnector {
 		final String toWritePrice=priceStr;
 		final String reply=msg;
 		// 本轮产生的工具附件一起随本轮发出：在回复之前先发附件
-		final List<MessageContent> attachments=drainToolAttachments(state);
+		Queue<MessageContent> pendingAttachments=pendingToolAttachments.get(state);
+		final List<MessageContent> attachments;
+		if(pendingAttachments==null||pendingAttachments.isEmpty()) {
+			attachments=Collections.emptyList();
+		}else {
+			attachments=new ArrayList<>();
+			MessageContent drained;
+			while((drained=pendingAttachments.poll())!=null) {
+				attachments.add(drained);
+			}
+		}
 		try {
 			// 准备阶段不占顺序：慢的语音合成只影响本轮自己的就绪时间
-			sendMessage.submit(()->prepareReply(state,gate,seq,reply,toWritePrice,attachments));
+			sendMessage.submit(()->{
+				// 显式发送模式：正文不自动发出，只把工具附件按原顺序发出去
+				if (explicitSessions.contains(state)) {
+					List<SendCall> attachmentSends = new ArrayList<>();
+					if (attachments != null) {
+						for (MessageContent attachment : attachments) {
+							try {
+								attachmentSends.addAll(buildToolAttachmentSends(state, attachment));
+							} catch (Throwable e) {
+								e.printStackTrace();
+								state.addStatus("<tool status=\"failed\">附件发送失败：" + e.getMessage() + "</tool>");
+							}
+						}
+					}
+					gate.complete(seq, () -> {
+						for (SendCall attachment : attachmentSends) {
+							emitAttachment(state, attachment);
+						}
+					});
+					return;
+				}
+				SendCall payload;
+				try {
+					beforeSendMessage(state);
+					if(reply==null||reply.isEmpty()) {
+						payload=textSend(state,"生成完成。"+toWritePrice);
+					}else {
+						// 语音回复：合成在这里完成（不占顺序），失败或超时则退回文本
+						SendCall voice=null;
+						try {
+							CompletableFuture<ModelGenerationResult> dataFuture =VoiceModelHandler.getAudioData("", state.getRoleName(Role.ASSISTANT),"qbot", reply.replaceAll("枫茜", "枫西").replaceAll("茜茜", "西西"),UUID.randomUUID().toString(), state::addUsage);
+							ModelGenerationResult audio=dataFuture.get();
+							if(audio!=null&&audio.bodyData!=null&&audio.bodyData.length>0) {
+								final String target=chatId(state);
+								final String privateUser=privateUserId(state);
+								final String dataUrl=FileUtil.toDataUrl(audio.bodyData);
+								voice = privateUser != null
+										? () -> adapter.sendPrivateRecord(privateUser,dataUrl)
+										: () -> adapter.sendRecord(target,dataUrl);
+							}
+						} catch (Throwable e) {
+							if(e instanceof InterruptedException)
+								Thread.currentThread().interrupt();
+							if(!(e instanceof ModelRouteException))
+								e.printStackTrace();
+						}
+						payload = voice != null ? voice : textSend(state,reply+toWritePrice);
+					}
+				} catch (Throwable e) {
+					e.printStackTrace();
+					payload=textSend(state,(reply==null?"":reply)+toWritePrice);
+				}
+				List<SendCall> attachmentSends=new ArrayList<>();
+				if(attachments!=null) {
+					for(MessageContent attachment:attachments) {
+						try {
+							attachmentSends.addAll(buildToolAttachmentSends(state,attachment));
+						} catch (Throwable e) {
+							e.printStackTrace();
+							state.addStatus("<tool status=\"failed\">附件发送失败：" + e.getMessage() + "</tool>");
+						}
+					}
+				}
+				final SendCall toSend=payload;
+				final String notifyText=reply==null?"":reply;
+				final List<SendCall> sends=attachmentSends;
+				gate.complete(seq,()->{
+					// 先发本轮的附件，再发本轮的正文/语音；附件各自最多等 5 秒回执，
+					// 回执先到立即继续，超时不再等待也不报错，直接发下一条。
+					for(SendCall attachment:sends) {
+						emitAttachment(state,attachment);
+					}
+					emitPayload(state,toSend,notifyText);
+				});
+			});
 		} catch (Throwable t) {
 			t.printStackTrace();
 			gate.complete(seq,()->emitPayload(state,textSend(state,reply+toWritePrice),reply));
 		}
-	}
-
-	/** 组装本轮要发送的动作（含暂存的工具附件）。此方法可以很慢，但不接触顺序闸门。 */
-	private void prepareReply(AIGroupSession state,GroupOutputGate gate,long seq,String msg,String toWritePrice,
-			List<MessageContent> attachments) {
-		SendCall payload;
-		try {
-			beforeSendMessage(state);
-			if(msg==null||msg.isEmpty()) {
-				payload=textSend(state,"生成完成。"+toWritePrice);
-			}else {
-				payload=replySend(state,msg,toWritePrice);
-			}
-		} catch (Throwable e) {
-			e.printStackTrace();
-			payload=textSend(state,(msg==null?"":msg)+toWritePrice);
-		}
-		List<SendCall> attachmentSends=new ArrayList<>();
-		if(attachments!=null) {
-			for(MessageContent attachment:attachments) {
-				try {
-					attachmentSends.addAll(buildToolAttachmentSends(state,attachment));
-				} catch (Throwable e) {
-					e.printStackTrace();
-					state.addStatus("<tool status=\"failed\">附件发送失败：" + e.getMessage() + "</tool>");
-				}
-			}
-		}
-		final SendCall toSend=payload;
-		final String notifyText=msg==null?"":msg;
-		final List<SendCall> sends=attachmentSends;
-		gate.complete(seq,()->{
-			// 先发本轮的附件，再发本轮的正文/语音；附件各自最多等 5 秒回执，
-			// 回执先到立即继续，超时不再等待也不报错，直接发下一条。
-			for(SendCall attachment:sends) {
-				emitAttachment(state,attachment);
-			}
-			emitPayload(state,toSend,notifyText);
-		});
 	}
 
 	/**
@@ -1202,6 +2105,7 @@ public class NapCatAIConnector {
 		try {
 			String mid=sent.get(ATTACHMENT_ACK_WAIT_MS, TimeUnit.MILLISECONDS);
 			appendMid(mid,state.botId);
+			recordSentMessage(state, mid);
 		} catch (TimeoutException e) {
 			// 5 秒内没完成发送：不管了，直接发下一条
 		} catch (InterruptedException e) {
@@ -1221,49 +2125,27 @@ public class NapCatAIConnector {
 			return;
 		}
 		try {
-			sendMessage.submit(()->afterSent(state,sent,notifyText));
+			sendMessage.submit(()->{
+				// 发送成功后的本地簿记：消息 id、状态、通知同群其它 agent。附件消息不写状态、不通知。
+				try {
+					String mid=sent.get();
+					appendMid(mid,state.botId);
+					recordSentMessage(state, mid);
+					if(notifyText!=null) {
+						// 协议不提供消息 id 时（mid 为 null）不写状态，避免写进一串 null
+						if(mid!=null&&!mid.isEmpty())
+							state.addStatus("上条消息id："+mid+"\n");
+						notifyOtherAgents(state,notifyText,mid==null?"":mid);
+					}
+				} catch (Throwable e) {
+					if(e instanceof InterruptedException)
+						Thread.currentThread().interrupt();
+					e.printStackTrace();
+				}
+			});
 		} catch (Throwable t) {
 			t.printStackTrace();
 		}
-	}
-
-	/** 发送成功后的本地簿记：消息 id、状态、通知同群其它 agent。附件消息不写状态、不通知。 */
-	private void afterSent(AIGroupSession state,CompletableFuture<String> sent,String notifyText) {
-		try {
-			String mid=sent.get();
-			appendMid(mid,state.botId);
-			if(notifyText!=null) {
-				// 协议不提供消息 id 时（mid 为 null）不写状态，避免写进一串 null
-				if(mid!=null&&!mid.isEmpty())
-					state.addStatus("上条消息id："+mid+"\n");
-				notifyOtherAgents(state,notifyText,mid==null?"":mid);
-			}
-		} catch (Throwable e) {
-			if(e instanceof InterruptedException)
-				Thread.currentThread().interrupt();
-			e.printStackTrace();
-		}
-	}
-
-	/**
-	 * 语音回复：合成在这里完成（不占顺序），失败或超时则退回文本，仍然按本轮顺序发出。
-	 */
-	private SendCall replySend(AIGroupSession state,String msg,String toWritePrice) {
-		try {
-			CompletableFuture<ModelGenerationResult> dataFuture =VoiceModelHandler.getAudioData("", state.getRoleName(Role.ASSISTANT),"qbot", msg.replaceAll("枫茜", "枫西").replaceAll("茜茜", "西西"),UUID.randomUUID().toString(), state::addUsage);
-			ModelGenerationResult audio=dataFuture.get();
-			if(audio!=null&&audio.bodyData!=null&&audio.bodyData.length>0) {
-				final String target=chatId(state);
-				final String dataUrl=FileUtil.toDataUrl(audio.bodyData);
-				return () -> adapter.sendRecord(target,dataUrl);
-			}
-		} catch (Throwable e) {
-			if(e instanceof InterruptedException)
-				Thread.currentThread().interrupt();
-			if(!(e instanceof ModelRouteException))
-				e.printStackTrace();
-		}
-		return textSend(state,msg+toWritePrice);
 	}
 
 	Object globalLock=new Object();
@@ -1273,9 +2155,19 @@ public class NapCatAIConnector {
 	}
 
 	public void submitMessage(AIGroupSession state) {
+		submitMessage(state, state.groupId);
+	}
+
+	/**
+	 * 按指定闸门键触发一轮回复；私聊可用 {@code private:botId:userId} 让每个私聊各自串行。
+	 *
+	 * @param state   会话
+	 * @param gateKey 闸门键
+	 */
+	public void submitMessage(AIGroupSession state, String gateKey) {
 		// 本轮回复即将开始：清空主动回复判定的累计内容，避免重复判定
 		autoReply.onReply(state);
-		final GroupOutputGate gate=gateFor(state.groupId);
+		final GroupOutputGate gate=gateFor(gateKey == null ? state.groupId : gateKey);
 		// 在“输入被接纳”时就排队：顺序只取决于输入先后，与工具、模型、语音的快慢无关
 		final long seq=gate.register();
 		MessageContents prompt;
@@ -1301,6 +2193,8 @@ public class NapCatAIConnector {
 				} catch (Throwable t) {
 					t.printStackTrace();
 					gate.cancel(seq);
+				} finally {
+					onAiTurnFinished(state);
 				}
 			});
 		} catch (Throwable t) {
@@ -1308,7 +2202,6 @@ public class NapCatAIConnector {
 			gate.cancel(seq);
 		}
 	}
-
 
 	@SuppressWarnings("resource")
 	public static void main(String[] args) throws Throwable {
@@ -1319,6 +2212,38 @@ public class NapCatAIConnector {
 			
 			File dataFolder = new File("save");
 			VoiceModelHandler.init(dataFolder);
+			// 多 agent 架构只有显式指定才开启：-Dmulti_agent=true 或 --multi-agent；即使存在
+			// multi.json，默认也不开启
+			boolean multiRequested = false;
+			for (String propKey : new String[] {"multi_agent", "multiAgent", "multi"}) {
+				String value = System.getProperty(propKey);
+				if (value != null && ("true".equalsIgnoreCase(value) || "1".equals(value)
+						|| "yes".equalsIgnoreCase(value))) {
+					multiRequested = true;
+					break;
+				}
+			}
+			if (!multiRequested && args != null) {
+				for (String arg : args) {
+					if ("--multi-agent".equals(arg) || "--multi".equals(arg)
+							|| "-Dmulti_agent=true".equalsIgnoreCase(arg)
+							|| "-DmultiAgent=true".equalsIgnoreCase(arg)) {
+						multiRequested = true;
+						break;
+					}
+				}
+			}
+			if (multiRequested) {
+				com.khjxiaogu.aiwuxia.multi.MultiAgentConfig multiConfig =
+						com.khjxiaogu.aiwuxia.multi.MultiAgentConfig.load(dataFolder);
+				if (multiConfig != null) {
+					ChatAdapter multiAdapter = com.khjxiaogu.aiwuxia.multi.MultiAgentConnector
+							.createAdapter(dataFolder, multiConfig);
+					new com.khjxiaogu.aiwuxia.multi.MultiAgentConnector(dataFolder, multiAdapter, multiConfig);
+					return;
+				}
+				System.out.println("[Multi] 已请求多 agent，但没有可用的 config/multi.json（需要 enabled=true）");
+			}
 			JsonArray jarr=JsonParser.parseString(FileUtil.readString(ConfigPaths.agents(dataFolder))).getAsJsonArray();
 			AIGroupSession[] states=new AIGroupSession[jarr.size()];
 			int i=0;
@@ -1334,19 +2259,20 @@ public class NapCatAIConnector {
 
 				states[i++]=aistate;
 			}
-			new Thread(() -> {
-				try {
-					BasicWebServerBuilder.build().createURIRoot().createWrapper(new VoiceModelLocalServer())
-							.rule("/aichat").complete().complete().setNotFound(new File(new File("save"), "404.html"))
-							.compile().serverHttp(8998).info("http服务端已开启");
-				} catch (InterruptedException e) {
-					e.printStackTrace();
-				}
-			}).start();
-			// 协议适配器可替换：换一个 ChatAdapter 实现，就能用同一个控制器接入别的聊天平台
-			ChatAdapter adapter = new NapcatAdapter(System.getProperty("napcat_url"),
-					System.getProperty("napcat_token"));
+			// 协议适配器可替换：-Dqqbot_appid/-Dqqbot_secret 走 QQ 官方机器人 API v2，否则走 NapCat
+			ChatAdapter adapter;
+			String qqbotAppId = System.getProperty("qqbot_appid", "").trim();
+			if (!qqbotAppId.isEmpty()) {
+				adapter = new QqOfficialAdapter(qqbotAppId,
+						System.getProperty("qqbot_secret", ""), dataFolder);
+			} else {
+				adapter = new NapcatAdapter(System.getProperty("napcat_url"),
+						System.getProperty("napcat_token"), dataFolder);
+			}
 			new NapCatAIConnector(dataFolder, adapter, states);
+			// 主线程保持存活：部分协议/场景下连接线程退出后，不能让 JVM 顺手结束，
+			// 否则适配器安排的重连任务不会执行。
+			Thread.currentThread().join();
 		} catch (IOException e) {
 			e.printStackTrace();
 		} catch (InterruptedException e) {

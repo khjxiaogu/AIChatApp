@@ -1,5 +1,7 @@
 package com.khjxiaogu.aiwuxia.chat;
 
+import com.google.gson.JsonObject;
+
 /**
  * 适配器向控制器回调的事件。
  * <p>
@@ -41,5 +43,49 @@ public interface ChatEventHandler {
 	 * @param message 归一化后的消息
 	 */
 	default void onPrivateMessage(IncomingMessage message) {
+	}
+
+	/**
+	 * 群消息被撤回。
+	 *
+	 * @param groupId    群 id
+	 * @param messageId  被撤回的消息 id
+	 * @param operatorId 操作者 id（可能是群管理/群主，可能为空）
+	 * @param senderId   原消息发送者 id（可能为空）
+	 */
+	default void onGroupRecall(String groupId, String messageId, String operatorId, String senderId) {
+	}
+
+	/**
+	 * 私聊消息被撤回。
+	 *
+	 * @param userId    私聊对象 id
+	 * @param messageId 被撤回的消息 id
+	 */
+	default void onPrivateRecall(String userId, String messageId) {
+	}
+
+	/**
+	 * 协议系统事件（入群/退群、好友添加/删除等）。
+	 * <p>
+	 * 不同协议能提供的事件不同；实现方按事件名自行判断。事件体是协议原始 JSON，
+	 * 便于工具类（例如 openid 采集器）读取协议字段。
+	 * </p>
+	 *
+	 * @param event 事件名，例如 {@code GROUP_ADD_ROBOT}、{@code FRIEND_ADD}
+	 * @param data  原始事件体
+	 */
+	default void onSystemEvent(String event, JsonObject data) {
+	}
+
+	/**
+	 * 用户点击消息按钮或快捷菜单。
+	 * <p>
+	 * 只包含按钮互动；适配器已经回应过平台，处理器只需处理业务。
+	 * </p>
+	 *
+	 * @param interaction 互动数据
+	 */
+	default void onInteraction(ChatInteraction interaction) {
 	}
 }

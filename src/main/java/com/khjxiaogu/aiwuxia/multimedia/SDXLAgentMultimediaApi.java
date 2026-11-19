@@ -10,7 +10,6 @@ import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.mcp.SDXLAgentMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
-import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 
 /**
  * SDXLAgent 的通用多媒体 API 适配器。
@@ -28,12 +27,11 @@ public class SDXLAgentMultimediaApi extends ToolBackedMultimediaApi {
 	 * @param lora   LoRA 配置
 	 * @param charas 角色提示词
 	 * @param isNsfw 是否允许不宜内容
-	 * @param lock   资源锁
 	 * @throws IOException 读取子 agent 配置失败
 	 */
 	public SDXLAgentMultimediaApi(File path, ObjectStorageProvider tos, Map<String, LoraConfigurations> lora,
-			List<String> charas, boolean isNsfw, ResourceLock lock) throws IOException {
-		super("sdxl_agent", SDXLAgentMcp.createImage(path, tos, lora, charas, isNsfw, lock), tos);
+			List<String> charas, boolean isNsfw) throws IOException {
+		super("sdxl_agent", SDXLAgentMcp.createImage(path, tos, lora, charas, isNsfw), tos);
 	}
 
 	@Override

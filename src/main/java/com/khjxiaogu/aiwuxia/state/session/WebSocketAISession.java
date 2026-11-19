@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.state.session;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -63,6 +64,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.ServerToolUseContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
@@ -187,7 +189,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		// isVoiceUsable 仍表示"现在能否真正合成"，供需要区分在线状态的逻辑使用。
 		boolean voiceSupported=isVoiceSupported();
 		boolean hasAudioService=isVoiceUsable();
-		conn.writeAndFlush(new TextWebSocketFrame(JsonBuilder.object()
+		JsonObject openingStatus = JsonBuilder.object()
 				.add("type", "status")
 				.add("generating", isGenerating())
 				.add("conversation_id", chatId)
@@ -198,7 +200,9 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("isVoiceUsable",hasAudioService)
 				.add("models", buildModelList())
 				.add("modelTree", buildModelTree())
-				.add("model", getModelHint()).end().toString()));
+				.add("model", getModelHint()).end();
+		appendStatusExtras(openingStatus);
+		conn.writeAndFlush(new TextWebSocketFrame(openingStatus.toString()));
 		// 上次回填时连接已经断开：等这条新连接建立后再补发，避免失败的用户输入永久丢失
 		flushPendingRefill(conn);
 	}
@@ -496,7 +500,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 		if(this.conn.isEmpty()) {
 			// 已无连接可答复许可请求，立即按拒绝收敛，避免生成线程等到超时
 			cancelToolApprovals();
-			if(!isGenerating()) {
+			if(!isGenerating()&&canReleaseWhenIdle()) {
 				parent.markRelease(this);
 			}
 		}
@@ -517,8 +521,8 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 			state.sendFrame(JsonBuilder.object().add("type", "voice").add("isVoiceEnabled",state.getExtraData().isAudioSession).end().toString());
 			state.flush();
 		});
-		frameHandlers.put("revert", (jo,state)->state.requestRevert(optionalString(jo,"requestId")));
-		frameHandlers.put("regen", (jo,state)->state.requestRegen(optionalString(jo,"requestId")));
+		frameHandlers.put("revert", (jo,state)->state.requestRevert(JsonConfig.getNonBlankString(jo,"requestId")));
+		frameHandlers.put("regen", (jo,state)->state.requestRegen(JsonConfig.getNonBlankString(jo,"requestId")));
 		frameHandlers.put("stop", (jo,state)->{
 			// 用户主动停止生成：中断当前输出。正文流会立即结束，已经生成的内容照常写入历史；
 			// 模型已下发的工具调用会以“用户已停止生成。”的结果补进历史。
@@ -544,7 +548,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 			String id=jo.get("id").getAsString();
 			boolean approved=jo.has("approved")&&jo.get("approved").getAsBoolean();
 			// 前端拒绝时可附带原因，该原因会作为工具结果回传给模型
-			String denyReason=optionalString(jo,"reason");
+			String denyReason=JsonConfig.getNonBlankString(jo,"reason");
 			boolean accepted=state.completeToolApproval(id, approved, denyReason);
 			state.sendFrame(JsonBuilder.object()
 					.add("type", "toolApprovalResult")
@@ -729,20 +733,6 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	}
 
 	/**
-	 * 读取上行帧里的字符串字段，空串按未提供处理。
-	 *
-	 * @param jo  上行帧
-	 * @param key 字段名
-	 * @return 非空字符串，未提供时返回 {@code null}
-	 */
-	protected static String optionalString(JsonObject jo,String key) {
-		if(jo==null||!jo.has(key)||jo.get(key).isJsonNull())
-			return null;
-		String value=jo.get(key).getAsString();
-		return value==null||value.isEmpty()?null:value;
-	}
-
-	/**
 	 * 判断一条用户消息是否已经被本会话接受且尚未回滚。
 	 *
 	 * @param msgId 客户端消息标识
@@ -816,7 +806,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 */
 	protected void handleUserSpeech(Channel conn, JsonObject jo) {
 		String speech=jo.has("content")&&!jo.get("content").isJsonNull()?jo.get("content").getAsString():null;
-		String msgId=optionalString(jo,"msgId");
+		String msgId=JsonConfig.getNonBlankString(jo,"msgId");
 		if(speech==null) {
 			acknowledgeMessage(conn,msgId,false,"invalid");
 			return;
@@ -1058,6 +1048,17 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 								.add("content", contentsToJson(display.getContent()))
 								.end());
 						}
+					} else if (current instanceof ServerToolUseContent) {
+						// DeepSeek 服务端联网工具：按工具调用段展示，参数用带截断的占位文本
+						ServerToolUseContent serverToolUse=(ServerToolUseContent) current;
+						JsonObjectBuilder<JsonObject> seg=JsonBuilder.object()
+							.add("type", "tool_call")
+							.add("tool_name", serverToolUse.getBrief())
+							.add("tool", serverToolUse.getToolName());
+						String detail=serverToolUse.toText();
+						if(!detail.isEmpty())
+							seg.add("content", contentsToJson(new MutableMessageContents(detail)));
+						thinking.add(seg.end());
 					}
 				}
 			}
@@ -1095,8 +1096,38 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	 * </p>
 	 */
 	protected void sendGenerationStatus() {
-		sendFrame(JsonBuilder.object().add("type", "status").add("generating", isGenerating())
-				.add("tokens", getLastTurnTokens()).end().toString());
+		JsonObject status = JsonBuilder.object().add("type", "status").add("generating", isGenerating())
+				.add("tokens", getLastTurnTokens()).end();
+		appendStatusExtras(status);
+		sendFrame(status.toString());
+	}
+
+	/**
+	 * 子类可往 {@code status} 帧里追加额外字段。
+	 * <p>
+	 * 绘画页用它附带仍在运行的异步任务（视频生成等），重连后前端据此恢复“生成中”的提示。
+	 * 默认没有额外字段。
+	 * </p>
+	 *
+	 * @return 要合并进 status 帧的字段；没有时返回 {@code null}
+	 */
+	protected JsonObject statusExtras() {
+		return null;
+	}
+
+	/**
+	 * 把子类附加的状态字段合并进 status 帧。
+	 *
+	 * @param frame 已构造好的 status 帧
+	 */
+	private void appendStatusExtras(JsonObject frame) {
+		JsonObject extras = statusExtras();
+		if (extras == null || frame == null) {
+			return;
+		}
+		for (Map.Entry<String, JsonElement> entry : extras.entrySet()) {
+			frame.add(entry.getKey(), entry.getValue());
+		}
 	}
 
 	@Override
@@ -1122,9 +1153,24 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("type", "done")
 				.add("price",price)
 				.add("tokens",getLastTurnTokens()).end().toString()));
-		if(this.conn.isEmpty()) {
+		// 无连接时释放会话；还有后台任务（视频生成）时需要等它完成再释放，
+		// 否则会话关闭会取消任务，用户刷新回来就看不到结果
+		if(this.conn.isEmpty()&&canReleaseWhenIdle()) {
 			parent.markRelease(this);
 		}
+	}
+
+	/**
+	 * 无连接且本轮结束时是否可以释放会话。
+	 * <p>
+	 * 默认可以；有后台异步任务（例如绘画页的视频生成）的会话应返回 {@code false}，
+	 * 由任务完成后自行调用 {@link AIChatService#markRelease(ChatIdentity)}。
+	 * </p>
+	 *
+	 * @return 是否可以释放
+	 */
+	protected boolean canReleaseWhenIdle() {
+		return true;
 	}
 	@Override
 	public String getChatId() {

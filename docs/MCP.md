@@ -1,6 +1,6 @@
 # MCP 客户端 / 服务端与访问令牌
 
-本文说明 AIWuxia 新增的 MCP（Model Context Protocol）能力：
+本文说明本程序新增的 MCP（Model Context Protocol）能力：
 
 - **服务端**：把本地 `ToolData` 以标准 MCP 工具形式暴露给外部客户端（HTTP Streamable 传输）；
 - **客户端**：连接外部 MCP 服务端（HTTP 或 stdio），把远程工具转换为本地 `ToolData` 注册进会话；
@@ -26,7 +26,7 @@
         │ 同一份 messages.db
         ▼
 ┌──────────────────────────────────────────────┐
-│ AIWuxia 会话 / 应用                           │
+│ 会话 / 应用                                  │
 │  └─ McpClientManager ← save/mcp-client.json  │
 │       └─ McpHttpClient / McpStdioClient       │
 │            └─ McpToolBridge → ToolData        │
@@ -356,6 +356,55 @@ http://127.0.0.1:8999/aichat/mcptoken
 session.registerTools(CharacterSettingMcp.create(dataFolder));
 ```
 
+### 2.9 记录检索工具
+
+上下文压缩（`HistoryCompactor`）会把旧对话总结进摘要，然后用
+`history.setValidContext(item, false)` 把这些记录标记为**无效上下文**：它们不再发给模型，
+但仍完整保存在历史里（与真正被撤回、`isDeleted() == true` 的记录不同）。
+`HistorySearchMcp` 提供两个只读工具，专门找回这些“掉出上下文但还没删”的旧记录：
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `history_search` | `keyword`、`max_results`、`role` | 只在**未删除且已从上下文隐藏**（`should_send=0 AND deleted=0`）的记录里搜索，返回 `#id`、角色、命中字段（正文/上下文/思维链）与片段 |
+| `history_get` | `id`、`include_reasoning`、`max_chars` | 按 id 读取记录全文（正文 + 上下文内容）；`include_reasoning=true` 时附带思维链 |
+
+约定：
+
+- 搜索关键字不区分大小写，多个中英文/同义词用 `|` 分隔（如 `生日|birthday`）；
+  `max_results` 默认 20、最多 50，`role` 可填 `user` / `assistant` / `system` /
+  `application` / `tool`，省略为全部；
+- **已删除的记录既不会被搜到，也不能用 `history_get` 读出**；仍在上下文中的记录不参与搜索，
+  但知道 id 时可以用 `history_get` 读取；
+- 正文与上下文内容不同时（例如流式写入时冻结的上下文快照），`history_get` 会分两段返回；
+- 思维链默认不返回；记录里有思维链时会提示，传 `include_reasoning=true` 即可一起读取；
+- `max_chars` 默认不限制，只用于防止整条超长记录撑爆工具结果；
+- 两个工具只读、不产生用量。名字以 `history_` 开头，因此和 `doc_` / `kb_` 一样
+  不占“工具调用轮次上限”。
+
+这组工具只注册到**本来就会启用工具**的会话，不会给所有会话自动加上：
+
+- 绘画会话：`AIChatService#registerPainterTools`（`PainterSession` 构造时调用）；
+- QQ 群聊/私聊、多 agent、codex 等：`NapCatAIConnector#registerSkills`
+  （多 agent 继承同一入口，codex 应用也依赖这里注册的 `codex_*` 工具）；
+- 普通 Web 聊天等原本没有启用工具的会话保持原样，不注册这两个工具。
+
+工具绑定该会话自己的历史，所以 AI 在压缩发生后仍能按关键字回忆旧内容。外部 MCP 客户端只有在
+`save/mcp.json` 打开 `exposeSessionTools=true` 时才能看到它们（工具绑定令牌所属用户的在线会话，见 2.1）。
+
+调用示例（JSON-RPC）：
+
+```json
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{
+  "name":"history_search",
+  "arguments":{"keyword":"生日|birthday","role":"user","max_results":"10"}}}
+```
+
+```json
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{
+  "name":"history_get",
+  "arguments":{"id":"128","include_reasoning":"true"}}}
+```
+
 ---
 
 ## 3. 客户端
@@ -368,7 +417,7 @@ session.registerTools(CharacterSettingMcp.create(dataFolder));
 {
   "servers": [
     {
-      "name": "aiwuxia",
+      "name": "local",
       "type": "http",
       "url": "http://127.0.0.1:8999/aichat/mcp",
       "token": "mcp_xxxxxxxx",
@@ -379,9 +428,9 @@ session.registerTools(CharacterSettingMcp.create(dataFolder));
     {
       "name": "filesystem",
       "type": "stdio",
-      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "I:\\data"],
-      "env": { "npm_config_cache": "I:\\cache" },
-      "cwd": "I:\\data",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "D:\\data"],
+      "env": { "npm_config_cache": "D:\\cache" },
+      "cwd": "D:\\data",
       "prefix": "fs_",
       "timeoutMs": 60000
     }
@@ -466,3 +515,7 @@ String text = client.callTool("mcp_echo", new JsonObject());
 - 服务端 + HTTP/stdio 客户端 + 令牌 + 计费断言：初始化/列表/调用、固定 100 调用费、
   工具内部用量合计、管理 API、令牌额度、余额不足、失败退款、吊销、批量请求、stdio 客户端、ToolData 桥接；
 - `AIChatService` 集成测试：`/aichat/mcp` 由服务内方法转发、令牌扣费写入主库、管理 API 可达。
+
+另外，`src/test/java/com/khjxiaogu/aiwuxia/mcp/HistorySearchMcpTest.java`（`main` 直接运行）
+覆盖记录检索：只搜未删除且隐藏的记录、按 id 读全文、思维链开关、已删除/不存在 id 的拒绝，
+以及 `SqliteHistory` 关闭重开后仍能按 `should_send/deleted` 检索并读出思维链。

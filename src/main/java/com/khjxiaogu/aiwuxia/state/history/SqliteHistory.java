@@ -834,6 +834,22 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 		return new SqliteIterator(ids.iterator());
 	}
 
+	/**
+	 * 直接走 SQL 取「未删除、但已从上下文隐藏」的条目（{@code should_send=0 AND deleted=0}）。
+	 * <p>
+	 * 只按标识符建对象、重度字段仍懒加载，因此记录检索工具遍历几千条旧记录也不会把
+	 * 全部 JSON 读进内存。
+	 * </p>
+	 */
+	@Override
+	public Iterator<HistoryItem> hiddenContextIterator() {
+		List<Integer> ids = queryIds(
+				"SELECT identifier FROM history "
+				+ "WHERE should_send=0 AND deleted=0 "
+				+ "ORDER BY identifier ASC");
+		return new SqliteIterator(ids.iterator());
+	}
+
 	private List<Integer> queryIds(String sql) {
 		List<Integer> ids = new ArrayList<>();
 		try (Statement stmt = conn.createStatement();

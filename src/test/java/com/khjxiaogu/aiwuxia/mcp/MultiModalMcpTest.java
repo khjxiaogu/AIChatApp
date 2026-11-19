@@ -127,12 +127,12 @@ public class MultiModalMcpTest {
 		}
 
 		@Override
-		public String getUrl(String fn, Consumer<UsageIntf<?>> addUsage) {
+		public String getDataUrl(String fn, Consumer<UsageIntf<?>> addUsage) {
 			return "https://example/" + fn;
 		}
 
 		@Override
-		public String getPublicUrl(String fn, Consumer<UsageIntf<?>> addUsage) {
+		public String getHttpUrl(String fn, Consumer<UsageIntf<?>> addUsage) {
 			return "https://example/" + fn;
 		}
 	}

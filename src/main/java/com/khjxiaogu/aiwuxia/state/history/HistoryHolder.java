@@ -24,6 +24,7 @@
 package com.khjxiaogu.aiwuxia.state.history;
 
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
@@ -120,6 +121,68 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	 * @return 仅包含有效上下文条目的迭代器
 	 */
 	Iterator<HistoryItem> validContextIterator();
+
+	/**
+	 * 返回一个迭代器，仅遍历<b>未删除、但已从上下文中隐藏</b>的条目。
+	 * <p>
+	 * 这类条目由上下文压缩/清理产生：{@code com.khjxiaogu.aiwuxia.utils.HistoryCompactor} 在把旧对话总结进摘要后会调用
+	 * {@link #setValidContext(HistoryItem, boolean)} 把它们标记为无效上下文，因此它们不再发给模型，
+	 * 但仍然完整保留在存储里（区别于真正被撤回、{@code isDeleted()} 为 {@code true} 的条目）。
+	 * 记录检索工具用它找回这些“掉出上下文但还没删”的旧记录。
+	 * </p>
+	 * <p>
+	 * 默认实现基于 {@link #iterator()} 做内存过滤，两个内置实现都会返回未删除条目；
+	 * 需要时可由实现覆盖为更高效的查询（例如 {@link SqliteHistory} 直接走一条 SQL）。
+	 * 迭代器只读，{@link Iterator#remove()} 一律抛出 {@link UnsupportedOperationException}。
+	 * </p>
+	 *
+	 * @return 隐藏上下文条目的正向迭代器（按标识符升序）
+	 */
+	default Iterator<HistoryItem> hiddenContextIterator() {
+		Iterator<HistoryItem> delegate = iterator();
+		return new Iterator<HistoryItem>() {
+			/** 已预取的下一条目，null 表示没有更多。 */
+			private HistoryItem next;
+			/** next 是否需要重新预取。 */
+			private boolean needAdvance = true;
+
+			private void advance() {
+				needAdvance = false;
+				while (delegate.hasNext()) {
+					HistoryItem item = delegate.next();
+					if (!item.isDeleted() && !item.isValidContext()) {
+						next = item;
+						return;
+					}
+				}
+				next = null;
+			}
+
+			@Override
+			public boolean hasNext() {
+				if (needAdvance) {
+					advance();
+				}
+				return next != null;
+			}
+
+			@Override
+			public HistoryItem next() {
+				if (!hasNext()) {
+					throw new NoSuchElementException();
+				}
+				HistoryItem result = next;
+				next = null;
+				needAdvance = true;
+				return result;
+			}
+
+			@Override
+			public void remove() {
+				throw new UnsupportedOperationException();
+			}
+		};
+	}
 
 	/**
 	 * 添加一个新的历史条目，省略上下文内容（设为 null）。

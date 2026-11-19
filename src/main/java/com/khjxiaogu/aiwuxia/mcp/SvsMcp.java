@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -8,7 +9,6 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -141,12 +141,12 @@ public class SvsMcp implements ToolProvider {
 				.tool((data, output, manager) -> {
 					try {
 						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
-						String audioUrl = stringField(jo, "audio_url", "");
+						String audioUrl = JsonConfig.getNonBlankString(jo, "audio_url", "");
 						if (!isHttpUrl(audioUrl)) {
 							return CompletableFuture.completedFuture(
 									ToolResult.text("参数错误：audio_url 必须是 http/https 音频链接。"));
 						}
-						String role = stringField(jo, "voice", "");
+						String role = JsonConfig.getNonBlankString(jo, "voice", "");
 						if (role.isEmpty()) {
 							return CompletableFuture.completedFuture(
 									ToolResult.text("参数错误：缺少角色名 voice，可用 " + TOOL_LIST_VOICES + " 查询。"));
@@ -161,7 +161,7 @@ public class SvsMcp implements ToolProvider {
 						int pitch = intField(jo, "pitch", DEFAULT_PITCH, -24, 24);
 						int filterRadius = intField(jo, "filter_radius", DEFAULT_FILTER_RADIUS, 0, 7);
 						double protect = doubleField(jo, "protect", DEFAULT_PROTECT, 0d, 1d);
-						boolean doSplit = boolField(jo, "do_split", DEFAULT_DO_SPLIT);
+						boolean doSplit = JsonConfig.getBool(jo, "do_split", DEFAULT_DO_SPLIT);
 						return convert(audioUrl, audioId, pitch, filterRadius, protect, doSplit, output);
 					} catch (IllegalArgumentException ex) {
 						return CompletableFuture.completedFuture(ToolResult.text("参数错误：" + ex.getMessage()));
@@ -289,20 +289,9 @@ public class SvsMcp implements ToolProvider {
 		}
 	}
 
-	private static String stringField(JsonObject json, String key, String fallback) {
-		if (json == null || !json.has(key) || json.get(key).isJsonNull()) {
-			return fallback;
-		}
-		String value = json.get(key).getAsString();
-		return value == null ? fallback : value.trim();
-	}
-
 	private static int intField(JsonObject json, String key, int fallback, int min, int max) {
-		if (json == null || !json.has(key) || json.get(key).isJsonNull()) {
-			return fallback;
-		}
-		String raw = json.get(key).getAsString().trim();
-		if (raw.isEmpty()) {
+		String raw = JsonConfig.getNonBlankString(json, key);
+		if (raw == null) {
 			return fallback;
 		}
 		try {
@@ -317,11 +306,8 @@ public class SvsMcp implements ToolProvider {
 	}
 
 	private static double doubleField(JsonObject json, String key, double fallback, double min, double max) {
-		if (json == null || !json.has(key) || json.get(key).isJsonNull()) {
-			return fallback;
-		}
-		String raw = json.get(key).getAsString().trim();
-		if (raw.isEmpty()) {
+		String raw = JsonConfig.getNonBlankString(json, key);
+		if (raw == null) {
 			return fallback;
 		}
 		try {
@@ -332,27 +318,6 @@ public class SvsMcp implements ToolProvider {
 			return value;
 		} catch (NumberFormatException ex) {
 			throw new IllegalArgumentException(key + " 必须是数字");
-		}
-	}
-
-	private static boolean boolField(JsonObject json, String key, boolean fallback) {
-		String raw = stringField(json, key, "").toLowerCase();
-		if (raw.isEmpty()) {
-			return fallback;
-		}
-		switch (raw) {
-		case "true":
-		case "1":
-		case "yes":
-		case "on":
-			return true;
-		case "false":
-		case "0":
-		case "no":
-		case "off":
-			return false;
-		default:
-			throw new IllegalArgumentException(key + " 必须是 true/false、1/0、yes/no 或 on/off");
 		}
 	}
 

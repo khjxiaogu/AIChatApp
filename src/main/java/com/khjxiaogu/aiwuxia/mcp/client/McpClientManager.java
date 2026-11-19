@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp.client;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
@@ -26,10 +27,10 @@ import com.khjxiaogu.webserver.loging.SimpleLogger;
  * <pre>{@code
  * {
  *   "servers": [
- *     { "name": "aiwuxia", "type": "http", "url": "http://127.0.0.1:8999/aichat/mcp",
+ *     { "name": "local", "type": "http", "url": "http://127.0.0.1:8999/aichat/mcp",
  *       "token": "mcp_xxx", "prefix": "wx_" },
  *     { "name": "filesystem", "type": "stdio",
- *       "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "I:\\data"],
+ *       "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "D:\\data"],
  *       "prefix": "fs_" }
  *   ]
  * }
@@ -239,11 +240,11 @@ public class McpClientManager implements Closeable {
                 continue;
             }
             JsonObject entry = element.getAsJsonObject();
-            if (!bool(entry, "enabled", true)) {
+            if (!JsonConfig.getBool(entry, "enabled", true)) {
                 continue;
             }
-            String name = string(entry, "name", "server" + index);
-            String prefix = string(entry, "prefix", name + "_");
+            String name = JsonConfig.getString(entry, "name", "server" + index);
+            String prefix = JsonConfig.getString(entry, "prefix", name + "_");
             McpClient client = null;
             try {
                 client = createClient(name, entry);
@@ -279,23 +280,23 @@ public class McpClientManager implements Closeable {
 
     /** 按配置条目创建客户端。 */
     private McpClient createClient(String name, JsonObject entry) {
-        String type = string(entry, "type", "http");
+        String type = JsonConfig.getString(entry, "type", "http");
         if ("stdio".equalsIgnoreCase(type)) {
             List<String> command = parseCommand(entry.get("command"));
             Map<String, String> environment = parseStringMap(entry.get("env"));
             File cwd = entry.has("cwd") && !entry.get("cwd").isJsonNull() ? new File(entry.get("cwd").getAsString())
                     : null;
-            int timeout = integer(entry, "timeoutMs", 60000);
+            int timeout = JsonConfig.getInt(entry, "timeoutMs", 60000);
             return new McpStdioClient(name, command, environment, cwd, timeout);
         }
-        String url = string(entry, "url", null);
+        String url = JsonConfig.getString(entry, "url", null);
         if (url == null || url.trim().isEmpty()) {
             throw new IllegalArgumentException("http 类型的服务端缺少 url");
         }
-        String token = string(entry, "token", null);
+        String token = JsonConfig.getString(entry, "token", null);
         Map<String, String> headers = parseStringMap(entry.get("headers"));
-        int connectTimeout = integer(entry, "connectTimeoutMs", 10000);
-        int readTimeout = integer(entry, "readTimeoutMs", 60000);
+        int connectTimeout = JsonConfig.getInt(entry, "connectTimeoutMs", 10000);
+        int readTimeout = JsonConfig.getInt(entry, "readTimeoutMs", 60000);
         return new McpHttpClient(name, url.trim(), token, headers, connectTimeout, readTimeout);
     }
 
@@ -319,39 +320,6 @@ public class McpClientManager implements Closeable {
             client.close();
         } catch (IOException ex) {
             // 忽略
-        }
-    }
-
-    /** 读取 JSON 字符串字段。 */
-    private static String string(JsonObject object, String key, String fallback) {
-        if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
-            return fallback;
-        }
-        JsonElement element = object.get(key);
-        return element.isJsonPrimitive() ? element.getAsString() : fallback;
-    }
-
-    /** 读取 JSON 布尔字段。 */
-    private static boolean bool(JsonObject object, String key, boolean fallback) {
-        if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
-            return fallback;
-        }
-        try {
-            return object.get(key).getAsBoolean();
-        } catch (RuntimeException ex) {
-            return fallback;
-        }
-    }
-
-    /** 读取 JSON 整数字段。 */
-    private static int integer(JsonObject object, String key, int fallback) {
-        if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
-            return fallback;
-        }
-        try {
-            return object.get(key).getAsInt();
-        } catch (RuntimeException ex) {
-            return fallback;
         }
     }
 

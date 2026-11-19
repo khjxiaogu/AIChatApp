@@ -21,3 +21,8 @@
 /save/dsh-heartbeat
 /save/dsh-sessions.json
 /save/dsh-workspace/
+
+# Codex 连接器运行时生成
+/save/codex-workspace/
+/save/codex-mcp/
+/save/codex-schema/

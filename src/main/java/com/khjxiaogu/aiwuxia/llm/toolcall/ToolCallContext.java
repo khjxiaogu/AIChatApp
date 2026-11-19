@@ -324,7 +324,7 @@ public class ToolCallContext {
 		emit(toolCallContent);
 		history.appendAssistantToolCalls(reasonerText, toolCalls);
 
-		// 轮次超限时只拒绝受轮次限制的调用，声明为不限次的工具仍照常执行
+		// 轮次超限时只拒绝受轮次限制的调用；不限次工具和轮次豁免工具（doc_*/kb_*）仍照常执行
 		boolean roundExceeded = manager.hasRoundLimit() && round > manager.getMaxRounds();
 		callLimitExhausted.set(false);
 		AtomicBoolean limitReached = new AtomicBoolean();
@@ -339,7 +339,7 @@ public class ToolCallContext {
 				break;
 			}
 			ToolCall call = toolCalls.get(i);
-			if (roundExceeded && !manager.isUnlimited(nameOf(call))) {
+			if (roundExceeded && !manager.isRoundExempt(nameOf(call))) {
 				limitReached.set(true);
 				Execution execution = Execution.finished(notExecuted(call, manager.getLimitMessage(), displays.get(i)));
 				executions.set(i, execution);
@@ -675,7 +675,7 @@ public class ToolCallContext {
 	 */
 	private boolean countsRoundLimit(List<ToolCall> toolCalls) {
 		for (ToolCall call : toolCalls) {
-			if (!manager.isUnlimited(nameOf(call))) {
+			if (!manager.isRoundExempt(nameOf(call))) {
 				return true;
 			}
 		}

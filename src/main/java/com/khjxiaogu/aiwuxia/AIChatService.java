@@ -23,6 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -39,6 +40,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
@@ -68,6 +70,9 @@ import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
+import com.khjxiaogu.aiwuxia.mcp.H3VideoAgentMcp;
+import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
+import com.khjxiaogu.aiwuxia.mcp.history.HistorySearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.LocalVoiceMcp;
 import com.khjxiaogu.aiwuxia.mcp.MediaOutputMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
@@ -79,6 +84,13 @@ import com.khjxiaogu.aiwuxia.mcp.server.McpBuiltinTools;
 import com.khjxiaogu.aiwuxia.mcp.server.McpServer;
 import com.khjxiaogu.aiwuxia.mcp.server.McpServerEndpoint;
 import com.khjxiaogu.aiwuxia.mcp.server.McpToolRegistry;
+import com.khjxiaogu.aiwuxia.mcp.harness.HarnessMcp;
+import com.khjxiaogu.aiwuxia.mcp.harness.HarnessMcpConfig;
+import com.khjxiaogu.aiwuxia.mcp.harness.HarnessMcpService;
+import com.khjxiaogu.aiwuxia.codex.CodexConfig;
+import com.khjxiaogu.aiwuxia.codex.CodexRuntime;
+import com.khjxiaogu.aiwuxia.codex.CodexService;
+import com.khjxiaogu.aiwuxia.mcp.codex.CodexMcp;
 import com.khjxiaogu.aiwuxia.mcp.server.McpToolSource;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
@@ -86,6 +98,7 @@ import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
 import com.khjxiaogu.aiwuxia.state.session.ChatIdentity;
@@ -122,6 +135,7 @@ import com.khjxiaogu.webserver.wrappers.inadapters.FullPathIn;
 import com.khjxiaogu.webserver.wrappers.inadapters.JsonIn;
 
 import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.multipart.FileUpload;
 import io.netty.handler.codec.http.multipart.HttpData;
 
 /**
@@ -201,6 +215,24 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private ToolData painterMoegirlSearchTool;
 	/** DeepSeek 网页搜索工具，未配置 deepseektoken 时为 null */
 	private ToolData painterWebSearchTool;
+	/**
+	 * 绘画会话的视频工具（本地 H3 视频导演子 agent）。
+	 * <p>
+	 * 与图片生成一样只依赖服务级配置：H3 通过本地模型通道（{@code model_type=h3}）生成，
+	 * 服务端不需要访问 ComfyUI；本地模型离线时调用会返回可读的失败原因，工具本身仍可注册。
+	 * 视频结果写入 {@link #painterStorage}，前端按视频 id 通过 {@code /painter/video} 播放。
+	 * </p>
+	 */
+	private ToolData painterH3VideoTool;
+	/**
+	 * 绘画会话的即梦视频工具（云端 Seedance）。
+	 * <p>
+	 * 只有 {@code config/image-generation.json} 配置了视频 {@code apiKey} 时才创建；
+	 * 生成结果是远端视频地址，前端可以直接播放。
+	 * 未配置时保持 null，不注册该工具，避免模型调用一个必然失败的工具。
+	 * </p>
+	 */
+	private ToolData painterJimengVideoTool;
 
 	/** 可用的AI应用映射，键为应用ID（如"wuxia"），值为对应的AI应用实例 */
 	private Map<String, ApplicationAttributes> apps = new HashMap<>();
@@ -548,6 +580,90 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		painterWebViewTool = FetchMcp.createWebView(painterStorage);
 		painterMoegirlSearchTool = FetchMcp.createMoegirlSearch(painterStorage);
 		painterWebSearchTool = DeepseekSearchMcp.createWebSearch();
+		// 视频：本地 H3 走本地模型通道，不需要云端凭据；即梦需要配置视频 apiKey
+		painterH3VideoTool = createPainterH3VideoTool();
+		painterJimengVideoTool = createPainterJimengVideoTool();
+	}
+
+	/**
+	 * 创建绘画会话的本地视频工具（H3 视频导演子 agent）。
+	 * <p>
+	 * 子 agent 负责把用户的粗略需求扩写成 H3 提示词并选择模式/比例/时长；主模型只给需求与参考图。
+	 * 提示词目录为 {@code config/h3/agent}（可缺省，缺省时用内置提示词）。
+	 * 创建失败只记录日志：视频工具不可用不应影响绘画页其它功能。
+	 * </p>
+	 *
+	 * @return 视频工具，创建失败时为 null
+	 */
+	private ToolData createPainterH3VideoTool() {
+		try {
+			return H3VideoAgentMcp.createVideo(ConfigPaths.h3Agent(parent), painterStorage, chara);
+		} catch (Throwable ex) {
+			logger.printStackTrace(ex);
+			logger.warning("绘画视频工具（H3）初始化失败：" + ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
+	 * 创建绘画会话的即梦视频工具（火山方舟 Seedance）。
+	 * <p>
+	 * 凭据与图片共用 {@code config/image-generation.json}，其中视频需要 {@code apiKey}；
+	 * 没有 apiKey 时不创建工具（该工具调用必然失败），图片工具不受影响。
+	 * 视频脚本提示词取 {@code config/jimeng-video.txt}，缺失时工具内部退回内置提示词。
+	 * </p>
+	 *
+	 * @return 视频工具，未配置或创建失败时为 null
+	 */
+	private ToolData createPainterJimengVideoTool() {
+		try {
+			File configFile = ConfigPaths.imageGeneration(parent);
+			if (!configFile.isFile()) {
+				return null;
+			}
+			JsonObject config = JsonParser.parseString(FileUtil.readString(configFile)).getAsJsonObject();
+			if (JsonConfig.getTrimmed(config, "apiKey").isEmpty()) {
+				logger.info("未配置火山方舟 apiKey，绘画页不注册即梦视频工具");
+				return null;
+			}
+			File promptFile = ConfigPaths.jimengVideo(parent);
+			String prompt = promptFile.isFile() ? FileUtil.readString(promptFile) : "";
+			return SeedreamMcp.createVideo(config, loadPainterReferenceImages(), painterStorage, prompt);
+		} catch (Throwable ex) {
+			logger.printStackTrace(ex);
+			logger.warning("绘画视频工具（即梦）初始化失败：" + ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
+	 * 读取即梦生成用的内置参考图（{@code config/sdxl/reference-images.json}）。
+	 * <p>
+	 * 与群聊侧使用同一份配置：键是参考图名称，值是可直接访问的图片地址。
+	 * 文件缺失或格式错误时返回空表。
+	 * </p>
+	 *
+	 * @return 参考图名称到地址的映射，永不为 null
+	 */
+	private Map<String, String> loadPainterReferenceImages() {
+		Map<String, String> references = new LinkedHashMap<>();
+		File file = ConfigPaths.sdxlReferenceImages(parent);
+		if (!file.isFile()) {
+			return references;
+		}
+		try {
+			JsonObject config = JsonParser.parseString(FileUtil.readString(file)).getAsJsonObject();
+			for (String name : config.keySet()) {
+				JsonElement value = config.get(name);
+				if (value != null && value.isJsonPrimitive()) {
+					references.put(name, value.getAsString());
+				}
+			}
+		} catch (Throwable ex) {
+			logger.printStackTrace(ex);
+			logger.warning("参考图配置读取失败：" + ex.getMessage());
+		}
+		return references;
 	}
 
 	/**
@@ -624,7 +740,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * SDXL 图片工具按会话所属用户取用（见 {@link #painterImageGeneratorFor(String)}），
 	 * 这样用户接入自己的本地绘画模型后，其所有绘画会话都会改用用户的模型。
 	 * 调用次数规则沿用原有设置：图片识别单次最多 5 次，SDXL 图片生成工具共享 5 次，
-	 * 其余工具使用默认规则。
+	 * 其余工具使用默认规则。视频工具（H3 视频导演 / 即梦视频）为长任务，生成完成后由
+	 * {@link PainterSession} 作为新的助手消息下发，前端按视频 id 或远端地址播放。
 	 * </p>
 	 *
 	 * @param session 目标会话
@@ -640,6 +757,12 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		session.registerTool(painterWebViewTool);
 		session.registerTool(painterMoegirlSearchTool);
 		session.registerTool(painterWebSearchTool);
+		// 视频生成：两个工具都是长任务（异步），生成完成后由会话把视频作为新消息下发
+		session.registerTool(painterH3VideoTool);
+		session.registerTool(painterJimengVideoTool);
+		// 记录检索：绘画会话本来就会注册工具，压缩历史后可用 history_search / history_get
+		// 找回已从上下文隐藏但没有删除的旧记录
+		session.registerTools(HistorySearchMcp.forSession(session));
 	}
 
 	/**
@@ -707,6 +830,49 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		mcpTokenStore = new McpAccessTokenStore(database, usageType);
 		McpToolRegistry registry = new McpToolRegistry();
 		McpBuiltinTools.register(registry);
+		// DeepSeek Harness 监督工具：列工作区/聊天、发任务、读最新输出与思维链、处理提问与审批。
+		// 配置来自 mcp.json 的 harness 段（或 save/harness-mcp.json / -Ddsh_mcp_*）；
+		// DSH 实例在后台拉起，MCP 初始化不会被它阻塞。
+		try {
+			HarnessMcpConfig harnessConfig = HarnessMcpConfig.from(path, config);
+			if (harnessConfig != null) {
+				HarnessMcpService harnessService = new HarnessMcpService(harnessConfig);
+				registry.registerAll(new HarnessMcp(harnessService).getTools());
+				harnessService.startAsync();
+				logger.info("Harness MCP 已启用：工作区 " + harnessConfig.workspaces.size()
+						+ " 个，DSH 正在后台启动");
+			}
+		} catch (Throwable ex) {
+			logger.printStackTrace(ex);
+			logger.warning("Harness MCP 初始化失败：" + ex.getMessage());
+		}
+		// Codex 编程代理：把 codex_* 工具暴露给外部 MCP 客户端（每个令牌一个归属键、一套线程）。
+		// 只有 save/mcp.json 里显式写了 codex 段才启用，避免默认拉起 Codex 进程。
+		try {
+			if (config.has("codex") && config.get("codex").isJsonObject()) {
+				CodexConfig codexConfig = CodexConfig.from(path, config);
+				CodexService codexService = CodexRuntime.ensureService(codexConfig, mcpStorage);
+				if (codexService != null) {
+					registry.addSource(new McpToolSource() {
+						@Override
+						public String getName() {
+							return "codex";
+						}
+
+						@Override
+						public Collection<ToolData> getTools(String uid) {
+							return new CodexMcp(codexService,
+									"mcp:" + (uid == null ? "anonymous" : uid)).getTools();
+						}
+					});
+					logger.info("Codex MCP 已启用：工作目录 " + codexConfig.cwd.getPath()
+							+ "，沙箱 " + codexConfig.sandbox);
+				}
+			}
+		} catch (Throwable ex) {
+			logger.printStackTrace(ex);
+			logger.warning("Codex MCP 初始化失败：" + ex.getMessage());
+		}
 		// 角色设定查询工具：数据来自绘画 agent 目录下的人类可读索引 character-list.txt
 		registry.registerAll(new CharacterSettingMcp(path).getTools());
 		// 本地语音合成：列出可用说话人 + 用 VoiceTagger 标注后合成并存入 MCP 统一对象存储
@@ -759,7 +925,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				}
 			});
 		}
-		mcpEndpoint = new McpServerEndpoint(registry, mcpTokenStore, "AIWuxia-MCP", "0.0.1",
+		mcpEndpoint = new McpServerEndpoint(registry, mcpTokenStore, "MCP", "0.0.1",
 				this::resolveMcpMediaUrl, mcpStorage);
 		logger.info("MCP 服务端已启用：/aichat/mcp，固定调用费 " + McpServer.CALL_COST + " 额外配额 + 工具内部用量"
 				+ "，已暴露 SDXL 图片工具与本地语音工具" + (exposeSessionTools ? "，并暴露在线会话工具" : ""));
@@ -1932,6 +2098,10 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/**
 	 * HTTP POST端点：接收绘画师前端上传的图片（multipart/form-data）。
 	 * 使用DelegatingStorage持久化存储（本地+TOS），返回内容寻址的图片ID。
+	 * <p>
+	 * 只接受图片：按文件内容判断 MIME，非图片文件直接拒绝，避免把视频/文档写进图片上下文后
+	 * 模型调用图片识别工具必然失败。
+	 * </p>
 	 *
 	 * @param cid 对话ID（conversation_id）
 	 * @param imageData 上传的图片文件数据
@@ -1953,12 +2123,17 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			if (session != null&&session instanceof PainterSession) {
 
 				byte[] data = imageData.get();
+				String mime = LocalStorage.detectMimeType(data, uploadFilename(imageData));
+				if (!mime.startsWith("image/")) {
+					return new ResultDTO(415, JsonBuilder.object().add("code", -1)
+							.add("message", "只支持上传图片文件（当前内容类型：" + mime + "）").end());
+				}
 				String imageId = painterStorage.uploadIfNotExists(data,session::addUsage);
 				
 				// 图片作为待生成的用户输入记录到会话历史：写入动作会排到会话命令线程，
 				// 与正在进行的生成串行，避免与生成线程并发写历史（落盘也在一并在线程内完成）
 				((PainterSession) session).addPendingUserMessage(new ImageContent(imageId));
-				return new ResultDTO(200, JsonBuilder.object().add("code", 0).add("message", "success").end());
+				return new ResultDTO(200, JsonBuilder.object().add("code", 0).add("message", "success").add("imageId", imageId).end());
 			}
 			if (session == null) {
 				return new ResultDTO(409, JsonBuilder.object().add("code", -1)
@@ -1978,8 +2153,98 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	}
 
 	/**
+	 * HTTP POST端点：接收绘画师前端上传的视频（multipart/form-data）。
+	 * <p>
+	 * 视频作为用户消息的<b>视频内容</b>写入会话历史（前端显示为可播放的视频卡片），
+	 * 与图片上传一样不立即触发生成，用户可以在同一条消息里补充文字要求。
+	 * 视频不会写进模型上下文以外的二进制：模型只看到带视频 id 与说明的占位文本。
+	 * </p>
+	 * <p>
+	 * 只接受视频（按文件内容判断 MIME），并有大小上限：视频通常比图片大得多，
+	 * 超限时直接拒绝，避免一次请求占用过多内存。
+	 * </p>
+	 *
+	 * @param cid       对话ID（conversation_id）
+	 * @param videoData 上传的视频文件数据
+	 * @return 包含视频ID的JSON结果
+	 */
+	@HttpPath("/painter/uploadVideo")
+	@Adapter
+	@HttpMethod("POST")
+	public ResultDTO painterUploadVideo(@PostQuery("conversation_id") String cid,
+		@PostQuery("video") HttpData videoData) {
+		try {
+			if (cid == null || cid.isEmpty()) {
+				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "缺少会话ID（conversation_id）").end());
+			}
+			if (videoData == null) {
+				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "没有收到视频数据（video 字段为空）").end());
+			}
+			AISession session = uidsockets.get(cid);
+			if (session == null) {
+				return new ResultDTO(409, JsonBuilder.object().add("code", -1)
+						.add("message", "对话连接不存在或已释放，请刷新页面后重试").end());
+			}
+			if (!(session instanceof PainterSession)) {
+				return new ResultDTO(409, JsonBuilder.object().add("code", -1)
+						.add("message", "当前对话不是绘画会话，无法上传视频").end());
+			}
+			byte[] data = videoData.get();
+			if (data == null || data.length == 0) {
+				return new ResultDTO(400, JsonBuilder.object().add("code", -1).add("message", "视频内容为空").end());
+			}
+			if (data.length > MAX_PAINTER_VIDEO_BYTES) {
+				return new ResultDTO(413, JsonBuilder.object().add("code", -1)
+						.add("message", "视频过大，最大支持 " + (MAX_PAINTER_VIDEO_BYTES / 1024 / 1024) + "MB")
+						.end());
+			}
+			String mime = LocalStorage.detectMimeType(data, uploadFilename(videoData));
+			if (!mime.startsWith("video/")) {
+				return new ResultDTO(415, JsonBuilder.object().add("code", -1)
+						.add("message", "只支持上传视频文件（当前内容类型：" + mime + "）").end());
+			}
+			String extension = mime.indexOf("webm") >= 0 ? ".webm" : ".mp4";
+			String videoId = painterStorage.uploadIfNotExists(data, extension, session::addUsage);
+			String filename = uploadFilename(videoData);
+			String description = "用户上传的视频" + (filename == null || filename.isEmpty() ? "" : "：" + filename);
+			((PainterSession) session).addPendingUserMessage(new VideoContent(videoId, description));
+			return new ResultDTO(200, JsonBuilder.object().add("code", 0).add("message", "success")
+					.add("videoId", videoId).end());
+		} catch (Exception e) {
+			getLogger().printStackTrace(e);
+			String detail = e.getClass().getSimpleName();
+			if (e.getMessage() != null && !e.getMessage().isEmpty()) {
+				detail = detail + "：" + e.getMessage();
+			}
+			return new ResultDTO(500, JsonBuilder.object().add("code", -1)
+					.add("message", "服务器上传失败（" + detail + "）").end());
+		}
+	}
+
+	/** 绘画页上传视频的大小上限（字节）：200MB，足够 15 秒 1080p 视频。 */
+	private static final int MAX_PAINTER_VIDEO_BYTES = 200 * 1024 * 1024;
+
+	/**
+	 * 取上传文件的原始文件名（仅用于 MIME 兜底与视频说明，缺失时返回 null）。
+	 *
+	 * @param data 上传数据
+	 * @return 文件名，非文件上传或未携带文件名时返回 null
+	 */
+	private static String uploadFilename(HttpData data) {
+		if (data instanceof FileUpload) {
+			String filename = ((FileUpload) data).getFilename();
+			return filename == null || filename.trim().isEmpty() ? null : filename.trim();
+		}
+		return null;
+	}
+
+	/**
 	 * HTTP GET端点：根据图片ID获取已存储的图片数据。
 	 * 优先从本地存储读取，若不存在则从TOS下载。
+	 * <p>
+	 * 对象键不带媒体后缀（内容哈希），因此 Content-Type 按文件内容推断，而不是按扩展名。
+	 * 支持 HTTP Range，视频/大图在浏览器里可以边下边播、拖动进度。
+	 * </p>
 	 *
 	 * @param imageId 图片ID（内容寻址的SHA-256哈希）
 	 * @return 包含图片字节数据的ResultDTO
@@ -1988,22 +2253,186 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	@HttpPath("/painter/image")
 	@Adapter
 	public ResultDTO painterGetImage(@Query("image_id") String imageId) {
+		byte[] data = loadPainterMedia(imageId);
+		if (data == null) {
+			return new ResultDTO(404, "image not found");
+		}
+		ResultDTO result = new ResultDTO(200, data);
+		result.addHeader(HttpHeaderNames.CONTENT_TYPE, LocalStorage.detectMimeType(data, imageId));
+		result.setHeader(HttpHeaderNames.CACHE_CONTROL, "public,max-age=2592000");
+		return result;
+	}
+
+	/**
+	 * HTTP GET端点：按视频ID获取绘画页生成的视频。
+	 * <p>
+	 * 本地 H3 生成的视频只存在对象存储里（键是内容哈希），前端通过本入口播放：
+	 * </p>
+	 * <ul>
+	 *   <li>{@code Content-Type} 按文件内容推断（无后缀的 mp4/webm 也能正确播放）；</li>
+	 *   <li>支持单段 {@code Range} 请求，浏览器可以拖动进度条、只缓冲需要的片段；</li>
+	 *   <li>id 只允许安全字符，拒绝 {@code ../} 等路径穿越。</li>
+	 * </ul>
+	 * <p>
+	 * 即梦（云端）视频返回的是远端 http 地址，前端直接播放，不经过本入口。
+	 * </p>
+	 *
+	 * @param req 原始请求（读取 Range 头）
+	 * @param res 原始响应（按 200/206/416 写回视频字节）
+	 */
+	@HttpMethod("GET")
+	@HttpPath("/painter/video")
+	public void painterGetVideo(Request req, Response res) {
+		Map<String, String> query = req.getQuery();
+		String videoId = query == null ? null : query.get("video_id");
+		if (videoId == null || videoId.trim().isEmpty()) {
+			videoId = query == null ? null : query.get("id");
+		}
+		writePainterMediaResponse(req, res, videoId, "video");
+	}
+
+	/**
+	 * 校验绘画媒体 id：只允许内容哈希与扩展名，避免路径穿越。
+	 *
+	 * @param id 对象存储键
+	 * @return 是否安全
+	 */
+	private static boolean isSafePainterMediaId(String id) {
+		if (id == null || id.isEmpty() || id.length() > 200) {
+			return false;
+		}
+		if (id.contains("..") || id.indexOf('/') >= 0 || id.indexOf('\\') >= 0) {
+			return false;
+		}
+		return id.matches("[A-Za-z0-9._-]+");
+	}
+
+	/**
+	 * 读取绘画媒体对象内容。
+	 *
+	 * @param id 对象存储键
+	 * @return 文件字节，id 非法或对象不存在时返回 null
+	 */
+	private byte[] loadPainterMedia(String id) {
+		if (!isSafePainterMediaId(id)) {
+			return null;
+		}
 		try {
-			if (!painterStorage.exists(imageId,null)) {
-				return new ResultDTO(404, "image not found");
+			if (painterStorage == null || !painterStorage.exists(id, null)) {
+				return null;
 			}
-			byte[] data = painterStorage.download(imageId,null);
-			String mime = "image/png";
-			if (imageId.endsWith(".jpg") || imageId.endsWith(".jpeg")) mime = "image/jpeg";
-			else if (imageId.endsWith(".gif")) mime = "image/gif";
-			else if (imageId.endsWith(".webp")) mime = "image/webp";
-			ResultDTO result = new ResultDTO(200, data);
-			result.addHeader(HttpHeaderNames.CONTENT_TYPE, mime);
-			result.setHeader(HttpHeaderNames.CACHE_CONTROL, "public,max-age=2592000");
-			return result;
+			byte[] data = painterStorage.download(id, null);
+			return data == null || data.length == 0 ? null : data;
 		} catch (Exception e) {
 			getLogger().printStackTrace(e);
-			return new ResultDTO(500, "failed to load image");
+			return null;
+		}
+	}
+
+	/**
+	 * 把绘画媒体按 HTTP 语义写回响应：完整响应或单段 Range 响应。
+	 *
+	 * @param req  原始请求，可为 null（此时忽略 Range）
+	 * @param res  原始响应
+	 * @param rawId 对象存储键
+	 * @param kind 媒体类型名，仅用于错误文案
+	 */
+	private void writePainterMediaResponse(Request req, Response res, String rawId, String kind) {
+		String id = rawId == null ? "" : rawId.trim();
+		if (!isSafePainterMediaId(id)) {
+			res.write(400, "invalid " + kind + " id");
+			return;
+		}
+		byte[] data = loadPainterMedia(id);
+		if (data == null) {
+			res.write(404, kind + " not found");
+			return;
+		}
+		Map<String, String> headers = new LinkedHashMap<>();
+		headers.put(HttpHeaderNames.CONTENT_TYPE.toString(), LocalStorage.detectMimeType(data, id));
+		headers.put(HttpHeaderNames.CACHE_CONTROL.toString(), "public,max-age=2592000");
+		headers.put(HttpHeaderNames.ACCEPT_RANGES.toString(), "bytes");
+		headers.put("X-Content-Type-Options", "nosniff");
+		String rangeHeader = req == null || req.getHeaders() == null ? null
+				: req.getHeaders().get(HttpHeaderNames.RANGE);
+		long[] range = parseHttpRange(rangeHeader, data.length);
+		if (range != null && range[0] < 0) {
+			// 无法满足的范围：按 RFC 7233 返回 416 并告知资源长度，浏览器会重新请求完整内容
+			headers.put(HttpHeaderNames.CONTENT_RANGE.toString(), "bytes */" + data.length);
+			res.write(416, headers, new byte[0]);
+			return;
+		}
+		if (range != null) {
+			int start = (int) range[0];
+			int end = (int) range[1];
+			headers.put(HttpHeaderNames.CONTENT_RANGE.toString(),
+					"bytes " + start + "-" + end + "/" + data.length);
+			res.write(206, headers, Arrays.copyOfRange(data, start, end + 1));
+			return;
+		}
+		res.write(200, headers, data);
+	}
+
+	/**
+	 * 解析单段 HTTP Range 请求头。
+	 * <p>
+	 * 只取第一段（视频播放器只会对单个文件发单段请求，多段请求按第一段处理）。
+	 * 无法解析的值按“忽略 Range”处理，和常见静态文件服务一致。
+	 * </p>
+	 *
+	 * @param header Range 头原文，可为 null
+	 * @param length 资源长度
+	 * @return {@code null} 表示按完整内容响应；{@code {-1,-1}} 表示无法满足；
+	 *         否则为 {@code {start,end}}（闭区间）
+	 */
+	private static long[] parseHttpRange(String header, int length) {
+		if (header == null || length <= 0) {
+			return null;
+		}
+		String value = header.trim();
+		if (!value.regionMatches(true, 0, "bytes=", 0, 6)) {
+			return null;
+		}
+		value = value.substring(6).trim();
+		int comma = value.indexOf(',');
+		if (comma >= 0) {
+			value = value.substring(0, comma).trim();
+		}
+		int dash = value.indexOf('-');
+		if (dash < 0) {
+			return null;
+		}
+		String startText = value.substring(0, dash).trim();
+		String endText = value.substring(dash + 1).trim();
+		try {
+			long start;
+			long end;
+			if (startText.isEmpty()) {
+				if (endText.isEmpty()) {
+					return null;
+				}
+				long suffix = Long.parseLong(endText);
+				if (suffix <= 0) {
+					return new long[] { -1, -1 };
+				}
+				start = Math.max(0, length - suffix);
+				end = length - 1L;
+			} else {
+				start = Long.parseLong(startText);
+				end = endText.isEmpty() ? length - 1L : Long.parseLong(endText);
+			}
+			if (start < 0 || start >= length) {
+				return new long[] { -1, -1 };
+			}
+			if (end >= length) {
+				end = length - 1L;
+			}
+			if (end < start) {
+				return new long[] { -1, -1 };
+			}
+			return new long[] { start, end };
+		} catch (NumberFormatException ex) {
+			return null;
 		}
 	}
 	/**
@@ -3702,11 +4131,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				logger.warning("充值配置解析失败，改用系统属性/默认值：" + ex.getMessage());
 			}
 		}
-		String cookie = firstNonBlank(System.getProperty("deepseek_cookie"), stringValue(config, "cookie"));
+		String cookie = firstNonBlank(System.getProperty("deepseek_cookie"), JsonConfig.getString(config, "cookie"));
 		String deviceId = firstNonBlank(System.getProperty("shumei_device_id"),
-			stringValue(config, "shumei_device_id"), DEFAULT_SHUMEI_DEVICE_ID);
+			JsonConfig.getString(config, "shumei_device_id"), DEFAULT_SHUMEI_DEVICE_ID);
 		String authorization = firstNonBlank(System.getProperty("deepseek_authorization"),
-			stringValue(config, "authorization"));
+			JsonConfig.getString(config, "authorization"));
 		paymentCookie = normalizeCookie(cookie);
 		paymentShumeiDeviceId = deviceId == null ? DEFAULT_SHUMEI_DEVICE_ID : deviceId;
 		paymentAuthorization = normalizeAuthorization(authorization);
@@ -3736,7 +4165,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * @return 正数配置值
 	 */
 	private BigDecimal readPositiveAmount(JsonObject config, String key, String property, BigDecimal fallback) {
-		String text = firstNonBlank(System.getProperty(property), stringValue(config, key));
+		String text = firstNonBlank(System.getProperty(property), JsonConfig.getString(config, key));
 		if (text == null) {
 			return fallback;
 		}
@@ -3762,7 +4191,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * @return 正整数配置值
 	 */
 	private int readPositiveInt(JsonObject config, String key, String property, int fallback) {
-		String text = firstNonBlank(System.getProperty(property), stringValue(config, key));
+		String text = firstNonBlank(System.getProperty(property), JsonConfig.getString(config, key));
 		if (text == null) {
 			return fallback;
 		}
@@ -3872,9 +4301,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			if (remote == null) {
 				continue;
 			}
-			String status = stringValue(remote, "payment_order_status");
+			String status = JsonConfig.getString(remote, "payment_order_status");
 			if (PAYMENT_STATUS_SUCCESS.equalsIgnoreCase(status)) {
-				String paidAt = firstNonBlank(stringValue(remote, "paid_at"), now);
+				String paidAt = firstNonBlank(JsonConfig.getString(remote, "paid_at"), now);
 				updatePaymentOrderStatus(order.orderId, PAYMENT_STATUS_SUCCESS, paidAt);
 				creditPaymentOrder(order.orderId);
 			} else if (PAYMENT_STATUS_FAILED.equalsIgnoreCase(status)) {
@@ -3920,23 +4349,23 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			.get()
 			.readString();
 		JsonObject resp = parseJsonObject(text, "获取支付订单");
-		int code = intValue(resp, "code", -1);
+		int code = JsonConfig.getInt(resp, "code", -1);
 		if (code != 0) {
-			throw new IOException("获取支付订单失败：" + stringValue(resp, "msg") + "（code=" + code + "）");
+			throw new IOException("获取支付订单失败：" + JsonConfig.getString(resp, "msg") + "（code=" + code + "）");
 		}
-		JsonObject data = objectValue(resp, "data");
+		JsonObject data = JsonConfig.getObject(resp, "data");
 		if (data == null) {
 			throw new IOException("获取支付订单失败：响应缺少 data");
 		}
-		int bizCode = intValue(data, "biz_code", 0);
+		int bizCode = JsonConfig.getInt(data, "biz_code", 0);
 		if (bizCode != 0) {
-			throw new IOException("获取支付订单失败：" + stringValue(data, "biz_msg") + "（biz_code=" + bizCode + "）");
+			throw new IOException("获取支付订单失败：" + JsonConfig.getString(data, "biz_msg") + "（biz_code=" + bizCode + "）");
 		}
-		JsonObject biz = objectValue(data, "biz_data");
+		JsonObject biz = JsonConfig.getObject(data, "biz_data");
 		if (biz == null) {
 			throw new IOException("获取支付订单失败：响应缺少 biz_data");
 		}
-		JsonArray orders = arrayValue(objectValue(biz, "invoices"), "payment_orders");
+		JsonArray orders = JsonConfig.getArray(JsonConfig.getObject(biz, "invoices"), "payment_orders");
 		Map<String, JsonObject> result = new LinkedHashMap<>();
 		if (orders != null) {
 			for (JsonElement element : orders) {
@@ -3944,7 +4373,7 @@ public class AIChatService implements ServiceClass, CommandHandler {
 					continue;
 				}
 				JsonObject order = element.getAsJsonObject();
-				String orderId = stringValue(order, "payment_order_id");
+				String orderId = JsonConfig.getString(order, "payment_order_id");
 				if (orderId != null && !orderId.isEmpty()) {
 					result.put(orderId, order);
 				}
@@ -3994,25 +4423,25 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			.send(body.toString())
 			.readString();
 		JsonObject resp = parseJsonObject(text, "创建支付订单");
-		int code = intValue(resp, "code", -1);
+		int code = JsonConfig.getInt(resp, "code", -1);
 		if (code != 0) {
-			throw new IOException("创建支付订单失败：" + stringValue(resp, "msg") + "（code=" + code + "）");
+			throw new IOException("创建支付订单失败：" + JsonConfig.getString(resp, "msg") + "（code=" + code + "）");
 		}
-		JsonObject data = objectValue(resp, "data");
+		JsonObject data = JsonConfig.getObject(resp, "data");
 		if (data == null) {
 			throw new IOException("创建支付订单失败：响应缺少 data");
 		}
-		int bizCode = intValue(data, "biz_code", 0);
+		int bizCode = JsonConfig.getInt(data, "biz_code", 0);
 		if (bizCode != 0) {
-			throw new IOException("创建支付订单失败：" + stringValue(data, "biz_msg") + "（biz_code=" + bizCode + "）");
+			throw new IOException("创建支付订单失败：" + JsonConfig.getString(data, "biz_msg") + "（biz_code=" + bizCode + "）");
 		}
-		JsonObject biz = objectValue(data, "biz_data");
+		JsonObject biz = JsonConfig.getObject(data, "biz_data");
 		if (biz == null) {
 			throw new IOException("创建支付订单失败：响应缺少 biz_data");
 		}
-		int payCode = intValue(biz, "code", 0);
+		int payCode = JsonConfig.getInt(biz, "code", 0);
 		if (payCode != 0) {
-			throw new IOException("创建支付订单失败：" + stringValue(biz, "msg") + "（code=" + payCode + "）");
+			throw new IOException("创建支付订单失败：" + JsonConfig.getString(biz, "msg") + "（code=" + payCode + "）");
 		}
 		return biz;
 	}
@@ -4092,13 +4521,13 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				logger.warning("创建充值订单失败：" + ex.getMessage());
 				return new ResultDTO(500, "创建支付订单失败：" + ex.getMessage());
 			}
-			String paymentOrderId = stringValue(remote, "payment_order_id");
-			String payUrl = stringValue(remote, "url");
+			String paymentOrderId = JsonConfig.getString(remote, "payment_order_id");
+			String payUrl = JsonConfig.getString(remote, "url");
 			if (paymentOrderId == null || paymentOrderId.isEmpty()
 				|| payUrl == null || payUrl.isEmpty()) {
 				return new ResultDTO(500, "创建支付订单失败：响应缺少支付订单号或支付链接");
 			}
-			String currency = firstNonBlank(stringValue(remote, "currency"), "CNY");
+			String currency = firstNonBlank(JsonConfig.getString(remote, "currency"), "CNY");
 			try {
 				PaymentOrder order = insertPaymentOrder(uid, amountValue, currency, paymentOrderId, payUrl, tokens);
 				paymentRefreshedAt.put(uid, System.currentTimeMillis());
@@ -4506,52 +4935,6 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			return "";
 		}
 		return text.length() > 300 ? text.substring(0, 300) + "…" : text;
-	}
-
-	/** 读取 JSON 对象里的字符串字段，字段不存在或不是基本类型时返回 null。 */
-	private static String stringValue(JsonObject json, String key) {
-		if (json == null) {
-			return null;
-		}
-		JsonElement element = json.get(key);
-		if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
-			return null;
-		}
-		return element.getAsString();
-	}
-
-	/** 读取 JSON 对象里的整数字段，字段不存在或无法转换时返回默认值。 */
-	private static int intValue(JsonObject json, String key, int fallback) {
-		if (json == null) {
-			return fallback;
-		}
-		JsonElement element = json.get(key);
-		if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
-			return fallback;
-		}
-		try {
-			return element.getAsInt();
-		} catch (Throwable ex) {
-			return fallback;
-		}
-	}
-
-	/** 读取 JSON 对象里的子对象，字段不存在或不是对象时返回 null。 */
-	private static JsonObject objectValue(JsonObject json, String key) {
-		if (json == null) {
-			return null;
-		}
-		JsonElement element = json.get(key);
-		return element != null && element.isJsonObject() ? element.getAsJsonObject() : null;
-	}
-
-	/** 读取 JSON 对象里的数组，字段不存在或不是数组时返回 null。 */
-	private static JsonArray arrayValue(JsonObject json, String key) {
-		if (json == null) {
-			return null;
-		}
-		JsonElement element = json.get(key);
-		return element != null && element.isJsonArray() ? element.getAsJsonArray() : null;
 	}
 
 	/** 返回第一个非空白字符串（已去除首尾空白），全部为空时返回 null。 */

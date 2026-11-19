@@ -26,6 +26,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.utils.BotCallback;
 import com.khjxiaogu.aiwuxia.utils.BotCallbackPromise;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 /**
@@ -53,6 +54,8 @@ public class NapcatAdapter implements ChatAdapter {
 
 	private final String url;
 	private final WebSocketClient client;
+	/** 昵称/头像缓存；没有数据目录时只存内存。 */
+	private final ChatProfileCache profileCache;
 	/** 串行化 WS 帧处理，保证事件按到达顺序回调。 */
 	private final Object lock = new Object();
 	/** echo -> 回执回调。 */
@@ -64,6 +67,15 @@ public class NapcatAdapter implements ChatAdapter {
 	 * @param token     OneBot 访问令牌，为空表示不带鉴权头
 	 */
 	public NapcatAdapter(String hostOrUrl, String token) {
+		this(hostOrUrl, token, null);
+	}
+
+	/**
+	 * @param hostOrUrl  NapCat 正向 WS 地址
+	 * @param token      OneBot 访问令牌
+	 * @param dataFolder 运行数据目录（用于持久化昵称/头像缓存），可为 null
+	 */
+	public NapcatAdapter(String hostOrUrl, String token, File dataFolder) {
 		String target = hostOrUrl == null ? "" : hostOrUrl.trim();
 		if (target.isEmpty()) {
 			throw new IllegalArgumentException("NapCat 地址为空：请用 -Dnapcat_url=host:port 指定");
@@ -77,6 +89,8 @@ public class NapcatAdapter implements ChatAdapter {
 			headers.put("Authorization", "Bearer " + token);
 		}
 		this.client = new NapcatClient(URI.create(target), headers);
+		this.profileCache = new ChatProfileCache(dataFolder == null ? null
+				: new File(new File(dataFolder, "config"), "profile-cache.json"));
 	}
 
 	@Override
@@ -102,6 +116,7 @@ public class NapcatAdapter implements ChatAdapter {
 	@Override
 	public void close() {
 		client.close();
+		profileCache.close();
 	}
 
 	@Override
@@ -173,6 +188,70 @@ public class NapcatAdapter implements ChatAdapter {
 	}
 
 	@Override
+	public CompletableFuture<String> sendPrivateMessage(String userId, String text) {
+		JsonObject action = action("send_private_msg");
+		JsonObject params = action.getAsJsonObject("params");
+		setUserId(params, userId);
+		JsonArray message = new JsonArray();
+		message.add(textSegment(text));
+		params.add("message", message);
+		return call(action);
+	}
+
+	@Override
+	public CompletableFuture<String> sendPrivateImage(String userId, String file, String caption) {
+		return sendPrivateMedia(userId, "image", file, caption);
+	}
+	@Override
+	public CompletableFuture<String> sendPrivateVideo(String userId, String file) {
+		return sendPrivateMedia(userId, "video", file, null);
+	}
+
+	@Override
+	public CompletableFuture<String> sendPrivateRecord(String userId, String file) {
+		return sendPrivateMedia(userId, "record", file, null);
+	}
+
+	private CompletableFuture<String> sendPrivateMedia(String userId, String type, String file, String caption) {
+		JsonObject action = action("send_private_msg");
+		JsonObject params = action.getAsJsonObject("params");
+		setUserId(params, userId);
+		JsonArray message = new JsonArray();
+		message.add(mediaSegment(type, file));
+		if (caption != null && !caption.isEmpty()) {
+			message.add(textSegment(caption));
+		}
+		params.add("message", message);
+		return call(action);
+	}
+
+	@Override
+	public boolean supportsRecall() {
+		return true;
+	}
+
+	@Override
+	public CompletableFuture<Void> recallMessage(String chatId, String messageId) {
+		return recall(messageId);
+	}
+
+	@Override
+	public CompletableFuture<Void> recallPrivateMessage(String userId, String messageId) {
+		return recall(messageId);
+	}
+
+	private CompletableFuture<Void> recall(String messageId) {
+		if (messageId == null || messageId.isEmpty()) {
+			CompletableFuture<Void> failed = new CompletableFuture<>();
+			failed.completeExceptionally(new IllegalArgumentException("messageId 为空"));
+			return failed;
+		}
+		JsonObject action = action("delete_msg");
+		action.getAsJsonObject("params").addProperty("message_id", messageId);
+		return callData(action).thenApply(data -> (Void) null);
+	}
+
+	@Override
 	public void react(String messageId, String emoji) {
 		if (messageId == null || messageId.isEmpty()) {
 			return;
@@ -214,14 +293,113 @@ public class NapcatAdapter implements ChatAdapter {
 		throw new IOException("无法读取媒体引用：" + ref);
 	}
 
+	// ==================== 用户资料 ====================
+
+	@Override
+	public CompletableFuture<String> getUserName(String userId) {
+		if (userId == null || userId.isEmpty()) {
+			return CompletableFuture.completedFuture(null);
+		}
+		String cached = profileCache.userName(userId);
+		if (cached != null && !cached.isEmpty()) {
+			return CompletableFuture.completedFuture(cached);
+		}
+		JsonObject action = action("get_stranger_info");
+		JsonObject params = action.getAsJsonObject("params");
+		setUserId(params, userId);
+		params.addProperty("no_cache", false);
+		return callData(action).thenApply(data -> {
+			String nickname = JsonConfig.getStringOrEmpty(data, "nickname");
+			String name = nickname.isEmpty() ? JsonConfig.getStringOrEmpty(data, "remark") : nickname;
+			if (!name.isEmpty()) {
+				profileCache.rememberUser(userId, null, name, null);
+			}
+			return name.isEmpty() ? null : name;
+		}).exceptionally(t -> null);
+	}
+
+	@Override
+	public CompletableFuture<String> getGroupMemberName(String groupId, String memberId) {
+		if (groupId == null || groupId.isEmpty() || memberId == null || memberId.isEmpty()) {
+			return CompletableFuture.completedFuture(null);
+		}
+		String memberName = profileCache.memberName(groupId, memberId);
+		if (memberName == null || memberName.isEmpty()) {
+			memberName = profileCache.userName(memberId);
+		}
+		final String cached = memberName;
+		if (cached != null && !cached.isEmpty()) {
+			return CompletableFuture.completedFuture(cached);
+		}
+		JsonObject action = action("get_group_member_info");
+		JsonObject params = action.getAsJsonObject("params");
+		setGroupId(params, groupId);
+		setUserId(params, memberId);
+		params.addProperty("no_cache", false);
+		return callData(action).thenApply(data -> {
+			String nickname = JsonConfig.getStringOrEmpty(data, "nickname");
+			String card = JsonConfig.getStringOrEmpty(data, "card");
+			String name = card.isEmpty() ? nickname : card;
+			if (!name.isEmpty()) {
+				profileCache.rememberMemberName(groupId, memberId, name);
+			}
+			if (!nickname.isEmpty()) {
+				profileCache.rememberUser(memberId, null, nickname, null);
+			}
+			return name.isEmpty() ? cached : name;
+		}).exceptionally(t -> cached);
+	}
+
+	@Override
+	public CompletableFuture<byte[]> getUserAvatar(String userId) {
+		if (userId == null || userId.isEmpty()) {
+			return CompletableFuture.completedFuture(null);
+		}
+		String cached = profileCache.userAvatar(userId);
+		final String avatarUrl = cached == null || cached.isEmpty()
+				? "https://q1.qlogo.cn/g?b=qq&nk=" + userId + "&s=640" : cached;
+		return CompletableFuture.supplyAsync(() -> {
+			byte[] data = fetchAvatarBytes(avatarUrl);
+			if (data != null && data.length > 0) {
+				profileCache.rememberUser(userId, null, null, avatarUrl);
+			}
+			return data;
+		});
+	}
+
+	@Override
+	public CompletableFuture<byte[]> getGroupAvatar(String groupId) {
+		if (groupId == null || groupId.isEmpty()) {
+			return CompletableFuture.completedFuture(null);
+		}
+		String cached = profileCache.groupAvatar(groupId);
+		final String avatarUrl = cached == null || cached.isEmpty()
+				? "https://p.qlogo.cn/gh/" + groupId + "/" + groupId + "/640" : cached;
+		return CompletableFuture.supplyAsync(() -> {
+			byte[] data = fetchAvatarBytes(avatarUrl);
+			if (data != null && data.length > 0) {
+				profileCache.rememberGroup(groupId, null, avatarUrl);
+			}
+			return data;
+		});
+	}
+
+	private static byte[] fetchAvatarBytes(String url) {
+		try (InputStream in = FileUtil.fetch(url)) {
+			return FileUtil.readAll(in);
+		} catch (Throwable t) {
+			return null;
+		}
+	}
+
 	/**
-	 * 发一条 OneBot API 调用并等待回执。
+	 * 发一条 OneBot API 调用并等待回执，返回回执里的 {@code data}。
 	 *
 	 * @param action 已填好 action/params 的请求
-	 * @return 消息 id 的 future（协议没给 message_id 时为 null）
+	 * @return data future（协议没给 data 时为 null）
 	 */
-	private CompletableFuture<String> call(JsonObject action) {
-		CompletableFuture<String> result = new CompletableFuture<>();
+	private CompletableFuture<JsonObject> callData(JsonObject action) {
+		CompletableFuture<JsonObject> result = new CompletableFuture<>();
 		final String echo = UUID.randomUUID().toString();
 		BotCallbackPromise promise = new BotCallbackPromise(CALLBACK_TIMEOUT_MINUTES);
 		callBack.put(echo, promise.getBotCallback());
@@ -239,10 +417,20 @@ public class NapcatAdapter implements ChatAdapter {
 			if (error != null) {
 				result.completeExceptionally(error);
 			} else {
-				result.complete(messageIdOf(data));
+				result.complete(data);
 			}
 		});
 		return result;
+	}
+
+	/**
+	 * 发一条 OneBot API 调用并等待回执，返回消息 id。
+	 *
+	 * @param action 已填好 action/params 的请求
+	 * @return 消息 id 的 future（协议没给 message_id 时为 null）
+	 */
+	private CompletableFuture<String> call(JsonObject action) {
+		return callData(action).thenApply(NapcatAdapter::messageIdOf);
 	}
 
 	/** 从回执 data 里取消息 id。 */
@@ -277,9 +465,35 @@ public class NapcatAdapter implements ChatAdapter {
 		JsonObject segment = new JsonObject();
 		segment.addProperty("type", type);
 		JsonObject data = new JsonObject();
-		data.addProperty("file", file == null ? "" : file);
+		data.addProperty("file", normalizeMediaFile(type, file));
 		segment.add("data", data);
 		return segment;
+	}
+
+	/**
+	 * OneBot v11 的图片/语音/视频文件字段用 {@code base64://}；data URL 需要转换，其它形式原样下发。
+	 * <p>
+	 * Codex 截图等内联图片是以 data URL 形式进入附件链路的，NapCat 对 {@code data:} 前缀支持不一致，
+	 * 这里统一转成协议规定的 {@code base64://}。本地 H3 视频在对象存储没有公网地址时也会以
+	 * data URL 形式下发，因此视频同样需要转换。
+	 * </p>
+	 */
+	private static String normalizeMediaFile(String type, String file) {
+		if (file == null || file.isEmpty() || !file.startsWith("data:")) {
+			return file == null ? "" : file;
+		}
+		if (!"image".equals(type) && !"record".equals(type) && !"video".equals(type)) {
+			return file;
+		}
+		int comma = file.indexOf(',');
+		if (comma < 0) {
+			return file;
+		}
+		String meta = file.substring(5, comma);
+		if (!meta.contains(";base64")) {
+			return file;
+		}
+		return "base64://" + file.substring(comma + 1);
 	}
 
 	/** 群 id 尽量按数字下发，非数字标识才退回字符串（兼容非 QQ 协议实现）。 */
@@ -321,16 +535,20 @@ public class NapcatAdapter implements ChatAdapter {
 		}
 	}
 
-	/** 分派一帧：OneBot API 回执 / 群消息 / 私聊消息。 */
+	/** 分派一帧：OneBot API 回执 / 撤回通知 / 群消息 / 私聊消息。 */
 	private void dispatch(JsonObject message, String frame) {
 		if (message.has("status") && message.has("echo")) {
 			dispatchResponse(message);
 			return;
 		}
+		if ("notice".equals(JsonConfig.getStringOrEmpty(message, "post_type"))) {
+			dispatchNotice(message);
+			return;
+		}
 		if (!message.has("message_type") || message.get("message_type").isJsonNull()) {
 			return;
 		}
-		String eventType = optString(message, "message_type");
+		String eventType = JsonConfig.getStringOrEmpty(message, "message_type");
 		ChatEventHandler current = handler;
 		if (current == null) {
 			return;
@@ -353,9 +571,30 @@ public class NapcatAdapter implements ChatAdapter {
 		}
 	}
 
+	/**
+	 * 分派通知类事件：目前处理群/私聊撤回。
+	 * <p>
+	 * OneBot v11 的撤回事件是 {@code post_type=notice}，{@code notice_type=group_recall/friend_recall}，
+	 * 携带 {@code message_id}；拿到后交给控制器决定是否从待处理缓冲区移除。
+	 * </p>
+	 */
+	private void dispatchNotice(JsonObject message) {
+		ChatEventHandler current = handler;
+		if (current == null) {
+			return;
+		}
+		String noticeType = JsonConfig.getStringOrEmpty(message, "notice_type");
+		String messageId = JsonConfig.getStringOrEmpty(message, "message_id");
+		if ("group_recall".equals(noticeType)) {
+			current.onGroupRecall(JsonConfig.getStringOrEmpty(message, "group_id"), messageId,
+					JsonConfig.getStringOrEmpty(message, "operator_id"), JsonConfig.getStringOrEmpty(message, "user_id"));
+		} else if ("friend_recall".equals(noticeType)) {
+			current.onPrivateRecall(JsonConfig.getStringOrEmpty(message, "user_id"), messageId);
+		}
+	}
+
 	/** 分派 OneBot API 回执。 */
-	private void dispatchResponse(JsonObject message) {
-		String echo = optString(message, "echo");
+	private void dispatchResponse(JsonObject message) {		String echo = JsonConfig.getStringOrEmpty(message, "echo");
 		if (echo.isEmpty()) {
 			return;
 		}
@@ -378,7 +617,7 @@ public class NapcatAdapter implements ChatAdapter {
 
 	/** 事件是否是机器人自己发出的消息。 */
 	private static boolean isMessageSent(JsonObject message) {
-		return "message_sent".equals(optString(message, "post_type"));
+		return "message_sent".equals(JsonConfig.getStringOrEmpty(message, "post_type"));
 	}
 
 	/**
@@ -389,23 +628,24 @@ public class NapcatAdapter implements ChatAdapter {
 	 * </p>
 	 */
 	private IncomingMessage parseGroupMessage(JsonObject message) {
-		String chatId = optString(message, "group_id");
+		String chatId = JsonConfig.getStringOrEmpty(message, "group_id");
 		if (chatId.isEmpty()) {
 			return null;
 		}
-		String selfId = optString(message, "self_id");
+		String selfId = JsonConfig.getStringOrEmpty(message, "self_id");
 		JsonObject sender = message.has("sender") && message.get("sender").isJsonObject()
 				? message.getAsJsonObject("sender")
 				: new JsonObject();
-		String senderName = optString(sender, "card");
-		if (senderName.isEmpty()) {
-			senderName = optString(sender, "nickname");
-		}
-		String senderId = optString(sender, "user_id");
+		String card = JsonConfig.getStringOrEmpty(sender, "card");
+		String nickname = JsonConfig.getStringOrEmpty(sender, "nickname");
+		String senderName = card.isEmpty() ? nickname : card;
+		String senderId = JsonConfig.getStringOrEmpty(sender, "user_id");
 		if (senderId.isEmpty()) {
-			senderId = optString(message, "user_id");
+			senderId = JsonConfig.getStringOrEmpty(message, "user_id");
 		}
-		String messageId = optString(message, "message_id");
+		String messageId = JsonConfig.getStringOrEmpty(message, "message_id");
+		profileCache.rememberUser(senderId, null, nickname, null);
+		profileCache.rememberMemberName(chatId, senderId, senderName);
 
 		JsonArray segments = message.has("message") && message.get("message").isJsonArray()
 				? message.getAsJsonArray("message")
@@ -419,24 +659,24 @@ public class NapcatAdapter implements ChatAdapter {
 					continue;
 				}
 				JsonObject segment = element.getAsJsonObject();
-				String type = optString(segment, "type");
+				String type = JsonConfig.getStringOrEmpty(segment, "type");
 				JsonObject data = segment.has("data") && segment.get("data").isJsonObject()
 						? segment.getAsJsonObject("data")
 						: new JsonObject();
 				if ("image".equals(type)) {
-					String file = optString(data, "file");
-					String imageUrl = optString(data, "url");
+					String file = JsonConfig.getStringOrEmpty(data, "file");
+					String imageUrl = JsonConfig.getStringOrEmpty(data, "url");
 					if (!file.isEmpty() && !imageUrl.isEmpty()) {
 						imageUrls.put(file, imageUrl);
 					}
 				} else if ("at".equals(type)) {
-					String qq = optString(data, "qq");
+					String qq = JsonConfig.getStringOrEmpty(data, "qq");
 					// @全体（qq=all）不算 @ 机器人
 					if (!qq.isEmpty() && !"all".equals(qq)) {
 						mentioned.add(qq);
 					}
 				} else if ("reply".equals(type)) {
-					String id = optString(data, "id");
+					String id = JsonConfig.getStringOrEmpty(data, "id");
 					if (!id.isEmpty()) {
 						replyTo = id;
 					}
@@ -461,24 +701,24 @@ public class NapcatAdapter implements ChatAdapter {
 				JsonElement replyElement = melm.get("replyElement");
 				if (replyElement != null && replyElement.isJsonObject()) {
 					JsonObject reply = replyElement.getAsJsonObject();
-					contents.add(new IncomingContent.QuoteBlock(replyTo, optString(reply, "senderUid"),
+					contents.add(new IncomingContent.QuoteBlock(replyTo, JsonConfig.getStringOrEmpty(reply, "senderUid"),
 							quoteText(reply)));
 					continue;
 				}
 				JsonElement textElement = melm.get("textElement");
 				if (textElement != null && textElement.isJsonObject()) {
-					contents.add(new IncomingContent.TextBlock(optString(textElement.getAsJsonObject(), "content")));
+					contents.add(new IncomingContent.TextBlock(JsonConfig.getStringOrEmpty(textElement.getAsJsonObject(), "content")));
 					continue;
 				}
 				JsonElement picElement = melm.get("picElement");
 				if (picElement != null && picElement.isJsonObject()) {
 					JsonObject pic = picElement.getAsJsonObject();
-					String fileName = optString(pic, "fileName");
+					String fileName = JsonConfig.getStringOrEmpty(pic, "fileName");
 					String imageRef = imageUrls.get(fileName);
 					if (imageRef == null) {
 						imageRef = fileName;
 					}
-					contents.add(new IncomingContent.ImageBlock(imageRef, optString(pic, "summary")));
+					contents.add(new IncomingContent.ImageBlock(imageRef, JsonConfig.getStringOrEmpty(pic, "summary")));
 				}
 			}
 		} else if (segments != null) {
@@ -488,18 +728,18 @@ public class NapcatAdapter implements ChatAdapter {
 					continue;
 				}
 				JsonObject segment = element.getAsJsonObject();
-				String type = optString(segment, "type");
+				String type = JsonConfig.getStringOrEmpty(segment, "type");
 				JsonObject data = segment.has("data") && segment.get("data").isJsonObject()
 						? segment.getAsJsonObject("data")
 						: new JsonObject();
 				if ("text".equals(type)) {
-					contents.add(new IncomingContent.TextBlock(optString(data, "text")));
+					contents.add(new IncomingContent.TextBlock(JsonConfig.getStringOrEmpty(data, "text")));
 				} else if ("image".equals(type)) {
-					String imageRef = optString(data, "url");
+					String imageRef = JsonConfig.getStringOrEmpty(data, "url");
 					if (imageRef.isEmpty()) {
-						imageRef = optString(data, "file");
+						imageRef = JsonConfig.getStringOrEmpty(data, "file");
 					}
-					contents.add(new IncomingContent.ImageBlock(imageRef, optString(data, "summary")));
+					contents.add(new IncomingContent.ImageBlock(imageRef, JsonConfig.getStringOrEmpty(data, "summary")));
 				}
 			}
 		}
@@ -539,14 +779,15 @@ public class NapcatAdapter implements ChatAdapter {
 		JsonObject sender = message.has("sender") && message.get("sender").isJsonObject()
 				? message.getAsJsonObject("sender")
 				: new JsonObject();
-		String senderId = optString(sender, "user_id");
+		String senderId = JsonConfig.getStringOrEmpty(sender, "user_id");
 		if (senderId.isEmpty()) {
-			senderId = optString(message, "user_id");
+			senderId = JsonConfig.getStringOrEmpty(message, "user_id");
 		}
-		String senderName = optString(sender, "card");
+		String senderName = JsonConfig.getStringOrEmpty(sender, "card");
 		if (senderName.isEmpty()) {
-			senderName = optString(sender, "nickname");
+			senderName = JsonConfig.getStringOrEmpty(sender, "nickname");
 		}
+		profileCache.rememberUser(senderId, null, senderName, null);
 		List<IncomingContent> contents = new ArrayList<>();
 		if (message.has("message") && message.get("message").isJsonArray()) {
 			for (JsonElement element : message.getAsJsonArray("message")) {
@@ -554,11 +795,11 @@ public class NapcatAdapter implements ChatAdapter {
 					continue;
 				}
 				JsonObject segment = element.getAsJsonObject();
-				if (!"text".equals(optString(segment, "type"))) {
+				if (!"text".equals(JsonConfig.getStringOrEmpty(segment, "type"))) {
 					continue;
 				}
 				if (segment.has("data") && segment.get("data").isJsonObject()) {
-					String text = optString(segment.getAsJsonObject("data"), "text");
+					String text = JsonConfig.getStringOrEmpty(segment.getAsJsonObject("data"), "text");
 					if (!text.isEmpty()) {
 						contents.add(new IncomingContent.TextBlock(text));
 					}
@@ -566,11 +807,11 @@ public class NapcatAdapter implements ChatAdapter {
 			}
 		}
 		IncomingMessage.Builder builder = IncomingMessage.builder().chatId(senderId)
-				.selfId(optString(message, "self_id")).senderId(senderId).senderName(senderName)
-				.messageId(optString(message, "message_id")).raw(message);
+				.selfId(JsonConfig.getStringOrEmpty(message, "self_id")).senderId(senderId).senderName(senderName)
+				.messageId(JsonConfig.getStringOrEmpty(message, "message_id")).raw(message);
 		if (contents.isEmpty()) {
 			// 没有消息段时退回 raw_message，保证管理员短答复也能识别
-			builder.content(new IncomingContent.TextBlock(optString(message, "raw_message")));
+			builder.content(new IncomingContent.TextBlock(JsonConfig.getStringOrEmpty(message, "raw_message")));
 		} else {
 			for (IncomingContent content : contents) {
 				builder.content(content);
@@ -580,21 +821,6 @@ public class NapcatAdapter implements ChatAdapter {
 	}
 
 	// ==================== JSON 取值 ====================
-
-	private static String optString(JsonObject object, String key) {
-		if (object == null || !object.has(key)) {
-			return "";
-		}
-		JsonElement value = object.get(key);
-		if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) {
-			return "";
-		}
-		try {
-			return value.getAsString();
-		} catch (RuntimeException e) {
-			return "";
-		}
-	}
 
 	// ==================== WebSocket ====================
 

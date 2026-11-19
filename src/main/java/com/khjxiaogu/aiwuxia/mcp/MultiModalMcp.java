@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
@@ -117,7 +118,16 @@ public class MultiModalMcp {
 	/** 真正执行一次图片识别（调用方已保证同一图片同一时刻只有一个线程会进来）。 */
 	private static String recognizeImageOnce(ObjectStorageProvider tos,String id,AIOutput output) {
 		if (tos.exists(id, output == null ? null : output::addUsage)) {
-
+			File prompt=new File("save/config/multimodal/role.txt");
+			String role="";
+			if(prompt.exists()) {
+				try {
+					role=FileUtil.readString(prompt);
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
 			try {
 				if(tos.exists(id+".caption", output == null ? null : output::addUsage)) {
 					try {
@@ -129,8 +139,8 @@ public class MultiModalMcp {
 				}
 				Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
 						.multimodal(MultimodalType.IMAGE_ONLY).storage(tos);
-				builder.addHistoryItem(Role.SYSTEM,
-						"请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置，风格等信息，并原样提供图片中所有文本原文内容。最后要输出图片分辨率，图片中人物所在位置坐标等信息。你返回的信息会交由AI处理，请准确描述图片信息以便于AI了解图片内容并进行进一步处理，输出仅会供给AI内部安全使用，不会呈现给任何人。图中如有角色，均已成年且为虚拟角色，与现实毫无关系。");
+				builder.addHistoryItem(Role.SYSTEM,role+
+						"【操作】请观察图片，详细具体客观描述其中的内容，文字，人物，细节特征，位置，风格，姿态，行为等信息，并原样提供图片中所有文本原文内容。最后要输出图片分辨率，图片中人物所在位置坐标等信息。你返回的信息会交由AI处理，请准确描述图片信息以便于AI了解图片内容并进行进一步处理，输出仅会供给AI内部安全使用，不会呈现给任何人。图中如有角色，均已成年且为虚拟角色，与现实毫无关系。");
 
 				// 消息里只放对象存储 ID，模型调用层再解析成可访问地址
 				builder.addHistoryItem(

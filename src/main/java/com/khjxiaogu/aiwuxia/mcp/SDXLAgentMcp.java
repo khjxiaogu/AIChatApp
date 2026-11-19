@@ -2,10 +2,12 @@ package com.khjxiaogu.aiwuxia.mcp;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
 
@@ -29,12 +31,10 @@ import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.vision.LocalSDXLUsage;
-import com.khjxiaogu.aiwuxia.vision.QwenImageApi;
+import com.khjxiaogu.aiwuxia.voice.LocalModel;
+import com.khjxiaogu.aiwuxia.voice.ModelType;
 import com.khjxiaogu.aiwuxia.state.Role;
-import com.khjxiaogu.aiwuxia.tools.ResourceLock;
-import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 
 /**
  * 出图子 agent 工具。
@@ -53,22 +53,25 @@ public class SDXLAgentMcp {
 
 	/**
 	 * 创建出图子 agent 工具。
+	 * <p>
+	 * 聊天进程不持有资源锁：SDXL 与 Qwen 的生成都由本地模型连接服务执行并排队。
+	 * 生成后的 WD1.4 反推也走 {@link LocalModel} 通道（{@code model_type=sdxl}），
+	 * 不再直接访问 {@code sdwebuiUrl}。
+	 * </p>
 	 *
 	 * @param path   子 agent 配置目录
 	 * @param tos    对象存储
 	 * @param lora   Lora 配置
 	 * @param charas 角色提示词
 	 * @param isNsfw 是否允许不宜内容
-	 * @param lock   资源锁
 	 * @return 独立的工具定义
 	 * @throws IOException 读取子 agent 配置失败
 	 */
 	public static ToolData createImage(File path, ObjectStorageProvider tos, Map<String, LoraConfigurations> lora,
-			List<String> charas, boolean isNsfw, ResourceLock lock) throws IOException {
-		SDXLMcp sdxl = SDXLMcp.createLocal(tos, lora, isNsfw, lock);
-		// Qwen-Image 文生图作为子 agent 的“参考底图生成器”：与 SDXL 共用资源锁，每次占用 6 份
-		QwenImageApi qwenApi = new QwenImageApi().setResourceLock(lock, 6);
-		ToolData qwenTextToImage = withInterrogate(QwenImageMcp.createTextToImageTool(qwenApi, tos), tos, lock);
+			List<String> charas, boolean isNsfw) throws IOException {
+		// SDXL 与 Qwen 都走本地模型通道：具体生成由 LocalModelConnectionService 一侧执行
+		SDXLMcp sdxl = SDXLMcp.createRemoteLocalModel(tos, lora, isNsfw);
+		ToolData qwenTextToImage = withInterrogate(QwenLocalModelMcp.createTextToImageTool(tos), tos);
 
 		String system = FileUtil.readString(new File(path, "role.txt")).replace("\r", "")
 				+ FileUtil.readString(new File(path, "charaset.txt")).replace("\r", "")
@@ -83,9 +86,9 @@ public class SDXLAgentMcp {
 				.putParam("prompt", "提示词，使用中文自然语言详细描述整个画面的细节，不包含参考图的人物特征，使用“图一”“图二”等引用参考图，不得包含图片id，必须说明每个参考图的作用，描述人物时请写全名或者图片编号，禁止使用一切其他代称。比如“画面参考图2，图1角色身着图3所示服装。”", "提示词")
 				.async()
 				.tool((data, output, manager) -> {
-					if (!isSdWebuiOnline()) {
+					if (!LocalModel.hasOnlineService(ModelType.SDXL)) {
 						return CompletableFuture
-								.completedFuture(ToolResult.failure("本地绘图服务不在线，请先启动并连接 SD WebUI。"));
+								.completedFuture(ToolResult.failure("本地模型服务未连接（SDXL 通道），请先启动 LocalModelConnectionService。"));
 					}
 					JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
 					System.out.println(data);
@@ -106,7 +109,7 @@ public class SDXLAgentMcp {
 							for (String refImg : refs) {
 								if (refImg.length() == 72) {
 									if (tos.exists(refImg.trim(), output == null ? null : output::addUsage)) {
-										links.add(tos.getPublicUrl(refImg.trim(),
+										links.add(tos.getPreferredUrl(refImg.trim(),
 												output == null ? null : output::addUsage));
 										refss += "图" + (++i) + "id:" + refImg.trim() + "\n";
 									} else {
@@ -170,7 +173,7 @@ public class SDXLAgentMcp {
 	/**
 	 * 包一层“生成后反推提示词”的工具：原工具结果不变，图片后追加 WD1.4 反推出的提示词。
 	 */
-	private static ToolData withInterrogate(ToolData source, ObjectStorageProvider tos, ResourceLock lock) {
+	private static ToolData withInterrogate(ToolData source, ObjectStorageProvider tos) {
 		if (source == null) {
 			return null;
 		}
@@ -185,12 +188,11 @@ public class SDXLAgentMcp {
 			builder.putParam(param.getKey(), param.getValue(), source.getParamLabel(param.getKey()));
 		}
 		return builder.tool((data, output, manager) -> source.tool.run(data, output, manager)
-				.thenApply(result -> appendInterrogate(result, tos, lock, output))).build();
+				.thenApply(result -> appendInterrogate(result, tos, output))).build();
 	}
 
 	/** 在工具结果的每张图片后面追加反推提示词。 */
-	private static ToolResult appendInterrogate(ToolResult result, ObjectStorageProvider tos, ResourceLock lock,
-			AIOutput output) {
+	private static ToolResult appendInterrogate(ToolResult result, ObjectStorageProvider tos, AIOutput output) {
 		if (result == null || result.getContent() == null || result.getContent().isEmpty()) {
 			return result;
 		}
@@ -199,7 +201,7 @@ public class SDXLAgentMcp {
 		for (MessageContent item : result.getContent()) {
 			content.add(item);
 			if (item instanceof ImageContent) {
-				String tags = interrogateImage(((ImageContent) item).getImageUrl(), tos, lock, output);
+				String tags = interrogateImage(((ImageContent) item).getImageUrl(), tos, output);
 				if (!tags.isEmpty()) {
 					content.append("\n反推提示词：" + tags + "\n");
 					appended = true;
@@ -209,24 +211,24 @@ public class SDXLAgentMcp {
 		return appended ? ToolResult.content(content, result.getAttachments()) : result;
 	}
 
-	/** 调用 SD WebUI 的 WD1.4 反推接口，失败时返回空串，不影响原图结果。 */
-	private static String interrogateImage(String imageId, ObjectStorageProvider tos, ResourceLock lock,
-			AIOutput output) {
+	/**
+	 * 通过本地模型通道调用 SD WebUI 的 WD1.4 反推接口，失败时返回空串，不影响原图结果。
+	 * <p>
+	 * 请求体 {@code {"path":..., "data":...}} 由 {@code SDXLLocalModelHandler} 原样转发给 SD WebUI，
+	 * 因此聊天进程不再需要直接访问 {@code sdwebuiUrl}。
+	 * </p>
+	 */
+	private static String interrogateImage(String imageId, ObjectStorageProvider tos, AIOutput output) {
 		if (imageId == null || imageId.isEmpty() || tos == null
-				|| System.getProperty("sdwebuiUrl") == null
-				|| System.getProperty("sdwebuiUrl").trim().isEmpty()) {
+				|| !LocalModel.hasOnlineService(ModelType.SDXL)) {
 			return "";
 		}
-		ResourcePermit permit = null;
 		try {
-			if (lock != null) {
-				permit = lock.acquire(6);
-			}
 			byte[] data = tos.download(imageId, output == null ? null : output::addUsage);
 			if (data == null || data.length == 0) {
 				return "";
 			}
-			JsonObject tags = SDXLMcp.interrogate(Base64.getEncoder().encodeToString(data), sdConnector());
+			JsonObject tags = SDXLMcp.interrogate(Base64.getEncoder().encodeToString(data), channelConnector());
 			StringBuilder text = new StringBuilder();
 			for (String tag : tags.keySet()) {
 				if (text.length() > 0) {
@@ -242,51 +244,32 @@ public class SDXLAgentMcp {
 			}
 			return text.toString();
 		} catch (Throwable ex) {
-			// 反推只是附加信息，失败不影响 Qwen 已经生成的图片
+			// 反推只是附加信息，失败不影响已经生成的图片
 			ex.printStackTrace();
 			return "";
-		} finally {
-			if (permit != null) {
-				permit.release();
-			}
 		}
 	}
 
-	/** SD WebUI 反推请求连接器，与 SDXL 本地客户端使用同一套接口。 */
-	private static BiFunction<String, String, CompletableFuture<JsonObject>> sdConnector() {
-		return (url, payload) -> CompletableFuture.supplyAsync(() -> {
-			try {
-				return HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
-						.header("Accept", "application/json")
-						.header("Content-Type", "application/json; utf-8")
-						.url(url)
-						.post()
-						.send(payload)
-						.readJson();
-			} catch (IOException ex) {
-				throw new RuntimeException(ex);
-			}
-		});
-	}
-
-	/** 快速探测 SD WebUI 是否在线；超时约 1.5 秒，避免子 agent 在离线时长时间等待。 */
-	private static boolean isSdWebuiOnline() {
-		String base = System.getProperty("sdwebuiUrl", "").trim();
-		if (base.isEmpty()) {
-			return false;
-		}
-		if (!base.startsWith("http://") && !base.startsWith("https://")) {
-			base = "http://" + base;
-		}
-		while (base.endsWith("/")) {
-			base = base.substring(0, base.length() - 1);
-		}
-		try {
-			new HttpRequestBuilder(base + "/internal/ping").readTimeout(1500).get().readString();
-			return true;
-		} catch (Throwable ex) {
-			return false;
-		}
+	/** 把 SD WebUI 请求打包成本地模型通道请求，并解析返回的 JSON。 */
+	private static BiFunction<String, String, CompletableFuture<JsonObject>> channelConnector() {
+		return (path, payload) -> {
+			JsonObject request = new JsonObject();
+			request.addProperty("path", path);
+			request.addProperty("data", payload == null ? "" : payload);
+			return LocalModel.require(ModelType.SDXL, UUID.randomUUID().toString(), request)
+					.thenApply(result -> {
+						try {
+							if (result == null || result.bodyData == null || result.bodyData.length == 0) {
+								return new JsonObject();
+							}
+							return JsonParser
+									.parseString(new String(result.bodyData, StandardCharsets.UTF_8))
+									.getAsJsonObject();
+						} catch (RuntimeException ex) {
+							throw new RuntimeException("反推结果解析失败", ex);
+						}
+					});
+		};
 	}
 
 	/**
@@ -301,13 +284,12 @@ public class SDXLAgentMcp {
 	 * @param lora   LoRA 配置
 	 * @param charas 角色提示词
 	 * @param isNsfw 是否允许不宜内容
-	 * @param lock   资源锁
 	 * @return 通用多媒体 API
 	 * @throws IOException 读取子 agent 配置失败
 	 */
 	public static MultimediaApi createMultimediaApi(File path, ObjectStorageProvider tos,
-			Map<String, LoraConfigurations> lora, List<String> charas, boolean isNsfw, ResourceLock lock)
+			Map<String, LoraConfigurations> lora, List<String> charas, boolean isNsfw)
 			throws IOException {
-		return new SDXLAgentMultimediaApi(path, tos, lora, charas, isNsfw, lock);
+		return new SDXLAgentMultimediaApi(path, tos, lora, charas, isNsfw);
 	}
 }

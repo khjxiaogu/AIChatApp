@@ -2,7 +2,9 @@ package com.khjxiaogu.aiwuxia.llm;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
@@ -30,6 +32,14 @@ public class ToolData {
 	public final String name;
 	public final String description;
 	public final Map<String, String> params;
+	/**
+	 * 可选参数名集合。
+	 * <p>
+	 * 这些参数仍然出现在工具说明里，但不会写进 JSON Schema 的 {@code required} 列表，
+	 * 因此模型/MCP 客户端可以省略它们。未声明时全部参数都是必填的。
+	 * </p>
+	 */
+	public final Set<String> optionalParams;
 	/**
 	 * 参数的人可读显示名：参数名 → 显示名。
 	 * <p>
@@ -90,12 +100,24 @@ public class ToolData {
 	public ToolData(Tool tool, String name, String description, Map<String, String> params,
 			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive,
 			Map<String, String> paramLabels) {
+		this(tool, name, description, params, presenter, async, maxCalls, sessionOnly, orderSensitive, paramLabels,
+				Collections.emptySet());
+	}
+
+	/**
+	 * @param optionalParams 可选参数名集合，可为 null
+	 */
+	public ToolData(Tool tool, String name, String description, Map<String, String> params,
+			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive,
+			Map<String, String> paramLabels, Set<String> optionalParams) {
 		super();
 		this.tool = tool;
 		this.name = name;
 		this.description = description;
 		this.params = params;
 		this.paramLabels = paramLabels == null ? Collections.emptyMap() : paramLabels;
+		this.optionalParams = optionalParams == null ? Collections.emptySet()
+				: Collections.unmodifiableSet(new HashSet<>(optionalParams));
 		this.presenter = presenter == null ? ToolCallPresenter.defaults() : presenter;
 		this.async = async;
 		this.maxCalls = maxCalls;
@@ -115,6 +137,16 @@ public class ToolData {
 		}
 		String label = paramLabels.get(paramName);
 		return label == null || label.isEmpty() ? paramName : label;
+	}
+
+	/**
+	 * 判断一个参数是否可选。
+	 *
+	 * @param paramName 参数名（JSON 字段名）
+	 * @return true 表示可以省略
+	 */
+	public boolean isOptionalParam(String paramName) {
+		return paramName != null && optionalParams.contains(paramName);
 	}
 
 	/**
@@ -201,6 +233,7 @@ public class ToolData {
 		private String description;
 		private Map<String, String> params = new HashMap<>();
 		private Map<String, String> paramLabels = new HashMap<>();
+		private Set<String> optionalParams = new HashSet<>();
 		private ToolCallPresenter presenter;
 		private boolean async;
 		private int maxCalls = -1;
@@ -384,6 +417,37 @@ public class ToolData {
 		 */
 		public Builder putParam(String key, String value, String label) {
 			this.params.put(key, value);
+			this.optionalParams.remove(key);
+			if (label != null && !label.trim().isEmpty()) {
+				this.paramLabels.put(key, label.trim());
+			} else {
+				this.paramLabels.remove(key);
+			}
+			return this;
+		}
+
+		/**
+		 * 添加一个可选参数（可以省略）。
+		 *
+		 * @param key   参数名（给模型看的 JSON 字段名）
+		 * @param value 参数说明（写进给模型的工具描述）
+		 * @return 当前 Builder
+		 */
+		public Builder putOptionalParam(String key, String value) {
+			return putOptionalParam(key, value, null);
+		}
+
+		/**
+		 * 添加一个可选参数，并声明它在审核等界面中的人可读名称。
+		 *
+		 * @param key   参数名（给模型看的 JSON 字段名）
+		 * @param value 参数说明（写进给模型的工具描述）
+		 * @param label 人可读名称；为 null 或空时回退为参数名
+		 * @return 当前 Builder
+		 */
+		public Builder putOptionalParam(String key, String value, String label) {
+			this.params.put(key, value);
+			this.optionalParams.add(key);
 			if (label != null && !label.trim().isEmpty()) {
 				this.paramLabels.put(key, label.trim());
 			} else {
@@ -402,8 +466,9 @@ public class ToolData {
 			// 防御性复制 + 不可变视图，保证外部无法修改 ToolData 内部的 Map
 			Map<String, String> immutableParams = new HashMap<>(params);
 			Map<String, String> immutableLabels = new HashMap<>(paramLabels);
+			Set<String> immutableOptional = new HashSet<>(optionalParams);
 			return new ToolData(tool, name, description, immutableParams, presenter, async, maxCalls, sessionOnly,
-					orderSensitive, immutableLabels);
+					orderSensitive, immutableLabels, immutableOptional);
 		}
 
 		public Builder(String name, String description) {

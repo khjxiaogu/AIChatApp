@@ -51,8 +51,10 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallHistory;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.ServerToolUseContent;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 public class DeepseekModelProvider implements ModelProvider{
@@ -78,7 +80,7 @@ public class DeepseekModelProvider implements ModelProvider{
 	}
 	Gson gs=new Gson();
 	public RespScheme sendAIRequest(AIRequest request) throws IOException {
-		JsonObject jo=createRequest(request);
+		JsonObject jo=createRequest(request, useServerSearch(request));
 		jo.addProperty("stream", true);
 		String tosend = gs.toJson(jo);
 		JsonObject retjs;
@@ -143,13 +145,36 @@ public class DeepseekModelProvider implements ModelProvider{
 			return "";
 		return text.length()<=max?text:text.substring(0,max)+"……（已截断）";
 	}
+	/**
+	 * 构造一个客户端函数工具（允许声明 {@code strict}）。
+	 *
+	 * @param schema 工具定义
+	 * @return 工具 JSON
+	 * @see #createSchema(ToolData, boolean)
+	 */
 	public static JsonObject createSchema(ToolData schema) {
+		return createSchema(schema, true);
+	}
+
+	/**
+	 * 构造一个客户端函数工具。
+	 *
+	 * @param schema      工具定义
+	 * @param allowStrict 是否允许声明 {@code strict}。与官方联网工具
+	 *                    （{@code deepseek_web_search}）一起声明时，官方不接受该字段，会返回 400
+	 *                    「{@code strict} cannot be used together with {@code deepseek_web_search}」；
+	 *                    此时整个字段都不下发（而不是置为 false）
+	 * @return 工具 JSON
+	 */
+	public static JsonObject createSchema(ToolData schema, boolean allowStrict) {
 		JsonObject outer=new JsonObject();
 		outer.addProperty("type", "function");
 		JsonObject main=new JsonObject();
 		main.addProperty("name", schema.name);
 		main.addProperty("description", schema.description);
-		main.addProperty("strict", true);
+		// strict 是 Beta 能力，和联网工具互斥：开启服务端联网后一律不带这个字段
+		if(allowStrict)
+			main.addProperty("strict", schema.optionalParams.isEmpty());
 		JsonObject parameters=new JsonObject();
 		parameters.addProperty("type", "object");
 		parameters.addProperty("additionalProperties", false);
@@ -160,7 +185,8 @@ public class DeepseekModelProvider implements ModelProvider{
 			prop.addProperty("type","string");
 			prop.addProperty("description", ent.getValue());
 			properties.add(ent.getKey(), prop);
-			required.add(ent.getKey());
+			if(!schema.isOptionalParam(ent.getKey()))
+				required.add(ent.getKey());
 		}
 		parameters.add("properties", properties);
 		parameters.add("required", required);
@@ -168,22 +194,76 @@ public class DeepseekModelProvider implements ModelProvider{
 		outer.add("function", main);
 		return outer;
 	}
-	private static JsonObject createRequest(AIRequest request) {
+	/**
+	 * 判断本次请求是否改用 DeepSeek 官方的服务端联网工具。
+	 * <p>
+	 * 前提是会话注册了项目的 DeepSeek 搜索工具（{@code web_search}，它只在配置了
+	 * {@code deepseektoken} 时才会注册）。以下情况继续用客户端的 {@code web_search} 工具：
+	 * </p>
+	 * <ul>
+	 *   <li>选用 {@code deepseek-v4-pro}：按要求只对 {@code deepseek-flash} 启用服务端联网；</li>
+	 *   <li>需要 JSON 输出（{@code response_format=json_object} 与联网工具同时声明会返回 400）；</li>
+	 *   <li>带 {@code prefix} 的续写请求（用过联网工具的回复不能续写）。</li>
+	 * </ul>
+	 * <p>
+	 * 官方在声明联网工具时会自行决定生成参数（{@code temperature}、{@code top_p}、{@code stop} 等
+	 * 在请求里被忽略），联网工具本身不计次收费，也不占用工具调用轮次与次数配额。
+	 * </p>
+	 *
+	 * @param request 请求
+	 * @return 是否声明 {@code deepseek_web_search} 并剔除客户端搜索工具
+	 */
+	private static boolean useServerSearch(AIRequest request) {
+		if(request.multimodal!=MultimodalType.TEXT_ONLY)
+			return false;
+		if(!request.getTools().containsKey(DeepseekServerTools.CLIENT_SEARCH_TOOL))
+			return false;
+		// 专业模型不使用该优化：官方文档要求联网工具配合 deepseek-flash，
+		// pro 继续走客户端 web_search（含 strict 在内的一切行为保持原样）
+		if(request.hasModelProperty("pro"))
+			return false;
+		if(request.format==ResponseFormat.JSON)
+			return false;
+		if(request.prefix!=null)
+			return false;
+		return true;
+	}
+
+	/**
+	 * 构造对话请求体。
+	 *
+	 * @param request      请求
+	 * @param serverSearch 是否改用官方服务端联网工具（见 {@link #useServerSearch(AIRequest)}）
+	 */
+	private static JsonObject createRequest(AIRequest request, boolean serverSearch) {
 
 			
 		JsonObject jo=new JsonObject();
 		
-		jo.add("messages", HistoryRequestBuilder.createRequest(request));
+		// 服务端联网工具的调用记录（server_tool_calls）按官方要求原样回传，read_link 的网页正文
+		// （signature）靠它拼回上下文；其它提供商走默认分支，把这类记录降级成占位文本
+		jo.add("messages", HistoryRequestBuilder.createRequest(request, true));
 		if(request.hasModelProperty("pro"))
 			jo.addProperty("model", "deepseek-v4-pro");
 		else
 			jo.addProperty("model", "deepseek-flash");
-		if(!request.getTools().isEmpty()) {
+		if(!request.getTools().isEmpty()||serverSearch) {
 			JsonArray ja=new JsonArray();
 			for(ToolData val:request.getTools().values()) {
-				ja.add(createSchema(val));
+				// 改用服务端联网后不再下发客户端的 web_search，避免两个“搜索”能力互相抢调用；
+				// 同时去掉 strict：官方不允许 strict 与 deepseek_web_search 同时出现（400）
+				if(serverSearch&&DeepseekServerTools.CLIENT_SEARCH_TOOL.equals(val.name))
+					continue;
+				ja.add(createSchema(val, !serverSearch));
 			}
-			jo.add("tools", ja);
+			if(serverSearch) {
+				// 只声明类型：搜索与网页抓取都在服务端完成，客户端不执行任何工具
+				JsonObject webSearch=new JsonObject();
+				webSearch.addProperty("type", DeepseekServerTools.WEB_SEARCH);
+				ja.add(webSearch);
+			}
+			if(ja.size()>0)
+				jo.add("tools", ja);
 		}
 		
 		jo.add("stream_options", JsonBuilder.object().add("include_usage", true).end());
@@ -209,12 +289,14 @@ public class DeepseekModelProvider implements ModelProvider{
 		
 	}
 	public AIOutput sendAIStreamedRequest(ExecutorService exec,AIRequest request) throws IOException {
-		JsonObject jo=createRequest(request);
+		boolean serverSearch=useServerSearch(request);
+		JsonObject jo=createRequest(request, serverSearch);
 		JsonArray ja=jo.get("messages").getAsJsonArray();
 		jo.addProperty("stream", true);
 		StreamedAIOutput readable=new StreamedAIOutput();
 		DeepseekV4Usage usage=createUsage(request);
-		boolean usesTool=!request.getTools().isEmpty();
+		// 服务端联网工具也算“有工具”：推理流要一直开着，等最后一个 chunk 的 server_tool_calls
+		boolean usesTool=!request.getTools().isEmpty()||serverSearch;
 		// 工具调用的收集、次数限制、权限、许可与执行统一交给 ToolCallManager
 		ToolCallContext toolContext=ToolCallContext.create(request.getToolCallManager(), readable, ToolCallHistory.of(ja));
 		exec.submit(()->{
@@ -236,6 +318,9 @@ public class DeepseekModelProvider implements ModelProvider{
 					//System.out.println(ja);
 					DeepseekV4Usage crnusage=createUsage(request);
 					MutableMessageContents reasoner=new MutableMessageContents();
+					// 本轮服务端联网工具的调用记录：完整信息只在带 finish_reason 的最后一个 chunk 下发一次，
+					// 这里先用 server_tool_event 兜底累积，断流时也能留下已经发生的搜索
+					AtomicReference<JsonArray> serverToolCalls=new AtomicReference<>(new JsonArray());
 					// readSSE 现在会把监听器异常转成 IOException 抛出；流内错误仍统一暂存在这里，
 					// 由监听器返回 false 提前结束读取，读完流后再抛出（保持原有的错误处理优先级）
 					AtomicReference<DeepseekApiError> streamError=new AtomicReference<>();
@@ -275,6 +360,15 @@ public class DeepseekModelProvider implements ModelProvider{
 											reasoner.append(choice.delta.content);
 										}
 										toolContext.collect(choice.delta.tool_calls);
+										// 服务端联网工具的进度事件：兜底累积每次 call_started；
+										// 完整记录（含 signature/results）以最后一个 chunk 为准
+										if(choice.server_tool_event!=null) {
+											recordServerToolEvent(serverToolCalls.get(), choice.server_tool_event);
+										}
+										if(choice.delta.server_tool_calls!=null
+												&&choice.delta.server_tool_calls.size()>0) {
+											serverToolCalls.set(choice.delta.server_tool_calls);
+										}
 										if("tool_calls".equals(choice.finish_reason)) {
 											ToolCallContext.ProcessResult result=toolContext.process(reasoner.toText());
 											shouldContinueRequest.set(result!=null&&result.shouldContinue());
@@ -291,6 +385,13 @@ public class DeepseekModelProvider implements ModelProvider{
 						// 中断时流可能没有走到 finish_reason=tool_calls：把已经收到的工具调用补写进历史，
 						// 结果统一为“用户已停止生成。”，保证 tool_calls 与 tool 消息成对
 						toolContext.flushInterrupted(reasoner.toText());
+					}
+					// 把本轮的服务端联网调用写进推理流：前端据此展示“搜过什么”，并随历史保存，
+					// 下一轮请求原样回传 server_tool_calls（其它模型则降级成占位文本）。
+					// 这一步不产生任何用量：官方已取消服务端搜索的按次计费，只按模型 token 计费
+					JsonArray recordedServerToolCalls=serverToolCalls.get();
+					if(recordedServerToolCalls.size()>0&&!readable.getReasoner().isEnded()) {
+						readable.putReasoner(new ServerToolUseContent(recordedServerToolCalls));
 					}
 					DeepseekApiError streamFailure=streamError.get();
 					if(streamFailure!=null) {
@@ -317,6 +418,43 @@ public class DeepseekModelProvider implements ModelProvider{
 	
 		return readable;
 	}
+	/**
+	 * 用 {@code server_tool_event} 兜底累积服务端联网调用。
+	 * <p>
+	 * 官方只在带 {@code finish_reason} 的最后一个 chunk 里下发完整的 {@code server_tool_calls}；
+	 * 这里先记录每次 {@code call_started} 的调用参数。正常情况会被完整记录整体覆盖，
+	 * 断流时则保证历史里仍留下“这一轮搜过什么”，展示与下一轮回传都不会完全丢失。
+	 * </p>
+	 *
+	 * @param steps 按步骤累积的调用数组（{@code [{index, calls:[...]}]}）
+	 * @param event 一条进度事件，可为 null
+	 */
+	private static void recordServerToolEvent(JsonArray steps, Choice.ServerToolEvent event) {
+		if(event==null||!"call_started".equals(event.type)||event.call==null)
+			return;
+		int stepIndex=event.step==null?0:event.step.intValue();
+		JsonObject step=null;
+		for(JsonElement element:steps) {
+			if(element.isJsonObject()
+					&&JsonConfig.getInt(element.getAsJsonObject(), "index", -1)==stepIndex) {
+				step=element.getAsJsonObject();
+				break;
+			}
+		}
+		if(step==null) {
+			step=new JsonObject();
+			step.addProperty("index", stepIndex);
+			step.add("calls", new JsonArray());
+			steps.add(step);
+		}
+		JsonArray calls=step.getAsJsonArray("calls");
+		if(calls==null) {
+			calls=new JsonArray();
+			step.add("calls", calls);
+		}
+		calls.add(event.call.deepCopy());
+	}
+
 	/**
 	 * 识别流式响应中直接下发的错误对象。
 	 * <p>

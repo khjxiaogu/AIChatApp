@@ -53,6 +53,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *       ├─ loras.json           LoRA 配置
  *       ├─ reference-images.json 参考图
  *       └─ agent/               绘画 agent 提示词（role.txt / charaset.txt / rules.txt / character-list.txt）
+ *    └─ h3/
+ *       └─ agent/               视频 agent 提示词（role.txt / charaset.txt / rules.txt，可缺省）
  * </pre>
  * <p>
  * 为兼容旧部署，新位置不存在时会退回 {@code save} 根目录下的旧位置（{@code save/tos.json} 等），
@@ -99,6 +101,12 @@ public final class ConfigPaths {
 	public static final String SDXL_AGENT = "agent";
 	/** 角色设定索引（作品公共设定 + 角色设定 + 别名，人类可读） */
 	public static final String SDXL_CHARACTER_LIST = "character-list.txt";
+
+	// ---- 视频（config/h3） ----
+	/** 视频相关配置子目录名（{@code config} 下） */
+	public static final String H3_FOLDER = "h3";
+	/** 视频 agent 提示词目录（{@code config/h3/agent}） */
+	public static final String H3_AGENT = "agent";
 
 	// ---- 旧位置，仅用于平滑升级 ----
 	private static final String LEGACY_OBJECT_STORAGE = "tos.json";
@@ -336,6 +344,20 @@ public final class ConfigPaths {
 		candidates.add(new File(sdxlFolder(dataFolder), SDXL_AGENT));
 		candidates.add(new File(dataFolder, LEGACY_SDXL_AGENT));
 		return candidates;
+	}
+
+	/**
+	 * H3 视频 agent 提示词目录。
+	 * <p>
+	 * 目录内可选文件与绘画 agent 相同：{@code role.txt}（角色设定）、{@code charaset.txt}
+	 * （人物设定）、{@code rules.txt}（生成规则）。文件都不存在时，工具使用内置的默认提示词。
+	 * </p>
+	 *
+	 * @param dataFolder 数据目录
+	 * @return {@code config/h3/agent}
+	 */
+	public static File h3Agent(File dataFolder) {
+		return new File(new File(folder(dataFolder), H3_FOLDER), H3_AGENT);
 	}
 
 	/**

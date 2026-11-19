@@ -328,14 +328,46 @@ public class SDXLMcp implements ToolProvider {
 				throw new RuntimeException(e);
 			}
 		});
-		return create(tos,lora,isNsfw,(s,output)->{
+		return create(tos,lora,isNsfw,base64UrlGetter(tos),func);
+	}
+
+	/**
+	 * 使用共享本地模型池的 SDXL 工具集（参考图读取方式与 {@link #createLocal} 相同）。
+	 * <p>
+	 * 与 {@link #createLocal} 的区别是：请求不直接发往 {@code -DsdwebuiUrl}，而是通过
+	 * {@link LocalModel} 交给 {@code model_type=sdxl} 的本地模型客户端（例如
+	 * {@code LocalModelConnectionService} 里的 {@link com.khjxiaogu.aiwuxia.vision.SDXLLocalModelHandler}）。
+	 * 因此聊天进程不需要能访问 SD WebUI，服务端也不需要跑在同一个进程里。
+	 * </p>
+	 *
+	 * @param tos    对象存储
+	 * @param lora   Lora 配置
+	 * @param isNsfw 是否允许不宜内容
+	 * @return 工具集
+	 */
+	public static SDXLMcp createRemoteLocalModel(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora,
+			boolean isNsfw) {
+		return createRemoteLocalModel(null, tos, lora, base64UrlGetter(tos), isNsfw);
+	}
+
+	/**
+	 * 把对象存储里的图片 id 读成 Base64 的参考图读取器。
+	 * <p>
+	 * SDXL 的图生图/分区请求要求把参考图随 JSON 一起发送，本地与远程模型都使用同样的读取方式。
+	 * </p>
+	 *
+	 * @param tos 对象存储
+	 * @return 图片 id → Base64 的函数
+	 */
+	public static BiFunction<String, AIOutput, String> base64UrlGetter(ObjectStorageProvider tos) {
+		return (id, output) -> {
 			try {
-				return Base64.getEncoder().encodeToString(tos.download(s, output == null ? null : output::addUsage));
+				return Base64.getEncoder().encodeToString(tos.download(id, output == null ? null : output::addUsage));
 			} catch (IOException e) {
 				e.printStackTrace();
 				throw new RuntimeException(e);
 			}
-		},func);
+		};
 	}
 	/**
 	 * 从字符串列表中搜索同时包含所有搜索关键词的字符串。

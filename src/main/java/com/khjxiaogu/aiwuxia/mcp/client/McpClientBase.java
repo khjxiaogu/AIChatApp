@@ -73,7 +73,7 @@ public abstract class McpClientBase implements McpClient {
         // 本客户端不提供 sampling/roots 等高级能力，声明空能力集合
         params.add("capabilities", new JsonObject());
         JsonObject clientInfo = new JsonObject();
-        clientInfo.addProperty("name", "AIWuxia-MCP-Client");
+        clientInfo.addProperty("name", "MCP-Client");
         clientInfo.addProperty("version", "0.0.1");
         params.add("clientInfo", clientInfo);
         JsonObject result = rpc(nextId(), McpProtocol.METHOD_INITIALIZE, params);

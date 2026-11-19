@@ -19,8 +19,18 @@
 - **对话导出**：可将整个对话历史导出为 UTF-8 文本文件（带 BOM 头）。
 - **模型路由**：通过 `ModelProvider` 接口支持多模型提供商（Deepseek、火山引擎等），可按模型提示或
   **消费预算（budget）** 自动选择最接近的提供商。
-- **网页搜索**：通过 MCP 工具 `web_search` 接入 DeepSeek 官方 Search API（需 `deepseektoken`），
-  按成功请求次数准确计费，失败/无结果不计费。
+- **网页搜索**：DeepSeek `deepseek-flash` 直接声明官方服务端联网工具 `deepseek_web_search`（需 `deepseektoken`），
+  搜索在服务端完成、不按次计费；`deepseek-v4-pro` 与其它模型继续用 MCP 工具 `web_search` 接入 DeepSeek Search API，按成功请求次数计费。
+- **Codex 编程代理**：`codex` 技能把本机 Codex CLI 接成 8 个 MCP 工具，`type=codex` 的 agent 应用
+  负责把群里需求交给 Codex 改代码并汇总结果；按群隔离线程，审批走私聊管理员。Codex agent 默认
+  **显式发送**（正文不自动发，必须用 `send_group` 工具；私聊相关工具属多 agent 架构）。
+  见 [docs/codex.md](docs/codex.md)。
+- **知识库 MCP**：`kb_search` 在项目根目录文件 + `design`/`docs`/`diary`/`discussion` 子目录里
+  搜文件名和内容，`kb_read` 读取范围内的 `.md`；codex / 多 agent 会话按各自项目 `cwd` 自动接入。
+  见 [docs/knowledge.md](docs/knowledge.md)。
+- **多 agent 架构**：一个公屏总览 agent（按公开群）+ 每个私聊用户一个私人 agent；公屏内容广播到所有
+  agent 历史，私聊各自隔离；缓冲区无上限并落盘 `save/multi/buffers/`，每人可配置独立提示词，私聊
+  agent 默认审核人为对应用户、公屏为管理员。见 [docs/multi-agent.md](docs/multi-agent.md)。
 - **前后端分离**：前端通过 WebSocket 进行实时通信，HTTP 接口用于获取应用列表、对话列表等。
 
 ---
@@ -157,7 +167,7 @@
 
 | 属性名               | 说明                             |
 |-------------------|--------------------------------|
-| `deepseektoken`   | Deepseek API 的 Token，若存在则启用 Deepseek 模型提供商，并启用网页搜索工具 `web_search` |
+| `deepseektoken`   | Deepseek API 的 Token，若存在则启用 Deepseek 模型提供商，并启用联网搜索（`deepseek-flash` 走官方服务端工具 `deepseek_web_search`，`deepseek-v4-pro` 与其它模型走 MCP 工具 `web_search`） |
 | `volcmodeltoken`  | 火山引擎模型 Token，若存在则启用火山模型提供商           |
 | `localVoiceToken` | 本地语音模型的 Bearer Token，用于验证 WebSocket 连接 |
 | `site_host`       | 站点对外域名的临时覆盖（一般不用传，改 `save/site.json` 即可） |
@@ -268,7 +278,7 @@ public static void main(String[] args) {
 
 ### 让 Deepseek Harness 接管 QQ（DeepseekHarnessConnector）
 
-`DeepseekHarnessConnector` 与 `NapCatAIConnector` 方向相反：不再由 AIWuxia 的 AI 应用作答，
+`DeepseekHarnessConnector` 与 `NapCatAIConnector` 方向相反：不再由本程序的 AI 应用作答，
 而是把 QQ 消息转给 **Deepseek Harness** 运行时，再把它的输出转发回 QQ。
 
 工作方式：
@@ -356,28 +366,53 @@ java -Dnapcat_url=127.0.0.1:3001 -Dnapcat_token=your_token \
 插件副本 `save/dsh-approval-bridge.mjs`、`--patch` 覆盖层 `save/dsh-approval-patch.yml`（每次启动覆盖）、
 心跳文件 `save/dsh-heartbeat`（看门狗用）。
 
+### 让 Codex 在群里改代码（codex 技能 + 编排 agent）
+
+`codex` 技能把本机 Codex CLI（`codex app-server`，实验性 JSON-RPC）接成 8 个 MCP 工具；
+`meta.json` 里 `"type": "codex"` 的 agent 应用负责「理解需求 → 调 Codex → 汇总结果」。
+**任务在后台执行，结束后由系统触发 AI 汇报，模型不再反复轮询**。
+与 `DeepseekHarnessConnector` 的区别：**不替换 AI 应用**，而是把 Codex 当工具挂进现有 QQ agent，
+按群隔离线程；审批用的是 Codex 原生的审批请求，不需要 `--patch` 插件与回环 TCP。
+
+最少两步：
+
+1. `save/config/agents.json` 里给目标群的 `tools` 加 `"codex"`，并配置接收审批的 `adminId`；
+2. `save/apps/<名字>/meta.json` 写 `{"type":"codex","name":"..."}`（可选 `rules.txt`）。
+
+示例（bot `123456` / 群 `789012` / 管理员 `345678` / 项目 FrostedHeart）已写进
+`save/config/agents.json` 与 `save/apps/frostedheartirc/`。该群默认还会把线程挂到 Codex 桌面端已有的
+`Frostedheart` 项目（`codex.project`，按项目名从 Codex 状态库解析出 id），桌面端项目视图里能看到机器人会话。
+工具清单、全部配置项、审批流程与安全建议见 [docs/codex.md](docs/codex.md)。
+
 ---
 
 ## 配置说明
 
-### 网页搜索（DeepSeek Search API）
+### 网页搜索（DeepSeek 官方联网）
 
-`DeepseekSearchMcp` 按官方
-[网页搜索与抓取](https://api-docs.deepseek.com/zh-cn/guides/search) 文档接入
-`POST https://api.deepseek.com/v1/tools/search`：对话模型通过工具 `web_search` 搜索实时网页，
-拿到标题、链接、发布时间、权威度与长摘要。鉴权复用 `deepseektoken`，**未配置时不注册该工具**。
+联网能力有两条路径，按**当前执行请求的模型**自动选择，业务代码不用关心：
 
-| 事项 | 说明 |
-|---|---|
-| 挂载位置 | 群聊 agent 的 `tools` 含 `fetch` 时注册；绘画会话与绘画 subagent 也注册 |
-| 请求参数 | `query`（必填，≤128 字符，支持 `site:`/`-site:`/`-关键词`/`"精确短语"`/`lang:`/`after:`/`before:` 语法）、`count`（1～20，默认 10） |
-| 返回内容 | 每条结果的标题、链接、`发布时间 · 站点 · 相关度 · 权威度` 与摘要；不返回正文（需要正文用 `web_view` 打开链接） |
-| 计费口径 | 官方按**成功请求次数**计费：每 1000 次 5 元（每次 0.005 元），与 `count`、token 无关；仅 HTTP 200 且 `results` 非空才计费 |
-| 系统记账 | 按 1 元 = 500000 等效 token 折算，每次成功搜索记 2500 等效 token（0.005 元），明细类型为「DeepSeek 网页搜索」；失败、超时、空结果一律不记账 |
-| 重试 | 仅对 408 / 429 / 5xx 自动重试（最多 3 次尝试），其它 4xx 直接返回错误说明给模型 |
+| 场景 | 做法 | 计费 |
+|---|---|---|
+| DeepSeek `deepseek-flash` | 在 `tools` 里声明官方的服务端工具 `{"type":"deepseek_web_search"}`：搜索、打开网页、页内查找全部在服务端完成，客户端不执行任何工具，也不再下发 MCP 工具 `web_search` | **不按次计费**：官方已取消服务端搜索/抓取的按次收费，搜索结果只按模型 token 计费 |
+| DeepSeek `deepseek-v4-pro`、其它模型提供商（火山方舟、Grok、SiliconFlow、MiMo），或 DeepSeek 需要 JSON 输出 / `prefix` 续写 | 使用 MCP 工具 `web_search`（`DeepseekSearchMcp`）：本进程调用 `POST https://api.deepseek.com/v1/tools/search` 取回结果后再发一轮请求（`deepseek-v4-pro` 不使用服务端联网优化） | 按**成功请求次数**计费：每 1000 次 5 元；仅 HTTP 200 且 `results` 非空才记账（每次 2500 等效 token） |
+
+两条路径都只在会话注册了 `web_search` 工具时开启：该工具在配置了 `deepseektoken` 且工具设置里开启
+`fetch` 时才注册，**未配置时不联网**。服务端路径的要点：
+
+- 是否联网、搜几次都由模型判断；开启思考时是**深度思考搜索**（多步搜索、打开网页、页内查找，最多约 20 次调用）。
+- 调用记录随回复以 `server_tool_use` 返回并存进历史（`ServerToolUseContent`）：下一轮请求把
+  `server_tool_calls` **原样回传**；换成其它模型时降级成带截断的占位文本（如「[联网搜索] 冰岛人口」）。
+- 不占用工具调用轮次/次数配额，也不产生「DeepSeek 网页搜索」用量。
+- 官方限制：声明联网工具时 `response_format` 只能是 `text`、客户端工具不能带 `strict`（联网时自动省去该字段），
+  且用过联网工具的回复不能续写（`prefix`）；JSON 输出与 `prefix` 这两种请求自动退回 MCP 工具 `web_search`。
+
+MCP 工具参数（`deepseek-v4-pro` 与其它模型路径）：`query`（必填，≤128 字符，支持 `site:`/`-site:`/`-关键词`/`"精确短语"`/`lang:`/`after:`/`before:` 语法）、`count`（1～20，默认 10）；
+返回每条结果的标题、链接、`发布时间 · 站点 · 相关度 · 权威度` 与摘要，不返回正文（需要正文用 `web_view` 打开链接）；
+仅对 408 / 429 / 5xx 自动重试（最多 3 次尝试）。
 
 ```bash
-java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话与 web_search
+java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话与联网（flash 走服务端工具，pro 走 MCP 工具）
 ```
 
 ### 即梦 Seedance 2.5 视频与工具审核
@@ -396,13 +431,14 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
   "videoDuration": 10,
   "videoResolution": "720p",
   "videoRatio": "9:16",
-  "videoGenerateAudio": true
+  "videoGenerateAudio": false
 }
 ```
 
 可选的 `videoDuration`（4-15 秒，默认 10 秒，超过 15 秒按 15 秒处理）、
 `videoResolution`（480p/720p/1080p）、`videoRatio`（默认 9:16）、
 `videoBaseUrl`、`videoPollIntervalMs`、`videoMaxPollAttempts` 见 `save/config/README.md`。
+**所有视频生成 MCP 均禁用音频**：`videoGenerateAudio` 已强制为 `false`，配置成 `true` 也不会生效。
 `videoDuration` 是默认时长；`jimeng_video` 工具支持 `duration` 参数（4-15 秒），会覆盖该默认值，
 并同时写进脚本要求和提交给视频接口。未配置 `apiKey` 时视频工具返回明确错误，不影响图片工具。
 
@@ -410,6 +446,13 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 **70 元/百万视频 token**。本站配额统一按 2 元/百万等效 token 折算，因此计入配额的扣减 token
 为视频 token 的 **35 倍**；输出尺寸默认从 `videoResolution` + `videoRatio` 推导，帧率默认 24，
 可用 `videoWidth` / `videoHeight` / `videoFps` 校准。
+
+**绘画页（`ui: "painter"`）也会自动获得视频能力**，不需要在 `tools` 里配置：本地 H3 视频导演
+`h3_video_agent` 始终注册（本地模型离线时调用会返回可读错误），即梦 `jimeng_video` 在配置了
+`apiKey` 时注册。视频生成是异步长任务，生成期间前端显示“视频生成中”，完成后把视频续写到本轮
+助手回复里；本地 H3 的视频通过 `GET /aichat/painter/video?video_id=` 播放（支持 Range），即梦返回远端
+地址直接播放。绘画页也支持上传视频作为用户消息内容，详见
+[docs/apps/configuration.md](docs/apps/configuration.md) 的“绘画页视频”一节。
 
 工具调用审核写在 `save/config/agents.json` 的机器人配置里：
 
@@ -561,6 +604,10 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 | `/kh$localModelDeployData` | POST | `reqid`, `type`, 二进制数据        | 本地模型回调，接收音频数据             |
 | `/painter/localModelDeploy` | WS | `uid`, `model_type=sdxl`           | 用户自带绘画模型的接入端点（无需 Token）     |
 | `/painter/localModelResult` | POST | `reqid`, `format`，原始响应体       | 用户接入页回传生图结果（不经过 WebSocket 帧）  |
+| `/painter/image`       | GET  | `image_id`                       | 按对象存储 id 取绘画图片（按内容返回 MIME） |
+| `/painter/video`       | GET  | `video_id`                       | 按对象存储 id 取绘画视频；支持单段 `Range`（206/416） |
+| `/painter/uploadImage` | POST | `conversation_id`, `image`（multipart） | 上传参考图到当前绘画会话（只接受图片）  |
+| `/painter/uploadVideo` | POST | `conversation_id`, `video`（multipart） | 上传视频作为用户消息内容（只接受视频，≤200MB） |
 | `/resource/*`          | GET  | -                                | 静态资源文件（图片、CSS 等）            |
 | `/voice/*`             | GET  | -                                | 语音资源文件                       |
 | `/index`, `/aichat`, `/painter`, `/archive` 等 | GET  | -                    | 返回对应的 HTML 页面                |
@@ -579,20 +626,51 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 ### WebSocket 协议
 
 前端通过 `/chatsocket` 建立连接后，与 `WebSocketAISession` 进行双向通信。
+所有帧都是 JSON 对象，并统一用 **`type`** 字段区分（不再使用 `operation`）。
 
-#### 前端 → 后端（客户端消息）
+#### 前端 → 后端（上行帧）
 
-- **发送用户消息**：纯文本字符串，表示用户输入。
-- **特殊指令**：某些应用支持“重新生成”、“撤回”等指令。
+| `type` | 字段 | 说明 |
+|---|---|---|
+| `message` | `content`, `msgId` | 用户输入文本；`msgId` 用于 ACK/重试幂等 |
+| `generate` | — | 触发本轮生成（绘画页：先把输入落成待生成消息，再单独触发生成） |
+| `stop` | — | 中断本轮生成 |
+| `revert` / `regen` | `requestId` | 撤回最后一轮 / 重新生成最后一条回复 |
+| `requestBackLog` | `before_id` | 向上翻页加载更早历史（`0` 为最新一页） |
+| `model` | `model` | 切换模型 |
+| `prompt` | `input`, `content` | 回答服务端的补充输入请求 |
+| `toolApproval` | `id`, `approved`, `reason?` | 工具调用许可答复 |
+| `ping` | `id` | 心跳，服务端回 `pong` |
 
-#### 后端 → 前端（服务端推送）
+#### 后端 → 前端（下行帧）
 
-- **新消息推送**：`postMessage(id, role, message)` 方法会触发推送。
-- **追加内容**：`appendMessage(id, content)` 用于流式追加当前消息内容。
-- **删除消息**：`delMessage(id)` 通知前端移除某条消息。
-- **音频完成**：`postAudioComplete(id, audioId)` 通知语音生成完成。
+| `type` | 字段 | 说明 |
+|---|---|---|
+| `status` | `generating`, `tokens`, `price`, `conversation_id`, `isVoice*`, `models`, `modelTree`, `model`, `tasks[]` | 状态快照；重连后据此纠正生成状态并恢复异步任务提示 |
+| `message` | `id`, `role`, `title`, `content[]` | 整条消息（首次下发/历史重放） |
+| `content` | `id`, `content[]` | 流式追加内容 |
+| `remove` | `id` | 删除一条消息 |
+| `batch_messages` | `messages[]`, `prepend`, `hasMore`, `oldestId`, `newestId` | 历史分页；每条另带 `token_cost` |
+| `thinking` / `tool_call` | `content` / `tool_name`, `tool`, `content[]` | 思维链与工具调用展示 |
+| `task` | `state`(`created`/`done`/`failed`), `id`, `tool`, `name`, `time`, `message?` | 异步长任务（视频生成等）状态变化 |
+| `done` | `price`, `tokens` | 本轮结束；`tokens` 是本轮新增配额用量 |
+| `notice` / `sendResult` / `sendbox` | — | 轻提示 / 发送 ACK / 有条件回填输入框 |
+| `audio` / `scene` / `voice` / `model` / `pong` | — | 语音完成、场景切换、语音开关、模型回执、心跳应答 |
 
-消息格式为 JSON，具体字段由前端约定（可在 `chat.js` 中查看）。
+`content[]` 是结构化内容数组：
+
+```json
+[{"type":"text","text":"..."},
+ {"type":"image","image_url":"<对象存储 id>","description":"..."},
+ {"type":"video","video_url":"<对象存储 id 或远端 http 地址>","description":"..."}]
+```
+
+图片与本地视频只保存对象存储 id，由页面换成本站取用地址
+（`/aichat/painter/image?image_id=`、`/aichat/painter/video?video_id=`）；
+即梦等云端视频的 `video_url` 本身就是可播放的远端地址，前端直接使用。
+
+公共前端协议层在 `save/ai-protocol.js`（Vue mixin），页面只需实现
+`aiSocketUrl()` 与需要的帧钩子；视频/异步任务的展示在 `painter.html` 中实现。
 
 ---
 
@@ -667,16 +745,124 @@ SceneSelector selector = builder.build();
 
 系统属性 `localVoiceToken` 用于验证 WebSocket 和 HTTP 回调的 Bearer Token。
 
-### 模型类型（model_type）
+### 模型类型（model_type）与能力集合
 
-连接时通过 URL 参数 `model_type` 声明该连接支持的模型类型，多个类型用逗号分隔（如 `?model_type=audio,svs`），
-未指定时默认为 `audio`。`LocalModelHandshaker` 按类型维护连接池，请求时由系统挑选支持该类型的连接。
+连接时通过 URL 参数 `model_type` 声明该连接支持的模型类型，多个类型用逗号分隔（如
+`?model_type=qwen,h3`），未指定时默认为 `audio`。`LocalModelHandshaker` 按类型维护连接池，请求时由
+系统挑选支持该类型的连接。
+
+同一条连接可以承载所有模型类型；连接建立后还可以发送能力集合变更报文动态增删类型：
+
+```json
+{"type":"capabilities","model_types":["qwen","h3"]}
+```
+
+服务器收到后更新该连接在各类型连接池里的登记，并回一条同样的报文作为确认；运行期不需要断开重连。
 
 | 类型      | 说明   | 请求参数                                                     |
 |---------|------|----------------------------------------------------------|
 | `audio` | 语音合成 | `chara`, `content`                                       |
 | `sdxl`  | 图像生成 | `path`, `data`                                           |
 | `svs`   | 歌声合成 | `url`, `name`, `pitch`, `separate`, `timbre`, `filter`, `strength` |
+| `qwen`  | Qwen-Image 2.1 生图 | `action`（`text2image` / `edit`）, `prompt`, `negative`, `width`, `height`, `steps`, `cfg`, `seed`, `fast`, `images` |
+| `h3`    | MiniMax H3 生视频（无声） | `action`（`video`）, `model`（`int8` / `nvfp4`）, `steps`, `sparse`, `audio`（固定 false）, `prompt`, `width`, `height`, `seconds` / `frames`, `seed`, `first_frame`, `last_frame` |
+
+### 独立模型服务进程（sdxl / svs / qwen / h3 / 可选 tts）
+
+`LocalModelConnectionService` 是模型侧的独立进程：在本机执行 SDXL、SVS、Qwen-Image、MiniMax H3，
+结果通过本地模型通道回传。它**同时**接入两条部署通道：
+
+| 通道 | 地址 | 说明 |
+| --- | --- | --- |
+| 配置的远端 | `-DlocalModelServer=host:port`；未配置时按 `save/site.json` / `--site-host` | 可以是对外的聊天服务器 |
+| 本机网关 | `ws://127.0.0.1:8997/aichat/kh$localModelDeploy` | `NapCatAIConnector` 启动时监听，端口可用 `-DlocalModelPort` 覆盖 |
+
+- 远端没配置时只连本机网关；两条通道都连不上时进程不退出，客户端会自动重连；
+- 本机网关只监听回环地址，不需要域名、反向代理或 TLS，聊天与模型同一台机器即可；
+- 模型相关系统属性：`localVoiceToken`、`sdwebuiUrl`（SDXL）、`svsHost`（localemp）、
+  `qwenImageUrl` 或环境变量 `QWEN_API`（ComfyUI，默认 `http://127.0.0.1:8188`）、
+  `h3VideoUrl` 或环境变量 `H3_VIDEO_API`（H3 视频，未配置时复用 `qwenImageUrl`；图与视频在同一个
+  ComfyUI 进程里）、`ttsUrl` 或环境变量 `TTS_URL`（本机 TTS，默认端口 `9880`，见下）；
+- 启动（与 `NapCatAIConnector` 相同的数据目录与站点参数）：
+  `java -DlocalVoiceToken=... -DsdwebuiUrl=... -DsvsHost=... -DqwenImageUrl=... -Dh3VideoUrl=... -DttsUrl=http://127.0.0.1:9880 -cp "target/AIWuxia-0.0.1-SNAPSHOT.jar;target/aiwx_lib/*" com.khjxiaogu.aiwuxia.voice.LocalModelConnectionService`
+
+**分层结构**：
+
+| 层 | 类 | 职责 |
+| --- | --- | --- |
+| 传输 | `voice.transport.LocalModelTransport` / `WebSocketLocalModelTransport` | 只管连接与文本收发；换协议只需实现 `LocalModelTransport` 并提供 `LocalModelTransportFactory` |
+| 协议 | `voice.protocol.LocalModelProtocol` | 定义请求/响应/进度/能力集合报文与字段，服务端与连接器共用 |
+| 会话 | `voice.LocalModelClient` | 一条连接 + 一张“模型类型 → 请求处理器”表：按 `type` 分发、进度心跳、重连、按类型的健康检查 |
+| 模型调用 | `vision.*LocalModelHandler` / `AudioLocalModelHandler` | 只负责把请求翻译成 SD WebUI / localemp / ComfyUI / TTS 调用 |
+
+- 每条部署通道只建**一条连接**，所有模型共用它，不再各持一条；
+- **结果文件走二进制分块**：连接器把图片/视频/音频原始字节按
+  `[LMF1][reqidLen][reqid][formatLen][format][current][total][content]` 的二进制帧发送，
+  每块内容体最大 **5 MiB**，超过自动分包；服务端收齐 `1..total` 全部块后才完成任务，
+  `-DlocalModelFileTimeoutMs`（默认 60 秒）内没有新分块视为失败并丢弃已收到的块。
+  图片/视频/音频不再在 JSON 里套 Base64，`format` 直接是 `png` / `mp4` / `mp3` 等；
+- 进度协商：连接器处理任务时定期上报
+  `{"type":"progress","reqid":"...","status":"queued|running","progress":0.35,"message":"..."}`。
+  状态语义固定：`queued` = **正在等待资源锁**（排队），`running` = **请求已下发给对应的本地软件**
+  （SD WebUI / localemp / ComfyUI / TTS，执行中），`progress` 为可选的执行进度；
+  服务端收到后把该任务（含 `registerTask` 注册的外部任务）的超时延长到“当前时间 + 3 分钟”
+  （`-DlocalModelProgressTimeoutMs` 可调）；心跳间隔默认 20 秒（`-DlocalModelProgressIntervalMs`）；
+- 健康检查按模型类型分别进行：某类本地服务连续失败只把该类型从能力集合移除（发送能力集合报文），
+  连接与其它模型不受影响，恢复后自动重新加入；
+- **断线结果缓冲**：结果、进度与错误只回给请求来自的那个接收地址（连接器与服务器都会校验来源，
+  不按 reqid 跨连接投递）。生成完成时如果该地址正好断开，结果先放进连接器里该地址的缓冲区
+  （最多 8 条 / 256 MiB，超出丢最早一条），重连成功后立即补发；服务器凭连接URL里的
+  `client_id` 认出“重连后还是同一个客户端”，把断线前没完成的任务保留下来并延长超时等待补发
+  （没有 `client_id` 的连接，例如浏览器页面，仍在断开时立即失败）；
+- 资源锁只在模型服务一侧：`LocalModelConnectionService` 持有一把锁，聊天进程的 MCP 不再加锁。
+  H3 的 int8 档先等到至少 8 份，再占满当前剩余全部资源；NVFP4 档固定占用 **10 份**。
+
+**语音合成（audio）**：只有显式配置了 `-DttsUrl`（或 `TTS_URL`）时，模型服务才会注册 `audio`
+处理器，把聊天进程下发的朗读请求原样 POST 给本机 TTS（路径 `-DttsPath`，默认 `/`；回传格式
+`-DttsFormat`，默认 `mp3`），响应可以是原始音频，也可以是 JSON 里的
+`data` / `audio` / `audio_base64` / `audioBase64` / `base64`（支持 `data:audio/...;base64,` 前缀）。
+不配置 `ttsUrl` 时没有 audio 能力，语音仍可由外部 `model_type=audio` 连接器直连本机网关或
+MiMo / 火山提供；都没有时回复会自动退回文本。
+
+`NapCatAIConnector` 侧的 `sdxl` / `sdxl-nsfw` / `sdxl-agent` / `svs` / `qwen` / `h3video` 工具都通过
+`LocalModel` 通道调用这些模型，**不直接访问** SD WebUI / localemp / ComfyUI，也**不持有资源锁**；
+模型服务没启动时工具会明确提示“本地模型服务未连接”。`qwen` 是新增技能：在 `save/config/agents.json`
+的 `tools` 里加入 `"qwen"` 才会注册 `qwen_gen_image` / `qwen_edit_image`。
+
+`h3video` 是另一个技能名：在 `tools` 里加入 `"h3video"` 会注册三个工具：
+`h3_gen_video`（H3 视频制作）、`h3_gen_anim`（NVFP4 简单动图）和 `video_extract_frame`（视频截帧）。
+生成工具只让模型给五类参数——提示词 `prompt`、参考图 `reference`（对象存储 id，1 张作首帧、
+2 张用英文逗号分隔作首尾帧、留空为文生视频）、参考视频 `video`（与 `reference` 二选一；1 个视频
+取首帧+末帧，2 个视频取第一个的首帧、第二个的末帧，由本地模型服务用 ComfyUI 截帧）、画面比例
+`resolution`（16:9/9:16/1:1/4:3/3:4）和时长 `duration`（秒）。`video_extract_frame` 单独截取
+任意一帧（`frame`：0 首帧、-1 末帧、-2 倒数第二帧），返回图片 id。其余全部由代码固定：
+
+| 模式 | 主模型 | 步数 | 时长 | 画布（16:9） | 资源占用 |
+| --- | --- | --- | --- | --- | --- |
+| `h3_gen_video` | int8 | 8 | 1~15，默认 5 | 864×480 | 至少 8 份后占满剩余 |
+| `h3_gen_anim` | NVFP4 | 6 | 1~8，默认 3 | 640×352 | 固定 10 份 |
+
+- **全部视频 MCP 均禁用音频**：工作流不加载音频 VAE、不做音频解码，输出无声 mp4；
+- 宽高 32 的倍数、帧数按 24fps 向上吸附到 **17k+5**（5 秒→124、10 秒→243、15 秒→362 帧）、
+  `euler`/`simple`、无 CFG 无负面词、随机种子、稀疏注意力默认开（`BlockSparseAttention`，
+  token < 12288 自动退回稠密）、每次提交前 `/free`、跑完卸载显存；
+- 计费：生成成功后按算力时长上报配额，**每 1 小时计算时间 = 1,000,000 配额**。估算公式为
+  `F=17k+5 网格、T_lat=((F-5)/17)*5+2、n=T_lat*(W/32)*(H/32)+2*round(40*sec)+T_text`，
+  `t_step=a*n+b*n^2`（INT8：a=4.94e-4、b=3.86e-8；NVFP4：a=6.10e-4、b=4.80e-8），
+  再加冷加载、文本编码与 VAE 解码时间；`-Dh3DiskMBps` 可校准磁盘读吞吐
+  （默认 1000 MB/s）。见 `H3VideoUsage`；
+- 生成结果上传对象存储后作为视频附件返回，聊天侧会把对象存储 id 换成公网地址（或 `base64://`）
+  再交给协议层发送；H3 工作流还会额外输出首帧、末帧 png（节点 16~19），API 里可通过
+  `H3Output.firstFrame/lastFrame` 取用。
+
+`h3video-agent` 是视频导演**子 agent**（与 `sdxl-agent` 同构）：主模型只给需求与参考图/参考视频，
+子 agent 负责扩写 H3 提示词、决定画面比例与时长，并在 `h3_gen_video`（完整视频）与
+`h3_gen_anim`（NVFP4 简单动图）之间选择，每种模式最多生成 2 次视频；参考视频可用 `video` 参数
+（1 个取首末帧、2 个取首/末），需要单独某一帧时用子 agent 的 `video_extract_frame`。没有合适参考图
+时可以先让 Qwen 生成一张首帧，再做图生视频。子 agent 的提示词放在 `config/h3/agent/`
+（`role.txt` / `charaset.txt` / `rules.txt`，可缺省，缺省时用内置提示词），生成的视频会作为外层
+工具附件自动回传；子 agent 内部视频的算力用量也会补记到外层任务。视频排队与显存由其本地模型
+处理器（`H3LocalModelHandler`）统一处理。
 
 ### 本地模型终端页面
 
@@ -719,11 +905,13 @@ Stable Diffusion WebUI 反向代理到服务器。页面不向用户收集 uid�
 排查接入问题时，服务端日志会打印实际接入的 uid：
 
 ```
-[LocalModel] connected from ... uid=<客户端发送的值> (shared|user-bound) provider: [sdxl]
+[LocalModel] connected from ... uid=<客户端发送的值> (shared|user-bound) client=<client_id> provider: [sdxl]
 [Painter] local SDXL unavailable for session user=<session 用户>
 ```
 
 `shared` 表示占位值/未提供 uid，按共享连接处理；`user-bound` 表示已绑定到该用户。
+`client=<client_id>` 是连接器自己的稳定标识（没有时为 `(none)`）；断线重连后该值不变，
+服务器据此把重连前后的连接认成同一个客户端，接续断线期间暂存的结果。
 
 ### SVS 歌声合成
 

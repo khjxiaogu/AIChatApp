@@ -73,19 +73,35 @@ public class LLMConnector {
      */
     public static void initDefault() {
         List<ModelProvider> providers = new ArrayList<>();
-        if (System.getProperty("deepseektoken") != null)
+        if (hasToken("deepseektoken"))
             providers.add(new DeepseekModelProvider());
-        if (System.getProperty("mimotoken") != null)
+        if (hasToken("mimotoken"))
             providers.add(new MimoModelProvider());
-        if (System.getProperty("volcmodeltoken") != null)
+        if (hasToken("volcmodeltoken"))
             providers.add(new VolcanoModelProvider());
-        if (System.getProperty("groktoken") != null)
+        if (hasToken("groktoken"))
             providers.add(new GrokModelProvider());
 
-        if (System.getProperty("silicontoken") != null)
+        if (hasToken("silicontoken"))
             providers.add(new SiliconFlowModelProvider());
         
         router = new DefaultModelRouter(providers);
+    }
+
+    /**
+     * 是否配置了非空的模型凭证。
+     * <p>
+     * 只判断 {@code != null} 会把 {@code -Dvolcmodeltoken=} 这种空值也当成已配置，
+     * 于是请求带着 {@code Bearer } 发出，服务端可能在请求体写完前就断开连接，
+     * 表现为 {@code java.io.IOException: Error writing to server}。
+     * </p>
+     *
+     * @param property 系统属性名
+     * @return 属性存在且非空白
+     */
+    private static boolean hasToken(String property) {
+        String value = System.getProperty(property);
+        return value != null && !value.trim().isEmpty();
     }
 
     /**

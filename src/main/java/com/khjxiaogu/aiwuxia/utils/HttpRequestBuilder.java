@@ -111,6 +111,8 @@ public class HttpRequestBuilder {
 	public static class OpenedConnectionBuilder {
 		HttpURLConnection huc;
 		public OutputStream os;
+		/** 最近一次读到的 HTTP 状态码，-1 表示还没读过；关闭连接后仍可读取，不会重新发起请求。 */
+		private int lastResponseCode = -1;
 		public OpenedConnectionBuilder(HttpURLConnection huc,boolean doOut) throws IOException {
 			super();
 			this.huc = huc;
@@ -122,15 +124,30 @@ public class HttpRequestBuilder {
 			this.huc = huc;
 		}
 		public OpenedConnectionBuilder send(String s) throws IOException {
-			if(os==null)
+			byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+			if(os==null) {
+				// 尽量给出 Content-Length：有些网关（例如火山方舟的视觉接口）不接受分块请求，
+				// 会在请求体还没写完时直接断开，表现为 “Error writing to server”。
+				try {
+					huc.setFixedLengthStreamingMode(bytes.length);
+				} catch (IllegalStateException ex) {
+					// 已经 connect/写过：只能退回默认的 chunked
+				}
 				os=huc.getOutputStream();
-			os.write(s.getBytes(StandardCharsets.UTF_8));
+			}
+			os.write(bytes);
 			
 			return this;
 		}
 		public OpenedConnectionBuilder send(byte[] s) throws IOException {
-			if(os==null)
+			if(os==null) {
+				try {
+					huc.setFixedLengthStreamingMode(s.length);
+				} catch (IllegalStateException ex) {
+					// 已经 connect/写过：只能退回默认的 chunked
+				}
 				os=huc.getOutputStream();
+			}
 			os.write(s);
 			return this;
 		}
@@ -154,29 +171,53 @@ public class HttpRequestBuilder {
 		}
 		public String readString() throws IOException {
 			closeOutput();
-			try(InputStream is=huc.getInputStream()){
-				return new String(FileUtil.readAll(is), StandardCharsets.UTF_8);
-			}catch(IOException ex){
+			try {
+				lastResponseCode = huc.getResponseCode();
+				try (InputStream is = huc.getInputStream()) {
+					return new String(FileUtil.readAll(is), StandardCharsets.UTF_8);
+				}
+			} catch (IOException ex) {
 				generateExceptionFromError(ex);
-			}finally{
+			} finally {
 				close();
 			}
 			return null;//this should never happen
 		}
 		public byte[] readBytes() throws IOException {
 			closeOutput();
-			try(InputStream is=huc.getInputStream()){
-				return FileUtil.readAll(is);
-			}catch(IOException ex){
+			try {
+				lastResponseCode = huc.getResponseCode();
+				try (InputStream is = huc.getInputStream()) {
+					return FileUtil.readAll(is);
+				}
+			} catch (IOException ex) {
 				generateExceptionFromError(ex);
-			}finally{
+			} finally {
 				close();
 			}
 			return null;//this should never happen
 		}
+		/**
+		 * 最近一次读取到的 HTTP 状态码。
+		 * <p>
+		 * 在 {@link #readString()} / {@link #readBytes()} / {@link #readJson()} 读取响应之后可用；
+		 * 返回的是缓存值，连接已关闭也不会重新发起请求。尚未读取响应、或连接在拿到状态前就失败时返回
+		 * {@code -1}。
+		 * </p>
+		 *
+		 * @return HTTP 状态码或 -1
+		 */
+		public int getResponseCode() {
+			return lastResponseCode;
+		}
 		public JsonObject readJson() throws IOException {
 			closeOutput();
-			if(huc.getResponseCode()>=300) {
+			try {
+				lastResponseCode = huc.getResponseCode();
+			} catch (IOException ex) {
+				// 状态码读不到时保留 -1，交给下面的读取流程抛出真实原因
+			}
+			if(lastResponseCode>=300) {
 				throw new IOException(huc.getResponseMessage());
 			}
 			try(InputStream is=huc.getInputStream()){

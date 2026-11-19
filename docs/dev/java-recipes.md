@@ -120,7 +120,8 @@ state.registerTool(weather);      // 之后 AIRequest.builder(state) 自动带�
 - 计费：工具内部产生的用量（额外模型调用、图片上传、搜索等）写入本次的 `output.addUsage(...)`，
   会话通过 `output.addUsageListener(state::addUsage)` 统一记账；**按次计费**的外部接口（如
   `DeepseekSearchMcp` 的 `web_search`）要在确认成功并拿到结果之后再记账，失败、超时与空结果不要记，
-  见 `DeepseekSearchUsage`。
+  见 `DeepseekSearchUsage`。DeepSeek 模型自身的联网搜索走官方服务端工具 `deepseek_web_search`，
+  不经过工具调用，也不产生按次用量。
 
 验证：问一个需要工具的问题，日志应出现工具名与参数，前端出现工具调用卡片。
 

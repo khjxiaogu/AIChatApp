@@ -36,7 +36,7 @@ public class TOStorage implements ObjectStorageProvider {
 	public boolean exists(String fn,Consumer<UsageIntf<?>> addUsage) {
 		HttpURLConnection connection = null;
 		try {
-			URL url = new URL(getUrl(fn,addUsage));
+			URL url = new URL(getHttpUrl(fn,addUsage));
 			connection = (HttpURLConnection) url.openConnection();
 			connection.setRequestMethod("HEAD");
 			connection.setConnectTimeout(5000); // 连接超时 5 秒
@@ -87,13 +87,8 @@ public class TOStorage implements ObjectStorageProvider {
 	}
 
 	@Override
-	public String getUrl(String fn,Consumer<UsageIntf<?>> addUsage) {
+	public String getHttpUrl(String fn,Consumer<UsageIntf<?>> addUsage) {
 		return "https://" + cfg.bucket + "." + cfg.endpoint + "/" + fn;
-	}
-
-	@Override
-	public String getPublicUrl(String fn,Consumer<UsageIntf<?>> addUsage) {
-		return getUrl(fn,addUsage);
 	}
 
 }

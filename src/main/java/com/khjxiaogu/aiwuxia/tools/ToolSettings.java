@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.tools;
 
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -144,21 +145,8 @@ public final class ToolSettings {
 
 	/** 工具条目是否要求审核。 */
 	private static boolean needsApproval(JsonObject object) {
-		return bool(object, "approval") || bool(object, "review") || bool(object, "needApproval")
-				|| bool(object, "audit");
-	}
-
-	/** 读取布尔字段。 */
-	private static boolean bool(JsonObject object, String key) {
-		JsonElement element = object.get(key);
-		if (element == null || element.isJsonNull()) {
-			return false;
-		}
-		try {
-			return element.getAsBoolean();
-		} catch (RuntimeException e) {
-			return false;
-		}
+		return JsonConfig.getBool(object, "approval") || JsonConfig.getBool(object, "review") || JsonConfig.getBool(object, "needApproval")
+				|| JsonConfig.getBool(object, "audit");
 	}
 
 	/** 取第一个非空字符串字段。 */

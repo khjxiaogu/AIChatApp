@@ -35,6 +35,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -196,6 +197,74 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * </p>
 	 */
 	private final ToolCallManager toolCallManager = new ToolCallManager();
+
+	/** 轮次结束原因；目前只用于日志/恢复标记，不影响会话本身的行为。 */
+	public enum RoundEndReason {
+		NORMAL, ERROR, TIMEOUT, CLOSED
+	}
+
+	/**
+	 * 会话轮次生命周期监听器。
+	 * <p>
+	 * 由需要感知“一轮生成开始/结束/会话关闭”的子系统注册，例如共享文档库的轮次锁。
+	 * 监听器抛出的异常只会被打印，不能影响生成流程。
+	 * </p>
+	 */
+	public interface SessionLifecycleListener {
+		/** 构造本轮 prompt 之前触发；文档库在这里把待注入的通知放进消息队列。 */
+		default void onBeforePrompt(AISession session) {
+		}
+
+		default void onRoundStart(AISession session) {
+		}
+
+		default void onRoundEnd(AISession session, RoundEndReason reason) {
+		}
+
+		default void onSessionClosed(AISession session) {
+		}
+	}
+
+	private final List<SessionLifecycleListener> lifecycleListeners = new CopyOnWriteArrayList<>();
+
+	/**
+	 * 注册轮次生命周期监听器。
+	 *
+	 * @param listener 监听器，null 忽略
+	 * @return 本会话，便于链式调用
+	 */
+	public AISession addLifecycleListener(SessionLifecycleListener listener) {
+		if (listener != null) {
+			lifecycleListeners.add(listener);
+		}
+		return this;
+	}
+
+	/**
+	 * 移除轮次生命周期监听器。
+	 *
+	 * @param listener 监听器
+	 * @return 本会话
+	 */
+	public AISession removeLifecycleListener(SessionLifecycleListener listener) {
+		if (listener != null) {
+			lifecycleListeners.remove(listener);
+		}
+		return this;
+	}
+
+	/**
+	 * 在构造本轮 prompt 之前通知监听器。由 {@code AIGroupSession#getPrompt()} 在最开始调用。
+	 */
+	protected void fireBeforePrompt() {
+		for (SessionLifecycleListener listener : lifecycleListeners) {
+			try {
+				listener.onBeforePrompt(this);
+			} catch (Throwable t) {
+				t.printStackTrace();
+			}
+		}
+	}
 
 	/**
 	 * 注册一个工具，由本会话的工具调用管理器统一处理。
@@ -1110,6 +1179,15 @@ public class AISession implements ISaveData,AutoCloseable{
 		if (reply != null && reply.getRole() == Role.ASSISTANT)
 			setTokenCost(reply, lastTurnTokens);
 		setUpdated();
+		// 在 isGenerating 置 false 之前结束轮次：监听器（例如文档库）在这个窗口里
+		// 还能看到“本会话仍在生成”，不会立刻唤醒自己。
+		for (SessionLifecycleListener listener : lifecycleListeners) {
+			try {
+				listener.onRoundEnd(this, RoundEndReason.NORMAL);
+			} catch (Throwable t) {
+				t.printStackTrace();
+			}
+		}
 		isGenerating = false;
 		this.currentOutput=null;
 		data.flush();
@@ -1331,6 +1409,13 @@ public class AISession implements ISaveData,AutoCloseable{
 		turnUsageBase = getExtraData().usage.getTotalEquivantTokens();
 		lastTurnTokens = 0;
 		isGenerating = true;
+		for (SessionLifecycleListener listener : lifecycleListeners) {
+			try {
+				listener.onRoundStart(this);
+			} catch (Throwable t) {
+				t.printStackTrace();
+			}
+		}
 	}
 
 	/**
@@ -1535,6 +1620,22 @@ public class AISession implements ISaveData,AutoCloseable{
 
 	@Override
 	public void close(){
+		// 先把仍然打开的轮次收尾（例如文档库提交草稿并解锁），再关闭执行器。
+		for (SessionLifecycleListener listener : lifecycleListeners) {
+			try {
+				listener.onRoundEnd(this, RoundEndReason.CLOSED);
+			} catch (Throwable t) {
+				t.printStackTrace();
+			}
+		}
+		for (SessionLifecycleListener listener : lifecycleListeners) {
+			try {
+				listener.onSessionClosed(this);
+			} catch (Throwable t) {
+				t.printStackTrace();
+			}
+		}
+		lifecycleListeners.clear();
 		// 会话结束前把后台思维链写入等完，避免任务在会话释放后继续写历史
 		awaitReasonerWrites();
 		// 取消仍在运行的异步工具任务，完成回调不会再通知已关闭的会话

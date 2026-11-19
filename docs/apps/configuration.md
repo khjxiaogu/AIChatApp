@@ -174,6 +174,8 @@ save/config/
    ├─ loras.json            LoRA 配置 {触发词: {key, weight}}
    ├─ reference-images.json 参考图 {名称: 图片地址}
    └─ agent/                绘画 agent 的提示词（role / charaset / rules）
+└─ h3/
+   └─ agent/                本地视频子 agent 的提示词（role / charaset / rules，可缺省）
 ```
 
 逐字段说明见 [save/config/README.md](../../save/config/README.md)。
@@ -192,12 +194,13 @@ save/config/
   "videoDuration": 10,
   "videoResolution": "720p",
   "videoRatio": "9:16",
-  "videoGenerateAudio": true
+  "videoGenerateAudio": false
 }
 ```
 
 `videoDuration` 支持 4-15 秒，默认 10 秒（超过 15 秒按 15 秒处理）；`videoRatio` 默认 `9:16`；
-`videoResolution` 支持 480p/720p/1080p。`jimeng_video` 工具还支持 `duration` 参数（4-15 的整数），
+`videoResolution` 支持 480p/720p/1080p。**所有视频生成 MCP 均禁用音频**：
+`videoGenerateAudio` 已强制为 `false`，配置成 `true` 也不会生效。`jimeng_video` 工具还支持 `duration` 参数（4-15 的整数），
 会覆盖配置默认值，并同时写进脚本要求、提交给视频接口。未配置 `apiKey` 时只有视频工具失败，
 图片工具不受影响。
 
@@ -211,6 +214,62 @@ save/config/
 **70 元/百万视频 token**；本站配额按 2 元/百万等效 token 折算，所以配额扣减 token = 视频 token × 35。
 输出尺寸默认由 `videoResolution` + `videoRatio` 推导，帧率默认 24，可用 `videoWidth` /
 `videoHeight` / `videoFps` 校准。
+
+#### 本地 H3 视频（`h3video` / `h3video-agent`）
+
+模型服务（`LocalModelConnectionService`）在本机跑 ComfyUI + MiniMax H3 时，可以完全绕开火山方舟，
+不需要视频 `apiKey`：
+
+- `tools` 里加 `"h3video"` 会注册三个工具：
+  - `h3_gen_video`（H3 视频制作，int8，8 步，1~15 秒，默认 5，16:9=864×480）；
+  - `h3_gen_anim`（NVFP4 简单动图，6 步，1~8 秒，默认 3，16:9=640×352）；
+  - `video_extract_frame`（视频截帧，`frame` 0 首帧、-1 末帧、-2 倒数第二帧，返回图片 id）。
+  生成工具参数为提示词、参考图（1 张首帧 / 2 张首尾帧）、参考视频（1 个视频取首末帧，2 个取首/末，
+  与参考图二选一）、画面比例（16:9/9:16/1:1/4:3/3:4）、时长（秒）；尺寸、帧数、步数、采样、种子、
+  模型与显存释放全部由代码固定，且**都不生成音频**；
+- 计费：生成成功后按算力时长扣配额，每 1 小时 = 1,000,000 配额；`-Dh3DiskMBps` 可校准磁盘读吞吐
+  （默认 1000 MB/s）；
+- `tools` 里加 `"h3video-agent"` 注册视频导演子 agent `h3_video_agent`：主模型只给需求与参考图/视频，
+  子 agent 负责扩写提示词、决定比例与时长，并在两种视频模式间选择；提示词文件放在
+  `config/h3/agent/`（可缺省，缺省时用内置提示词）；
+- 模型地址沿用 `-DqwenImageUrl`（图与视频共用同一个 ComfyUI），确实需要分开时用 `-Dh3VideoUrl`；
+  NVFP4 档需要 `ComfyUI/models/diffusion_models/10Eros_Max_H3_FL2VA-NVFP4.safetensors` 与 torch ≥ 2.8。
+
+#### 绘画页视频（`PainterSession`，无需额外开关）
+
+绘画会话（`ui: "painter"` 的应用）默认注册视频工具，不需要像群聊那样在 `tools` 里勾选：
+
+- `h3_video_agent`：本地 H3 视频导演子 agent，始终注册；本地模型服务（`model_type=h3`）
+  离线时调用会返回可读的失败原因，不影响图片功能。提示词目录 `config/h3/agent/`（可缺省）；
+- `jimeng_video`：即梦 Seedance 2.5，仅在 `config/image-generation.json` 配置了 `apiKey` 时注册，
+  参数与群聊侧完全一致（想法 / 参考图 / 4-15 秒时长）。
+
+视频生成是**异步长任务**（5 秒视频约 2~5 分钟），绘画前端据此做了三件事：
+
+1. 生成期间在输入框上方常驻“视频生成中 · 已等待 X 秒”的提示（协议帧 `task`，
+   重连后由 `status.tasks` 恢复）；本轮回复先结束也不会丢失提示；
+2. 任务完成后把视频**续写到本轮助手回复**里（本轮之后已经开了新对话、最后一条不是助手回复时
+   才新起一条），历史重载后同样能看到；撤回/重新生成仍按“助手回复 ↔ 用户请求”配对处理；
+3. 视频可播放、全屏、下载；图片安全模式对视频同样生效。
+
+视频的 `video_url` 有两种来源，前端会自动区分：
+
+| 来源 | `video_url` | 播放方式 |
+|---|---|---|
+| 本地 H3 | 对象存储 id（72 位哈希） | `GET /aichat/painter/video?video_id=<id>`，支持 Range 拖动 |
+| 即梦（云端） | 远端 `https://...mp4` | 浏览器直接播放 |
+
+绘画页还支持上传视频作为用户消息内容：
+
+```text
+POST /aichat/painter/uploadVideo      multipart/form-data
+  conversation_id: 当前对话 id
+  video:           视频文件（按内容校验，只接受视频；上限 200MB）
+→ {"code":0,"message":"success","videoId":"..."}
+```
+
+图片上传（`POST /aichat/painter/uploadImage`）也改为按文件内容校验只接受图片，
+并在响应里补上 `imageId`。两个上传接口都只写入待生成的用户消息，不立即触发生成。
 
 ### 5.2 工具调用审核
 
@@ -299,7 +358,7 @@ save/config/
 
 | 参数 | 作用 |
 |---|---|
-| `deepseektoken` | 启用 Deepseek（最常用），同时启用网页搜索工具 `web_search` |
+| `deepseektoken` | 启用 Deepseek（最常用），同时启用联网搜索：`deepseek-flash` 走官方服务端工具 `deepseek_web_search`（不按次计费），`deepseek-v4-pro` 与其它模型走 MCP 工具 `web_search` |
 | `volcmodeltoken` | 启用火山引擎 |
 | `mimotoken` | 启用 Mimo（也用于 Mimo 语音） |
 | `groktoken` / `silicontoken` | 启用 Grok / 硅基流动 |
