@@ -566,9 +566,9 @@ java -Ddeepseektoken=你的key -Dfile.encoding=UTF-8 `
 
 ### 10.3 SVS（歌声转换）
 
-`com.khjxiaogu.aiwuxia.mcp.SvsMcp` 从 `MusicMcp` 的 SVS 流程复制而来，但与音乐平台无关：
-输入任意 http/https 音频链接，调用 localemp.py（`-DsvsHost=host:port`）做 RVC 变声，
-结果音频上传对象存储后作为附件返回。
+`com.khjxiaogu.aiwuxia.mcp.SvsMcp` 是唯一的 SVS 工具层：输入任意 http/https 音频链接，
+通过 `LocalModel.requireSvs` 把请求交给已接入的 `svs` 本地模型通道，结果音频上传对象存储后作为附件返回。
+聊天进程**不直接访问 localemp.py**，也不持有资源锁。
 
 SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，按
 `config/svs-voices.json`（`{"角色名":"音频id"}`）解析出实际模型名；配置文件每次调用重新读取。
@@ -578,16 +578,17 @@ SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，�
 `do_split=false` 时不做伴奏分离、不混伴奏；固定使用临时文件，不提供文件名参数。
 每次成功生成按输出体积计费：`LocalSVSUsage` 每 0.6 MiB 计 5000 token；
 `do_split=false` 时只按输出体积的 1/3 计费。
-资源锁与其它本地模型共享。
 
-另外两套 LocalModel 接入：
+localemp.py 的实际 HTTP 调用在模型侧完成，分两层：
+
+- `com.khjxiaogu.aiwuxia.vision.SvsApi`：从 `SvsMcp` 抽出的 localemp API 集合，负责拼装
+  `url` / `voice` / `reqid` / `pitch` / `filter_radius` / `protect` / `do_split`，
+  注册本地回调任务并等待回调结果；
 - `com.khjxiaogu.aiwuxia.vision.SvsLocalModelHandler`：注册到统一管理器的 `svs` 处理器，
-  调用 localemp.py 前用 `LocalModel.registerTask(reqid)` 注册回调任务（与 `MusicMcp` 一致），
-  等 localemp 的 HTTP 回调完成后把音频通过本地模型通道回传（处理器需与服务器在同一 JVM）；
-- `com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp`：使用 `LocalModel.requireSvs` 的 SVS MCP，
-  已在 `AIChatService` 的 MCP 注册表中注册。`svs_convert` 声明为异步工具，MCP 层会立即返回
-  `task_id`，再用通用 `mcp_task_result` 轮询获取音频。
-  `LocalModelClient` 断线后不再打印错误，按固定间隔无限静默重连。
+  负责资源锁与进度上报，内部调用 `SvsApi`（处理器需与服务器在同一 JVM）。
+
+`svs_convert` 声明为异步工具，MCP 层会立即返回 `task_id`，再用通用 `mcp_task_result`
+轮询获取音频。`LocalModelClient` 断线后不再打印错误，按固定间隔无限静默重连。
 
 ### 10.4 音乐子 agent
 
@@ -620,10 +621,12 @@ SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，�
 
 | 层 | 类 | 职责 |
 |---|---|---|
-| 传输 | `voice.transport.LocalModelTransport`（SPI）、`WebSocketLocalModelTransport`、`LocalModelTransportFactory` | 只管连接与文本收发。新增协议（TCP 自定义帧、stdio、IPC…）实现接口 + 工厂即可，业务层零改动 |
-| 协议 | `voice.protocol.LocalModelProtocol` | 请求 / 响应 / 进度 / 能力集合报文的字段与编解码，服务端与连接器共用 |
-| 会话 | `voice.LocalModelClient` | 一条连接 + “模型类型 → 处理器”表：按请求的 `type` 分发、进度心跳、重连、按类型健康检查 |
-| 模型调用 | `vision.SDXLLocalModelHandler` / `SvsLocalModelHandler` / `QwenLocalModelHandler` / `H3LocalModelHandler`、`voice.AudioLocalModelHandler` | 只把请求翻译成 SD WebUI / localemp / ComfyUI / TTS 调用 |
+| 传输 | `modelproxy.transport.LocalModelTransport`（SPI）、`WebSocketLocalModelTransport`、`LocalModelTransportFactory` | 只管连接与文本收发。新增协议（TCP 自定义帧、stdio、IPC…）实现接口 + 工厂即可，业务层零改动 |
+| 协议 | `modelproxy.protocol.LocalModelProtocol` | 请求 / 响应 / 进度 / 能力集合报文的字段与编解码，服务端与连接器共用 |
+| 会话 | `modelproxy.LocalModelClient` | 一条连接 + “模型类型 → 处理器”表：按请求的 `type` 分发、进度心跳、重连、按类型健康检查 |
+| 模型调用 | `vision.SvsApi` / `SvsLocalModelHandler`、`vision.SDXLApi` / `SDXLLocalModelHandler` / `QwenLocalModelHandler` / `H3LocalModelHandler`、`voice.AudioLocalModelHandler` | 只把请求翻译成 SD WebUI / localemp / ComfyUI / TTS 调用；`SDXLApi` 负责 SDXL 的路径、采样器、分区参数与结果还原，`SvsApi` 负责 localemp 的请求拼装与回调等待，服务器只下发 `action` + 语义参数 |
+| 请求对象 | `modelproxy.api.LocalModelCall` + `LocalModelCodec` | 统一信封：`type` + `reqid` + 各 API 独立参数对象（`SdxlParams` / `AudioParams` / `SvsParams` / `QwenParams` / `H3Params`，彼此无继承）+ `attachments[]`；服务端只构造对象，客户端只解析对象 |
+| 附件 | `LocalModelAttachments` / `AttachmentFetcher` | 附件只登记字节来源、按 `reqid` 作用域保存；客户端在**同一条 WebSocket** 上发 `{"type":"attachment.get",...}`，服务器按 `LMA1` 二进制分块回传；请求结束自动释放，不走 HTTP、不内联 Base64 |
 
 - 各处理器由 `LocalModelConnectionService.createHandlers()` 统一注册，不再各自建连接；
   配置了 `-DttsUrl` 时才注册 `audio`；
@@ -662,7 +665,7 @@ SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，�
 
 `NapCatAIConnector` 注册的 `sdxl` / `sdxl-nsfw` / `sdxl-agent` / `svs` / `qwen` / `h3video` /
 `h3video-agent` 工具都走
-`LocalModel` 通道（`SDXLMcp.createRemoteLocalModel`、`SvsLocalModelMcp`、`QwenLocalModelMcp`、
+`LocalModel` 通道（`SDXLMcp.createRemoteLocalModel`、`SvsMcp`、`QwenLocalModelMcp`、
 `H3VideoMcp`、`H3VideoAgentMcp`），
 不再直接访问上面三个本地 HTTP 服务，也不持有资源锁；模型服务没启动时工具会提示“本地模型服务未连接”。
 语音回复仍走 `VoiceModelHandler` → `LocalVoiceApi` → `LocalModel.requireAudio(ModelType.AUDIO)`；
