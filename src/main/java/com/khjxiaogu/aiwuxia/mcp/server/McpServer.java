@@ -6,13 +6,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -300,7 +300,6 @@ public class McpServer {
 
     /** 异步工具任务。 */
     private static final class AsyncTask {
-        private final CompletableFuture<ToolResult> future;
         private final CompletableFuture<Void> processed = new CompletableFuture<>();
         private final AIOutput output;
         private final McpAccessTokenStore.Charge charge;
@@ -311,9 +310,8 @@ public class McpServer {
         private volatile String resultText = "";
         private volatile boolean success = true;
 
-        AsyncTask(CompletableFuture<ToolResult> future, AIOutput output, McpAccessTokenStore.Charge charge,
+        AsyncTask( AIOutput output, McpAccessTokenStore.Charge charge,
                 long startedAt) {
-            this.future = future;
             this.output = output;
             this.charge = charge;
             this.startedAt = startedAt;
@@ -541,7 +539,7 @@ public class McpServer {
                     return successResult(failText, 0, failUsage, failCharged, failBalance, false);
                 }
             }
-            AsyncTask task = new AsyncTask(future, taskOutput, charge, start);
+            AsyncTask task = new AsyncTask(taskOutput, charge, start);
             asyncTasks.put(taskId, task);
             // 完成时立即结算：并发查询不再承担任务用量，避免重复扣费
             future.whenComplete((result, error) -> finishTask(task, result, error));

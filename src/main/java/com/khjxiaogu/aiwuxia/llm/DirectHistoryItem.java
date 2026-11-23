@@ -6,7 +6,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
-import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 public class DirectHistoryItem implements HistoryItem {
 	final Role role;
@@ -17,14 +17,14 @@ public class DirectHistoryItem implements HistoryItem {
 		super();
 		this.role = role;
 		this.context = context;
-		tokenSimulated=TokenSimulatedCounter.fastCountLength(context);
+		tokenSimulated=TextCounter.countTokens(context);
 		reasoner=MessageContents.EMPTY;
 	}
 	public DirectHistoryItem(Role role, MessageContent... context) {
 		super();
 		this.role = role;
 		this.context = new MutableMessageContents(context);
-		tokenSimulated=TokenSimulatedCounter.fastCountLength(this.context);
+		tokenSimulated=TextCounter.countTokens(this.context);
 		reasoner=MessageContents.EMPTY;
 	}
 	public DirectHistoryItem(Role role, String context) {
@@ -35,7 +35,7 @@ public class DirectHistoryItem implements HistoryItem {
 		this.role = role;
 		this.context = new MutableMessageContents(context);
 		this.reasoner=reasoner;
-		tokenSimulated=TokenSimulatedCounter.fastCountLength(context)+TokenSimulatedCounter.fastCountLength(reasoner);
+		tokenSimulated=TextCounter.countTokens(context)+TextCounter.countTokens(reasoner);
 	}
 
 	@Override

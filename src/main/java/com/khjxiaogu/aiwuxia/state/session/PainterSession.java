@@ -23,6 +23,8 @@ import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
@@ -37,8 +39,6 @@ import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.ModelType;
 
 import io.netty.channel.Channel;
 

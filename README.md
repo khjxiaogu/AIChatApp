@@ -610,7 +610,7 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 | `/kh$localModelDeploy` | WS   | 需 `Authorization: Bearer token` 或 `?token=` | 本地模型 WebSocket 连接端点（共享连接，可带 `uid` 表示仅服务该用户） |
 | `/kh$localModelDeployData` | POST | `reqid`, `type`, 二进制数据        | 本地模型回调，接收音频数据             |
 | `/painter/localModelDeploy` | WS | `uid`, `model_type=sdxl`           | 用户自带绘画模型的接入端点（无需 Token）     |
-| `/painter/localModelResult` | POST | `reqid`, `format`，原始响应体       | 用户接入页回传生图结果（不经过 WebSocket 帧）  |
+| `/painter/localModelResult` | POST | `reqid`, `format`，图片字节 / 反推 JSON | 用户接入页回传生图结果（不经过 WebSocket 帧）  |
 | `/painter/image`       | GET  | `image_id`                       | 按对象存储 id 取绘画图片（按内容返回 MIME） |
 | `/painter/video`       | GET  | `video_id`                       | 按对象存储 id 取绘画视频；支持单段 `Range`（206/416） |
 | `/painter/uploadImage` | POST | `conversation_id`, `image`（multipart） | 上传参考图到当前绘画会话（只接受图片）  |
@@ -770,8 +770,8 @@ SceneSelector selector = builder.build();
 | 类型      | 说明   | 请求参数                                                     |
 |---------|------|----------------------------------------------------------|
 | `audio` | 语音合成 | `chara`, `content`                                       |
-| `sdxl`  | 图像生成 | `path`, `data`                                           |
-| `svs`   | 歌声合成 | `url`, `name`, `pitch`, `separate`, `timbre`, `filter`, `strength` |
+| `sdxl`  | 图像生成 | 统一信封：`params.action`（`txt2img` / `img2img` / `regional` / `interrogate`）、`params.prompt`、`params.negative_prompt`、`params.steps`、`params.width`、`params.height`、`params.image`（附件 id）、`params.denoising_strength`、`params.is_row`、`params.ratio`；参考图放在 `attachments[]`，客户端在**同一条 WebSocket** 上发 `{"type":"attachment.get","reqid":..,"id":..}`，服务器按 `LMA1` 二进制分块回传；旧格式（字段平铺）仍兼容 |
+| `svs`   | 歌声合成 | `url`, `name`, `pitch`, `voice` / `timbre`, `filter_radius` / `filter`, `protect` / `strength`, `do_split` / `separate` |
 | `qwen`  | Qwen-Image 2.1 生图 | `action`（`text2image` / `edit`）, `prompt`, `negative`, `width`, `height`, `steps`, `cfg`, `seed`, `fast`, `images` |
 | `h3`    | MiniMax H3 生视频（无声） | `action`（`video`）, `model`（`int8` / `nvfp4`）, `steps`, `sparse`, `audio`（固定 false）, `prompt`, `width`, `height`, `seconds` / `frames`, `seed`, `first_frame`, `last_frame` |
 
@@ -792,16 +792,16 @@ SceneSelector selector = builder.build();
   `h3VideoUrl` 或环境变量 `H3_VIDEO_API`（H3 视频，未配置时复用 `qwenImageUrl`；图与视频在同一个
   ComfyUI 进程里）、`ttsUrl` 或环境变量 `TTS_URL`（本机 TTS，默认端口 `9880`，见下）；
 - 启动（与 `NapCatAIConnector` 相同的数据目录与站点参数）：
-  `java -DlocalVoiceToken=... -DsdwebuiUrl=... -DsvsHost=... -DqwenImageUrl=... -Dh3VideoUrl=... -DttsUrl=http://127.0.0.1:9880 -cp "target/AIWuxia-0.0.1-SNAPSHOT.jar;target/aiwx_lib/*" com.khjxiaogu.aiwuxia.voice.LocalModelConnectionService`
+  `java -DlocalVoiceToken=... -DsdwebuiUrl=... -DsvsHost=... -DqwenImageUrl=... -Dh3VideoUrl=... -DttsUrl=http://127.0.0.1:9880 -cp "target/AIWuxia-0.0.1-SNAPSHOT.jar;target/aiwx_lib/*" com.khjxiaogu.aiwuxia.LocalModelConnectionService`
 
 **分层结构**：
 
 | 层 | 类 | 职责 |
 | --- | --- | --- |
-| 传输 | `voice.transport.LocalModelTransport` / `WebSocketLocalModelTransport` | 只管连接与文本收发；换协议只需实现 `LocalModelTransport` 并提供 `LocalModelTransportFactory` |
-| 协议 | `voice.protocol.LocalModelProtocol` | 定义请求/响应/进度/能力集合报文与字段，服务端与连接器共用 |
-| 会话 | `voice.LocalModelClient` | 一条连接 + 一张“模型类型 → 请求处理器”表：按 `type` 分发、进度心跳、重连、按类型的健康检查 |
-| 模型调用 | `vision.*LocalModelHandler` / `AudioLocalModelHandler` | 只负责把请求翻译成 SD WebUI / localemp / ComfyUI / TTS 调用 |
+| 传输 | `modelproxy.transport.LocalModelTransport` / `WebSocketLocalModelTransport` | 只管连接与文本收发；换协议只需实现 `LocalModelTransport` 并提供 `LocalModelTransportFactory` |
+| 协议 | `modelproxy.protocol.LocalModelProtocol` | 定义请求/响应/进度/能力集合报文与字段，服务端与连接器共用 |
+| 会话 | `modelproxy.LocalModelClient` | 一条连接 + 一张“模型类型 → 请求处理器”表：按 `type` 分发、进度心跳、重连、按类型的健康检查 |
+| 模型调用 | `vision.SDXLApi` + `vision.*LocalModelHandler` / `AudioLocalModelHandler` | 只负责把请求翻译成 SD WebUI / localemp / ComfyUI / TTS 调用：`SDXLApi` 把语义请求翻成 SD WebUI 的 txt2img / img2img / 分区 / 反推调用并还原出图片字节 |
 
 - 每条部署通道只建**一条连接**，所有模型共用它，不再各持一条；
 - **请求支持二进制分块**：连接器在握手 URL 里用 `flags=chunked` 声明“支持分块 / 大报文”
@@ -918,13 +918,14 @@ MiMo / 火山提供；都没有时回复会自动退回文本。
 ### 用户自带绘画模型（painter-local）
 
 `/aichat/painter-local` 是面向普通用户的接入页：它不再提供对话，只负责把用户本机的
-Stable Diffusion WebUI 反向代理到服务器。页面不向用户收集 uid，固定发送 `uid=undefined`
+Stable Diffusion WebUI 接入服务器的绘画会话。页面不向用户收集 uid，固定发送 `uid=undefined`
 作为占位参数；生产环境由服务器注入对应参数（例如替换页面里的占位值）。占位值会被服务器当作
 共享接入（任何没有自己本地模型的会话都可以回退使用），注入真实 uid 后才按用户隔离。页面会先检查本地服务，
 通过后用浏览器 WebSocket 连接 `/painter/localModelDeploy`（查询参数 `uid` 与 `model_type=sdxl`），
-把服务器下发的生图请求转发到本地。生图结果不再走 WebSocket 文本帧，而是把本地服务的原始响应体
-直接 POST 到 `/painter/localModelResult?reqid=<请求ID>&format=json`，由服务器用 reqid 唤醒等待中的
-请求；这样大图 JSON 不会受 WebSocket 帧大小或压缩链路影响。要点：
+在用户本机调用 SD WebUI：服务器只下发动作与提示词（`action` / `prompt` / `width` 等），
+页面自己决定接口路径、采样器与分区参数。生图结果不再走 WebSocket 文本帧，而是把图片原始字节
+（反推则是 tag JSON）POST 到 `/painter/localModelResult?reqid=<请求ID>&format=png`，
+由服务器用 reqid 唤醒等待中的请求；这样大图不再受 WebSocket 帧大小或压缩链路影响。要点：
 
 - 该用户接入本地模型后，其**所有绘画会话**（包括已经打开的会话）都优先使用这台机器上的模型；
 - 本地服务离线、断开本页或关闭浏览器时，服务器自动回退到共享的本地模型池，生成不中断；
@@ -952,40 +953,41 @@ Stable Diffusion WebUI 反向代理到服务器。页面不向用户收集 uid�
 
 ### SVS 歌声合成
 
-SVS 请求在音源（`url`、`name`）之外需要五个参数：
+SVS 请求在音源（`url`、`name`）之外需要以下参数（新字段与旧字段并存，旧字段继续兼容）：
 
-| 参数         | 类型      | 说明                |
-|------------|---------|-------------------|
-| `pitch`    | int     | 音高                |
-| `separate` | bool    | 是否分离人声            |
-| `timbre`   | string  | 音色标识              |
-| `filter`   | int     | 滤波强度，取值 0-7       |
-| `strength` | double  | 合成强度，取值 0.00-1.00 |
+| 参数                      | 类型     | 说明                                  |
+|-------------------------|--------|-------------------------------------|
+| `pitch`                 | int    | 音高                                  |
+| `voice` / `timbre`      | string | 音色：localemp 用 `voice`，旧实现用 `timbre` |
+| `filter_radius` / `filter` | int    | 中值滤波半径 / 滤波强度，取值 0-7               |
+| `protect` / `strength`  | double | 防撕裂保护 / 合成强度，取值 0.00-1.00          |
+| `do_split` / `separate` | bool   | 是否伴奏分离与合成 / 旧字段是否分离人声，默认 true     |
 
 ```json
 {
   "url": "音源地址",
   "name": "音源名称",
   "pitch": 2,
-  "separate": true,
-  "timbre": "音色",
-  "filter": 3,
-  "strength": 0.75,
+  "voice": "音色",
+  "filter_radius": 3,
+  "protect": 0.75,
+  "do_split": true,
   "reqid": "请求ID",
   "type": "svs"
 }
 ```
 
-Java 调用：
+Java 调用（`import com.khjxiaogu.aiwuxia.modelproxy.api.SvsOptions;`）：
 
 ```java
-LocalModel.requireSvs(reqid, url, LocalModelHandshaker.SvsOptions.builder()
-        .pitch(2).separate(true).timbre("音色").filter(3).strength(0.75))
+LocalModel.requireSvs(reqid, url, SvsOptions.builder()
+        .voice("音色").pitch(2).filterRadius(3).protect(0.75).doSplit(true))
     .thenAccept(result -> { /* result.bodyData, result.format */ });
 ```
 
-`filter`、`strength` 超出范围，或 `timbre` 传入空字符串时会立即抛出 `IllegalArgumentException`；
-未设置 `timbre` 时返回失败的 Future。可用 `LocalModel.hasOnlineSvsService()` 判断是否有可用的 SVS 连接。
+`filter_radius`、`protect` 超出范围，或 `voice` / `timbre` 传入空字符串时会立即抛出
+`IllegalArgumentException`；`voice` 与 `timbre` 都未设置时返回失败的 Future。
+可用 `LocalModel.hasOnlineSvsService()` 判断是否有可用的 SVS 连接。
 
 ---
 

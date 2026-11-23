@@ -13,6 +13,9 @@ import java.util.function.Consumer;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 

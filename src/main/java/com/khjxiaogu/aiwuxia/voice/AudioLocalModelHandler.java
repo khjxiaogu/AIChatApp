@@ -10,10 +10,11 @@ import java.util.Base64;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.ProgressReporter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.RequestHandler;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.Response;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.ProgressReporter;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.RequestHandler;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.Response;
 
 /**
  * 本地语音合成（TTS）的请求处理器。

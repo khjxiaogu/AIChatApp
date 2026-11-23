@@ -62,11 +62,11 @@ public class HistoryCompactor {
 					}
 					if(shouldContainReasoner) {
 						for(MessageContent msgc:hi.getReasoningContent()) {
-							tokenLen+=(TokenSimulatedCounter.fastCountLength( msgc.toText()));
+							tokenLen+=(TextCounter.countTokens( msgc.toText()));
 							
 						}
 					}
-				}tokenLen+=TokenSimulatedCounter.fastCountLength(hi.getContextContent());
+				}tokenLen+=TextCounter.countTokens(hi.getContextContent());
 				history.setTokenLength(hi,tokenLen);
 			}
 			len+=tokenLen;

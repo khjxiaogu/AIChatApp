@@ -34,10 +34,12 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 /**
  * 火山引擎声音复刻API。
@@ -66,7 +68,7 @@ public class VolcanoVoiceApi implements VoiceModel {
 					.header("Content-Type", "application/json; charset=utf-8").post(true).send(gs.toJson(send))
 					.readJson();
 			if (data.has("data")) {
-				usageListener.accept(new VolcanoVoiceUsage(text.length()));
+				usageListener.accept(new VolcanoVoiceUsage(TextCounter.countWords(text)));
 				return CompletableFuture.completedFuture(
 						new ModelGenerationResult(Base64.getDecoder().decode(data.get("data").getAsString()), "mp3"));
 			}

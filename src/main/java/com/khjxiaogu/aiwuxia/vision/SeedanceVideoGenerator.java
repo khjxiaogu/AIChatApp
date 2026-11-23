@@ -1,6 +1,5 @@
 package com.khjxiaogu.aiwuxia.vision;
 
-import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,6 +17,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 
 /**
  * 即梦 Seedance 2.5 视频生成客户端（火山方舟 Ark API）。

@@ -11,9 +11,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
-import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
-import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 
 /**

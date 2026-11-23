@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.mcp.history;
+package com.khjxiaogu.aiwuxia.mcp;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -37,14 +37,18 @@ import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryHolder;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.utils.JsonConfig;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 /**
  * 记录检索 MCP：在历史记录里按关键字搜索，并按 id 读取记录全文。
@@ -56,11 +60,22 @@ import com.khjxiaogu.aiwuxia.utils.JsonConfig;
  * {@link HistoryItem#isDeleted()}）永远不会出现在搜索结果里。
  * </p>
  * <p>
+ * 只检索 {@link Role#USER}、{@link Role#ASSISTANT}、{@link Role#TOOL} 三种角色的记录：
+ * 系统提示、应用状态这类 {@link Role#SYSTEM} / {@link Role#APPLICATION} 记录既不参与搜索，
+ * 也不允许通过 {@code history_get} 读取，避免把内部提示词当作对话内容取回。
+ * </p>
+ * <p>
+ * 搜索按<b>从新到旧</b>进行，结果也按这个顺序给出：第一页永远是最新的匹配，
+ * 更旧的匹配通过 {@code page} 翻页获取。
+ * </p>
+ * <p>
  * 提供的工具：
  * </p>
  * <ul>
- *   <li>{@code history_search}：按关键字搜索隐藏记录，返回 {@code #id}、角色、命中字段与片段；</li>
- *   <li>{@code history_get}：按 id 读取记录全文，可选是否附带思维链（CoT）。</li>
+ *   <li>{@code history_search}：按关键字搜索隐藏记录，返回 {@code #id}、角色、命中字段与片段，
+ *       前端会把这次搜索显示为“关键词 + 页码”；</li>
+ *   <li>{@code history_get}：按 id 读取记录全文，可选是否附带思维链（CoT），
+ *       前端会显示这次读取的消息 id。</li>
  * </ul>
  * <p>
  * 两个工具都只读，不修改历史，也不产生用量。
@@ -74,9 +89,11 @@ public final class HistorySearchMcp {
 	public static final String GET_TOOL = "history_get";
 
 	/** 默认返回条数。 */
-	public static final int DEFAULT_MAX_RESULTS = 20;
+	public static final int DEFAULT_MAX_RESULTS = 5;
 	/** 单次搜索最多返回条数。 */
 	public static final int MAX_RESULTS = 50;
+	/** 默认页码（从 1 开始）。 */
+	public static final int DEFAULT_PAGE = 1;
 	/** 片段中命中位置之前保留的字符数。 */
 	private static final int SNIPPET_BEFORE = 60;
 	/** 片段中命中位置之后保留的字符数。 */
@@ -132,16 +149,18 @@ public final class HistorySearchMcp {
 
 	// ==================== 工具定义 ====================
 
-	/** 搜索工具：只搜隐藏且未删除的记录，只返回 id 与片段。 */
+	/** 搜索工具：只搜隐藏且未删除的记录，只返回 id 与片段，按从新到旧分页。 */
 	private ToolData searchTool() {
 		return new ToolData.Builder(SEARCH_TOOL,
-				"在**已从上下文隐藏但未删除**的历史记录里按关键字搜索。上下文压缩后旧记录会被隐藏，"
-						+ "用本工具可以找回当时的内容；已删除、仍在上下文中的记录不会被搜到。"
+				"在上下文压缩后隐藏的历史记录里按关键字搜索，结果按从新到旧排序。"
+						+ "用本工具可以找回当时的内容；仍在上下文中的记录不会被搜到。"
 						+ "只返回记录 id、角色、命中字段和片段，还需要全文时用 history_get(id) 读取。"
 						+ "关键字不区分大小写，多个中英文/同义词用 | 分隔。")
 				.putParam("keyword", "要搜索的关键字（不区分大小写）；多个中英文/同义词用 | 分隔，如 生日|birthday。", "关键字")
-				.putOptionalParam("max_results", "最多返回多少条，默认 20，最多 50。", "返回条数")
-				.putOptionalParam("role", "只看某个角色：user / assistant / system / application / tool；省略为全部。", "角色")
+				.putOptionalParam("max_results", "最多返回多少条，默认 5，最多 50。", "返回条数")
+				.putOptionalParam("page", "页码，从 1 开始，默认 1；一页装不下更旧的匹配时用 page 往后翻。", "页码")
+				.putOptionalParam("role", "只看某个角色：user / assistant / tool；省略为全部。", "角色")
+				.presenter(HistorySearchMcp::searchDisplay)
 				.toolText((params, output, manager) -> {
 					JsonObject json = json(params);
 					String keyword = JsonConfig.getNonBlankString(json, "keyword");
@@ -150,17 +169,22 @@ public final class HistorySearchMcp {
 					}
 					int max = JsonConfig.getInt(json, "max_results", DEFAULT_MAX_RESULTS);
 					max = Math.max(1, Math.min(MAX_RESULTS, max));
+					int page = Math.max(DEFAULT_PAGE, JsonConfig.getInt(json, "page", DEFAULT_PAGE));
 					String roleText = JsonConfig.getNonBlankString(json, "role");
 					Role role = null;
 					if (roleText != null && !"all".equalsIgnoreCase(roleText) && !"全部".equals(roleText)) {
 						role = parseRole(roleText);
 						if (role == null) {
 							return "无法识别的角色：" + roleText
-									+ "（可用：user / assistant / system / application / tool，或省略）";
+									+ "（可用：user / assistant / tool，或省略）";
+						}
+						if (!isSearchable(role)) {
+							return "只能搜索 user / assistant / tool 的记录，不能搜索 "
+									+ role.getRoleName() + " 的记录";
 						}
 					}
 					try {
-						return search(keyword, max, role);
+						return search(keyword, max, role, page);
 					} catch (Throwable t) {
 						return "搜索失败：" + describe(t);
 					}
@@ -168,15 +192,35 @@ public final class HistorySearchMcp {
 				.build();
 	}
 
+	/**
+	 * 搜索工具的前端显示：关键词 + 页码。
+	 * <p>
+	 * 只读调用参数，不关心搜索结果；页码缺省时按 {@value #DEFAULT_PAGE} 显示，
+	 * 与工具实际取值的归一化规则一致。
+	 * </p>
+	 *
+	 * @param call 原始工具调用
+	 * @return 用户友好显示
+	 */
+	private static ToolCallDisplay searchDisplay(ToolCall call) {
+		String keyword = ToolCallPresenter.argument(call, "keyword");
+		String page = ToolCallPresenter.argument(call, "page");
+		StringBuilder text = new StringBuilder();
+		if (keyword != null && !keyword.trim().isEmpty()) {
+			text.append("关键词：").append(keyword.trim()).append('\n');
+		}
+		text.append("页码：").append(page == null || page.trim().isEmpty() ? DEFAULT_PAGE : page.trim());
+		return ToolCallDisplay.of("搜索历史记录", new MutableMessageContents(text.toString()));
+	}
+
 	/** 读取工具：按 id 返回记录全文，可选是否附带思维链。 */
 	private ToolData getTool() {
 		return new ToolData.Builder(GET_TOOL,
-				"按记录 id 查询历史记录的全文（正文与上下文内容；默认不含思维链，"
-						+ "include_reasoning=true 时附带思维链）。可以读取已从上下文隐藏但未删除的记录；"
-						+ "已删除的记录会拒绝。id 来自 history_search 返回的 #数字。")
+				"按记录 id 查询历史记录的全文（正文与上下文内容；默认不含思维链）。可以读取已从上下文隐藏的记录。id 来自 history_search 返回的 #数字。")
 				.putParam("id", "记录 id，例如 history_search 返回的 #128 里填 128。", "记录ID")
 				.putOptionalParam("include_reasoning", "是否附带思维链（CoT），默认 false。", "含思维链")
 				.putOptionalParam("max_chars", "最多返回多少字符，默认不限制；超过会截断并提示。", "字符上限")
+				.presenter(HistorySearchMcp::getDisplay)
 				.toolText((params, output, manager) -> {
 					JsonObject json = json(params);
 					String idText = JsonConfig.getNonBlankString(json, "id");
@@ -194,17 +238,46 @@ public final class HistorySearchMcp {
 				.build();
 	}
 
+	/**
+	 * 读取工具的前端显示：消息 id（记录 id）。
+	 * <p>
+	 * 显示的是模型请求读取的那条记录 id，与 {@code history_get} 返回的
+	 * {@code 记录 #id} 一致；缺少 id 时只显示简述。
+	 * </p>
+	 *
+	 * @param call 原始工具调用
+	 * @return 用户友好显示
+	 */
+	private static ToolCallDisplay getDisplay(ToolCall call) {
+		String id = ToolCallPresenter.argument(call, "id");
+		if (id == null || id.trim().isEmpty()) {
+			return ToolCallDisplay.of("读取历史记录");
+		}
+		return ToolCallDisplay.of("读取历史记录", new MutableMessageContents("消息ID：" + id.trim()));
+	}
+
 	// ==================== 搜索 ====================
 
 	/**
-	 * 在隐藏且未删除的记录里搜索。
+	 * 在隐藏且未删除的记录里按<b>从新到旧</b>搜索，并只返回指定页的匹配。
+	 * <p>
+	 * 迭代器本身就是降序（{@link HistoryHolder#hiddenContextReverseIterator()}），因此先跳过
+	 * 前 {@code (page - 1) * maxResults} 条匹配，再收集本页的 {@code maxResults} 条：
+	 * 第一页永远是最新的一批匹配，翻页只会往更旧的记录走。
+	 * </p>
+	 * <p>
+	 * 只有<b>确实又找到一条匹配</b>时才提示“还有更多”：本页装满后搜索会继续往后扫，
+	 * 扫到下一条匹配就停下并标记还有更多，扫到末尾都没有就标记没有更多，
+	 * 避免模型为了一页不存在的旧记录来回翻页。
+	 * </p>
 	 *
 	 * @param keyword    关键字（已确认非空）
-	 * @param maxResults 最多返回条数（已归一化到 1..{@link #MAX_RESULTS}）
-	 * @param role       角色过滤，null 表示全部
+	 * @param maxResults 每页最多返回条数（已归一化到 1..{@link #MAX_RESULTS}）
+	 * @param role       角色过滤，null 表示 user/assistant/tool 全部
+	 * @param page       页码（从 1 开始，已归一化为不小于 1）
 	 * @return 面向模型的搜索结果文本
 	 */
-	private String search(String keyword, int maxResults, Role role) {
+	private String search(String keyword, int maxResults, Role role, int page) {
 		HistoryHolder history = resolveHistory();
 		if (history == null) {
 			return "当前会话没有可搜索的历史记录";
@@ -213,14 +286,20 @@ public final class HistorySearchMcp {
 		if (needles.length == 0) {
 			return "缺少有效的搜索关键字";
 		}
+		int skip = (page - 1) * maxResults;
 		List<Hit> hits = new ArrayList<>();
 		int scanned = 0;
-		boolean truncated = false;
-		Iterator<HistoryItem> it = history.hiddenContextIterator();
+		int matched = 0;
+		boolean hasMore = false;
+		Iterator<HistoryItem> it = history.hiddenContextReverseIterator();
 		while (it.hasNext()) {
 			HistoryItem item = it.next();
-			// hiddenContextIterator 已经过滤，这里再防御一次，避免实现覆盖后语义跑偏
+			// 迭代器已经过滤，这里再防御一次，避免实现覆盖后语义跑偏
 			if (item == null || item.isDeleted() || item.isValidContext()) {
+				continue;
+			}
+			// 只检索 user / assistant / tool，系统提示、应用状态等记录一律不参与
+			if (!isSearchable(item.getRole())) {
 				continue;
 			}
 			scanned++;
@@ -231,29 +310,40 @@ public final class HistorySearchMcp {
 			if (hit == null) {
 				continue;
 			}
-			if (hits.size() >= maxResults) {
-				truncated = true;
-				break;
+			matched++;
+			if (matched <= skip) {
+				continue;
 			}
-			hits.add(hit);
+			if (hits.size() < maxResults) {
+				hits.add(hit);
+				continue;
+			}
+			// 本页已经装满：继续往后找，真的找到下一条匹配才敢说“还有更多”；
+			// 后面都没有匹配时 hasMore 保持 false，不会让模型白翻一页。
+			hasMore = true;
+			break;
 		}
 		if (hits.isEmpty()) {
-			StringBuilder text = new StringBuilder("没有在「已从上下文隐藏且未删除」的记录里找到「")
+			StringBuilder text = new StringBuilder("没有在「已从上下文隐藏」的记录里找到「")
 					.append(keyword).append("」。");
-			if (scanned > 0) {
-				text.append("（已检查 ").append(scanned).append(" 条隐藏记录；")
-						.append("已删除、仍在上下文中的记录不参与搜索）");
+			if (matched > 0) {
+				text.append("（第 ").append(page).append(" 页没有更多匹配，一共找到 ")
+						.append(matched).append(" 条）");
+			} else if (scanned > 0) {
+				text.append("（第 ").append(page).append(" 页；已检查 ").append(scanned).append(" 条隐藏记录；")
+						.append("仍在上下文中的记录不参与搜索）");
 			} else {
-				text.append("当前没有被隐藏的旧记录：要么历史还没有压缩过，要么相关记录已被删除。");
+				text.append("当前没有可搜索的旧记录：历史可能还没有压缩过。");
 			}
 			return text.toString();
 		}
 		StringBuilder text = new StringBuilder("在已从上下文隐藏的记录里找到 ")
-				.append(hits.size()).append(" 条匹配");
-		if (truncated) {
-			text.append("（已达到返回上限 ").append(maxResults).append("，可能还有更多）");
+				.append(hits.size()).append(" 条匹配（第 ").append(page).append(" 页");
+		if (hasMore) {
+			text.append("，达到每页上限 ").append(maxResults)
+					.append("，更旧的匹配还有更多，翻页用 page=").append(page + 1);
 		}
-		text.append("：\n");
+		text.append("）：\n");
 		for (Hit hit : hits) {
 			text.append('#').append(hit.item.getIdentifier()).append('｜')
 					.append(roleName(hit.item.getRole())).append("｜匹配：").append(hit.field).append('\n');
@@ -348,10 +438,16 @@ public final class HistorySearchMcp {
 		}
 		HistoryItem item = history.getById(id);
 		if (item == null) {
-			return "没有找到记录 #" + id + "（可能已删除，或不属于当前会话）";
+			return "没有找到记录 #" + id + "（不存在，或不属于当前会话）";
 		}
 		if (item.isDeleted()) {
-			return "记录 #" + id + " 已删除，不能查询";
+			return "没有找到记录 #" + id + "（不存在或不可读取）";
+		}
+		// 与搜索一致：只允许读取 user / assistant / tool，避免系统提示、应用状态被当对话取回
+		Role itemRole = item.getRole();
+		if (!isSearchable(itemRole)) {
+			return "记录 #" + id + " 的角色是 " + (itemRole == null ? "未知" : itemRole.getRoleName())
+					+ "，只允许读取 user / assistant / tool 的记录";
 		}
 		String display = render(item.getDisplayContent());
 		String context = render(item.getContextContent());
@@ -360,7 +456,7 @@ public final class HistorySearchMcp {
 		StringBuilder text = new StringBuilder();
 		text.append("记录 #").append(id)
 				.append("｜角色：").append(roleName(item.getRole()))
-				.append("｜状态：").append(item.isValidContext() ? "在上下文中" : "已从上下文隐藏（未删除）")
+				.append("｜状态：").append(item.isValidContext() ? "在上下文中" : "已从上下文隐藏")
 				.append('\n');
 		text.append("── 正文 ──\n");
 		text.append(display.isEmpty() ? "（无文本）" : display.trim()).append('\n');
@@ -371,7 +467,7 @@ public final class HistorySearchMcp {
 			text.append("── 思维链 ──\n");
 			text.append(reasoning.isEmpty() ? "（无）" : reasoning.trim()).append('\n');
 		} else if (!reasoning.isEmpty()) {
-			text.append("（该记录有思维链 ").append(reasoning.length())
+			text.append("（该记录有思维链 ").append(TextCounter.countWords(reasoning))
 					.append(" 字；需要时传 include_reasoning=true 一并返回）\n");
 		}
 		String result = text.toString().trim();
@@ -480,6 +576,21 @@ public final class HistorySearchMcp {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * 该角色的记录是否允许被检索/读取。
+	 * <p>
+	 * 只放行 {@link Role#USER}、{@link Role#ASSISTANT}、{@link Role#TOOL} 三种对话记录：
+	 * {@link Role#SYSTEM}（系统提示）与 {@link Role#APPLICATION}（应用状态）属于内部数据，
+	 * 既不出现在搜索结果里，也不能用 {@code history_get} 按 id 取回。
+	 * </p>
+	 *
+	 * @param role 记录角色，可为 null
+	 * @return 允许检索时返回 true
+	 */
+	private static boolean isSearchable(Role role) {
+		return role == Role.USER || role == Role.ASSISTANT || role == Role.TOOL;
 	}
 
 	/** 多语言/同义词搜索：用 | 分隔，如 {@code 生日|birthday}。 */

@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.voice;
+package com.khjxiaogu.aiwuxia;
 
 import java.io.File;
 import java.net.URI;
@@ -12,12 +12,17 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelGateway;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.vision.H3LocalModelHandler;
 import com.khjxiaogu.aiwuxia.vision.QwenLocalModelHandler;
 import com.khjxiaogu.aiwuxia.vision.SDXLLocalModelHandler;
 import com.khjxiaogu.aiwuxia.vision.SvsLocalModelHandler;
+import com.khjxiaogu.aiwuxia.voice.AudioLocalModelHandler;
+import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
 
 /**
  * 本地模型服务：管理“怎么调用本机模型”，不关心网络细节。
@@ -26,7 +31,7 @@ import com.khjxiaogu.aiwuxia.vision.SvsLocalModelHandler;
  * </p>
  * <ul>
  *   <li>为每条部署通道创建一个 {@link LocalModelClient}（统一管理器），
- *       网络传输由 {@link com.khjxiaogu.aiwuxia.voice.transport.LocalModelTransport} 负责；</li>
+ *       网络传输由 {@link com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransport} 负责；</li>
  *   <li>把所有模型的请求处理器（SDXL / SVS / QWEN / H3 / 可选 AUDIO）注册到同一个管理器上，
  *       由它按请求的 {@code type} 分发；</li>
  *   <li>能力集合通过连接 URL 的 {@code model_type} 初始声明，运行期可用

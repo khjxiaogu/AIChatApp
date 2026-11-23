@@ -2,24 +2,28 @@ package com.khjxiaogu.aiwuxia.vision;
 
 import java.io.IOException;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-
+import com.khjxiaogu.aiwuxia.modelproxy.AttachmentFetcher;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.ProgressReporter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.RequestHandler;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.Response;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelEta;
+import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCodec;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SdxlAction;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SdxlParams;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.tools.TaskPriority;
-import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.ProgressReporter;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.RequestHandler;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.Response;
-import com.khjxiaogu.aiwuxia.voice.LocalModelEta;
 
 /**
  * SDXL（SD WebUI / A1111 / Forge）的请求处理器。
  * <p>
- * 服务器把 {@code {"path":...,"data":...}} 原样送进来，本处理器转成对 SD WebUI 的 POST；
- * 不再持有网络连接，连接与进度上报由 {@link LocalModelClient} 统一管理。
+ * 与 H3 / Qwen 的处理器同一套架构：服务器只下发 {@link SdxlParams}，本处理器先按需从服务器
+ * 拉取参考图附件（{@link AttachmentFetcher}），再用 {@link SDXLApi} 调用 SD WebUI，
+ * 最后把结果还原成图片字节回传。地址取 {@code -DsdwebuiUrl=127.0.0.1:7860}。
  * </p>
  */
 public final class SDXLLocalModelHandler {
@@ -30,6 +34,10 @@ public final class SDXLLocalModelHandler {
 	private static final String HEALTH_PATH = "/internal/ping";
 	/** 生成图片时 SD WebUI 可能较慢，单次探活给足超时，避免误判。 */
 	private static final int HEALTH_TIMEOUT_MS = 10_000;
+	/** 反推比生图快得多，用于区分预计耗时。 */
+	private static final long INTERROGATE_ETA_MS = 15_000L;
+	/** 生图的默认预计耗时。 */
+	private static final long GENERATE_ETA_MS = 45_000L;
 
 	private SDXLLocalModelHandler() {
 	}
@@ -45,12 +53,12 @@ public final class SDXLLocalModelHandler {
 		return new RequestHandler() {
 			@Override
 			public Response handle(JsonObject request) {
-				return SDXLLocalModelHandler.handle(request, effectiveLock, ProgressReporter.NOOP);
+				return handle(LocalModelCodec.decode(request), ProgressReporter.NOOP, null);
 			}
 
 			@Override
-			public Response handle(JsonObject request, ProgressReporter progress) {
-				return SDXLLocalModelHandler.handle(request, effectiveLock, progress);
+			public Response handle(LocalModelCall<?> call, ProgressReporter progress, AttachmentFetcher fetcher) {
+				return SDXLLocalModelHandler.handle(call, effectiveLock, progress, fetcher);
 			}
 		};
 	}
@@ -71,71 +79,58 @@ public final class SDXLLocalModelHandler {
 		return LocalModelClient.httpHealthCheck(base + HEALTH_PATH, HEALTH_TIMEOUT_MS);
 	}
 
-	/** 把服务器的 SD WebUI 请求转发出去，并把响应字节原样回传。 */
-	private static Response handle(JsonObject request, ResourceLock lock, ProgressReporter progress) {
-		String reqid = request.has("reqid") && !request.get("reqid").isJsonNull()
-				? request.get("reqid").getAsString() : "";
-		String path = request.has("path") && !request.get("path").isJsonNull()
-				? request.get("path").getAsString() : "";
+	/** 拉取参考图 → 执行一次 SDXL 调用 → 回传结果字节。 */
+	private static Response handle(LocalModelCall<?> call, ResourceLock lock, ProgressReporter progress,
+			AttachmentFetcher fetcher) {
+		SdxlParams params = call.requireParams(SdxlParams.class);
+		params.validate();
+		String reqid = call.reqid;
+		String action = params.action.wireName;
 		String sdwebuiUrl = System.getProperty("sdwebuiUrl");
 		progress.queued("等待本地模型资源");
 		long queuedAt = System.currentTimeMillis();
 		try (ResourcePermit permit = lock.acquire(RESOURCE_AMOUNT, TaskPriority.HIGH)) {
 			long waited = System.currentTimeMillis() - queuedAt;
-			Gson gson = new Gson();
+			// 参考图按需拉取：只用到图的反推/图生图才会真正下载
+			byte[] imageBytes = readAttachment(call, params.image, fetcher);
 			// 排队结束、正式把请求下发给 SD WebUI 的那一刻才切到“执行中”
-			// 没有真实进度，给一个预计总耗时：前端按 10% 步进到 90%，避免长时间空转。
-			// 不同 API 的耗时不同：API 级配置优先，其次模型级 sdxlEtaMs，最后按 API 取默认值
-			String api = sdxlApi(path);
 			progress.running("已下发 SD WebUI", LocalModelEta.resolve(
-					"interrogate".equals(api) ? 15_000L : 45_000L,
-					LocalModelEta.propertyName("sdxl", api), "sdxlEtaMs"));
-			String body = gson.fromJson(request.get("data").toString(), String.class);
+					params.action == SdxlAction.INTERROGATE ? INTERROGATE_ETA_MS : GENERATE_ETA_MS,
+					LocalModelEta.propertyName("sdxl", action), "sdxlEtaMs"));
 			long sentAt = System.currentTimeMillis();
 			System.out.println("[SDXL] 已获取资源锁（排队 " + waited + "ms），请求 SD WebUI：reqid=" + reqid
-					+ " path=" + path + " 请求体=" + (body == null ? 0 : body.length()) + "B");
-			HttpRequestBuilder.OpenedConnectionBuilder connection = HttpRequestBuilder
-					.create("http", sdwebuiUrl)
-					.header("Accept", "application/json")
-					.header("Content-Type", "application/json; utf-8")
-					.url(path)
-					.post()
-					.send(body);
-			byte[] data = connection.readBytes();
-			System.out.println("[SDXL] SD WebUI 返回：reqid=" + reqid + " path=" + path + " HTTP="
-					+ connection.getResponseCode() + " 响应=" + (data == null ? 0 : data.length) + "B 用时="
+					+ " action=" + action + (params.image == null ? "" : " 附件=" + params.image));
+			byte[] data = SDXLApi.dispatch(params, imageBytes, SDXLApi.direct(sdwebuiUrl));
+			String format = params.action == SdxlAction.INTERROGATE ? "json" : SDXLApi.imageFormat(data);
+			System.out.println("[SDXL] SD WebUI 返回：reqid=" + reqid + " action=" + action + " 结果="
+					+ (data == null ? 0 : data.length) + "B/" + format + " 用时="
 					+ (System.currentTimeMillis() - sentAt) + "ms");
-			return new Response(data, "json");
+			return new Response(data, format);
 		} catch (IOException ex) {
-			System.err.println("[SDXL] 请求 SD WebUI 失败：reqid=" + reqid + " path=" + path + " url="
+			System.err.println("[SDXL] 请求 SD WebUI 失败：reqid=" + reqid + " action=" + action + " url="
 					+ sdwebuiUrl + " 错误=" + ex);
 			ex.printStackTrace();
 			throw new RuntimeException(ex);
 		} catch (RuntimeException ex) {
-			// JSON 解析失败、请求字段缺失等非 IO 问题也明确打出来，避免只看到协议层笼统的错误
-			System.err.println("[SDXL] 处理请求出错：reqid=" + reqid + " path=" + path + " 错误=" + ex);
+			System.err.println("[SDXL] 处理请求出错：reqid=" + reqid + " action=" + action + " 错误=" + ex);
 			ex.printStackTrace();
 			throw ex;
 		}
 	}
 
-	/**
-	 * 按请求路径识别 SD WebUI 的 API 名，用于选择对应的预计耗时。
-	 *
-	 * @param path 请求路径，例如 {@code /sdapi/v1/txt2img}
-	 * @return {@code txt2img} / {@code img2img} / {@code interrogate}；未知路径返回 null
-	 */
-	private static String sdxlApi(String path) {
-		String value = path == null ? "" : path.trim().toLowerCase(java.util.Locale.ROOT);
-		if (value.contains("interrogate")) {
-			return "interrogate";
+	/** 若参数里的图片是附件，则从服务器拉取；否则返回 null（链接/Base64 兜底）。 */
+	private static byte[] readAttachment(LocalModelCall<?> call, String image, AttachmentFetcher fetcher)
+			throws IOException {
+		if (image == null || image.isEmpty()) {
+			return null;
 		}
-		if (value.contains("img2img")) {
-			return "img2img";
+		AttachmentRef ref = call.attachment(image);
+		if (ref == null) {
+			return null;
 		}
-		if (value.contains("txt2img")) {
-			return "txt2img";
+		if (fetcher == null) {
+			throw new IOException("没有附件拉取器，无法获取参考图：" + image);
 		}
-		return null;
+		return fetcher.fetch(call.reqid, ref);
 	}
 }

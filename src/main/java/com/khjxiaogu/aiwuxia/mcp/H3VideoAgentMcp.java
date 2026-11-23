@@ -1,6 +1,5 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
-import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -23,13 +22,14 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.ModelType;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 
 /**
  * 视频生成子 agent 工具。

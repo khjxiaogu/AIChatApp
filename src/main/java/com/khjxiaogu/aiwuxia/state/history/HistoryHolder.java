@@ -185,6 +185,66 @@ public interface HistoryHolder extends Iterable<HistoryItem> {
 	}
 
 	/**
+	 * 返回一个迭代器，仅遍历<b>未删除、但已从上下文中隐藏</b>的条目，顺序为<b>从新到旧</b>。
+	 * <p>
+	 * 与 {@link #hiddenContextIterator()} 的过滤条件完全相同，只是顺序相反：最近被挤出上下文的
+	 * 记录先返回。记录检索工具（{@code mcp.HistorySearchMcp}）按这个顺序搜索与分页，
+	 * 因此第一页永远是最新的匹配。
+	 * </p>
+	 * <p>
+	 * 默认实现基于 {@link #reverseIterator()} 做内存过滤；{@link SqliteHistory} 覆盖为一条
+	 * {@code ORDER BY identifier DESC} 的查询，避免为了找最新记录而把全部条目建出来。
+	 * </p>
+	 *
+	 * @return 隐藏上下文条目的反向迭代器（按标识符降序）
+	 */
+	default Iterator<HistoryItem> hiddenContextReverseIterator() {
+		Iterator<HistoryItem> delegate = reverseIterator();
+		return new Iterator<HistoryItem>() {
+			/** 已预取的下一条目，null 表示没有更多。 */
+			private HistoryItem next;
+			/** next 是否需要重新预取。 */
+			private boolean needAdvance = true;
+
+			private void advance() {
+				needAdvance = false;
+				while (delegate.hasNext()) {
+					HistoryItem item = delegate.next();
+					if (!item.isDeleted() && !item.isValidContext()) {
+						next = item;
+						return;
+					}
+				}
+				next = null;
+			}
+
+			@Override
+			public boolean hasNext() {
+				if (needAdvance) {
+					advance();
+				}
+				return next != null;
+			}
+
+			@Override
+			public HistoryItem next() {
+				if (!hasNext()) {
+					throw new NoSuchElementException();
+				}
+				HistoryItem result = next;
+				next = null;
+				needAdvance = true;
+				return result;
+			}
+
+			@Override
+			public void remove() {
+				throw new UnsupportedOperationException();
+			}
+		};
+	}
+
+	/**
 	 * 添加一个新的历史条目，省略上下文内容（设为 null）。
 	 *
 	 * @param role           条目的角色

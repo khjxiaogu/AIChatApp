@@ -45,7 +45,7 @@ import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 
 public class AISummary {
@@ -74,7 +74,7 @@ public class AISummary {
 				
 				HistoryItem hi=it.next();
 			
-				len+=TokenSimulatedCounter.fastCountLength(hi.getContextContent());
+				len+=TextCounter.countTokens(hi.getContextContent());
 				
 				if(hi.getRole()!=Role.SYSTEM) {
 					if(hi.getRole()==Role.USER)

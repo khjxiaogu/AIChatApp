@@ -23,7 +23,6 @@
  */
 package com.khjxiaogu.aiwuxia.mcp;
 
-import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -41,10 +40,11 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
-import com.khjxiaogu.aiwuxia.voice.ModelType;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.aiwuxia.vision.QwenImageApi;
 
 /**

@@ -3,7 +3,7 @@ package com.khjxiaogu.aiwuxia.utils;
 /**
  * 一次本地模型任务的进度。
  * <p>
- * 由本地模型连接器上报、经 {@link com.khjxiaogu.aiwuxia.voice.LocalModelHandshaker} 转交给
+ * 由本地模型连接器上报、经 {@link com.khjxiaogu.aiwuxia.modelproxy.LocalModelHandshaker} 转交给
  * 正在执行该工具调用的线程。只用于展示，不写入历史。
  * </p>
  */

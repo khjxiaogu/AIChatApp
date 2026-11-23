@@ -1,5 +1,6 @@
-package com.khjxiaogu.aiwuxia.voice;
+package com.khjxiaogu.aiwuxia.modelproxy;
 
+import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URI;
@@ -8,7 +9,6 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
@@ -18,24 +18,30 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.gson.JsonObject;
-import com.khjxiaogu.aiwuxia.voice.protocol.FileChunkAssembler;
-import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol;
-import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol.FileChunk;
-import com.khjxiaogu.aiwuxia.voice.transport.LocalModelTransport;
-import com.khjxiaogu.aiwuxia.voice.transport.LocalModelTransportFactory;
-import com.khjxiaogu.aiwuxia.voice.transport.WebSocketTransportFactory;
+import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCodec;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.FileChunkAssembler;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol.FileChunk;
+import com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransport;
+import com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransportFactory;
+import com.khjxiaogu.aiwuxia.modelproxy.transport.WebSocketTransportFactory;
 
 /**
  * 本地模型连接客户端（统一会话管理器）。
@@ -61,7 +67,7 @@ import com.khjxiaogu.aiwuxia.voice.transport.WebSocketTransportFactory;
  * </ul>
  * <p>
  * 网络传输细节由 {@link LocalModelTransport} 负责（默认
- * {@link com.khjxiaogu.aiwuxia.voice.transport.WebSocketLocalModelTransport}），报文格式由
+ * {@link com.khjxiaogu.aiwuxia.modelproxy.transport.WebSocketLocalModelTransport}），报文格式由
  * {@link LocalModelProtocol} 负责，本类不直接依赖 WebSocket 或具体报文结构。
  * </p>
  */
@@ -137,6 +143,23 @@ public class LocalModelClient {
 		 */
 		default Response handle(JsonObject request, ProgressReporter progress) {
 			return handle(request);
+		}
+
+		/**
+		 * 处理统一调用对象（新协议）。
+		 * <p>
+		 * 默认实现把统一对象压回旧格式后交给 {@link #handle(JsonObject, ProgressReporter)}，
+		 * 未迁移的处理器因此可以继续工作；已经迁移的处理器直接覆盖本方法即可拿到类型化参数
+		 * 与附件拉取器。
+		 * </p>
+		 *
+		 * @param call     统一调用对象
+		 * @param progress 进度上报入口，永不为 null
+		 * @param fetcher  附件拉取器，永不为 null
+		 * @return 处理结果，包含数据和格式；返回 null 表示处理失败
+		 */
+		default Response handle(LocalModelCall<?> call, ProgressReporter progress, AttachmentFetcher fetcher) {
+			return handle(LocalModelCodec.encodeLegacyJson(call), progress);
 		}
 	}
 
@@ -381,7 +404,12 @@ public class LocalModelClient {
 		this.reconnectIntervalMs = reconnectIntervalMs;
 		// 本客户端实现分块收发：始终声明分块/大报文能力（flags=chunked）
 		this.flags.add(LocalModelProtocol.FLAG_CHUNKED);
+		// 附件按需从同一条 WebSocket 连接拉取（LMA1 分块），不走额外 HTTP 端口
+		this.attachmentFetcher = this::fetchAttachment;
 	}
+
+	/** 拉取附件的实现。 */
+	private final AttachmentFetcher attachmentFetcher;
 
 	/** 读取进度心跳间隔，非法值回退到默认值。 */
 	private static long readProgressInterval() {
@@ -568,8 +596,10 @@ public class LocalModelClient {
 
 			@Override
 			public void onBinary(byte[] message) {
-				// 服务器把过大的模型请求按分块发过来时走这里
-				receiveRequestChunk(message);
+				// 服务器回传附件（LMA1）或把过大的模型请求分块下发（LMR1）
+				if (!receiveAttachmentChunk(message)) {
+					receiveRequestChunk(message);
+				}
 			}
 
 			@Override
@@ -845,6 +875,125 @@ public class LocalModelClient {
 		dispatch(new String(data, StandardCharsets.UTF_8));
 	}
 
+	// ==================== 附件按需拉取 ====================
+
+	/** 附件拉取等待上限：60 秒。 */
+	private static final long ATTACHMENT_TIMEOUT_MS = 60_000L;
+
+	/** 等待中的附件拉取，key = reqid + "|" + 附件 id。 */
+	private final Map<String, CompletableFuture<byte[]>> pendingAttachments = new ConcurrentHashMap<>();
+	/** 附件分块组装，key 同上。 */
+	private final Map<String, FileChunkAssembler> attachmentAssemblers = new ConcurrentHashMap<>();
+
+	/**
+	 * 通过 WebSocket 按需拉取附件。
+	 * <p>
+	 * 发送 {@code {"type":"attachment.get","reqid":..,"id":..}}，服务器按 {@code LMA1} 分块
+	 * 回传；这里同步等待拼装完成。附件字节不会出现在模型请求报文里。
+	 * </p>
+	 *
+	 * @param reqid 请求 ID
+	 * @param ref   附件引用
+	 * @return 附件字节
+	 * @throws IOException 拉取失败或超时
+	 */
+	private byte[] fetchAttachment(String reqid, AttachmentRef ref) throws IOException {
+		if (ref == null || ref.id == null || ref.id.isEmpty()) {
+			throw new IOException("缺少附件引用");
+		}
+		String key = reqid + "|" + ref.id;
+		CompletableFuture<byte[]> future = new CompletableFuture<>();
+		pendingAttachments.put(key, future);
+		sendReply(LocalModelProtocol.attachmentGet(reqid, ref.id));
+		try {
+			return future.get(ATTACHMENT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+		} catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new IOException("拉取附件被中断：" + ref.id, ex);
+		} catch (TimeoutException ex) {
+			throw new IOException("拉取附件超时：" + ref.id, ex);
+		} catch (ExecutionException ex) {
+			Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+			throw new IOException("拉取附件失败："
+					+ (cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage()), cause);
+		} finally {
+			pendingAttachments.remove(key);
+			attachmentAssemblers.remove(key);
+		}
+	}
+
+	/**
+	 * 接收一个附件分块。
+	 *
+	 * @param frame 二进制帧
+	 * @return 是否是附件帧（false 表示调用方应按请求分块处理）
+	 */
+	private boolean receiveAttachmentChunk(byte[] frame) {
+		FileChunk chunk = LocalModelProtocol.parseAttachmentChunk(frame);
+		if (chunk == null) {
+			return false;
+		}
+		String key = chunk.reqid + "|" + chunk.format;
+		FileChunkAssembler assembler = attachmentAssemblers.get(key);
+		if (assembler == null) {
+			try {
+				assembler = FileChunkAssembler.start(chunk,
+						System.currentTimeMillis() + ATTACHMENT_TIMEOUT_MS);
+			} catch (IllegalArgumentException ex) {
+				System.err.println("[LocalModelClient] 附件分块非法：reqid=" + chunk.reqid + " id=" + chunk.format
+						+ " 错误=" + ex.getMessage());
+				completeAttachmentWithError(chunk.reqid, chunk.format, ex.getMessage());
+				return true;
+			}
+			attachmentAssemblers.put(key, assembler);
+		} else {
+			try {
+				assembler.accept(chunk);
+				assembler.touch(System.currentTimeMillis() + ATTACHMENT_TIMEOUT_MS);
+			} catch (IllegalArgumentException ex) {
+				attachmentAssemblers.remove(key);
+				completeAttachmentWithError(chunk.reqid, chunk.format, ex.getMessage());
+				return true;
+			}
+		}
+		if (!assembler.isComplete()) {
+			return true;
+		}
+		attachmentAssemblers.remove(key);
+		try {
+			byte[] data = assembler.assemble();
+			CompletableFuture<byte[]> future = pendingAttachments.get(key);
+			if (future != null) {
+				future.complete(data);
+			}
+			System.out.println("[LocalModelClient] 附件接收完成：reqid=" + chunk.reqid + " id=" + chunk.format
+					+ " 大小=" + data.length + "B");
+		} catch (IllegalStateException ex) {
+			completeAttachmentWithError(chunk.reqid, chunk.format, ex.getMessage());
+		}
+		return true;
+	}
+
+	/** 处理服务器回传的附件拉取失败报文。 */
+	private void completeAttachmentWithError(JsonObject message) {
+		String reqid = LocalModelProtocol.reqid(message);
+		String id = LocalModelProtocol.attachmentId(message);
+		String error = message.has(LocalModelProtocol.FIELD_ERROR)
+				&& !message.get(LocalModelProtocol.FIELD_ERROR).isJsonNull()
+						? message.get(LocalModelProtocol.FIELD_ERROR).getAsString()
+						: "attachment error";
+		completeAttachmentWithError(reqid, id, error);
+	}
+
+	/** 让等待中的附件拉取失败。 */
+	private void completeAttachmentWithError(String reqid, String id, String error) {
+		String key = reqid + "|" + id;
+		CompletableFuture<byte[]> future = pendingAttachments.get(key);
+		if (future != null) {
+			future.completeExceptionally(new IOException(error));
+		}
+	}
+
 	/** 启动请求分块的超时清理（只启动一次）。 */
 	private void startRequestCleanup() {
 		if (!requestCleanupStarted.compareAndSet(false, true)) {
@@ -887,6 +1036,10 @@ public class LocalModelClient {
 		}
 		if (LocalModelProtocol.isCapabilities(request)) {
 			System.out.println("[LocalModelClient] 服务器已确认能力集合：" + LocalModelProtocol.modelTypes(request) + " flags=" + LocalModelProtocol.flags(request));
+			return;
+		}
+		if (LocalModelProtocol.isAttachmentError(request)) {
+			completeAttachmentWithError(request);
 			return;
 		}
 		String reqid = LocalModelProtocol.reqid(request);
@@ -947,9 +1100,22 @@ public class LocalModelClient {
 							+ "s 仍未返回，本地软件仍在生成：reqid=" + reqid + " type=" + taskTypeName),
 					LONG_TASK_WARN_MS, TimeUnit.MILLISECONDS);
 			long startedAt = System.currentTimeMillis();
+			// 统一解码：新协议得到类型化参数与附件引用，旧报文由编解码器兜底解析
+			LocalModelCall<?> call;
+			try {
+				call = LocalModelCodec.decode(request);
+			} catch (RuntimeException ex) {
+				System.err.println("[LocalModelClient] 请求参数无法解析：reqid=" + reqid + " type=" + typeName
+						+ " 错误=" + ex);
+				longTaskWarning.cancel(false);
+				heartbeat.cancel(false);
+				activeRequests.decrementAndGet();
+				sendReply(source, LocalModelProtocol.error(reqid, "bad request: " + rootMessage(ex)));
+				return;
+			}
 			Response response;
 			try {
-				response = handler.handle(request, reporter);
+				response = handler.handle(call, reporter, attachmentFetcher);
 			} finally {
 				longTaskWarning.cancel(false);
 				heartbeat.cancel(false);

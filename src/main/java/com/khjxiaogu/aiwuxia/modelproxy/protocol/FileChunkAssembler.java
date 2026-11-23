@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.voice.protocol;
+package com.khjxiaogu.aiwuxia.modelproxy.protocol;
 
 /**
  * 二进制文件分块的接收端组装器。

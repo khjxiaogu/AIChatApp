@@ -23,7 +23,7 @@
  */
 package com.khjxiaogu.aiwuxia.codex;
 
-import com.khjxiaogu.aiwuxia.mcp.codex.CodexMcp;
+import com.khjxiaogu.aiwuxia.mcp.CodexMcp;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 
 /**

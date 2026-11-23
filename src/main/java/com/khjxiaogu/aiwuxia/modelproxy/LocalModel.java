@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.voice;
+package com.khjxiaogu.aiwuxia.modelproxy;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -29,6 +29,7 @@ import java.util.function.Consumer;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SvsOptions;
 /**
  * 本地部署模型的交互器，提供对本地模型服务的静态访问入口。
  * 该类封装了 {@link LocalModelHandshaker} 的单例实例，并通过静态方法
@@ -80,7 +81,7 @@ public class LocalModel {
      * 判断指定用户接下来会取用的连接器是否声明了某个协议能力标记。
      * <p>
      * 标记在握手 URL（{@code flags=...}）或运行期 {@code capabilities} 报文里声明。
-     * 例如 {@link com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol#FLAG_CHUNKED}
+     * 例如 {@link com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol#FLAG_CHUNKED}
      * 表示支持分块/大报文，可以在报文里直接内嵌图片等多媒体内容，而不是只给链接。
      * 取用顺序与 {@link #require(String, ModelType, String, JsonObject)} 一致：
      * 用户专属连接优先，用户没有可用连接时看共享连接池。
@@ -189,10 +190,10 @@ public class LocalModel {
      *
      * @param reqid   请求唯一标识符
      * @param url     音源地址
-     * @param options SVS 参数，见 {@link LocalModelHandshaker.SvsOptions}
+     * @param options SVS 参数，见 {@link SvsOptions}
      * @return 包含音频字节数组的 CompletableFuture
      */
-    public static CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, LocalModelHandshaker.SvsOptions options) {
+    public static CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, SvsOptions options) {
         return lhs.requireSvs(reqid, url, options);
     }
 
@@ -202,14 +203,40 @@ public class LocalModel {
      * @param reqid   请求唯一标识符
      * @param url     音源地址
      * @param name    音源名称，可为 null
-     * @param options SVS 参数，见 {@link LocalModelHandshaker.SvsOptions}
+     * @param options SVS 参数，见 {@link SvsOptions}
      * @return 包含音频字节数组的 CompletableFuture
      */
-    public static CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, String name, LocalModelHandshaker.SvsOptions options) {
+    public static CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, String name, SvsOptions options) {
         return lhs.requireSvs(reqid, url, name, options);
     }
 
     public static CompletableFuture<ModelGenerationResult> registerTask(String reqid) {
         return lhs.registerTask(reqid);
+    }
+
+    /**
+     * 发送一次统一信封调用（新协议）。
+     * <p>
+     * 参数与附件都已经是类型化对象：附件字节不内联进报文，接收端按需通过
+     * {@link com.khjxiaogu.aiwuxia.modelproxy.LocalModelAttachments} 拉取。
+     * </p>
+     *
+     * @param call 调用
+     * @return 结果
+     */
+    public static CompletableFuture<ModelGenerationResult> send(com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall<?> call) {
+        return lhs.send(call);
+    }
+
+    /**
+     * 发送一次统一信封调用，并优先使用指定用户的本地模型。
+     *
+     * @param uid  用户标识，可为 null
+     * @param call 调用
+     * @return 结果
+     */
+    public static CompletableFuture<ModelGenerationResult> send(String uid,
+            com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall<?> call) {
+        return lhs.send(uid, call);
     }
 }

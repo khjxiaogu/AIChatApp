@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.voice.transport;
+package com.khjxiaogu.aiwuxia.modelproxy.transport;
 
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -13,7 +13,7 @@ import org.java_websocket.handshake.ServerHandshake;
  * <p>
  * 只处理连接与报文收发，收到的文本报文原样交给 {@link LocalModelTransport.Listener}；
  * 业务逻辑（任务分发、进度上报、重连策略、健康检查）全部在
- * {@link com.khjxiaogu.aiwuxia.voice.LocalModelClient} 中。
+ * {@link com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient} 中。
  * </p>
  */
 public class WebSocketLocalModelTransport extends WebSocketClient implements LocalModelTransport {

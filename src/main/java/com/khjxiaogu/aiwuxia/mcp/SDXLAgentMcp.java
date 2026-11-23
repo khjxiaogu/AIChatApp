@@ -2,14 +2,11 @@ package com.khjxiaogu.aiwuxia.mcp;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.BiFunction;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -24,17 +21,17 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.multimedia.MultimediaApi;
 import com.khjxiaogu.aiwuxia.multimedia.SDXLAgentMultimediaApi;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
+import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
-import com.khjxiaogu.aiwuxia.vision.LocalSDXLUsage;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.ModelType;
-import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.vision.LocalSDXLUsage;
 
 /**
  * 出图子 agent 工具。
@@ -212,10 +209,11 @@ public class SDXLAgentMcp {
 	}
 
 	/**
-	 * 通过本地模型通道调用 SD WebUI 的 WD1.4 反推接口，失败时返回空串，不影响原图结果。
+	 * 通过本地模型通道反推图片提示词，失败时返回空串，不影响原图结果。
 	 * <p>
-	 * 请求体 {@code {"path":..., "data":...}} 由 {@code SDXLLocalModelHandler} 原样转发给 SD WebUI，
-	 * 因此聊天进程不再需要直接访问 {@code sdwebuiUrl}。
+	 * 请求只带语义参数（{@code action=interrogate} + 图片），由本地模型客户端
+	 * （{@link com.khjxiaogu.aiwuxia.vision.SDXLLocalModelHandler} 或浏览器接入页）调用 SD WebUI，
+	 * 因此聊天进程不需要能访问 {@code sdwebuiUrl}。
 	 * </p>
 	 */
 	private static String interrogateImage(String imageId, ObjectStorageProvider tos, AIOutput output) {
@@ -228,7 +226,7 @@ public class SDXLAgentMcp {
 			if (data == null || data.length == 0) {
 				return "";
 			}
-			JsonObject tags = SDXLMcp.interrogate(Base64.getEncoder().encodeToString(data), channelConnector());
+			JsonObject tags = SDXLMcp.interrogateRemote(imageId, tos, output);
 			StringBuilder text = new StringBuilder();
 			for (String tag : tags.keySet()) {
 				if (text.length() > 0) {
@@ -248,28 +246,6 @@ public class SDXLAgentMcp {
 			ex.printStackTrace();
 			return "";
 		}
-	}
-
-	/** 把 SD WebUI 请求打包成本地模型通道请求，并解析返回的 JSON。 */
-	private static BiFunction<String, String, CompletableFuture<JsonObject>> channelConnector() {
-		return (path, payload) -> {
-			JsonObject request = new JsonObject();
-			request.addProperty("path", path);
-			request.addProperty("data", payload == null ? "" : payload);
-			return LocalModel.require(ModelType.SDXL, UUID.randomUUID().toString(), request)
-					.thenApply(result -> {
-						try {
-							if (result == null || result.bodyData == null || result.bodyData.length == 0) {
-								return new JsonObject();
-							}
-							return JsonParser
-									.parseString(new String(result.bodyData, StandardCharsets.UTF_8))
-									.getAsJsonObject();
-						} catch (RuntimeException ex) {
-							throw new RuntimeException("反推结果解析失败", ex);
-						}
-					});
-		};
 	}
 
 	/**

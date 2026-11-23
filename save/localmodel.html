@@ -814,7 +814,7 @@
             type: 'sdxl',
             name: '图像生成',
             icon: '🎨',
-            desc: '把 SD WebUI 的 API 请求转发到本机绘画服务',
+            desc: '在本机调用 SD WebUI 完成生图与提示词反推',
             placeholder: 'http://127.0.0.1:7860',
             defaultHealth: '/internal/ping',
             hasPath: false,
@@ -1145,9 +1145,12 @@
 
             html += '</div>';
 
-            if (!def.hasPath) {
-                html += '<div class="card-note">请求路径与参数由服务器下发，页面直接转发到'
-                    + def.name + '服务（例如 SD WebUI 的 /sdapi/v1/txt2img）。</div>';
+            if (def.type === 'sdxl') {
+                html += '<div class="card-note">服务器只下发动作与提示词，页面在本机调用 SD WebUI 的 '
+                    + 'txt2img / img2img / Regional Prompter / tagger 接口，并把结果（图片字节或反推结果 JSON）回传。</div>';
+            } else if (!def.hasPath) {
+                html += '<div class="card-note">请求参数由服务器下发，页面直接调用本机 '
+                    + def.name + '服务并把结果回传。</div>';
             } else {
                 html += '<div class="card-note">请求体是服务器下发的原始 JSON；响应可以是音频二进制，'
                     + '也可以是包含 data / audio 字段（Base64）的 JSON。</div>';
@@ -1436,6 +1439,8 @@
 
         svc.ws = ws;
         updateServerPill();
+        // 附件按需回传是 LMA1 二进制帧，必须用 ArrayBuffer 接收
+        ws.binaryType = 'arraybuffer';
 
         ws.onopen = function () {
             if (svc.ws !== ws) {
@@ -1450,6 +1455,13 @@
 
         ws.onmessage = function (event) {
             if (svc.ws !== ws) {
+                return;
+            }
+            if (event.data instanceof ArrayBuffer) {
+                handleAttachmentFrame(event.data);
+                return;
+            }
+            if (handleAttachmentError(event.data)) {
                 return;
             }
             handleServerRequest(svc, event.data);
@@ -1512,7 +1524,8 @@
         svc.requests += 1;
         svc.activeRequests += 1;
         syncCard(svc.key);
-        log('info', svc.def.name + '：收到任务 ' + shortId(reqid) + '（type=' + (req.type || svc.type) + '）');
+        log('info', svc.def.name + '：收到任务 ' + shortId(reqid)
+            + (req.action ? '（' + req.action + '）' : '（type=' + (req.type || svc.type) + '）'));
 
         var started = Date.now();
         try {
@@ -1552,10 +1565,16 @@
         }
         var url;
         var body;
+        var sdxlAction = '';
+        var params = req.params && typeof req.params === 'object' ? req.params : req;
+        var attachments = Array.isArray(req.attachments) ? req.attachments : [];
         if (svc.type === 'sdxl') {
-            var path = typeof req.path === 'string' && req.path ? req.path : '/sdapi/v1/txt2img';
-            url = base + (path.charAt(0) === '/' ? path : '/' + path);
-            body = typeof req.data === 'string' ? req.data : JSON.stringify(req.data == null ? {} : req.data);
+            sdxlAction = typeof params.action === 'string' ? params.action.trim() : '';
+            if (!sdxlAction) {
+                throw new Error('服务器请求缺少 action（txt2img / img2img / regional / interrogate）');
+            }
+            url = base + sdxlPath(sdxlAction);
+            body = JSON.stringify(await buildSdxlPayload(params, sdxlAction, req.reqid, attachments, svc));
         } else {
             url = joinUrl(base, svc.path || '/');
             body = JSON.stringify(req);
@@ -1593,11 +1612,7 @@
         }
 
         if (svc.type === 'sdxl') {
-            var sdxlBuffer = await resp.arrayBuffer();
-            if (!sdxlBuffer.byteLength) {
-                throw new Error('本地服务返回空响应');
-            }
-            return { data: toBase64(sdxlBuffer), format: 'json', size: sdxlBuffer.byteLength };
+            return decodeSdxlResult(base, sdxlAction, resp);
         }
 
         var contentType = (resp.headers.get('content-type') || '').toLowerCase();
@@ -1616,6 +1631,226 @@
             throw new Error('本地服务返回空响应');
         }
         return { data: toBase64(buffer), format: svc.format || 'mp3', size: buffer.byteLength };
+    }
+
+    /* ===================== SDXL：语义请求 → SD WebUI 调用 ===================== */
+
+    /** 动作对应的 SD WebUI 接口路径。 */
+    function sdxlPath(action) {
+        if (action === 'interrogate') {
+            return '/tagger/v1/interrogate';
+        }
+        return action === 'img2img' ? '/sdapi/v1/img2img' : '/sdapi/v1/txt2img';
+    }
+
+    /**
+     * 把服务器下发的语义参数翻成 SD WebUI 的请求体。
+     * <p>参数来自统一信封的 {@code params}；参考图是附件 id 时先向服务器拉取字节，
+     * 再编码成 Base64（SD WebUI 的 init_images 需要 Base64 或链接）。</p>
+     */
+    async function buildSdxlPayload(req, action, reqid, attachments, svc) {
+        var image = await resolveAttachment(svc, reqid, attachments,
+            typeof req.image === 'string' ? req.image : '');
+        if (action === 'interrogate') {
+            return {
+                image: image,
+                model: 'wd-v1-4-moat-tagger.v2',
+                threshold: 0.2
+            };
+        }
+        var payload = {
+            prompt: req.prompt || '',
+            negative_prompt: req.negativePrompt || req.negative_prompt || '',
+            steps: number(req.steps, 20),
+            width: number(req.width, 1200),
+            height: number(req.height, 1200),
+            restore_faces: false,
+            sampler_name: action === 'txt2img' ? 'Euler a' : 'DPM++ 2M',
+            scheduler: 'Karras'
+        };
+        if (action === 'img2img' || (action === 'regional' && image)) {
+            payload.init_images = [image];
+            payload.resize_mode = 0;
+            payload.denoising_strength = number(req.denoising_strength, 1);
+        }
+        if (action === 'regional') {
+            payload.alwayson_scripts = regionalArgs(!!req.is_row, typeof req.ratio === 'string' ? req.ratio : '');
+        }
+        return payload;
+    }
+
+    /* ===================== 附件拉取（WebSocket / LMA1） ===================== */
+
+    var pendingAttachments = {};
+
+    function attachmentKey(reqid, id) {
+        return reqid + '|' + id;
+    }
+
+    function bytesToBase64(bytes) {
+        var binary = '';
+        var chunk = 0x8000;
+        for (var i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+    }
+
+    /** 通过同一条 WebSocket 拉取附件：发 attachment.get，服务器按 LMA1 分块回传。 */
+    function requestAttachment(svc, reqid, id) {
+        var ws = svc.ws;
+        return new Promise(function (resolve, reject) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                reject(new Error('连接已断开，无法拉取附件'));
+                return;
+            }
+            var key = attachmentKey(reqid, id);
+            var timer = setTimeout(function () {
+                delete pendingAttachments[key];
+                reject(new Error('拉取附件超时'));
+            }, 60000);
+            pendingAttachments[key] = {
+                chunks: [], received: 0, total: 0, resolve: resolve, reject: reject, timer: timer
+            };
+            ws.send(JSON.stringify({ type: 'attachment.get', reqid: reqid, id: id }));
+        });
+    }
+
+    /** 解析一个 LMA1 二进制帧并拼装；不是附件帧时返回 false。 */
+    function handleAttachmentFrame(buffer) {
+        if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 16) {
+            return false;
+        }
+        var view = new DataView(buffer);
+        if (view.getUint8(0) !== 76 || view.getUint8(1) !== 77 || view.getUint8(2) !== 65 || view.getUint8(3) !== 49) {
+            return false;
+        }
+        var offset = 4;
+        var reqidLen = view.getUint16(offset);
+        offset += 2;
+        var reqid = new TextDecoder('utf-8').decode(new Uint8Array(buffer, offset, reqidLen));
+        offset += reqidLen;
+        var idLen = view.getUint16(offset);
+        offset += 2;
+        var id = new TextDecoder('utf-8').decode(new Uint8Array(buffer, offset, idLen));
+        offset += idLen;
+        offset += 4; // current
+        var total = view.getUint32(offset);
+        offset += 4;
+        var content = new Uint8Array(buffer, offset);
+        var entry = pendingAttachments[attachmentKey(reqid, id)];
+        if (!entry) {
+            return true;
+        }
+        entry.total = total;
+        entry.chunks.push(content);
+        entry.received += 1;
+        if (entry.received < total) {
+            return true;
+        }
+        clearTimeout(entry.timer);
+        delete pendingAttachments[attachmentKey(reqid, id)];
+        var size = 0;
+        entry.chunks.forEach(function (part) {
+            size += part.length;
+        });
+        var merged = new Uint8Array(size);
+        var pos = 0;
+        entry.chunks.forEach(function (part) {
+            merged.set(part, pos);
+            pos += part.length;
+        });
+        entry.resolve(merged);
+        return true;
+    }
+
+    /** 处理服务器回传的附件失败报文；不是该报文时返回 false。 */
+    function handleAttachmentError(raw) {
+        if (typeof raw !== 'string') {
+            return false;
+        }
+        var msg;
+        try {
+            msg = JSON.parse(raw);
+        } catch (e) {
+            return false;
+        }
+        if (!msg || msg.type !== 'attachment.error') {
+            return false;
+        }
+        var key = attachmentKey(msg.reqid || '', msg.id || '');
+        var entry = pendingAttachments[key];
+        if (entry) {
+            clearTimeout(entry.timer);
+            delete pendingAttachments[key];
+            entry.reject(new Error(msg.error || '附件拉取失败'));
+        }
+        return true;
+    }
+
+    /** 附件按需拉取：报文里只有 id，这里再通过 WebSocket 要字节。 */
+    async function resolveAttachment(svc, reqid, attachments, value) {
+        if (!value) {
+            return '';
+        }
+        var ref = null;
+        for (var i = 0; i < attachments.length; i++) {
+            if (attachments[i] && attachments[i].id === value) {
+                ref = attachments[i];
+                break;
+            }
+        }
+        if (!ref) {
+            return value;
+        }
+        return bytesToBase64(await requestAttachment(svc, reqid, ref.id));
+    }
+
+    /** Regional Prompter 的 alwayson_scripts 参数块，与 Java 侧 SDXLApi 保持一致。 */
+    function regionalArgs(isRow, ratio) {
+        return {
+            'Regional Prompter': {
+                args: [true, false, 'Matrix', isRow ? 'Rows' : 'Columns', 'Mask', 'Prompt', ratio, '0.2',
+                    false, true, false, 'Attention', [false], '0', '0', '0.4', null, '0', '0', false]
+            }
+        };
+    }
+
+    /** 解析 SD WebUI 的响应：生图取 images[0]，反推取 caption.tag。 */
+    async function decodeSdxlResult(base, action, resp) {
+        var json;
+        try {
+            json = await resp.json();
+        } catch (e) {
+            throw new Error('SD WebUI 返回的 JSON 无法解析');
+        }
+        if (action === 'interrogate') {
+            // 反推模型占显存，拿到结果后让 SD WebUI 卸载（失败不影响结果）
+            fetch(base + '/tagger/v1/unload-interrogators', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: ''
+            }).catch(function () {});
+            var tags = json && json.caption && json.caption.tag ? json.caption.tag : {};
+            var text = JSON.stringify(tags);
+            var bytes = new TextEncoder().encode(text);
+            return { data: toBase64(bytes.buffer), format: 'json', size: bytes.length };
+        }
+        var images = Array.isArray(json.images) ? json.images : [];
+        var image = images.length ? String(images[0] || '') : '';
+        var comma = image.indexOf(',');
+        if (comma >= 0) {
+            image = image.slice(comma + 1);
+        }
+        image = image.replace(/\s+/g, '');
+        if (!image) {
+            throw new Error('SD WebUI 没有返回图片');
+        }
+        return {
+            data: image,
+            format: image.indexOf('/9j/') === 0 ? 'jpg' : 'png',
+            size: Math.floor(image.length * 3 / 4)
+        };
     }
 
     function decodeAudioJson(json, fallbackFormat) {

@@ -26,6 +26,9 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SvsOptions;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
@@ -33,10 +36,6 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.LocalModelHandshaker;
-import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
-import com.khjxiaogu.aiwuxia.voice.ModelType;
 
 import kotlin.text.Charsets;
 
@@ -332,9 +331,9 @@ public class MusicMcp implements ToolProvider {
 			return CompletableFuture.completedFuture(ToolResult.text(
 					"信息：本地歌声合成服务未连接（SVS 通道），请先启动 LocalModelConnectionService。"));
 		}
-		LocalModelHandshaker.SvsOptions options;
+		SvsOptions options;
 		try {
-			options = LocalModelHandshaker.SvsOptions.builder()
+			options = SvsOptions.builder()
 					.voice(voiceId)
 					// 同时带旧字段，兼容仍只读 timbre 的本地实现
 					.timbre(voiceId);
@@ -342,7 +341,7 @@ public class MusicMcp implements ToolProvider {
 			return CompletableFuture.completedFuture(
 					ToolResult.text("信息：当前角色歌声音色无效（" + ex.getMessage() + "）。"));
 		}
-		// 生成交给本地模型连接服务（SvsLocalModelClient → localemp.py），聊天进程不再直接访问 svsHost
+		// 生成交给本地模型连接服务（LocalModel → SvsLocalModelHandler → localemp.py），聊天进程不再直接访问 svsHost
 		String reqid = UUID.randomUUID().toString();
 		return LocalModel.requireSvs(reqid, url, null, options).thenApply(vg -> {
 			try {
@@ -546,7 +545,7 @@ public class MusicMcp implements ToolProvider {
 						}
 					}
 					// 子 agent 接入 SVS 模型通道：既可以转换外部音频，也可以查询可用音色
-					SvsLocalModelMcp svs = new SvsLocalModelMcp(tos, svsVoicesConfig);
+					SvsMcp svs = new SvsMcp(tos, svsVoicesConfig);
 					for (ToolData tool : svs.getTools()) {
 						subManager.registerTool(tool);
 					}

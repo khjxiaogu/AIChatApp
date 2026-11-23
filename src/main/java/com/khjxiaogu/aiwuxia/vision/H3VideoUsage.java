@@ -3,6 +3,7 @@ package com.khjxiaogu.aiwuxia.vision;
 import java.util.Locale;
 
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 /**
  * H3 / NVFP4 视频生成的算力时长计费。
@@ -123,7 +124,7 @@ public class H3VideoUsage implements UsageIntf<H3VideoUsage> {
 	 * @return 文本 token
 	 */
 	public static int textTokens(String prompt) {
-		return prompt == null ? MIN_TEXT_TOKENS : clampTextTokens(prompt.length());
+		return prompt == null ? MIN_TEXT_TOKENS : clampTextTokens(TextCounter.countWords(prompt));
 	}
 
 	/** 读取磁盘吞吐：{@code -Dh3DiskMBps}，默认 1000 MB/s。 */

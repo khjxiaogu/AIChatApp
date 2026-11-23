@@ -66,6 +66,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 /**
  * 把 Deepseek Harness 通过 NapCat 接入 QQ 的连接器。
@@ -1313,13 +1314,13 @@ public class DeepseekHarnessConnector extends WebSocketClient {
 
 	/** 待发文本是否已经够大：单行看 700，多行看 400。 */
 	private boolean shouldFlush(CharSequence pending) {
-		int length = pending.length();
-		if (length == 0)
+		int words = TextCounter.countWords(pending);
+		if (words == 0)
 			return false;
 		String text = pending.toString();
 		if (text.indexOf('\n') < 0)
-			return length >= flushSingleLine;
-		return length >= flushMultiLine;
+			return words >= flushSingleLine;
+		return words >= flushMultiLine;
 	}
 
 	/**
@@ -1850,7 +1851,7 @@ public class DeepseekHarnessConnector extends WebSocketClient {
 			params.add("messages", messages);
 			action.add("params", params);
 			lastSend = callNapCat(action, null);
-			log("已发送合并转发（" + nodes.size() + " 个节点，" + text.length() + " 字，" + nodeName + "）");
+			log("已发送合并转发（" + nodes.size() + " 个节点，" + TextCounter.countWords(text) + " 字，" + nodeName + "）");
 			if (!awaitAck)
 				return true;
 			JsonObject ack = lastSend == null ? null : lastSend.await(sendAckTimeout);

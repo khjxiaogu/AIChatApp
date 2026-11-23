@@ -3,7 +3,9 @@ package com.khjxiaogu.aiwuxia.voice.protocol;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
-import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol.FileChunk;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.FileChunkAssembler;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol.FileChunk;
 
 /**
  * 二进制分块文件协议的自检：

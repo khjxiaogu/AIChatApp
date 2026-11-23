@@ -70,17 +70,18 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
+import com.khjxiaogu.aiwuxia.mcp.CodexMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
 import com.khjxiaogu.aiwuxia.mcp.H3VideoMcp;
+import com.khjxiaogu.aiwuxia.mcp.HistorySearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
-import com.khjxiaogu.aiwuxia.mcp.history.HistorySearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.LocalVoiceMcp;
 import com.khjxiaogu.aiwuxia.mcp.MediaOutputMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.QwenLocalModelMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
-import com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp;
+import com.khjxiaogu.aiwuxia.mcp.SvsMcp;
 import com.khjxiaogu.aiwuxia.mcp.client.McpClientManager;
 import com.khjxiaogu.aiwuxia.mcp.server.McpAccessTokenStore;
 import com.khjxiaogu.aiwuxia.mcp.server.McpBuiltinTools;
@@ -93,8 +94,9 @@ import com.khjxiaogu.aiwuxia.mcp.harness.HarnessMcpService;
 import com.khjxiaogu.aiwuxia.codex.CodexConfig;
 import com.khjxiaogu.aiwuxia.codex.CodexRuntime;
 import com.khjxiaogu.aiwuxia.codex.CodexService;
-import com.khjxiaogu.aiwuxia.mcp.codex.CodexMcp;
 import com.khjxiaogu.aiwuxia.mcp.server.McpToolSource;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelHandshaker;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
@@ -115,8 +117,6 @@ import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder.JsonObjectBuilder;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.LocalModelHandshaker;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
@@ -1042,8 +1042,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		registry.registerAll(new CharacterSettingMcp(path).getTools());
 		// 本地语音合成：列出可用说话人 + 用 VoiceTagger 标注后合成并存入 MCP 统一对象存储
 		registry.registerAll(new LocalVoiceMcp(mcpStorage).getTools());
-		// 本地 SVS（歌声转换）：通过 LocalModel 的 svs 模型通道，与直接调用 localemp 的 SvsMcp 区分
-		registry.registerAll(new SvsLocalModelMcp(mcpStorage, ConfigPaths.svsVoices(path)).getTools());
+		// 本地 SVS（歌声转换）：统一走 LocalModel 的 svs 模型通道，不直接访问 localemp
+		registry.registerAll(new SvsMcp(mcpStorage, ConfigPaths.svsVoices(path)).getTools());
 		// 把 AIChatService 中按用户创建的 SDXL 图片工具暴露给 MCP：
 		// 外部调用与绘画会话使用同一套工具，用户接入自己的本地绘画模型时同样优先使用该用户的模型。
 		registry.addSource(new McpToolSource() {

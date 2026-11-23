@@ -29,6 +29,7 @@ import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 import com.khjxiaogu.aiwuxia.vision.JimengImageGenerator;
 import com.khjxiaogu.aiwuxia.vision.SeedanceVideoGenerator;
 
@@ -528,7 +529,7 @@ public class SeedreamMcp {
 				String script = FileUtil.printAndCollectContent(inner.getContent()).toText().trim();
 				if (script.isEmpty())
 					throw new RuntimeException("视频脚本为空（模型 " + modelName(request)
-							+ "，maxTokens " + request.maxToken + "，思维链 " + reasoning.length() + " 字，用量 "
+							+ "，maxTokens " + request.maxToken + "，思维链 " + TextCounter.countWords(reasoning) + " 字，用量 "
 							+ inner.getUsages() + "）；模型调用已结束但正文为空");
 				return script;
 			} catch (ModelRouteException | IOException e) {

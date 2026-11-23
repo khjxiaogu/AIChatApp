@@ -21,11 +21,13 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.voice;
+package com.khjxiaogu.aiwuxia.modelproxy;
 
 import java.io.File;
 import java.net.URI;
 
+import com.khjxiaogu.aiwuxia.LocalModelConnectionService;
+import com.khjxiaogu.aiwuxia.voice.VoiceModelLocalServer;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
 import com.khjxiaogu.webserver.annotations.HttpMethod;

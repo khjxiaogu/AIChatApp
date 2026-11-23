@@ -850,6 +850,19 @@ public class SqliteHistory implements HistoryHolder, SqliteHistoryItem.HeavyData
 		return new SqliteIterator(ids.iterator());
 	}
 
+	/**
+	 * 与 {@link #hiddenContextIterator()} 相同的过滤条件，但按标识符<b>降序</b>返回：
+	 * 记录检索工具按“从新到旧”搜索与分页，第一页就是最新的匹配。
+	 */
+	@Override
+	public Iterator<HistoryItem> hiddenContextReverseIterator() {
+		List<Integer> ids = queryIds(
+				"SELECT identifier FROM history "
+				+ "WHERE should_send=0 AND deleted=0 "
+				+ "ORDER BY identifier DESC");
+		return new SqliteIterator(ids.iterator());
+	}
+
 	private List<Integer> queryIds(String sql) {
 		List<Integer> ids = new ArrayList<>();
 		try (Statement stmt = conn.createStatement();

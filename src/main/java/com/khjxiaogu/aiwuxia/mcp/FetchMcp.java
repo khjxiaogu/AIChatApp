@@ -20,6 +20,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.Builder;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.TaskType;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ModelBudget;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
@@ -130,7 +131,7 @@ public class FetchMcp {
 			if (isTextType(mimeType)) {
 				String charset = extractCharset(contentType);
 				String text = readText(connection.getInputStream(), charset);
-				Builder b=AIRequest.builder("htmlRead").modelHint("mimo").taskType(TaskType.STORY).strength(ReasoningStrength.MEDIUM).temperature(0.2f).maxTokens(32767);
+				Builder b=AIRequest.builder("htmlRead").budget(ModelBudget.MIMO).modelHint("mimo").taskType(TaskType.STORY).strength(ReasoningStrength.MEDIUM).temperature(0.2f).maxTokens(32767);
 				b.addHistoryItem(Role.SYSTEM, "你是一个信息提取子agent，你需要把输入文本的内容转换为便于AI读取的格式，保留里面的链接等但是移除里面的格式。如有图片，需要保留图片链接。");
 				//b.modelHint("deepseek/pro");
 				b.addHistoryItem(Role.USER, text);

@@ -98,16 +98,19 @@ import com.khjxiaogu.aiwuxia.mcp.chat.MessageMcp;
 import com.khjxiaogu.aiwuxia.mcp.chat.GroupChatHost;
 import com.khjxiaogu.aiwuxia.mcp.chat.GroupChatMcp;
 import com.khjxiaogu.aiwuxia.mcp.knowledge.KnowledgeBaseMcp;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelGateway;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPermission;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
 import com.khjxiaogu.aiwuxia.mcp.AgentPingMcp;
+import com.khjxiaogu.aiwuxia.mcp.CodexMcp;
 import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
-import com.khjxiaogu.aiwuxia.mcp.history.HistorySearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.H3VideoAgentMcp;
 import com.khjxiaogu.aiwuxia.mcp.H3VideoMcp;
+import com.khjxiaogu.aiwuxia.mcp.HistorySearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.MediaOutputMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
 import com.khjxiaogu.aiwuxia.mcp.MusicMcp;
@@ -118,9 +121,7 @@ import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfiguration;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp.LoraConfigurations;
 import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
 import com.khjxiaogu.aiwuxia.mcp.SvsMcp;
-import com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp;
 import com.khjxiaogu.aiwuxia.mcp.QwenLocalModelMcp;
-import com.khjxiaogu.aiwuxia.mcp.codex.CodexMcp;
 import com.khjxiaogu.aiwuxia.objectstorage.DelegatingStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
@@ -144,8 +145,6 @@ import com.khjxiaogu.aiwuxia.utils.GroupOutputGate;
 import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.vision.ImageNoise;
-import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
-import com.khjxiaogu.aiwuxia.voice.LocalModelGateway;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 
 /**
@@ -167,8 +166,8 @@ import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
  * </p>
  * <p>
  * 本地模型不由本类执行：SDXL / SVS / Qwen 的客户端与部署端点都在
- * {@link com.khjxiaogu.aiwuxia.voice.LocalModelConnectionService} 进程里。本类只启动一个
- * {@link com.khjxiaogu.aiwuxia.voice.LocalModelGateway 本机模型网关}（默认
+ * {@link com.khjxiaogu.aiwuxia.LocalModelConnectionService} 进程里。本类只启动一个
+ * {@link com.khjxiaogu.aiwuxia.modelproxy.LocalModelGateway 本机模型网关}（默认
  * {@code ws://127.0.0.1:8997}），模型服务既连配置的远端、也连这个网关；本类注册的工具
  * （sdxl / svs / qwen / 语音等）通过 {@code LocalModel} 通道使用这些模型。
  * </p>
@@ -1258,8 +1257,8 @@ public class NapCatAIConnector implements GroupChatHost {
 		}
 		if (toolSettings.isEnabled("svs")) {
 			// SVS 独立于音乐平台：输入音频链接，voice 传角色名，由配置文件映射到音频 ID；
-			// 生成交给本地模型通道（SvsLocalModelClient），与直接访问 localemp 的 SvsMcp 区分。
-			SvsLocalModelMcp svs = new SvsLocalModelMcp(tos, ConfigPaths.svsVoices(dataFolder));
+			// 生成统一走本地模型通道（LocalModel → SvsLocalModelHandler → localemp.py）。
+			SvsMcp svs = new SvsMcp(tos, ConfigPaths.svsVoices(dataFolder));
 			state.registerTools(svs);
 			recordTools(toolNamesBySkill, "svs", svs.getTools());
 		}

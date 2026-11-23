@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.voice.transport;
+package com.khjxiaogu.aiwuxia.modelproxy.transport;
 
 import java.net.URI;
 
@@ -13,7 +13,7 @@ import java.net.URI;
  *   <li>通过 {@link Listener} 把连接事件回调给上层。</li>
  * </ul>
  * <p>
- * 应用层协议见 {@link com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol}；默认实现是
+ * 应用层协议见 {@link com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol}；默认实现是
  * {@link WebSocketLocalModelTransport}，新增其它协议（TCP 自定义帧、HTTP 长轮询、stdio、本地 IPC 等）
  * 只需实现本接口并通过 {@link LocalModelTransportFactory} 注入即可，业务层无需改动。
  * </p>

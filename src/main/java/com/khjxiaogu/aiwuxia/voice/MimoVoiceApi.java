@@ -11,9 +11,11 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.providers.mimo.MimoRespScheme;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 public class MimoVoiceApi implements VoiceModel {
 	final File sampleVoice;
@@ -48,7 +50,7 @@ public class MimoVoiceApi implements VoiceModel {
 				RespScheme scheme=gson.fromJson(retjs, MimoRespScheme.class);
 				PcmToWavConverter converter=new PcmToWavConverter(24000);
 				converter.addAudioChunk(scheme.choices.get(0).message.audio.data);
-				usageListener.accept(new MimoVoiceUsage(text.length()));
+				usageListener.accept(new MimoVoiceUsage(TextCounter.countWords(text)));
 				return new ModelGenerationResult(converter.saveAsWav(),"wav");
 			} catch (IOException e) {
 				throw new RuntimeException(e);

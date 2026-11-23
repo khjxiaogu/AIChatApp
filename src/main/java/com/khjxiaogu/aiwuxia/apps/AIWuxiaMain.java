@@ -52,7 +52,7 @@ import com.khjxiaogu.aiwuxia.state.status.ApplicationState;
 import com.khjxiaogu.aiwuxia.state.status.AttributeSet;
 import com.khjxiaogu.aiwuxia.state.status.MemoryAttributeSet;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.TokenSimulatedCounter;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 public class AIWuxiaMain extends AIApplication {
 	Pattern sxPattern = Pattern.compile("【([^】]+)】([^【]+)");
@@ -190,7 +190,7 @@ public class AIWuxiaMain extends AIApplication {
 				HistoryItem hi=it.next();
 				long tokenLen=hi.getTokenLength();
 				if(tokenLen==0) {
-					history.setTokenLength(hi,tokenLen=TokenSimulatedCounter.fastCountLength(hi.getContextContent()));
+					history.setTokenLength(hi,tokenLen=TextCounter.countTokens(hi.getContextContent()));
 				}
 				len+=tokenLen;
 			}

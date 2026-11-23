@@ -26,7 +26,6 @@ import java.util.regex.Pattern;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
-import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
@@ -43,19 +42,23 @@ import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelAttachments;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
+import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SdxlAction;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SdxlParams;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
-import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.aiwuxia.vision.LocalSDXLUsage;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.ModelType;
+import com.khjxiaogu.aiwuxia.vision.SDXLApi;
 
 public class SDXLMcp implements ToolProvider {
 	/** 本次提供的工具集合。 */
@@ -68,7 +71,8 @@ public class SDXLMcp implements ToolProvider {
 	private final Map<String, LoraConfigurations> lora;
 	private final boolean isNsfw;
 	private final BiFunction<String, AIOutput, String> urlGetter;
-	private final BiFunction<String, String, CompletableFuture<JsonObject>> func;
+	/** SDXL 执行通道：语义请求 → 结果字节。 */
+	private final Channel channel;
 	/**
 	 * 结果内容里放对象存储 id 而不是直接链接。
 	 * <p>
@@ -87,6 +91,152 @@ public class SDXLMcp implements ToolProvider {
 	private final String connectorUid;
 	/** 请求是否经本地模型连接器执行；为 false 时参考图始终按 {@link #urlGetter} 的形式发送。 */
 	private final boolean viaLocalModelConnector;
+
+	/**
+	 * SDXL 执行通道：把一次 {@link LocalModelCall}（参数对象 {@link SdxlParams} + 附件引用）
+	 * 交给执行方，返回结果字节。
+	 * <p>
+	 * 与 H3 / Qwen 一样，服务器只描述“要什么图”，真正的 SD WebUI 调用由本地模型客户端完成；
+	 * 两种实现见 {@link #remoteChannel(String)}（本地模型客户端）与
+	 * {@link #localChannel(ResourceLock)}（服务器直连 {@code -DsdwebuiUrl}）。
+	 * </p>
+	 */
+	@FunctionalInterface
+	public interface Channel {
+		/**
+		 * 执行一次 SDXL 调用。
+		 *
+		 * @param call 统一调用对象
+		 * @return 结果字节（图片字节，或反推结果 JSON）
+		 * @throws IOException 执行失败
+		 */
+		byte[] send(LocalModelCall<SdxlParams> call) throws IOException;
+	}
+
+	/**
+	 * 经本地模型客户端（{@code model_type=sdxl}）执行的通道。
+	 *
+	 * @param uid 用户标识，可为 null 或空（共享连接池）
+	 * @return 执行通道
+	 */
+	public static Channel remoteChannel(String uid) {
+		return call -> {
+			try {
+				ModelGenerationResult result = LocalModel.send(uid, call).get();
+				if (result == null || result.bodyData == null) {
+					throw new IOException("本地模型没有返回数据");
+				}
+				return result.bodyData;
+			} catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				throw new IOException("请求被中断", ex);
+			} catch (ExecutionException ex) {
+				Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+				String message = cause.getMessage();
+				throw new IOException(message == null || message.isEmpty() ? "本地模型调用失败" : message, cause);
+			}
+		};
+	}
+
+	/**
+	 * 直接在服务器进程里调用 {@code -DsdwebuiUrl} 的通道（不需要本地模型客户端）。
+	 * <p>
+	 * 资源锁照旧：一次生成占满整把锁。附件从本进程的注册表读取，效果与客户端拉取一致。
+	 * </p>
+	 *
+	 * @param lock 与其它本地模型共享的资源锁
+	 * @return 执行通道
+	 */
+	public static Channel localChannel(ResourceLock lock) {
+		return call -> {
+			SdxlParams params = call.requireParams(SdxlParams.class);
+			byte[] imageBytes = null;
+			AttachmentRef ref = params.image == null ? null : call.attachment(params.image);
+			if (ref != null) {
+				imageBytes = LocalModelAttachments.shared().read(call.reqid, ref.id);
+			}
+			try (ResourcePermit permit = lock.acquire(12)) {
+				return SDXLApi.dispatch(params, imageBytes, SDXLApi.direct(System.getProperty("sdwebuiUrl")));
+			}
+		};
+	}
+
+	/**
+	 * 通过本地模型通道反推图片提示词。
+	 *
+	 * @param imageId 图片的对象存储 id 或链接
+	 * @param tos     对象存储，可为 null
+	 * @param output  用量接收方，可为 null
+	 * @return 提示词 → 可能性
+	 * @throws IOException 调用失败或结果无法解析
+	 */
+	public static JsonObject interrogateRemote(String imageId, ObjectStorageProvider tos, AIOutput output)
+			throws IOException {
+		String reqid = UUID.randomUUID().toString();
+		List<AttachmentRef> attachments = new ArrayList<>();
+		String image = imageId;
+		String storageId = storageIdOf(imageId);
+		if (storageId != null && tos != null) {
+			AttachmentRef ref = registerImageAttachment(reqid, null, tos, storageId, output);
+			attachments.add(ref);
+			image = ref.id;
+		}
+		SdxlParams params = new SdxlParams(SdxlAction.INTERROGATE, "", "", 1, 64, 64, image, 0, false, "");
+		return parseJson(remoteChannel(null).send(LocalModelCall.sdxl(reqid, params, attachments)));
+	}
+
+	/** 把对象存储里的图片登记成附件，真正被拉取时才读存储。 */
+	private static AttachmentRef registerImageAttachment(String reqid, String uid, ObjectStorageProvider tos,
+			String storageId, AIOutput output) {
+		return LocalModelAttachments.shared().register(reqid, uid, AttachmentRef.KIND_IMAGE, "png", "reference.png",
+				() -> {
+					try {
+						byte[] data = tos.download(storageId, output == null ? null : output::addUsage);
+						if (data == null) {
+							throw new IOException("参考图内容为空：" + storageId);
+						}
+						return data;
+					} catch (IOException ex) {
+						throw new RuntimeException(ex);
+					}
+				});
+	}
+
+	/**
+	 * 组织一次 SDXL 调用：参考图是对象存储 id 时登记为附件（客户端按需拉取），
+	 * 其它引用继续走原来的链接/Base64 兜底。
+	 */
+	private byte[] generate(SdxlAction action, String prompt, String negative, int steps, int width, int height,
+			String imageRef, double denoising, boolean isRow, String ratio, AIOutput output) throws IOException {
+		String reqid = UUID.randomUUID().toString();
+		List<AttachmentRef> attachments = new ArrayList<>();
+		String image = null;
+		if (imageRef != null && !imageRef.isEmpty()) {
+			String storageId = storageIdOf(imageRef);
+			if (storageId != null && tos != null) {
+				AttachmentRef ref = registerImageAttachment(reqid, connectorUid, tos, storageId, output);
+				attachments.add(ref);
+				image = ref.id;
+			} else {
+				image = referencePayload(imageRef, output);
+			}
+		}
+		SdxlParams params = new SdxlParams(action, prompt, negative, steps, width, height, image, denoising, isRow,
+				ratio);
+		return channel.send(LocalModelCall.sdxl(reqid, params, attachments));
+	}
+
+	/** 解析结果字节为 JSON。 */
+	private static JsonObject parseJson(byte[] data) throws IOException {
+		if (data == null || data.length == 0) {
+			throw new IOException("SD WebUI 没有返回反推结果");
+		}
+		try {
+			return JsonParser.parseString(new String(data, StandardCharsets.UTF_8)).getAsJsonObject();
+		} catch (RuntimeException ex) {
+			throw new IOException("反推结果解析失败", ex);
+		}
+	}
 
 	public static class LoraConfigurations{
 		public final List<LoraConfiguration> li=new ArrayList<>(5);
@@ -328,24 +478,10 @@ public class SDXLMcp implements ToolProvider {
     public static SDXLMcp createRemoteLocalModel(String uid, ObjectStorageProvider tos,
             Map<String, LoraConfigurations> lora, BiFunction<String, AIOutput, String> urlGetter, boolean isNsfw,
             boolean contentIdMode) {
-        BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,data)->LocalModel.require(uid,ModelType.SDXL,UUID.randomUUID().toString(), JsonBuilder.object().add("path", url).add("data", data).end()).thenApply(t->JsonParser.parseString(new String(t.bodyData,StandardCharsets.UTF_8)).getAsJsonObject());
-        return create(tos,lora,isNsfw,urlGetter,func,contentIdMode,uid,true);
+        return create(tos, lora, isNsfw, urlGetter, remoteChannel(uid), contentIdMode, uid, true);
     }
 	public static SDXLMcp createLocal(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,ResourceLock lock) {
-		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,payload)->CompletableFuture.supplyAsync(()->{
-			try(ResourcePermit l=lock.acquire(12))  {
-				return HttpRequestBuilder.create("http", System.getProperty("sdwebuiUrl"))
-				.header("Accept", "application/json")
-				.header("Content-Type", "application/json; utf-8")
-				.url(url)
-				.post()
-				.send(payload.toString())
-				.readJson();
-			} catch (IOException e) {
-				throw new RuntimeException(e);
-			}
-		});
-		return create(tos,lora,isNsfw,base64UrlGetter(tos),func);
+		return create(tos,lora,isNsfw,base64UrlGetter(tos),localChannel(lock));
 	}
 
 	/**
@@ -555,13 +691,12 @@ public class SDXLMcp implements ToolProvider {
 	 * @param lora      Lora 配置
 	 * @param isNsfw    是否允许不宜内容
 	 * @param urlGetter 图片 id → 图片内容
-	 * @param func      调用 SDXL 服务的函数
+	 * @param channel   SDXL 执行通道
 	 * @return 工具集
 	 */
 	public static SDXLMcp create(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
-			BiFunction<String, AIOutput, String> urlGetter,
-			BiFunction<String, String, CompletableFuture<JsonObject>> func) {
-		return create(tos, lora, isNsfw, urlGetter, func, false);
+			BiFunction<String, AIOutput, String> urlGetter, Channel channel) {
+		return create(tos, lora, isNsfw, urlGetter, channel, false);
 	}
 
 	/**
@@ -571,14 +706,13 @@ public class SDXLMcp implements ToolProvider {
 	 * @param lora          Lora 配置
 	 * @param isNsfw        是否允许不宜内容
 	 * @param urlGetter     图片 id → 图片内容
-	 * @param func          调用 SDXL 服务的函数
+	 * @param channel       SDXL 执行通道
 	 * @param contentIdMode true 表示结果内容里放对象存储 id，由 MCP 服务端统一转换链接
 	 * @return 工具集
 	 */
 	public static SDXLMcp create(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
-			BiFunction<String, AIOutput, String> urlGetter,
-			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode) {
-		return create(tos, lora, isNsfw, urlGetter, func, contentIdMode, null, false);
+			BiFunction<String, AIOutput, String> urlGetter, Channel channel, boolean contentIdMode) {
+		return create(tos, lora, isNsfw, urlGetter, channel, contentIdMode, null, false);
 	}
 
 	/**
@@ -588,7 +722,7 @@ public class SDXLMcp implements ToolProvider {
 	 * @param lora                 Lora 配置
 	 * @param isNsfw               是否允许不宜内容
 	 * @param urlGetter            图片 id → 图片引用（链接或 Base64）
-	 * @param func                 调用 SDXL 服务的函数
+	 * @param channel              SDXL 执行通道
 	 * @param contentIdMode        true 表示结果内容里放对象存储 id，由 MCP 服务端统一转换链接
 	 * @param connectorUid         本地模型连接器所属用户，可为 null（共享连接池）
 	 * @param viaLocalModelConnector 是否经本地模型连接器执行；true 时连接器声明了 {@code flags=chunked}
@@ -596,10 +730,10 @@ public class SDXLMcp implements ToolProvider {
 	 * @return 工具集
 	 */
 	public static SDXLMcp create(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
-			BiFunction<String, AIOutput, String> urlGetter,
-			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode,
+			BiFunction<String, AIOutput, String> urlGetter, Channel channel, boolean contentIdMode,
 			String connectorUid, boolean viaLocalModelConnector) {
-		return new SDXLMcp(tos, lora, isNsfw, urlGetter, func, contentIdMode, connectorUid, viaLocalModelConnector);
+		return new SDXLMcp(tos, lora, isNsfw, urlGetter, channel, contentIdMode, connectorUid,
+				viaLocalModelConnector);
 	}
 
 	/**
@@ -631,15 +765,13 @@ public class SDXLMcp implements ToolProvider {
 	}
 
 	public SDXLMcp(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
-			BiFunction<String, AIOutput, String> urlGetter,
-			BiFunction<String, String, CompletableFuture<JsonObject>> func) {
-		this(tos, lora, isNsfw, urlGetter, func, false);
+			BiFunction<String, AIOutput, String> urlGetter, Channel channel) {
+		this(tos, lora, isNsfw, urlGetter, channel, false);
 	}
 
 	public SDXLMcp(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
-			BiFunction<String, AIOutput, String> urlGetter,
-			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode) {
-		this(tos, lora, isNsfw, urlGetter, func, contentIdMode, null, false);
+			BiFunction<String, AIOutput, String> urlGetter, Channel channel, boolean contentIdMode) {
+		this(tos, lora, isNsfw, urlGetter, channel, contentIdMode, null, false);
 	}
 
 	/**
@@ -649,21 +781,20 @@ public class SDXLMcp implements ToolProvider {
 	 * @param lora                    Lora 配置
 	 * @param isNsfw                  是否允许不宜内容
 	 * @param urlGetter               图片 id → 图片引用（链接或 Base64）
-	 * @param func                    调用 SDXL 服务的函数
+	 * @param channel                 SDXL 执行通道
 	 * @param contentIdMode           true 表示结果内容里放对象存储 id
 	 * @param connectorUid            本地模型连接器所属用户，可为 null（共享连接池）
 	 * @param viaLocalModelConnector  是否经本地模型连接器执行；为 true 时按连接器的分块能力
 	 *                                决定参考图是内嵌文件还是只给链接
 	 */
 	public SDXLMcp(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
-			BiFunction<String, AIOutput, String> urlGetter,
-			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode,
+			BiFunction<String, AIOutput, String> urlGetter, Channel channel, boolean contentIdMode,
 			String connectorUid, boolean viaLocalModelConnector) {
 		this.tos = tos;
 		this.lora = lora;
 		this.isNsfw = isNsfw;
 		this.urlGetter = urlGetter;
-		this.func = func;
+		this.channel = channel;
 		this.contentIdMode = contentIdMode;
 		this.connectorUid = connectorUid;
 		this.viaLocalModelConnector = viaLocalModelConnector;
@@ -697,7 +828,7 @@ public class SDXLMcp implements ToolProvider {
 					if (mtch.find()) {
 						String id = mtch.group(1);
 						try {
-							JsonObject datax = interrogate(referencePayload(id, output),func);
+							JsonObject datax = parseJson(generate(SdxlAction.INTERROGATE, "", "", 1, 64, 64, id, 0, false, "", output));
 							StringBuilder sb=new StringBuilder("按可能性从大到小排列的提示词：");
 							for(String key:datax.keySet()) {
 								sb.append(key).append(",");
@@ -752,11 +883,7 @@ public class SDXLMcp implements ToolProvider {
 						System.out.println(prompt);
 						System.out.println(negative);
 						try {
-							byte[] image=generateImage(prompt,
-									negative
-									,20,
-									its[0],
-									its[1],func);
+							byte[] image=generate(SdxlAction.TXT2IMG,prompt,negative,20,its[0],its[1],null,0,false,"",output);
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
 							Builder builder = AIRequest.builder("imageRecognize").taskType(TaskType.STORY)
@@ -867,13 +994,12 @@ public class SDXLMcp implements ToolProvider {
 									else if(jes.isNumber())
 										strength=jes.getAsFloat();
 								}
-								image=generateRegionalImage2Image(referencePayload(jo.get("picture_id").getAsString(),output),prompt,negative,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
-										its[0],
-										its[1],isRow,ratio,strength*0.2f+0.6f,func);
+								int regionalSteps=(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10));
+								image=generate(SdxlAction.REGIONAL,prompt,negative,regionalSteps,its[0],its[1],
+										jo.get("picture_id").getAsString(),strength*0.2f+0.6f,isRow,ratio,output);
 							}else{
-								image=generateRegionalImage(prompt,negative,30,
-										its[0],
-										its[1],isRow,ratio,func);
+								image=generate(SdxlAction.REGIONAL,prompt,negative,30,its[0],its[1],
+										null,0,isRow,ratio,output);
 							}
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
@@ -956,10 +1082,9 @@ public class SDXLMcp implements ToolProvider {
 						System.out.println(negative);
 						try {
 
-							byte[] image=generateImage2Image(referencePayload(pid,output),prompt,negative
-									,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
-									its[0],
-									its[1],strength*0.2f+0.6f,func);
+							byte[] image=generate(SdxlAction.IMG2IMG,prompt,negative,
+									(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
+									its[0],its[1],pid,strength*0.2f+0.6f,false,"",output);
 
 							
 							String fn = tos.uploadIfNotExists(image,output == null ? null : output::addUsage);
@@ -1031,172 +1156,5 @@ public class SDXLMcp implements ToolProvider {
 				usingLoras.add(s.getValue());
 		}
 		return usingLoras;
-	}
-	private static byte[] getFirstImage(JsonArray images) {
-		for (int i = 0; i < images.size(); i++) {
-			try {
-				String base64Image = images.get(i).getAsString();
-
-				if (base64Image.contains(",")) {
-					base64Image = base64Image.split(",", 2)[1];
-				}
-				byte[] imageBytes = Base64.getDecoder().decode(base64Image);
-				return imageBytes;
-			}catch(Exception ex) {
-				ex.printStackTrace();
-			}
-		}
-		return null;
-	}
-	public static JsonObject interrogate(String image,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
-		JsonObject payload = new JsonObject();
-		payload.addProperty("image", image);
-		payload.addProperty("model", "wd-v1-4-moat-tagger.v2");
-		payload.addProperty("threshold", 0.2);
-		
-		JsonObject jsonResponse;
-	
-		try {
-			jsonResponse = connector.apply("/tagger/v1/interrogate", payload.toString()).get();
-			connector.apply("/tagger/v1/unload-interrogators", "");
-		} catch (InterruptedException | ExecutionException e) {
-			e.printStackTrace();
-			throw new IOException("服务异常");
-		}
-			
-		
-		return jsonResponse.get("caption").getAsJsonObject().get("tag").getAsJsonObject();
-	}
-	public static byte[] generateImage(String prompt, String negativePrompt, int steps, int width, int height,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
-		JsonObject payload = new JsonObject();
-		payload.addProperty("prompt", prompt);
-		payload.addProperty("negative_prompt", negativePrompt);
-		payload.addProperty("steps", steps);
-		payload.addProperty("width", width);
-		payload.addProperty("height", height);
-		payload.addProperty("restore_faces", false);
-		payload.addProperty("sampler_name", "Euler a");
-		payload.addProperty("scheduler", "Karras");
-		JsonObject jsonResponse;
-		
-		try {
-			jsonResponse = connector.apply("/sdapi/v1/txt2img", payload.toString()).get();
-		} catch (InterruptedException | ExecutionException e) {
-			e.printStackTrace();
-			throw new IOException("服务异常");
-		}
-		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
-	}
-	public static byte[] generateImage2Image(String baseImg,String prompt, String negativePrompt, int steps, int width, int height,float denoising,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
-		JsonObject payload = new JsonObject();
-		payload.add("init_images", JsonBuilder.array().add(baseImg).end());
-		payload.addProperty("prompt", prompt);
-		payload.addProperty("negative_prompt", negativePrompt);
-		payload.addProperty("steps", steps);
-		payload.addProperty("width", width);
-		payload.addProperty("height", height);
-		payload.addProperty("restore_faces", false);
-		payload.addProperty("sampler_name", "DPM++ 2M");
-		payload.addProperty("scheduler", "Karras");
-
-		
-		payload.addProperty("resize_mode", 0);
-		payload.addProperty("denoising_strength", denoising);
-		JsonObject jsonResponse;
-		try {
-			jsonResponse = connector.apply("/sdapi/v1/img2img", payload.toString()).get();
-		} catch (InterruptedException | ExecutionException e) {
-			e.printStackTrace();
-			throw new IOException("服务异常");
-		}
-		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
-		
-	}
-	public static byte[] generateRegionalImage2Image(String baseImg,String prompt, String negativePrompt, int steps, int width, int height,boolean isRow,String ratio,float denoising,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
-		JsonObject payload = new JsonObject();
-		payload.add("init_images", JsonBuilder.array().add(baseImg).end());
-		payload.addProperty("prompt", prompt);
-		payload.addProperty("negative_prompt", negativePrompt);
-		payload.addProperty("steps", steps);
-		payload.addProperty("width", width);
-		payload.addProperty("height", height);
-		payload.addProperty("restore_faces", false);
-		payload.addProperty("sampler_name", "DPM++ 2M");
-		payload.addProperty("scheduler", "Karras");
-		payload.add("alwayson_scripts", JsonBuilder.object().object("Regional Prompter").array("args")
-				.add(true)
-				.add(false)
-				.add("Matrix")
-				.add(isRow?"Rows":"Columns")
-				.add("Mask")
-				.add("Prompt")
-				.add(ratio)
-				.add("0.2")
-				.add(false)
-				.add(true)
-				.add(false)
-				.add("Attention")
-				.array().add(false).end()
-				.add("0")
-				.add("0")
-				.add("0.4")
-				.add(JsonNull.INSTANCE)
-				.add("0")
-				.add("0")
-				.add(false).end().end().end());
-		
-		payload.addProperty("resize_mode", 0);
-		payload.addProperty("denoising_strength", denoising);
-		JsonObject jsonResponse;
-		try {
-			jsonResponse = connector.apply("/sdapi/v1/img2img", payload.toString()).get();
-		} catch (InterruptedException | ExecutionException e) {
-			e.printStackTrace();
-			throw new IOException("服务异常");
-		}
-		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
-		
-	}
-	public static byte[] generateRegionalImage(String prompt, String negativePrompt, int steps, int width, int height,boolean isRow,String ratio,BiFunction<String,String,CompletableFuture<JsonObject>> connector) throws IOException {
-		JsonObject payload = new JsonObject();
-		payload.addProperty("prompt", prompt);
-		payload.addProperty("negative_prompt", negativePrompt);
-		payload.addProperty("steps", steps);
-		payload.addProperty("width", width);
-		payload.addProperty("height", height);
-		payload.addProperty("restore_faces", false);
-		payload.addProperty("sampler_name", "DPM++ 2M");
-		payload.addProperty("scheduler", "Karras");
-		payload.add("alwayson_scripts", JsonBuilder.object().object("Regional Prompter").array("args")
-				.add(true)
-				.add(false)
-				.add("Matrix")
-				.add(isRow?"Rows":"Columns")
-				.add("Mask")
-				.add("Prompt")
-				.add(ratio)
-				.add("0.2")
-				.add(false)
-				.add(true)
-				.add(false)
-				.add("Attention")
-				.array().add(false).end()
-				.add("0")
-				.add("0")
-				.add("0.4")
-				.add(JsonNull.INSTANCE)
-				.add("0")
-				.add("0")
-				.add(false).end().end().end());
-		JsonObject jsonResponse;
-		
-		try {
-			jsonResponse = connector.apply("/sdapi/v1/txt2img", payload.toString()).get();
-		} catch (InterruptedException | ExecutionException e) {
-			e.printStackTrace();
-			throw new IOException("服务异常");
-		}
-		return getFirstImage(jsonResponse.get("images").getAsJsonArray());
-
 	}
 }

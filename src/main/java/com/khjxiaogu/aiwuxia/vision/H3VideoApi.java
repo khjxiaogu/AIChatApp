@@ -1021,26 +1021,6 @@ public class H3VideoApi {
 		return Math.round(value * 1000d) / 1000d;
 	}
 
-	/** 只读取视频时长的工作流。 */
-	private JsonObject buildDurationGraph(String uploadedVideo) {
-		JsonObject graph = new JsonObject();
-		JsonObject load = node("LoadVideo");
-		load.getAsJsonObject("inputs").addProperty("file", uploadedVideo.trim());
-		graph.add("1", load);
-		JsonObject components = node("GetVideoComponents");
-		components.getAsJsonObject("inputs").add("video", ref("1", 0));
-		graph.add("2", components);
-		JsonObject duration = node("VideoDurationFromFrames");
-		JsonObject durationInputs = duration.getAsJsonObject("inputs");
-		durationInputs.add("images", ref("2", 0));
-		durationInputs.add("fps", ref("2", 2));
-		graph.add("3", duration);
-		JsonObject preview = node("PreviewAny");
-		preview.getAsJsonObject("inputs").add("source", ref("3", 0));
-		graph.add("4", preview);
-		return graph;
-	}
-
 	/**
 	 * 构造 H3 工作流（不提交），便于调试或自行改写参数。
 	 * <p>

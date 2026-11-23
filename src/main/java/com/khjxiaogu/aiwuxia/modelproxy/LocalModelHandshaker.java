@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-package com.khjxiaogu.aiwuxia.voice;
+package com.khjxiaogu.aiwuxia.modelproxy;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +30,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -48,14 +49,20 @@ import java.util.function.Consumer;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
-import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.modelproxy.api.AudioParams;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelApiException;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCodec;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SvsOptions;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SvsParams;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.FileChunkAssembler;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol.FileChunk;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 import com.khjxiaogu.aiwuxia.utils.ToolProgress;
 import com.khjxiaogu.aiwuxia.utils.ToolProgressContext;
-import com.khjxiaogu.aiwuxia.voice.protocol.FileChunkAssembler;
-import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol;
-import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol.FileChunk;
+import com.khjxiaogu.aiwuxia.voice.LocalVoiceUsage;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
 import io.netty.buffer.ByteBuf;
@@ -516,6 +523,11 @@ public class LocalModelHandshaker implements WebsocketEvents {
             handleProgress(jo);
             return;
         }
+        if (LocalModelProtocol.isAttachmentGet(jo)) {
+            // 客户端按需拉取请求附件：按 LMA1 二进制分块回传到同一条连接
+            handleAttachmentGet(conn, jo);
+            return;
+        }
         if (LocalModelProtocol.isCapabilities(jo)) {
             // 运行期能力集合变更报文：更新该连接在各模型类型连接池中的登记
             handleCapabilities(conn, jo);
@@ -550,6 +562,46 @@ public class LocalModelHandshaker implements WebsocketEvents {
             // 任务已超时/已完成，或响应发到了别的连接上；以前这里完全静默，排查时看不出结果已经回来
             System.err.println("[LocalModelDeploy] 收到文本响应但没有等待中的任务（可能已超时或已完成）：reqid="
                     + reqid + " 大小=" + message.length() + "B");
+        }
+    }
+
+    /**
+     * 处理客户端的附件拉取请求：把附件按 {@code LMA1} 分块回传到请求来源连接。
+     * <p>
+     * 只允许拉取“下发给这条连接的那次调用”登记过的附件：附件按 reqid 作用域登记，
+     * 请求结束即释放，因此客户端拿不到别的用户或别的调用的附件。
+     * </p>
+     *
+     * @param conn 请求来源连接
+     * @param jo   拉取报文
+     */
+    private void handleAttachmentGet(Channel conn, JsonObject jo) {
+        String reqid = LocalModelProtocol.reqid(jo);
+        String id = LocalModelProtocol.attachmentId(jo);
+        if (reqid.isEmpty() || id.isEmpty()) {
+            return;
+        }
+        if (!isExpectedSource(reqid, conn)) {
+            System.err.println("[LocalModelDeploy] 拒绝跨连接的附件拉取：reqid=" + reqid + " id=" + id
+                    + " 来源=" + describeChannel(conn));
+            conn.writeAndFlush(new TextWebSocketFrame(LocalModelProtocol
+                    .attachmentError(reqid, id, "attachment not available for this connection").toString()));
+            return;
+        }
+        byte[] data = LocalModelAttachments.shared().read(reqid, id);
+        if (data == null || data.length == 0) {
+            conn.writeAndFlush(new TextWebSocketFrame(
+                    LocalModelProtocol.attachmentError(reqid, id, "attachment not found").toString()));
+            return;
+        }
+        int total = LocalModelProtocol.fileChunkCount(data.length, LocalModelProtocol.DEFAULT_FILE_CHUNK_SIZE);
+        System.out.println("[LocalModelDeploy] 回传附件：reqid=" + reqid + " id=" + id + " 大小=" + data.length
+                + "B 分块=" + total);
+        for (int index = 1; index <= total; index++) {
+            int offset = (index - 1) * LocalModelProtocol.DEFAULT_FILE_CHUNK_SIZE;
+            int length = Math.min(LocalModelProtocol.DEFAULT_FILE_CHUNK_SIZE, data.length - offset);
+            byte[] frame = LocalModelProtocol.encodeAttachmentChunk(reqid, id, data, offset, length, index, total);
+            conn.writeAndFlush(new BinaryWebSocketFrame(Unpooled.wrappedBuffer(frame)));
         }
     }
 
@@ -1414,274 +1466,87 @@ public class LocalModelHandshaker implements WebsocketEvents {
         });
     }
 
-    private static int countTextLength(JsonArray content) {
-        int len = 0;
-        for (JsonElement je : content) {
-            if (je.isJsonObject()) {
-                JsonObject jo = je.getAsJsonObject();
-                if (jo.has("text"))
-                    len += jo.get("text").getAsString().length();
-            }
-        }
-        return len;
+    /**
+     * 发送一次统一信封调用（新协议）。
+     * <p>
+     * 报文由 {@link LocalModelCodec} 生成：类型 + 请求 ID + 参数对象 + 附件引用。
+     * 附件字节不进报文，接收端按需通过 {@link LocalModelAttachments} 拉取；
+     * 请求结束（成功或失败）时释放该请求登记的附件。
+     * </p>
+     *
+     * @param call 调用
+     * @return 结果
+     */
+    public CompletableFuture<ModelGenerationResult> send(LocalModelCall<?> call) {
+        return send(null, call, DEFAULT_REQUEST_TIMEOUT_MS);
     }
 
     /**
-     * 请求音频数据（便捷方法，内部委托给 {@link #require}）。
+     * 发送一次统一信封调用，并优先使用指定用户的本地模型。
+     *
+     * @param uid  用户标识，可为 null
+     * @param call 调用
+     * @return 结果
+     */
+    public CompletableFuture<ModelGenerationResult> send(String uid, LocalModelCall<?> call) {
+        return send(uid, call, DEFAULT_REQUEST_TIMEOUT_MS);
+    }
+
+    /**
+     * 发送一次统一信封调用，并指定等待上限。
+     *
+     * @param uid       用户标识，可为 null
+     * @param call      调用
+     * @param timeoutMs 等待上限（毫秒），非正数使用默认值
+     * @return 结果
+     */
+    public CompletableFuture<ModelGenerationResult> send(String uid, LocalModelCall<?> call, long timeoutMs) {
+        if (call == null || call.type == null) {
+            return CompletableFuture.failedFuture(new IOException("本地模型调用缺少类型"));
+        }
+        JsonObject request;
+        try {
+            request = LocalModelCodec.encodeJson(call);
+        } catch (RuntimeException ex) {
+            return CompletableFuture.failedFuture(ex);
+        }
+        return require(uid, call.type, call.reqid, request, timeoutMs)
+                .whenComplete((result, error) -> LocalModelAttachments.shared().release(call.reqid));
+    }
+
+    /**
+     * 请求音频数据（便捷方法，内部委托给 {@link #send}）。
+     * <p>
+     * 朗读参数已经是独立的值对象 {@link AudioParams}，报文由编解码器统一生成。
+     * </p>
      */
     public CompletableFuture<ModelGenerationResult> requireAudio(String chara, String reqid, JsonArray content, Consumer<UsageIntf<?>> usageListener) {
-        if (content.size() == 0)
+        if (content == null || content.size() == 0)
             return CompletableFuture.failedFuture(new IOException("Empty input"));
-        int len = countTextLength(content);
-        JsonObject request = JsonBuilder.object()
-                .add("chara", chara)
-                .add("content", content)
-                .end();
-        return require(ModelType.AUDIO, reqid, request).thenApply(result -> {
+        int len = TextCounter.countWordsInTexts(content);
+        AudioParams params = new AudioParams(chara, audioSegments(content));
+        return send(null, LocalModelCall.audio(reqid, params), DEFAULT_REQUEST_TIMEOUT_MS).thenApply(result -> {
             usageListener.accept(new LocalVoiceUsage(len));
             return result;
         });
     }
 
-    /** SVS 滤波强度允许的最小值 */
-    public static final int SVS_MIN_FILTER = 0;
-    /** SVS 滤波强度允许的最大值 */
-    public static final int SVS_MAX_FILTER = 7;
-    /** SVS 合成强度允许的最小值 */
-    public static final double SVS_MIN_STRENGTH = 0.00;
-    /** SVS 合成强度允许的最大值 */
-    public static final double SVS_MAX_STRENGTH = 1.00;
-
-    /**
-     * SVS（歌声合成）请求参数。
-     * <p>
-     * 除音源（{@code url}、{@code name}）外，SVS 模型还需要以下参数：
-     * </p>
-     * <ul>
-     *   <li>{@code pitch} - 音高，整数</li>
-     *   <li>{@code separate} - 是否分离人声（旧本地模型字段）</li>
-     *   <li>{@code do_split} - localemp.py 是否执行伴奏分离与合成，默认 true</li>
-     *   <li>{@code timbre} / {@code voice} - 音色标识（localemp.py 使用 {@code voice}）</li>
-     *   <li>{@code filter} / {@code filter_radius} - 滤波强度/中值滤波半径</li>
-     *   <li>{@code strength} / {@code protect} - 合成强度/防撕裂保护</li>
-     * </ul>
-     * 通过 {@link #builder()} 构建：
-     * <pre>
-     * SvsOptions options = SvsOptions.builder()
-     *     .pitch(2).separate(true).timbre("chara").filter(3).strength(0.75);
-     * // localemp.py：
-     * SvsOptions options = SvsOptions.builder()
-     *     .voice("my_model").pitch(2).filterRadius(3).protect(0.33).doSplit(false);
-     * </pre>
-     */
-    public static class SvsOptions {
-        private int pitch = 0;
-        private boolean separate = false;
-        /** localemp.py 的伴奏分离与合成开关，默认 true。 */
-        private boolean doSplit = true;
-        private String timbre;
-        private int filter = SVS_MIN_FILTER;
-        private double strength = SVS_MAX_STRENGTH;
-        /** localemp.py 的模型名（不含 .pth）；与 timbre 二选一。 */
-        private String voice;
-        /** localemp.py 的中值滤波半径，0~7。 */
-        private int filterRadius = 0;
-        /** localemp.py 的防撕裂保护，0~1。 */
-        private double protect = 0d;
-
-        private SvsOptions() {
+    /** 把旧的内容数组转成 {@link AudioParams} 的分段列表。 */
+    private static List<Map<String, String>> audioSegments(JsonArray content) {
+        List<Map<String, String>> segments = new ArrayList<>();
+        for (JsonElement element : content) {
+            Map<String, String> segment = new LinkedHashMap<>();
+            if (element != null && element.isJsonObject()) {
+                for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+                    JsonElement value = entry.getValue();
+                    if (value != null && value.isJsonPrimitive()) {
+                        segment.put(entry.getKey(), value.getAsString());
+                    }
+                }
+            }
+            segments.add(segment);
         }
-
-        /** @return 一个新的参数构建器 */
-        public static SvsOptions builder() {
-            return new SvsOptions();
-        }
-
-        /**
-         * 设置音高。
-         *
-         * @param pitch 音高，整数
-         */
-        public SvsOptions pitch(int pitch) {
-            this.pitch = pitch;
-            return this;
-        }
-
-        /**
-         * 设置是否分离人声。
-         *
-         * @param separate true 表示先分离人声后再合成
-         */
-        public SvsOptions separate(boolean separate) {
-            this.separate = separate;
-            return this;
-        }
-
-        /**
-         * 设置 localemp.py 是否执行伴奏分离与合成。
-         *
-         * @param doSplit true 分离人声/伴奏并混回；false 直接转换整段音频，输出不含伴奏
-         */
-        public SvsOptions doSplit(boolean doSplit) {
-            this.doSplit = doSplit;
-            return this;
-        }
-
-        /**
-         * 设置音色标识。
-         *
-         * @param timbre 音色标识，不可为 null 或空字符串
-         * @throws IllegalArgumentException 传入 null 或空字符串时抛出
-         */
-        public SvsOptions timbre(String timbre) {
-            if (timbre == null || timbre.isEmpty())
-                throw new IllegalArgumentException("timbre must not be empty");
-            this.timbre = timbre;
-            return this;
-        }
-
-        /**
-         * 设置 localemp.py 使用的模型名（不带 .pth）。
-         *
-         * @param voice 模型名
-         */
-        public SvsOptions voice(String voice) {
-            if (voice == null || voice.isEmpty())
-                throw new IllegalArgumentException("voice must not be empty");
-            this.voice = voice;
-            return this;
-        }
-
-        /**
-         * 设置 localemp.py 的中值滤波半径。
-         *
-         * @param filterRadius 0~7
-         */
-        public SvsOptions filterRadius(int filterRadius) {
-            if (filterRadius < 0 || filterRadius > 7)
-                throw new IllegalArgumentException("filterRadius out of range [0, 7]: " + filterRadius);
-            this.filterRadius = filterRadius;
-            return this;
-        }
-
-        /**
-         * 设置 localemp.py 的防撕裂保护。
-         *
-         * @param protect 0~1
-         */
-        public SvsOptions protect(double protect) {
-            if (protect < 0d || protect > 1d)
-                throw new IllegalArgumentException("protect out of range [0, 1]: " + protect);
-            this.protect = protect;
-            return this;
-        }
-
-        /**
-         * 设置滤波强度。
-         *
-         * @param filter 取值范围 {@value #SVS_MIN_FILTER}-{@value #SVS_MAX_FILTER}
-         * @throws IllegalArgumentException 取值超出范围时抛出
-         */
-        public SvsOptions filter(int filter) {
-            if (filter < SVS_MIN_FILTER || filter > SVS_MAX_FILTER)
-                throw new IllegalArgumentException(
-                        "filter out of range [" + SVS_MIN_FILTER + ", " + SVS_MAX_FILTER + "]: " + filter);
-            this.filter = filter;
-            return this;
-        }
-
-        /**
-         * 设置合成强度。
-         *
-         * @param strength 取值范围 0.00-1.00
-         * @throws IllegalArgumentException 取值超出范围时抛出
-         */
-        public SvsOptions strength(double strength) {
-            if (strength < SVS_MIN_STRENGTH || strength > SVS_MAX_STRENGTH)
-                throw new IllegalArgumentException(
-                        "strength out of range [" + SVS_MIN_STRENGTH + ", " + SVS_MAX_STRENGTH + "]: " + strength);
-            this.strength = strength;
-            return this;
-        }
-
-        /** @return 音高 */
-        public int getPitch() {
-            return pitch;
-        }
-
-        /** @return 是否分离人声 */
-        public boolean isSeparate() {
-            return separate;
-        }
-
-        /** @return localemp.py 是否执行伴奏分离与合成 */
-        public boolean isDoSplit() {
-            return doSplit;
-        }
-
-        /** @return 音色标识 */
-        public String getTimbre() {
-            return timbre;
-        }
-
-        /** @return 滤波强度 */
-        public int getFilter() {
-            return filter;
-        }
-
-        /** @return 合成强度 */
-        public double getStrength() {
-            return strength;
-        }
-
-        /** @return localemp.py 的模型名 */
-        public String getVoice() {
-            return voice;
-        }
-
-        /** @return localemp.py 的中值滤波半径 */
-        public int getFilterRadius() {
-            return filterRadius;
-        }
-
-        /** @return localemp.py 的防撕裂保护 */
-        public double getProtect() {
-            return protect;
-        }
-
-        /**
-         * 将五个 SVS 参数写入指定的请求 JSON 对象。
-         *
-         * @param request 目标请求对象
-         * @return 传入的请求对象本身，便于链式调用
-         * @throws IllegalArgumentException 未设置音色时抛出
-         */
-        public JsonObject applyTo(JsonObject request) {
-            if ((timbre == null || timbre.isEmpty()) && (voice == null || voice.isEmpty()))
-                throw new IllegalArgumentException("timbre or voice must not be empty");
-            request.addProperty("pitch", pitch);
-            request.addProperty("separate", separate);
-            request.addProperty("do_split", doSplit);
-            if (timbre != null && !timbre.isEmpty())
-                request.addProperty("timbre", timbre);
-            if (voice != null && !voice.isEmpty())
-                request.addProperty("voice", voice);
-            request.addProperty("filter", filter);
-            request.addProperty("filter_radius", filterRadius);
-            request.addProperty("strength", strength);
-            request.addProperty("protect", protect);
-            return request;
-        }
-
-        /** @return 仅包含五个 SVS 参数的请求 JSON 对象 */
-        public JsonObject toJson() {
-            return applyTo(new JsonObject());
-        }
-
-        @Override
-        public String toString() {
-            return toJson().toString();
-        }
+        return segments;
     }
 
     /**
@@ -1697,21 +1562,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
     }
 
     /**
-     * 请求 SVS（歌声合成）音频数据（便捷方法，内部委托给 {@link #require}）。
-     * 请求 JSON 形如：
-     * <pre>
-     * {
-     *   "url": "音源地址",
-     *   "name": "音源名称",
-     *   "pitch": 0,
-     *   "separate": true,
-     *   "timbre": "音色",
-     *   "filter": 3,
-     *   "strength": 0.75,
-     *   "reqid": "请求ID",
-     *   "type": "svs"
-     * }
-     * </pre>
+     * 请求 SVS（歌声合成）音频数据（便捷方法，内部委托给 {@link #send}）。
      *
      * @param reqid   请求唯一 ID
      * @param url     音源地址（待转换/演唱的歌曲），不可为空
@@ -1720,19 +1571,12 @@ public class LocalModelHandshaker implements WebsocketEvents {
      * @return 包含合成音频数据的 {@link CompletableFuture}
      */
     public CompletableFuture<ModelGenerationResult> requireSvs(String reqid, String url, String name, SvsOptions options) {
-        if (url == null || url.isEmpty())
-            return CompletableFuture.failedFuture(new IOException("Empty input url"));
-        if (options == null)
-            return CompletableFuture.failedFuture(new IOException("Empty svs options"));
-        JsonObject request = new JsonObject();
-        request.addProperty("url", url);
-        if (name != null && !name.isEmpty())
-            request.addProperty("name", name);
         try {
-            options.applyTo(request);
-        } catch (IllegalArgumentException e) {
-            return CompletableFuture.failedFuture(e);
+            SvsParams params = new SvsParams(url, name, options);
+            params.validate();
+            return send(null, LocalModelCall.svs(reqid, params), DEFAULT_REQUEST_TIMEOUT_MS);
+        } catch (LocalModelApiException ex) {
+            return CompletableFuture.failedFuture(ex);
         }
-        return require(ModelType.SVS, reqid, request);
     }
 }

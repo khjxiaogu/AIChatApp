@@ -26,6 +26,8 @@ package com.khjxiaogu.aiwuxia.voice;
 import java.io.File;
 import java.io.IOException;
 
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelHandshaker;
 import com.khjxiaogu.webserver.annotations.Adapter;
 import com.khjxiaogu.webserver.annotations.GetBy;
 import com.khjxiaogu.webserver.annotations.HttpMethod;

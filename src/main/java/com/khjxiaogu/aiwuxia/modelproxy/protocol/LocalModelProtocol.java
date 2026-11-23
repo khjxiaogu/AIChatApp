@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.voice.protocol;
+package com.khjxiaogu.aiwuxia.modelproxy.protocol;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -80,6 +80,12 @@ public final class LocalModelProtocol {
 	public static final String TYPE_PROGRESS = "progress";
 	/** 报文类型：能力集合变更/回执。 */
 	public static final String TYPE_CAPABILITIES = "capabilities";
+	/** 报文类型：客户端按需拉取附件。 */
+	public static final String TYPE_ATTACHMENT_GET = "attachment.get";
+	/** 报文类型：附件拉取失败。 */
+	public static final String TYPE_ATTACHMENT_ERROR = "attachment.error";
+	/** 附件 ID 字段。 */
+	public static final String FIELD_ATTACHMENT_ID = "id";
 
 	/** 任务状态：排队中（正在等待本地资源锁）。 */
 	public static final String STATUS_QUEUED = "queued";
@@ -90,6 +96,8 @@ public final class LocalModelProtocol {
 	public static final byte[] FILE_MAGIC = { 'L', 'M', 'F', '1' };
 	/** 请求分块魔数：服务器把过大的模型请求分块下发给连接器时使用。 */
 	public static final byte[] REQUEST_MAGIC = { 'L', 'M', 'R', '1' };
+	/** 附件分块魔数：服务器按需把附件字节回传给客户端。 */
+	public static final byte[] ATTACHMENT_MAGIC = { 'L', 'M', 'A', '1' };
 	/** 每块内容体上限：5 MiB。 */
 	public static final int DEFAULT_FILE_CHUNK_SIZE = 5 * 1024 * 1024;
 	/**
@@ -157,7 +165,8 @@ public final class LocalModelProtocol {
 	/** 请求里的模型类型（{@code type} 字段），没有或不是纯类型名时返回空串。 */
 	public static String requestModelType(JsonObject request) {
 		String type = typeOf(request);
-		if (type.isEmpty() || TYPE_PROGRESS.equalsIgnoreCase(type) || TYPE_CAPABILITIES.equalsIgnoreCase(type)) {
+		if (type.isEmpty() || TYPE_PROGRESS.equalsIgnoreCase(type) || TYPE_CAPABILITIES.equalsIgnoreCase(type)
+				|| TYPE_ATTACHMENT_GET.equalsIgnoreCase(type) || TYPE_ATTACHMENT_ERROR.equalsIgnoreCase(type)) {
 			return "";
 		}
 		return type;
@@ -389,6 +398,83 @@ public final class LocalModelProtocol {
 	public static byte[] encodeRequestChunk(String reqid, String format, byte[] data, int offset, int length,
 			int current, int total) {
 		return encodeChunk(REQUEST_MAGIC, reqid, format, data, offset, length, current, total);
+	}
+
+	/**
+	 * 构造“附件拉取请求”报文。
+	 *
+	 * @param reqid 请求 ID
+	 * @param id    附件 ID
+	 * @return 报文
+	 */
+	public static JsonObject attachmentGet(String reqid, String id) {
+		JsonObject json = new JsonObject();
+		json.addProperty(FIELD_TYPE, TYPE_ATTACHMENT_GET);
+		json.addProperty(FIELD_REQID, reqid == null ? "" : reqid);
+		json.addProperty(FIELD_ATTACHMENT_ID, id == null ? "" : id);
+		return json;
+	}
+
+	/**
+	 * 构造“附件拉取失败”报文。
+	 *
+	 * @param reqid 请求 ID
+	 * @param id    附件 ID
+	 * @param error 失败原因
+	 * @return 报文
+	 */
+	public static JsonObject attachmentError(String reqid, String id, String error) {
+		JsonObject json = new JsonObject();
+		json.addProperty(FIELD_TYPE, TYPE_ATTACHMENT_ERROR);
+		json.addProperty(FIELD_REQID, reqid == null ? "" : reqid);
+		json.addProperty(FIELD_ATTACHMENT_ID, id == null ? "" : id);
+		json.addProperty(FIELD_ERROR, error == null ? "" : error);
+		return json;
+	}
+
+	/** 是否是附件拉取请求。 */
+	public static boolean isAttachmentGet(JsonObject message) {
+		return TYPE_ATTACHMENT_GET.equalsIgnoreCase(typeOf(message));
+	}
+
+	/** 是否是附件拉取失败报文。 */
+	public static boolean isAttachmentError(JsonObject message) {
+		return TYPE_ATTACHMENT_ERROR.equalsIgnoreCase(typeOf(message));
+	}
+
+	/** 附件 ID；没有时返回空串。 */
+	public static String attachmentId(JsonObject message) {
+		if (message == null || !message.has(FIELD_ATTACHMENT_ID) || message.get(FIELD_ATTACHMENT_ID).isJsonNull()) {
+			return "";
+		}
+		String id = message.get(FIELD_ATTACHMENT_ID).getAsString();
+		return id == null ? "" : id.trim();
+	}
+
+	/**
+	 * 构造单个“附件分块”帧。
+	 * <p>
+	 * 与结果分块结构相同，魔数为 {@link #ATTACHMENT_MAGIC}；{@code format} 槽位放附件 ID，
+	 * 接收方据此把同一次调用里的多个附件区分开。
+	 * </p>
+	 *
+	 * @param reqid   请求 ID
+	 * @param id      附件 ID
+	 * @param data    完整附件字节
+	 * @param offset  本块偏移
+	 * @param length  本块长度
+	 * @param current 当前块序号（从 1 开始）
+	 * @param total   总块数
+	 * @return 二进制帧
+	 */
+	public static byte[] encodeAttachmentChunk(String reqid, String id, byte[] data, int offset, int length,
+			int current, int total) {
+		return encodeChunk(ATTACHMENT_MAGIC, reqid, id, data, offset, length, current, total);
+	}
+
+	/** 解析附件分块帧；不是附件帧时返回 null。 */
+	public static FileChunk parseAttachmentChunk(byte[] frame) {
+		return parseChunk(ATTACHMENT_MAGIC, frame);
 	}
 
 	/** 按指定魔数构造分块帧；结果分块与请求分块共用同一套结构。 */

@@ -39,8 +39,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import com.google.gson.JsonObject;
-
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 /**

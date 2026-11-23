@@ -1,6 +1,5 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
-import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
@@ -19,14 +18,15 @@ import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.multimedia.LocalVoiceMultimediaApi;
 import com.khjxiaogu.aiwuxia.multimedia.MultimediaApi;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
-import com.khjxiaogu.aiwuxia.voice.ModelType;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.aiwuxia.voice.VoiceModelHandler;
 
 /**

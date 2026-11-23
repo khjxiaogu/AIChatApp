@@ -19,18 +19,17 @@ import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.JsonConfig;
-import com.khjxiaogu.aiwuxia.vision.H3VideoApi;
 import com.khjxiaogu.aiwuxia.vision.FoleyVideoUsage;
+import com.khjxiaogu.aiwuxia.vision.H3VideoApi;
 import com.khjxiaogu.aiwuxia.vision.H3VideoUsage;
-import com.khjxiaogu.aiwuxia.vision.Mp4Duration;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
-import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
-import com.khjxiaogu.aiwuxia.voice.ModelType;
 
 /**
  * MiniMax H3 视频生成的 MCP 工具（本地模型通道）。
@@ -139,14 +138,12 @@ public class H3VideoMcp implements ToolProvider {
 		}
 	}
 
-	private final ObjectStorageProvider tos;
 	private final List<ToolData> tools = new ArrayList<>();
 
 	/**
 	 * @param tos 生成视频的对象存储，可为 null（此时工具返回失败）
 	 */
 	public H3VideoMcp(ObjectStorageProvider tos) {
-		this.tos = tos;
 		tools.add(createGenerateTool(tos, true, Mode.H3));
 		tools.add(createGenerateTool(tos, true, Mode.NVFP4));
 		tools.add(createExtractFrameTool(tos, true));
@@ -447,7 +444,7 @@ public class H3VideoMcp implements ToolProvider {
 							FoleyGeneration generated = generateFoley(request);
 							byte[] result = generated.data;
 							double duration = generated.duration > 0d ? generated.duration
-									: Mp4Duration.seconds(result);
+									: 10d;
 							String id = tos.uploadIfNotExists(result, ".mp4",
 									output == null ? null : output::addUsage);
 							if (output != null) {
@@ -792,12 +789,6 @@ public class H3VideoMcp implements ToolProvider {
 		}
 		String name = mode == null ? "H3 生成视频" : mode.displayName();
 		return ToolResult.of("视频生成成功，视频id为：" + firstId + "。", new VideoContent(firstId, name));
-	}
-
-	/** 兼容旧调用：H3 模式的上传。 */
-	private static ToolResult uploadResults(ObjectStorageProvider tos, List<H3VideoApi.VideoResult> videos,
-			AIOutput output) throws Exception {
-		return uploadResults(tos, videos, output, Mode.H3);
 	}
 
 	/** 把底层异常转成便于模型理解的提示。 */

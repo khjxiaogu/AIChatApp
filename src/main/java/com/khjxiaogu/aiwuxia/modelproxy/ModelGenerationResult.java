@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.voice;
+package com.khjxiaogu.aiwuxia.modelproxy;
 
 public class ModelGenerationResult {
 	public final byte[] bodyData;

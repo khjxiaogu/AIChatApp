@@ -11,12 +11,13 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.RequestHandler;
-import com.khjxiaogu.aiwuxia.voice.protocol.FileChunkAssembler;
-import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol;
-import com.khjxiaogu.aiwuxia.voice.transport.LocalModelTransport;
-import com.khjxiaogu.aiwuxia.voice.transport.LocalModelTransportFactory;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.RequestHandler;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.FileChunkAssembler;
+import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol;
+import com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransport;
+import com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransportFactory;
 
 /**
  * {@link LocalModelClient} 的离线自检：用假传输验证

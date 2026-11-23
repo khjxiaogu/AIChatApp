@@ -4,6 +4,7 @@ import com.khjxiaogu.aiwuxia.llm.AIRequest.ModelCategory;
 import com.khjxiaogu.aiwuxia.llm.AIRequest.ReasoningStrength;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 /**
  * 模型消费预算倍率估算。
@@ -35,9 +36,6 @@ public final class ModelBudget {
 	/** 没有历史时给一个最小的提示规模，避免提示项在比值里完全消失。 */
 	private static final double MIN_PROMPT_TOKENS = 500;
 
-	/** 粗略的字符 → token 折算比例（中英文混排取折中值）。 */
-	private static final double CHARS_PER_TOKEN = 2.0;
-
 	private ModelBudget() {
 	}
 
@@ -59,7 +57,7 @@ public final class ModelBudget {
 
 	/** 估算本次请求的提示 token 数。 */
 	public static double promptTokens(AIRequest request) {
-		double chars = 0;
+		double words = 0;
 		if (request != null) {
 			for (HistoryItem item : request.history) {
 				if (item == null) {
@@ -67,11 +65,11 @@ public final class ModelBudget {
 				}
 				MessageContents contents = item.getContextContent();
 				if (contents != null) {
-					chars += contents.toText().length();
+					words += TextCounter.countWords(contents.toText());
 				}
 			}
 		}
-		return Math.max(MIN_PROMPT_TOKENS, chars / CHARS_PER_TOKEN);
+		return Math.max(MIN_PROMPT_TOKENS, words);
 	}
 
 	/** 估算本次请求的最大输出 token 数（推理模式按推理强度放大）。 */

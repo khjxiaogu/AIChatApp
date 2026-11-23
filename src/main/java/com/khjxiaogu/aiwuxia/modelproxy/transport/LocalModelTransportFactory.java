@@ -1,4 +1,4 @@
-package com.khjxiaogu.aiwuxia.voice.transport;
+package com.khjxiaogu.aiwuxia.modelproxy.transport;
 
 import java.net.URI;
 import java.util.Map;

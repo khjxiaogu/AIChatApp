@@ -26,6 +26,7 @@ import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.TextCounter;
 
 public class VoiceTagger {
 	File curPath;
@@ -110,7 +111,7 @@ public class VoiceTagger {
 									
 							}
 						}
-						if(ja.size()==0&&unifiedLastText.length()>3)
+						if(ja.size()==0&&TextCounter.countWords(unifiedLastText)>3)
 							continue;
 						return ja;
 					}catch(JsonSyntaxException ex) {

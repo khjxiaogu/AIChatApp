@@ -2159,28 +2159,103 @@ var main=new Vue({
                 if (incoming.length) this.messages.unshift(...incoming);
             } else {
                 // 连接/重连下发最新一页：替换最新范围，保留本地已经翻出来的更早记录。
-                // 重连时不能无条件滚到底：用户可能正在向上翻阅历史，保持原视口位置；
+                // 重连时不能无条件滚到底：用户可能正在向上翻阅历史，要保持原阅读位置；
                 // 只有首次加载/切换会话（列表原本为空）或用户本来就在底部时才滚到底。
                 const hadMessages = this.messages.length > 0;
-                const wasPinned = this.pinnedToBottom;
-                const container = this.$refs.messageContainer;
-                const prevTop = container ? container.scrollTop : 0;
+                // 用容器当前的真实位置判断“是否贴底”，不依赖可能已经过期的 pinnedToBottom
+                const anchor = this.aiCaptureReadingAnchor();
+                const wasPinned = anchor ? anchor.atBottom : this.pinnedToBottom;
                 const incoming = items.map(toMessage);
                 const oldestIncoming = incoming.length ? incoming[0]._id : null;
                 const kept = (oldestIncoming != null)
                     ? this.messages.filter(m => m._id != null && m._id < oldestIncoming)
                     : this.messages;
-                this.messages = kept.concat(incoming);
                 if (!hadMessages || wasPinned) {
+                    this.messages = kept.concat(incoming);
                     this.scrollToBottom(true);
                 } else {
+                    // 重连时先压住自动滚动：替换列表和解析图片地址都会触发 messages watcher，
+                    // 不能让它把视口拽到底部；等列表渲染完成、阅读位置恢复后再放开。
+                    const seq = this.aiBeginScrollRestore();
+                    this.messages = kept.concat(incoming);
                     this.$nextTick(() => {
-                        const c = this.$refs.messageContainer;
-                        if (c) c.scrollTop = prevTop;
+                        try {
+                            this.aiRestoreReadingAnchor(anchor, seq);
+                        } finally {
+                            this.aiEndScrollRestore(seq);
+                        }
                     });
                 }
             }
             this.resolveAllPartUrls();
+        },
+        // ------------------------- 重连后的阅读位置保持
+        // 重连会用服务端最新一页替换列表，消息节点与高度都可能变化：
+        // 只记 scrollTop 会落到别的消息上，因此记“视口顶部那条消息 + 它在视口里的偏移”。
+        aiCaptureReadingAnchor() {
+            const c = this.$refs.messageContainer;
+            if (!c) return null;
+            const boxTop = c.getBoundingClientRect().top;
+            const nodes = c.querySelectorAll('.message');
+            let index = -1;
+            let offset = 0;
+            for (let i = 0; i < nodes.length; i++) {
+                const rect = nodes[i].getBoundingClientRect();
+                // 第一条下边缘越过容器顶部的消息，就是正在读的那条（可能是半条）
+                if (rect.bottom > boxTop) {
+                    index = i;
+                    offset = rect.top - boxTop;
+                    break;
+                }
+            }
+            const msg = index >= 0 && index < this.messages.length ? this.messages[index] : null;
+            return {
+                top: c.scrollTop,
+                key: msg ? msg._key : null,
+                id: msg ? msg._id : null,
+                offset: offset,
+                atBottom: (c.scrollHeight - c.scrollTop - c.clientHeight) <= 60,
+            };
+        },
+        // 把同一条消息放回原来的视口位置；消息已被服务端重建/丢弃时退回原 scrollTop
+        aiRestoreReadingAnchor(anchor, seq) {
+            // 期间用户已主动滚动/发送，恢复作废，不能把用户拽回旧位置
+            if (seq !== this._aiScrollRestoreSeq) return;
+            const c = this.$refs.messageContainer;
+            if (!c) return;
+            let target = null;
+            if (anchor && (anchor.key != null || anchor.id != null)) {
+                const index = this.messages.findIndex(m => (anchor.key != null && m._key === anchor.key)
+                    || (anchor.id != null && m._id != null && String(m._id) === String(anchor.id)));
+                if (index >= 0) {
+                    const nodes = c.querySelectorAll('.message');
+                    target = nodes[index] || null;
+                }
+            }
+            if (target) {
+                const boxTop = c.getBoundingClientRect().top;
+                const delta = (target.getBoundingClientRect().top - boxTop) - anchor.offset;
+                if (Math.abs(delta) >= 0.5) c.scrollTop += delta;
+            } else if (anchor) {
+                c.scrollTop = anchor.top;
+            }
+            // 以恢复后的真实位置重新判断贴底状态，避免后续补发帧把用户拽回底部
+            this.pinnedToBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) <= 60;
+        },
+        // 开始一次阅读位置恢复：期间抑制自动滚动，并让强制滚动（用户发送/生成）可以取消它
+        aiBeginScrollRestore() {
+            this._aiScrollRestoreSeq = (this._aiScrollRestoreSeq || 0) + 1;
+            this._aiScrollRestorePending = true;
+            return this._aiScrollRestoreSeq;
+        },
+        aiEndScrollRestore(seq) {
+            if (seq !== this._aiScrollRestoreSeq) return;
+            // 等本帧布局（主要是 resolveAllPartUrls 触发的重绘）落定后再恢复自动滚动
+            const done = () => {
+                if (seq === this._aiScrollRestoreSeq) this._aiScrollRestorePending = false;
+            };
+            if (window.requestAnimationFrame) window.requestAnimationFrame(done);
+            else setTimeout(done, 16);
         },
         // 分页游标：本地最旧的一条记录
         aiOldestMessageId() {
@@ -2431,6 +2506,14 @@ var main=new Vue({
             this.aiToast(label + "上传失败：" + reason, {kind:'error'});
         },
         scrollToBottom(force) {
+            if (force) {
+                // 用户/页面主动回到底部：作废尚未执行的阅读位置恢复
+                this._aiScrollRestoreSeq = (this._aiScrollRestoreSeq || 0) + 1;
+                this._aiScrollRestorePending = false;
+            } else if (this._aiScrollRestorePending) {
+                // 重连的历史替换还没落定：此时列表高度不可信，等恢复完阅读位置再说
+                return;
+            }
             // 正在插入更早的历史记录时不要抢滚动位置
             if (this.suppressAutoScroll && !force) return;
             // 用户正在向上翻阅历史时不要把他拽回底部（图片加载、流式输出等后续更新同样受此约束）

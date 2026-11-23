@@ -1,21 +1,19 @@
 package com.khjxiaogu.aiwuxia.vision;
 
-import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.util.Base64;
 import java.util.List;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelEta;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.ProgressReporter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.RequestHandler;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.Response;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.tools.TaskPriority;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.ProgressReporter;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.RequestHandler;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.Response;
-import com.khjxiaogu.aiwuxia.voice.LocalModelEta;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 
 /**
  * MiniMax H3（本地 ComfyUI）的请求处理器。

@@ -1,26 +1,25 @@
 package com.khjxiaogu.aiwuxia.vision;
 
-import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.IOException;
 import java.util.Base64;
 import java.util.List;
 
 import com.google.gson.JsonObject;
-
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelEta;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.ProgressReporter;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.RequestHandler;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.Response;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.tools.TaskPriority;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.ProgressReporter;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.RequestHandler;
-import com.khjxiaogu.aiwuxia.voice.LocalModelClient.Response;
-import com.khjxiaogu.aiwuxia.voice.LocalModelEta;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 
 /**
  * Qwen-Image 2.1（本地 ComfyUI）的请求处理器。
  * <p>
  * 只负责“把服务器请求翻译成 ComfyUI 调用”，不再持有任何网络连接：连接、重连、进度上报
- * 由 {@link com.khjxiaogu.aiwuxia.voice.LocalModelClient} 统一管理。
+ * 由 {@link com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient} 统一管理。
  * </p>
  */
 public final class QwenLocalModelHandler {

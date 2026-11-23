@@ -4,7 +4,6 @@ import java.io.File;
 
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
-import com.khjxiaogu.aiwuxia.mcp.history.HistorySearchMcp;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.MemoryHistory;
@@ -81,7 +80,7 @@ public class HistorySearchMcpTest {
 	private static void testGetDeleted() {
 		Fixture fixture = new Fixture();
 		String deleted = fixture.call(HistorySearchMcp.GET_TOOL, "{\"id\":\"3\"}");
-		check(deleted.contains("已删除"), "已删除记录应拒绝查询，实际：" + deleted);
+		check(deleted.contains("没有找到记录"), "已删除记录应拒绝查询，实际：" + deleted);
 		String missing = fixture.call(HistorySearchMcp.GET_TOOL, "{\"id\":\"999\"}");
 		check(missing.contains("没有找到记录"), "不存在的 id 应给出提示，实际：" + missing);
 		String bad = fixture.call(HistorySearchMcp.GET_TOOL, "{\"id\":\"abc\"}");

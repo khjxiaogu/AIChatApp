@@ -1,12 +1,7 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
-import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import java.io.File;
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -17,25 +12,28 @@ import java.util.concurrent.CompletableFuture;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
+import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
+import com.khjxiaogu.aiwuxia.modelproxy.api.SvsOptions;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
-import com.khjxiaogu.aiwuxia.tools.ResourceLock;
-import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
-import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
-import com.khjxiaogu.aiwuxia.voice.LocalModel;
+import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.aiwuxia.voice.LocalSVSUsage;
-import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
 
 /**
- * SVS（歌声转换 / RVC）MCP。
+ * SVS（歌声转换 / RVC）MCP，统一走本地模型通道。
  * <p>
- * 从 {@link MusicMcp} 的 SVS 调用流程复制而来，但输入改为<b>音频链接</b>，与音乐平台无关：
- * 直接把任意 http/https 音频地址交给本地 localemp.py 服务，由它下载、变声并回调结果。
- * 原 {@link MusicMcp} 保持不变。
+ * 输入任意 http/https 音频链接，通过 {@link LocalModel#requireSvs} 把请求交给已接入的
+ * {@code model_type=svs} 本地模型客户端（见 {@code LocalModelConnectionService}），
+ * 由模型侧的 {@code vision.SvsLocalModelHandler} 调用 localemp.py 完成变声，再把结果音频回传。
+ * 本类不再直接访问 localemp（真正的 localemp HTTP 调用已抽到 {@code vision.SvsApi}），
+ * 也不持有资源锁。
  * </p>
  * <p>
  * <b>无默认音色、无请求状态</b>：每次调用都由模型显式传入角色名，按
@@ -43,11 +41,10 @@ import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
  * 配置文件每次调用时重新读取，修改后无需重启。工具 {@value #TOOL_LIST_VOICES} 可列出全部可用角色。
  * </p>
  * <p>
- * 请求参数按 {@code localemp_api.md}：
- * {@code url}、{@code voice}、{@code reqid}、{@code name}（可选）、
- * {@code pitch}（-24~24）、{@code filter_radius}（0~7）、{@code protect}（0~1）、
- * {@code do_split}（是否伴奏分离，默认 true）。
- * 服务地址取 {@code -DsvsHost=host:port}；未配置时不提供转换工具，但仍可列出角色。
+ * {@code svs_convert} 参数：{@code audio_url}、{@code voice}、{@code pitch}（-24~24）、
+ * {@code filter_radius}（0~7）、{@code protect}（0~1）、{@code do_split}（默认 true）。
+ * 固定使用临时文件，不提供文件名参数。工具声明为异步，MCP 层会立即返回 {@code task_id}，
+ * 再用通用 {@code mcp_task_result} 轮询获取音频。
  * </p>
  */
 public class SvsMcp implements ToolProvider {
@@ -68,45 +65,21 @@ public class SvsMcp implements ToolProvider {
 	private final ObjectStorageProvider tos;
 	/** 角色名 → 音频 ID 的配置文件。 */
 	private final File configFile;
-	/** 本地 SVS 服务地址，可为空。 */
-	private final String svsHost;
-	/** 与其它本地模型共享的资源锁。 */
-	private final ResourceLock lock;
 
 	/**
 	 * @param tos        结果音频存储，可为 null（此时返回 data URL）
-	 * @param lock       资源锁，null 时新建一个容量 4 的锁
 	 * @param configFile 角色名 → 音频 ID 配置文件
 	 */
-	public SvsMcp(ObjectStorageProvider tos, ResourceLock lock, File configFile) {
-		this(tos, lock, configFile, System.getProperty("svsHost"));
-	}
-
-	/**
-	 * @param tos        结果音频存储，可为 null
-	 * @param lock       资源锁
-	 * @param configFile 角色名 → 音频 ID 配置文件
-	 * @param svsHost    本地 SVS 服务地址，例如 {@code 127.0.0.1:8064}
-	 */
-	public SvsMcp(ObjectStorageProvider tos, ResourceLock lock, File configFile, String svsHost) {
+	public SvsMcp(ObjectStorageProvider tos, File configFile) {
 		this.tos = tos;
 		this.configFile = configFile;
-		this.svsHost = svsHost == null ? "" : svsHost.trim();
-		this.lock = lock == null ? new ResourceLock(4) : lock;
-	}
-
-	/** SVS 转换服务是否已配置。 */
-	public boolean isConfigured() {
-		return !svsHost.isEmpty();
 	}
 
 	@Override
 	public Collection<ToolData> getTools() {
 		List<ToolData> tools = new ArrayList<>(2);
 		tools.add(createListTool());
-		if (isConfigured()) {
-			tools.add(createConvertTool());
-		}
+		tools.add(createConvertTool());
 		return tools;
 	}
 
@@ -121,7 +94,7 @@ public class SvsMcp implements ToolProvider {
 					}
 					StringBuilder text = new StringBuilder("可用音色角色：\n");
 					for (Map.Entry<String, String> entry : voices.entrySet()) {
-						text.append("- ").append(entry.getKey()).append("\n");
+						text.append("- ").append(entry.getKey()).append("（").append(entry.getValue()).append("）\n");
 					}
 					return text.toString();
 				}).build();
@@ -129,14 +102,15 @@ public class SvsMcp implements ToolProvider {
 
 	private ToolData createConvertTool() {
 		return new ToolData.Builder(TOOL_CONVERT,
-				"把任意音频链接转换为指定角色音色的歌声（SVS/RVC）。传入可访问的 http/https 音频地址，"
-						+ "voice 传角色名（可用 " + TOOL_LIST_VOICES + " 查询），服务会下载音频、变声并把结果音频作为附件返回。")
+				"通过已接入的本地 SVS 模型（LocalModel）把任意音频链接转换为指定角色音色的歌声。"
+						+ "与音频平台无关：audio_url 传 http/https 音频地址，voice 传 " + TOOL_LIST_VOICES
+						+ " 中的角色名；结果音频作为附件返回。")
 				.putParam("audio_url", "要转换的音频链接，必须是 http/https，支持任意音频平台。", "音频链接")
 				.putParam("voice", "角色名，必须是 " + TOOL_LIST_VOICES + " 中的一项；由配置映射到音频 ID。", "角色名")
 				.putParam("pitch", "变调半音，-24~24，默认 0。正数升高、负数降低。", "变调")
 				.putParam("filter_radius", "中值滤波半径，0~7，默认 0；0~2 不滤波，3~7 启用滤波。", "滤波半径")
-				.putParam("protect", "防撕裂保护，0~1，默认 0，>=0.5 相当于关闭保护。", "保护强度")
-				.putParam("do_split", "是否执行伴奏分离与合成，默认 true；false 时直接转换整段音频、不混伴奏，输出不含伴奏，额度按 1/3 计。", "伴奏分离")
+				.putParam("protect", "防撕裂保护，0~1，默认 0；0.33 为常用折中值，>=0.5 相当于关闭保护。", "保护强度")
+				.putParam("do_split", "是否执行伴奏分离与合成，默认 true；false 时直接转换整段音频、不混伴奏，额度按 1/3 计。", "伴奏分离")
 				.async()
 				.tool((data, output, manager) -> {
 					try {
@@ -162,6 +136,10 @@ public class SvsMcp implements ToolProvider {
 						int filterRadius = intField(jo, "filter_radius", DEFAULT_FILTER_RADIUS, 0, 7);
 						double protect = doubleField(jo, "protect", DEFAULT_PROTECT, 0d, 1d);
 						boolean doSplit = JsonConfig.getBool(jo, "do_split", DEFAULT_DO_SPLIT);
+						if (!LocalModel.hasOnlineService(ModelType.SVS)) {
+							return CompletableFuture.completedFuture(ToolResult.failure(
+									"本地模型服务未连接：请先启动并连接 LocalModelConnectionService（svs 模型）。"));
+						}
 						return convert(audioUrl, audioId, pitch, filterRadius, protect, doSplit, output);
 					} catch (IllegalArgumentException ex) {
 						return CompletableFuture.completedFuture(ToolResult.text("参数错误：" + ex.getMessage()));
@@ -199,94 +177,55 @@ public class SvsMcp implements ToolProvider {
 		return voices;
 	}
 
-	/** 调用 localemp.py 并等待回调结果；始终使用临时文件，不传 name。 */
+	/** 通过本地模型通道转换音频，并把结果音频上传到对象存储。 */
 	private CompletableFuture<ToolResult> convert(String audioUrl, String audioId, int pitch,
-			int filterRadius, double protect, boolean doSplit, com.khjxiaogu.aiwuxia.llm.AIOutput output) {
-		if (!isSvsServiceOnline(svsHost)) {
-			return CompletableFuture
-					.completedFuture(ToolResult.failure("本地歌声合成服务不在线，请先启动 localemp.py。"));
+			int filterRadius, double protect, boolean doSplit, AIOutput output) {
+		SvsOptions options;
+		try {
+			options = SvsOptions.builder()
+					.voice(audioId)
+					// 同时带旧字段，兼容仍只读 timbre / filter / strength 的本地实现
+					.timbre(audioId)
+					.pitch(pitch)
+					.filter(filterRadius)
+					.filterRadius(filterRadius)
+					.strength(protect)
+					.protect(protect)
+					.doSplit(doSplit);
+		} catch (IllegalArgumentException ex) {
+			return CompletableFuture.completedFuture(ToolResult.text("参数错误：" + ex.getMessage()));
 		}
+		// 不传 name：本地服务必须使用临时文件
 		String reqid = UUID.randomUUID().toString();
-		CompletableFuture<ModelGenerationResult> callback = LocalModel.registerTask(reqid);
-		CompletableFuture.runAsync(() -> {
-			try (ResourcePermit permit = lock.acquire(4)) {
-				StringBuilder url = new StringBuilder("?url=").append(enc(audioUrl))
-						.append("&voice=").append(enc(audioId))
-						.append("&reqid=").append(enc(reqid))
-						.append("&pitch=").append(pitch)
-						.append("&filter_radius=").append(filterRadius)
-						.append("&protect=").append(protect)
-						.append("&do_split=").append(doSplit);
-				String response = HttpRequestBuilder.create("http", svsHost).url(url.toString())
-						.get().readString();
-				System.out.println("[SVS] " + response);
-			} catch (Throwable ex) {
-				// HTTP 失败时服务不会回调，主动让等待方失败，避免工具永久挂起
-				callback.completeExceptionally(ex);
-			}
-		});
-		return callback.thenApply(result -> {
-			if (result == null || result.bodyData == null || result.bodyData.length == 0) {
-				return ToolResult.failure("SVS 生成失败：服务没有返回音频数据。");
-			}
-			if (output != null) {
-				output.addUsage(new LocalSVSUsage(result.bodyData.length, doSplit));
-			}
-			String resultId;
-			try {
-				resultId = tos == null ? FileUtil.toDataUrl(result.bodyData)
-						: tos.uploadIfNotExists(result.bodyData, output == null ? null : output::addUsage);
-			} catch (IOException ex) {
-				ex.printStackTrace();
-				return ToolResult.failure("SVS 生成失败：音频保存失败，" + rootMessage(ex));
-			}
-			String displayName = "SVS 歌声";
-			return ToolResult.of("SVS 生成成功，音频id为：" + resultId + "。",
-					new AudioContent(resultId, displayName));
-		});
+		return LocalModel.requireSvs(reqid, audioUrl, null, options)
+				.thenApply(result -> uploadResult(result, doSplit, output))
+				.exceptionally(ex -> ToolResult.failure("SVS 生成失败：" + rootMessage(ex)));
+	}
+
+	/** 上传结果音频并构造附件结果。 */
+	private ToolResult uploadResult(ModelGenerationResult result, boolean doSplit, AIOutput output) {
+		if (result == null || result.bodyData == null || result.bodyData.length == 0) {
+			return ToolResult.failure("SVS 生成失败：本地模型没有返回音频数据。");
+		}
+		if (output != null) {
+			output.addUsage(new LocalSVSUsage(result.bodyData.length, doSplit));
+		}
+		String audioId;
+		try {
+			audioId = tos == null ? FileUtil.toDataUrl(result.bodyData)
+					: tos.uploadIfNotExists(result.bodyData, output == null ? null : output::addUsage);
+		} catch (IOException ex) {
+			ex.printStackTrace();
+			return ToolResult.failure("SVS 生成失败：音频保存失败，" + rootMessage(ex));
+		}
+		String displayName = "SVS 歌声";
+		return ToolResult.of("SVS 生成成功，音频id为：" + audioId + "。",
+				new AudioContent(audioId, displayName));
 	}
 
 	private static boolean isHttpUrl(String value) {
 		return value != null && (value.regionMatches(true, 0, "http://", 0, 7)
 				|| value.regionMatches(true, 0, "https://", 0, 8));
-	}
-
-	private static String enc(String value) throws IOException {
-		return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8.name());
-	}
-
-	/** 快速探测 localemp.py 是否在线，避免离线时长时间等待 HTTP 超时。 */
-	public static boolean isSvsServiceOnline(String host) {
-		if (host == null || host.trim().isEmpty()) {
-			return false;
-		}
-		String value = host.trim();
-		if (value.startsWith("http://")) {
-			value = value.substring(7);
-		} else if (value.startsWith("https://")) {
-			value = value.substring(8);
-		}
-		int slash = value.indexOf('/');
-		if (slash >= 0) {
-			value = value.substring(0, slash);
-		}
-		String hostName = value;
-		int port = 8064;
-		int colon = value.lastIndexOf(':');
-		if (colon > 0) {
-			hostName = value.substring(0, colon);
-			try {
-				port = Integer.parseInt(value.substring(colon + 1));
-			} catch (NumberFormatException ex) {
-				return false;
-			}
-		}
-		try (Socket socket = new Socket()) {
-			socket.connect(new InetSocketAddress(hostName, port), 1000);
-			return true;
-		} catch (Throwable ex) {
-			return false;
-		}
 	}
 
 	private static int intField(JsonObject json, String key, int fallback, int min, int max) {
@@ -333,4 +272,3 @@ public class SvsMcp implements ToolProvider {
 		return message == null || message.trim().isEmpty() ? cause.getClass().getSimpleName() : message;
 	}
 }
-

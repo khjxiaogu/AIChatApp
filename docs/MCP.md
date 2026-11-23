@@ -373,16 +373,20 @@ session.registerTools(CharacterSettingMcp.create(dataFolder));
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
-| `history_search` | `keyword`、`max_results`、`role` | 只在**未删除且已从上下文隐藏**（`should_send=0 AND deleted=0`）的记录里搜索，返回 `#id`、角色、命中字段（正文/上下文/思维链）与片段 |
+| `history_search` | `keyword`、`max_results`、`page`、`role` | 只在**未删除且已从上下文隐藏**（`should_send=0 AND deleted=0`）的记录里**按从新到旧**搜索，返回 `#id`、角色、命中字段（正文/上下文/思维链）与片段；结果也按这个顺序给出，用 `page` 翻到更旧的匹配 |
 | `history_get` | `id`、`include_reasoning`、`max_chars` | 按 id 读取记录全文（正文 + 上下文内容）；`include_reasoning=true` 时附带思维链 |
 
 约定：
 
 - 搜索关键字不区分大小写，多个中英文/同义词用 `|` 分隔（如 `生日|birthday`）；
-  `max_results` 默认 20、最多 50，`role` 可填 `user` / `assistant` / `system` /
-  `application` / `tool`，省略为全部；
+  `max_results` 默认 5、最多 50，`page` 从 1 开始、默认 1（每页 `max_results` 条，
+  第一页永远是最新的匹配），`role` 可填 `user` / `assistant` / `tool`，省略为全部；
+- **只检索 `user` / `assistant` / `tool` 三种角色的记录**：`system`（系统提示）、
+  `application`（应用状态）这类内部记录既不出现在搜索结果里，也不能用 `history_get` 按 id 读出；
 - **已删除的记录既不会被搜到，也不能用 `history_get` 读出**；仍在上下文中的记录不参与搜索，
   但知道 id 时可以用 `history_get` 读取；
+- 前端显示：`history_search` 的调用卡片显示**关键词与页码**，`history_get` 显示要读取的**消息 id**
+  （即历史记录 id，与结果里的 `#id` 一致）；
 - 正文与上下文内容不同时（例如流式写入时冻结的上下文快照），`history_get` 会分两段返回；
 - 思维链默认不返回；记录里有思维链时会提示，传 `include_reasoning=true` 即可一起读取；
 - `max_chars` 默认不限制，只用于防止整条超长记录撑爆工具结果；
@@ -404,7 +408,7 @@ session.registerTools(CharacterSettingMcp.create(dataFolder));
 ```json
 {"jsonrpc":"2.0","id":11,"method":"tools/call","params":{
   "name":"history_search",
-  "arguments":{"keyword":"生日|birthday","role":"user","max_results":"10"}}}
+  "arguments":{"keyword":"生日|birthday","role":"user","max_results":"10","page":"1"}}}
 ```
 
 ```json
