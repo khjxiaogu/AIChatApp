@@ -35,10 +35,10 @@ public class H3VideoAgentMcpTest {
 	private static void testToolInput() throws Exception {
 		ToolData tool = H3VideoAgentMcp.createVideo(null, null, null);
 		check(H3VideoAgentMcp.TOOL_AGENT.equals(tool.name), "工具名应为 h3_video_agent，实际：" + tool.name);
-		check(tool.params.keySet().equals(Set.of("reference", "video", "prompt")),
-				"参数应为 reference/video/prompt，实际：" + tool.params.keySet());
-		check(tool.optionalParams.equals(Set.of("reference", "video")),
-				"参考图、参考视频可选，实际：" + tool.optionalParams);
+		check(tool.params.keySet().equals(Set.of("reference", "video", "first", "last", "prompt")),
+				"参数应为 reference/video/first/last/prompt，实际：" + tool.params.keySet());
+		check(tool.optionalParams.equals(Set.of("reference", "video", "first", "last")),
+				"参考图、参考视频、首尾来源可选，实际：" + tool.optionalParams);
 		check(tool.async, "视频生成耗时长，子 agent 工具应声明为异步");
 		check(tool.description.contains("子 agent"), "工具描述应说明这是子 agent");
 		check(tool.getParamLabel("prompt").equals("提示词"), "prompt 的显示名应为“提示词”");

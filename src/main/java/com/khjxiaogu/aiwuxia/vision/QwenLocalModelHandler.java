@@ -9,10 +9,12 @@ import com.google.gson.JsonObject;
 
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
+import com.khjxiaogu.aiwuxia.tools.TaskPriority;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.ProgressReporter;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.RequestHandler;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.Response;
+import com.khjxiaogu.aiwuxia.voice.LocalModelEta;
 
 /**
  * Qwen-Image 2.1（本地 ComfyUI）的请求处理器。
@@ -93,7 +95,10 @@ public final class QwenLocalModelHandler {
 	private static Response handle(JsonObject request, ResourceLock lock, String baseUrl,
 			ProgressReporter progress) {
 		progress.queued("等待本地模型资源");
-		try (ResourcePermit permit = lock.acquire(RESOURCE_AMOUNT)) {
+		long queuedAt = System.currentTimeMillis();
+		try (ResourcePermit permit = lock.acquire(RESOURCE_AMOUNT, TaskPriority.HIGH)) {
+			System.out.println("[Qwen-LocalModel] 已获取资源锁（排队 " + (System.currentTimeMillis() - queuedAt)
+					+ "ms）" + (request.has("reqid") ? " reqid=" + request.get("reqid").getAsString() : ""));
 			QwenImageApi api = new QwenImageApi(baseUrl);
 			String action = JsonConfig.getTrimmed(request, "action");
 			String prompt = JsonConfig.getTrimmed(request, "prompt");
@@ -109,7 +114,9 @@ public final class QwenLocalModelHandler {
 			long seed = JsonConfig.getLong(request, "seed", QwenImageApi.randomSeed());
 			List<QwenImageApi.ImageResult> images;
 			// 排队结束、正式把请求下发给 ComfyUI 的那一刻才切到“执行中”
-			progress.running("已下发 ComfyUI");
+			// 不同动作（text2image / edit）可以分别配置预计耗时，未配置时回落到 qwenEtaMs
+			progress.running("已下发 ComfyUI", LocalModelEta.resolve(60_000L,
+					LocalModelEta.propertyName("qwen", action), "qwenEtaMs"));
 			if ("text2image".equals(action)) {
 				int width = JsonConfig.getInt(request, "width", 768);
 				int height = JsonConfig.getInt(request, "height", 1024);

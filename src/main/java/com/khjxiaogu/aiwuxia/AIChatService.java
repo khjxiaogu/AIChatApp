@@ -51,6 +51,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
@@ -66,16 +67,18 @@ import com.khjxiaogu.aiwuxia.apps.AIApplicationRegistry;
 import com.khjxiaogu.aiwuxia.apps.ApplicationAttributes;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.mcp.CharacterSettingMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
-import com.khjxiaogu.aiwuxia.mcp.H3VideoAgentMcp;
+import com.khjxiaogu.aiwuxia.mcp.H3VideoMcp;
 import com.khjxiaogu.aiwuxia.mcp.SeedreamMcp;
 import com.khjxiaogu.aiwuxia.mcp.history.HistorySearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.LocalVoiceMcp;
 import com.khjxiaogu.aiwuxia.mcp.MediaOutputMcp;
 import com.khjxiaogu.aiwuxia.mcp.MultiModalMcp;
+import com.khjxiaogu.aiwuxia.mcp.QwenLocalModelMcp;
 import com.khjxiaogu.aiwuxia.mcp.SDXLMcp;
 import com.khjxiaogu.aiwuxia.mcp.SvsLocalModelMcp;
 import com.khjxiaogu.aiwuxia.mcp.client.McpClientManager;
@@ -98,6 +101,7 @@ import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
 import com.khjxiaogu.aiwuxia.state.session.AISession.ExtraData;
@@ -191,6 +195,14 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/** 绘画会话的发送图片工具，所有绘画会话共享 */
 	private ToolData painterSendImageTool;
 	/**
+	 * 绘画页的 Qwen 文生图工具（{@code qwen_gen_image}，同步）。
+	 * <p>
+	 * 走本地模型通道的 {@code qwen} 客户端，生成结果写入 {@link #painterStorage}，图片 id 可直接
+	 * 用作 SDXL 图生图/分区出图的参考图。与 SDXL 图片工具共享每轮最多 5 次图片生成额度。
+	 * </p>
+	 */
+	private ToolData painterQwenTextToImageTool;
+	/**
 	 * 按用户缓存的 SDXL 图片生成工具集（文生图/图生图/分区/反推）。
 	 * <p>
 	 * 工具与用户的本地模型绑定：用户通过 {@code /painter-local} 页面接入自己的 SD WebUI 后，
@@ -216,14 +228,26 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	/** DeepSeek 网页搜索工具，未配置 deepseektoken 时为 null */
 	private ToolData painterWebSearchTool;
 	/**
-	 * 绘画会话的视频工具（本地 H3 视频导演子 agent）。
+	 * 绘画会话的本地 H3 直连生成工具（{@code h3_gen_video} / {@code h3_gen_anim}）。
 	 * <p>
-	 * 与图片生成一样只依赖服务级配置：H3 通过本地模型通道（{@code model_type=h3}）生成，
-	 * 服务端不需要访问 ComfyUI；本地模型离线时调用会返回可读的失败原因，工具本身仍可注册。
-	 * 视频结果写入 {@link #painterStorage}，前端按视频 id 通过 {@code /painter/video} 播放。
+	 * 两件工具共用同一轮视频额度：绘画页每轮最多生成 1 段 H3 视频。
+	 * 两件工具都是同步工具，视频生成完成后在工具结果里把视频 id 返回给模型；
+	 * 视频本身不自动附加到回复，仍保存在 {@link #painterStorage}，可按 id 通过
+	 * {@code /painter/video} 取用，或调用 {@code send_video} 显式发送。
 	 * </p>
 	 */
-	private ToolData painterH3VideoTool;
+	private List<ToolData> painterH3VideoGeneratorTools = Collections.emptyList();
+	/** 绘画页 H3 视频工具的同步说明：结果只给视频 id，需要展示时再调用 send_video。 */
+	private static final String PAINTER_SYNC_VIDEO_NOTE = "本工具在绘画页同步执行：等待视频生成/配音完成后只返回视频 id，"
+			+ "不会自动把视频文件附加到回复里；如果要让用户直接看到视频，请把该 id 传给 send_video；"
+			+ "否则请在最终回复中把视频 id 告诉用户。";
+	/**
+	 * 绘画会话的发送视频工具：把已生成/上传的视频作为附件写回当前回复。
+	 * <p>
+	 * H3 生成工具只返回视频 id，不自动附加视频；模型需要展示视频时显式调用本工具。
+	 * </p>
+	 */
+	private ToolData painterSendVideoTool;
 	/**
 	 * 绘画会话的即梦视频工具（云端 Seedance）。
 	 * <p>
@@ -574,6 +598,9 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private void initPainterTools() {
 		painterImageRecognitionTool = MultiModalMcp.createImageRecognition(painterStorage);
 		painterSendImageTool = MediaOutputMcp.createSendImage(painterStorage);
+		// Qwen 文生图与 SDXL 共用同一套图片存储，生成结果可直接作为后续图生图的参考图
+		painterQwenTextToImageTool = asPainterImageTool(
+				QwenLocalModelMcp.createTextToImageTool(painterStorage));
 		// SDXL 图片工具按用户创建（见 painterImageGeneratorFor），这里不再创建全局实例：
 		// 图片 id 直接通过 /painter/image 取图，与具体会话无关，URL 构造器在各用户的工具里共用
 		painterSearchCharacterTool = chara == null ? null : SDXLMcp.createSearchCharacter(chara);
@@ -581,28 +608,152 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		painterMoegirlSearchTool = FetchMcp.createMoegirlSearch(painterStorage);
 		painterWebSearchTool = DeepseekSearchMcp.createWebSearch();
 		// 视频：本地 H3 走本地模型通道，不需要云端凭据；即梦需要配置视频 apiKey
-		painterH3VideoTool = createPainterH3VideoTool();
+		painterH3VideoGeneratorTools = createPainterH3VideoGeneratorTools();
 		painterJimengVideoTool = createPainterJimengVideoTool();
+		// 发送视频：把已生成/上传的视频 id 作为附件写回当前回复
+		painterSendVideoTool = MediaOutputMcp.createSendVideo(painterStorage);
 	}
 
 	/**
-	 * 创建绘画会话的本地视频工具（H3 视频导演子 agent）。
+	 * 创建绘画会话的本地 H3 视频工具（{@code h3_gen_video} / {@code h3_gen_anim} / {@code video_foley}，同步版）。
 	 * <p>
-	 * 子 agent 负责把用户的粗略需求扩写成 H3 提示词并选择模式/比例/时长；主模型只给需求与参考图。
-	 * 提示词目录为 {@code config/h3/agent}（可缺省，缺省时用内置提示词）。
-	 * 创建失败只记录日志：视频工具不可用不应影响绘画页其它功能。
+	 * 这两件工具把提示词、参考图/视频、画面比例和时长直接交给本地模型通道，适合模型已经
+	 * 确定参数的场合。生成会同步等待完成，工具结果只把视频 id 返回给模型；视频不自动附加到
+	 * 回复，两件工具共用“每轮最多 1 次”的视频额度，额度在
+	 * {@link #registerPainterTools(AISession)} 里统一绑定。需要展示视频时由模型再调用
+	 * {@code send_video}。
 	 * </p>
 	 *
-	 * @return 视频工具，创建失败时为 null
+	 * @return 直连生成工具列表，永不为 null
 	 */
-	private ToolData createPainterH3VideoTool() {
-		try {
-			return H3VideoAgentMcp.createVideo(ConfigPaths.h3Agent(parent), painterStorage, chara);
-		} catch (Throwable ex) {
-			logger.printStackTrace(ex);
-			logger.warning("绘画视频工具（H3）初始化失败：" + ex.getMessage());
+	private List<ToolData> createPainterH3VideoGeneratorTools() {
+		List<ToolData> tools = new ArrayList<>();
+		ToolData h3 = H3VideoMcp.createGenerateTool(painterStorage, false, H3VideoMcp.Mode.H3);
+		if (h3 != null) {
+			tools.add(asPainterSyncVideoTool(h3, h3.description + " " + PAINTER_SYNC_VIDEO_NOTE));
+		}
+		ToolData anim = H3VideoMcp.createGenerateTool(painterStorage, false, H3VideoMcp.Mode.NVFP4);
+		if (anim != null) {
+			tools.add(asPainterSyncVideoTool(anim, anim.description + " " + PAINTER_SYNC_VIDEO_NOTE));
+		}
+		// 视频配音（Foley）：给已有视频换音效，同样只返回视频 id，由 send_video 决定是否展示
+		ToolData foley = H3VideoMcp.createFoleyTool(painterStorage, false);
+		if (foley != null) {
+			tools.add(asPainterSyncVideoTool(foley, foley.description + " " + PAINTER_SYNC_VIDEO_NOTE));
+		}
+		return Collections.unmodifiableList(tools);
+	}
+
+	/**
+	 * 把 H3 视频工具改造成绘画页使用的同步版本：强制同步执行，并且只把视频 id 文本返回给模型。
+	 * <p>
+	 * 原始 H3 直连工具会在结果附件里带 {@link VideoContent}，同步工具一旦保留附件，会话就会把视频
+	 * 直接写进本轮助手回复。绘画页改为“生成只返回视频 id”，因此这里去掉附件，并把结果文本裁剪成
+	 * 文本（缺少 id 时从附件里补上）。需要展示视频时由模型调用 {@code send_video}。
+	 * </p>
+	 *
+	 * @param source      原始工具
+	 * @param description 绘画页展示的工具说明，可为 null（回退到原始说明）
+	 * @return 同步、无附件的工具；source 为 null 时返回 null
+	 */
+	private static ToolData asPainterSyncVideoTool(ToolData source, String description) {
+		if (source == null) {
 			return null;
 		}
+		ToolData.Builder builder = new ToolData.Builder(source.name,
+				description == null ? source.description : description)
+						.sync()
+						.presenter(source.presenter)
+						.maxCalls(source.maxCalls)
+						.sessionOnly(source.sessionOnly)
+						.orderSensitive(source.orderSensitive);
+		for (Map.Entry<String, String> param : source.params.entrySet()) {
+			if (source.isOptionalParam(param.getKey())) {
+				builder.putOptionalParam(param.getKey(), param.getValue(), source.getParamLabel(param.getKey()));
+			} else {
+				builder.putParam(param.getKey(), param.getValue(), source.getParamLabel(param.getKey()));
+			}
+		}
+		return builder.tool((data, output, manager) -> {
+			CompletableFuture<ToolResult> future = source.tool.run(data, output, manager);
+			return future == null ? CompletableFuture.completedFuture(null)
+					: future.thenApply(AIChatService::toVideoIdOnlyResult);
+		}).build();
+	}
+
+	/**
+	 * 给绘画页的图片生成工具补一句发送约定。
+	 * <p>
+	 * Qwen 文生图工具原本面向子 agent（只返回图片 id 供后续生成参考），描述里没有
+	 * “生成后发给用户”；绘画页的图片同样只存在于工具结果里，需要模型再调用
+	 * {@code send_image} 才会出现在回复中，因此注册前补上这句说明。
+	 * </p>
+	 *
+	 * @param source 原始工具，可为 null
+	 * @return 带绘画页发送说明的工具；source 为 null 时返回 null
+	 */
+	private static ToolData asPainterImageTool(ToolData source) {
+		if (source == null) {
+			return null;
+		}
+		ToolData.Builder builder = new ToolData.Builder(source.name,
+				source.description + " 生成后请调用 send_image 把图片发给用户；返回的图片 id 也可以"
+						+ "作为图生图/分区出图的参考图。")
+				.sync()
+				.presenter(source.presenter)
+				.maxCalls(source.maxCalls)
+				.sessionOnly(source.sessionOnly)
+				.orderSensitive(source.orderSensitive);
+		for (Map.Entry<String, String> param : source.params.entrySet()) {
+			if (source.isOptionalParam(param.getKey())) {
+				builder.putOptionalParam(param.getKey(), param.getValue(), source.getParamLabel(param.getKey()));
+			} else {
+				builder.putParam(param.getKey(), param.getValue(), source.getParamLabel(param.getKey()));
+			}
+		}
+		return builder.tool(source.tool).build();
+	}
+
+	/**
+	 * 把视频工具结果压缩成“给模型看的视频 id 文本”：去掉给用户的视频附件，保留成功/失败状态。
+	 * <p>
+	 * H3 工具的结果文本本来就带“视频id为：...”，这里只在文本缺少 id 时从附件补一句，
+	 * 保证模型一定拿得到视频 id；视频文件本身仍留在对象存储里，按 id 取用。
+	 * </p>
+	 *
+	 * @param result 原始工具结果，可为 null
+	 * @return 只含文本、无附件的工具结果
+	 */
+	private static ToolResult toVideoIdOnlyResult(ToolResult result) {
+		if (result == null) {
+			return null;
+		}
+		String text = result.getText();
+		String videoId = lastVideoId(result);
+		if (videoId != null && (text == null || text.isEmpty() || !text.contains(videoId))) {
+			text = text == null || text.isEmpty() ? "视频生成成功，视频id为：" + videoId + "。"
+					: text + "\n视频id为：" + videoId + "。";
+		}
+		return ToolResult.text(text).withSuccess(result.isSuccess());
+	}
+
+	/** 从工具结果的内容与附件中取最后一个视频 id；没有时返回 null。 */
+	private static String lastVideoId(ToolResult result) {
+		String videoId = null;
+		for (MessageContent attachment : result.getAttachments()) {
+			if (attachment instanceof VideoContent) {
+				videoId = ((VideoContent) attachment).getVideoUrl();
+			}
+		}
+		if (videoId != null) {
+			return videoId;
+		}
+		for (MessageContent content : result.getContent()) {
+			if (content instanceof VideoContent) {
+				videoId = ((VideoContent) content).getVideoUrl();
+			}
+		}
+		return videoId;
 	}
 
 	/**
@@ -739,9 +890,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	 * 除 SDXL 图片工具外的工具定义由 {@link #initPainterTools()} 在服务启动时创建一次；
 	 * SDXL 图片工具按会话所属用户取用（见 {@link #painterImageGeneratorFor(String)}），
 	 * 这样用户接入自己的本地绘画模型后，其所有绘画会话都会改用用户的模型。
-	 * 调用次数规则沿用原有设置：图片识别单次最多 5 次，SDXL 图片生成工具共享 5 次，
-	 * 其余工具使用默认规则。视频工具（H3 视频导演 / 即梦视频）为长任务，生成完成后由
-	 * {@link PainterSession} 作为新的助手消息下发，前端按视频 id 或远端地址播放。
+	 * 调用次数规则沿用原有设置：图片识别单次最多 5 次，SDXL 图片生成工具与 Qwen 文生图
+	 * （{@code qwen_gen_image}）共享 5 次，其余工具使用默认规则。本地 H3 视频（两件直连生成工具）
+	 * 是同步工具：本轮内等待生成完成，只把视频 id 返回给模型，不把视频附件写进回复；需要展示视频时
+	 * 由模型调用 {@code send_video}。即梦视频仍是异步长任务，由 {@link PainterSession} 在完成后作为新的
+	 * 助手消息下发。本地 H3 视频**每轮最多生成 1 段**。
 	 * </p>
 	 *
 	 * @param session 目标会话
@@ -752,13 +905,25 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		}
 		session.registerTool(painterImageRecognitionTool, 5);
 		session.registerTool(painterSendImageTool);
-		session.registerTools(painterImageGeneratorFor(session.user), 5);
+		// 图片生成工具：SDXL（文生图/图生图/分区/反推）与 Qwen 文生图共享每轮 5 次额度
+		List<ToolData> imageTools = new ArrayList<>(painterImageGeneratorFor(session.user).getTools());
+		if (painterQwenTextToImageTool != null) {
+			imageTools.add(painterQwenTextToImageTool);
+		}
+		session.registerTools(imageTools, 5);
 		session.registerTool(painterSearchCharacterTool);
 		session.registerTool(painterWebViewTool);
 		session.registerTool(painterMoegirlSearchTool);
 		session.registerTool(painterWebSearchTool);
-		// 视频生成：两个工具都是长任务（异步），生成完成后由会话把视频作为新消息下发
-		session.registerTool(painterH3VideoTool);
+		// 本地 H3 视频：两件直连工具都是同步工具，生成完成后只把视频 id 返回给模型，视频文件不自动
+		// 附加到回复。两者绑定同一个共享额度：同一轮最多调用 1 次，下一轮重新计数。
+		for (ToolData tool : painterH3VideoGeneratorTools) {
+			session.registerTool(tool, 1);
+		}
+		session.bindTools(1, H3VideoMcp.TOOL_GENERATE, H3VideoMcp.TOOL_ANIM);
+		// 发送视频：显式把视频 id 对应的视频作为附件写回当前回复；发送动作本身不限次
+		session.registerTool(painterSendVideoTool);
+		// 即梦视频仍是异步工具，完成后由会话把视频作为新消息下发
 		session.registerTool(painterJimengVideoTool);
 		// 记录检索：绘画会话本来就会注册工具，压缩历史后可用 history_search / history_get
 		// 找回已从上下文隐藏但没有删除的旧记录

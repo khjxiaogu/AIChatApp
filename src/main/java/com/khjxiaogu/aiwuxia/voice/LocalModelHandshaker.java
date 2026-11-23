@@ -24,6 +24,7 @@
 package com.khjxiaogu.aiwuxia.voice;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -50,15 +51,19 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
+import com.khjxiaogu.aiwuxia.utils.ToolProgress;
+import com.khjxiaogu.aiwuxia.utils.ToolProgressContext;
 import com.khjxiaogu.aiwuxia.voice.protocol.FileChunkAssembler;
 import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol;
 import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol.FileChunk;
 import com.khjxiaogu.webserver.web.lowlayer.WebsocketEvents;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.QueryStringDecoder;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.util.AttributeKey;
 /**
@@ -122,6 +127,29 @@ public class LocalModelHandshaker implements WebsocketEvents {
         }
     }
 
+    /**
+     * 读取请求分块大小，可用 {@code -DlocalModelRequestChunkSize} 覆盖。
+     * <p>
+     * 请求超过这个大小、且客户端声明了 {@code flags=chunked} 时按分块下发；否则仍然一个文本帧发完。
+     * 取值范围 4 KiB ~ 5 MiB。
+     * </p>
+     */
+    private static int readRequestChunkSize() {
+        String raw = System.getProperty("localModelRequestChunkSize", "").trim();
+        if (raw.isEmpty()) {
+            return LocalModelProtocol.DEFAULT_REQUEST_CHUNK_SIZE;
+        }
+        try {
+            int value = Integer.parseInt(raw);
+            if (value < 4096) {
+                return LocalModelProtocol.DEFAULT_REQUEST_CHUNK_SIZE;
+            }
+            return Math.min(value, LocalModelProtocol.DEFAULT_FILE_CHUNK_SIZE);
+        } catch (NumberFormatException ex) {
+            return LocalModelProtocol.DEFAULT_REQUEST_CHUNK_SIZE;
+        }
+    }
+
     /** Channel 属性键，用于在连接上存储当前所有活跃请求的 Future */
     private static final AttributeKey<ConcurrentLinkedQueue<CompletableFuture<ModelGenerationResult>>> RESULTS_KEY = AttributeKey.valueOf("localModelResults");
 
@@ -157,6 +185,8 @@ public class LocalModelHandshaker implements WebsocketEvents {
     private final Map<String, Channel> requestChannels = new ConcurrentHashMap<>();
     /** 连接 → 客户端标识（{@code client_id}）；重连后仍是同一个值，用于接续断线前的任务。 */
     private final Map<Channel, String> channelClients = new ConcurrentHashMap<>();
+    /** 连接声明支持的协议能力标记；{@link LocalModelProtocol#FLAG_CHUNKED} 表示可以收发分块大报文。 */
+    private final Map<Channel, Set<String>> channelFlags = new ConcurrentHashMap<>();
     /** 请求 ID → 下发该请求的客户端标识；为重连后补发的结果提供来源校验。 */
     private final Map<String, String> requestClients = new ConcurrentHashMap<>();
     /** 每个进行中请求的可延长截止时间；收到进度上报时由 {@link #handleProgress(JsonObject)} 推后。 */
@@ -165,12 +195,22 @@ public class LocalModelHandshaker implements WebsocketEvents {
     private final Map<String, AtomicLong> registrationDeadlines = new ConcurrentHashMap<>();
     /** 最近一次上报的任务状态（queued / running），用于诊断与日志。 */
     private final Map<String, String> taskStatus = new ConcurrentHashMap<>();
+    /**
+     * 请求 ID → 进度接收方（工具调用状态）。
+     * <p>
+     * 工具线程调用 {@code LocalModel.require(...)} 时，从 {@link ToolProgressContext} 取到当前
+     * 工具调用的 sink 并登记在这里；连接器上报的 queued/running/进度/预计时间会转给它。
+     * </p>
+     */
+    private final Map<String, Consumer<ToolProgress>> progressListeners = new ConcurrentHashMap<>();
     /** 正在接收的二进制文件分块：reqid → 组装器 + 来源连接。 */
     private final Map<String, PendingFile> pendingFiles = new ConcurrentHashMap<>();
     /** 收到一次进度上报后，把任务超时延长到这个时间之后（毫秒）。 */
     private final long progressTimeoutMs = readProgressTimeout();
     /** 文件分块接收的空闲超时：超过这个时间没有新分块就失败并丢弃已收到的块（毫秒）。 */
     private final long fileTimeoutMs = readFileTimeout();
+    /** 请求超过该大小且客户端支持二进制时，按分块下发（字节）。 */
+    private final int requestChunkSize = readRequestChunkSize();
     /** 全局在线连接计数 */
     private volatile int totalConnections = 0;
 
@@ -319,13 +359,20 @@ public class LocalModelHandshaker implements WebsocketEvents {
         String uid = normalizeUid(rawUid);
         // client_id 是连接器自己生成的稳定标识：重连后仍是同一个值，用于接续断线前的任务
         String clientId = parseClientId(handshake.uri());
+        // flags 声明连接支持协议的哪些可选部分（例如 chunked = 支持分块/大报文）：
+        // 有该标记时服务器才把过大的请求按分块下发，也才把多媒体文件直接放进报文
+        Set<String> flags = parseFlags(handshake.uri());
         // 打印实际接入的 uid 与 client，便于核对接入用户、以及重连后是否认回同一个客户端
         System.err.println("[LocalModel] connected from " + conn.remoteAddress().toString()
                 + " uid=" + (rawUid == null ? "(none)" : rawUid)
                 + (uid == null ? " (shared)" : " (user-bound)")
                 + " client=" + (clientId == null ? "(none)" : clientId)
+                + " flags=" + flags
                 + " provider: " + Arrays.toString(modelTypes.toArray()));
         channelModelTypes.put(conn, modelTypes);
+        if (!flags.isEmpty()) {
+            channelFlags.put(conn, flags);
+        }
         if (clientId != null) {
             channelClients.put(conn, clientId);
         }
@@ -361,6 +408,44 @@ public class LocalModelHandshaker implements WebsocketEvents {
             // 解析失败时视为没有 client_id
         }
         return null;
+    }
+
+    /**
+     * 解析客户端声明的协议能力标记（握手 URL 的 {@code flags} 参数）。
+     * <p>
+     * 支持两种写法：一次给多个（{@code flags=chunked,stream}）或重复参数
+     * （{@code flags=chunked&flags=stream}）。标记会原样保存（转小写），便于将来扩展新能力；
+     * 目前已知的是 {@link LocalModelProtocol#FLAG_CHUNKED}，表示支持分块收发大报文。
+     * </p>
+     *
+     * @param uri 握手地址
+     * @return 能力标记集合（不为 null）
+     */
+    private static Set<String> parseFlags(String uri) {
+        Set<String> flags = new LinkedHashSet<>();
+        try {
+            QueryStringDecoder decoder = new QueryStringDecoder(uri);
+            List<String> values = decoder.parameters().get("flags");
+            if (values == null) {
+                values = decoder.parameters().get("flag");
+            }
+            if (values != null) {
+                for (String value : values) {
+                    if (value == null) {
+                        continue;
+                    }
+                    for (String part : value.split(",")) {
+                        String flag = part.trim().toLowerCase(java.util.Locale.ROOT);
+                        if (!flag.isEmpty() && flag.length() <= 64) {
+                            flags.add(flag);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // 解析失败时按“没有声明”处理（退回文本帧，保证兼容）
+        }
+        return flags;
     }
 
     /**
@@ -412,6 +497,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
             }
         }
         String uid = channelUsers.remove(conn);
+        channelFlags.remove(conn);
         Set<ModelType> types = channelModelTypes.remove(conn);
         unregisterTypes(conn, uid, types);
         // 连接断了：该连接上未收全的文件分块全部丢弃
@@ -672,13 +758,29 @@ public class LocalModelHandshaker implements WebsocketEvents {
         unregisterTypes(conn, uid, old);
         channelModelTypes.put(conn, requested);
         registerTypes(conn, uid, requested);
+        // 能力集合报文可以只更新模型类型；带了 flags 才更新协议能力标记
+        Set<String> flags;
+        if (message.has(LocalModelProtocol.FIELD_FLAGS)) {
+            flags = new LinkedHashSet<>();
+            for (String flag : LocalModelProtocol.flags(message)) {
+                flags.add(flag.toLowerCase(java.util.Locale.ROOT));
+            }
+            if (flags.isEmpty()) {
+                channelFlags.remove(conn);
+            } else {
+                channelFlags.put(conn, flags);
+            }
+        } else {
+            Set<String> current = channelFlags.get(conn);
+            flags = current == null ? Collections.<String>emptySet() : current;
+        }
         List<String> names = new ArrayList<>(requested.size());
         for (ModelType type : requested) {
             names.add(type.name().toLowerCase());
         }
-        System.out.println("[LocalModelDeploy] 能力集合变更：" + names
+        System.out.println("[LocalModelDeploy] 能力集合变更：" + names + " flags=" + flags
                 + " uid=" + (uid == null ? "(shared)" : uid));
-        conn.writeAndFlush(new TextWebSocketFrame(LocalModelProtocol.capabilities(names).toString()));
+        conn.writeAndFlush(new TextWebSocketFrame(LocalModelProtocol.capabilities(names, flags).toString()));
     }
 
     /** 把连接登记到各模型类型的连接池。 */
@@ -765,23 +867,52 @@ public class LocalModelHandshaker implements WebsocketEvents {
         extendDeadline(requestDeadlines.get(reqid), deadline);
         extendDeadline(registrationDeadlines.get(reqid), deadline);
         String status = message.has("status") && !message.get("status").isJsonNull()
-                ? message.get("status").getAsString().trim() : "running";
+                ? message.get("status").getAsString().trim() : LocalModelProtocol.STATUS_RUNNING;
         if (status.isEmpty()) {
-            status = "running";
+            status = LocalModelProtocol.STATUS_RUNNING;
         }
         String detail = message.has("message") && !message.get("message").isJsonNull()
                 ? message.get("message").getAsString().trim() : "";
+        Double progress = null;
         if (message.has("progress") && !message.get("progress").isJsonNull()) {
             try {
-                detail = (detail + " " + Math.round(message.get("progress").getAsDouble() * 100) + "%").trim();
+                progress = Double.valueOf(Math.max(0d, Math.min(1d, message.get("progress").getAsDouble())));
             } catch (RuntimeException ignored) {
                 // progress 不是数字时忽略进度，不影响状态与超时
             }
         }
+        Long etaMs = null;
+        if (message.has("eta") && !message.get("eta").isJsonNull()) {
+            try {
+                long eta = message.get("eta").getAsLong();
+                if (eta > 0) {
+                    etaMs = Long.valueOf(eta);
+                }
+            } catch (RuntimeException ignored) {
+                // eta 不是数字时忽略估计时间，不影响状态与超时
+            }
+        }
+        String logDetail = detail;
+        if (progress != null) {
+            logDetail = (logDetail + " " + Math.round(progress.doubleValue() * 100) + "%").trim();
+        }
+        if (etaMs != null) {
+            logDetail = (logDetail + " 预计 " + Math.round(etaMs.longValue() / 1000d) + "s").trim();
+        }
         String previous = taskStatus.put(reqid, status);
         if (!status.equals(previous)) {
             System.out.println("[LocalModelDeploy] 任务进度：" + reqid + " → " + status
-                    + (detail.isEmpty() ? "" : "（" + detail + "）"));
+                    + (logDetail.isEmpty() ? "" : "（" + logDetail + "）"));
+        }
+        // 转给正在执行该请求的工具调用；没有绑定（语音合成等非工具路径）时忽略
+        Consumer<ToolProgress> listener = progressListeners.get(reqid);
+        if (listener != null) {
+            try {
+                listener.accept(new ToolProgress(status, progress, etaMs, detail));
+            } catch (Throwable t) {
+                // 展示失败不能影响任务
+                t.printStackTrace();
+            }
         }
     }
 
@@ -800,6 +931,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
         requestChannels.remove(reqid);
         requestClients.remove(reqid);
         taskStatus.remove(reqid);
+        progressListeners.remove(reqid);
         pendingFiles.remove(reqid);
     }
 
@@ -932,6 +1064,73 @@ public class LocalModelHandshaker implements WebsocketEvents {
         return count != null && count > 0;
     }
 
+    /**
+     * 判断指定用户接下来会取用的连接器是否声明了某个协议能力标记。
+     * <p>
+     * 取用顺序与 {@link #require(String, ModelType, String, JsonObject)} 一致：用户专属连接优先，
+     * 用户没有该类型的连接时检查共享连接池。标记在握手 URL（{@code flags=...}）或运行期的
+     * {@code capabilities} 报文里声明；声明了 {@link LocalModelProtocol#FLAG_CHUNKED} 的连接
+     * 可以接收按分块下发的大请求，因此调用方可以直接把图片等多媒体内容放进报文，
+     * 而不是只给一个链接。没有声明该标记的连接（例如浏览器接入页）仍然只适合收链接。
+     * </p>
+     *
+     * @param uid       用户标识，可为 null 或空（只检查共享连接池）
+     * @param modelType 模型类型
+     * @param flag      协议能力标记，例如 {@link LocalModelProtocol#FLAG_CHUNKED}
+     * @return 取用顺序上的连接中有声明该标记者时返回 true；没有连接时返回 false
+     */
+    public boolean supportsFlag(String uid, ModelType modelType, String flag) {
+        if (flag == null) {
+            return false;
+        }
+        String target = flag.trim().toLowerCase(java.util.Locale.ROOT);
+        if (target.isEmpty()) {
+            return false;
+        }
+        String targetUser = uid == null || uid.isEmpty() ? null : uid;
+        if (targetUser != null && hasUserService(targetUser, modelType)) {
+            return anyFlag(targetUser, modelType, target);
+        }
+        return anyFlag(null, modelType, target);
+    }
+
+    /**
+     * 判断指定用户接下来会取用的连接器是否支持分块/大报文
+     * （{@link LocalModelProtocol#FLAG_CHUNKED}）。
+     *
+     * @param uid       用户标识，可为 null 或空（只检查共享连接池）
+     * @param modelType 模型类型
+     * @return 支持时返回 true
+     */
+    public boolean supportsChunked(String uid, ModelType modelType) {
+        return supportsFlag(uid, modelType, LocalModelProtocol.FLAG_CHUNKED);
+    }
+
+    /**
+     * 检查指定归属的连接里是否有声明了该标记、且支持该模型类型的连接。
+     *
+     * @param owner     连接归属用户；null 表示共享连接池
+     * @param modelType 模型类型
+     * @param flag      协议能力标记
+     * @return 存在这样的连接时返回 true
+     */
+    private boolean anyFlag(String owner, ModelType modelType, String flag) {
+        for (Map.Entry<Channel, Set<ModelType>> entry : channelModelTypes.entrySet()) {
+            String channelUid = channelUsers.get(entry.getKey());
+            if (owner == null ? channelUid != null : !owner.equals(channelUid)) {
+                continue;
+            }
+            if (!entry.getValue().contains(modelType)) {
+                continue;
+            }
+            Set<String> flags = channelFlags.get(entry.getKey());
+            if (flags != null && flags.contains(flag)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean hasOnlineService() {
         return totalConnections > 0;
     }
@@ -1003,6 +1202,43 @@ public class LocalModelHandshaker implements WebsocketEvents {
     private static void removeFuture(Channel ch, CompletableFuture<ModelGenerationResult> future) {
         ConcurrentLinkedQueue<CompletableFuture<ModelGenerationResult>> q = ch.attr(RESULTS_KEY).get();
         if (q != null) q.remove(future);
+    }
+
+    /**
+     * 把一条请求下发给连接器。
+     * <p>
+     * 默认仍然是一个文本帧（兼容所有老客户端）。如果请求超过 {@link #requestChunkSize} 且该连接
+     * 声明了 {@link LocalModelProtocol#FLAG_CHUNKED}（支持分块/大报文），则改成一串
+     * {@code LMR1} 二进制分块；连接器按 reqid 组装后走与文本请求完全相同的处理流程。
+     * 这样过大的请求（例如带参考图的图生图）不会因为单个 WebSocket 帧过大而失败。
+     * </p>
+     *
+     * @param ch      目标连接
+     * @param reqid   请求 ID
+     * @param payload 已序列化的请求 JSON
+     */
+    private void sendRequest(Channel ch, String reqid, String payload) {
+        byte[] data = payload.getBytes(StandardCharsets.UTF_8);
+        boolean chunked = hasFlag(ch, LocalModelProtocol.FLAG_CHUNKED);
+        if (!chunked || data.length <= requestChunkSize) {
+            ch.writeAndFlush(new TextWebSocketFrame(payload));
+            return;
+        }
+        int total = LocalModelProtocol.fileChunkCount(data.length, requestChunkSize);
+        System.out.println("[LocalModelDeploy] 请求较大，按二进制分块下发：reqid=" + reqid + " 大小=" + data.length
+                + "B 分块=" + total + " 每块=" + requestChunkSize + "B");
+        for (int index = 1; index <= total; index++) {
+            int offset = (index - 1) * requestChunkSize;
+            int length = Math.min(requestChunkSize, data.length - offset);
+            byte[] frame = LocalModelProtocol.encodeRequestChunk(reqid, "json", data, offset, length, index, total);
+            ch.writeAndFlush(new BinaryWebSocketFrame(Unpooled.wrappedBuffer(frame)));
+        }
+    }
+
+    /** 连接是否声明了该协议能力标记。 */
+    private boolean hasFlag(Channel ch, String flag) {
+        Set<String> flags = channelFlags.get(ch);
+        return flags != null && flags.contains(flag);
     }
 
     /**
@@ -1082,6 +1318,18 @@ public class LocalModelHandshaker implements WebsocketEvents {
         if (!request.has("type")) {
             request.addProperty("type", modelType.toString());
         }
+        // 工具线程调用 require 时绑定了当前工具调用的进度接收方；每次真正下发请求前登记，
+        // 失败重试时由 finally 清掉、下一轮重新登记
+        final Consumer<ToolProgress> toolSink = ToolProgressContext.current();
+        if (toolSink != null) {
+            // 连接池/资源锁的等待发生在服务器和连接器两侧：先亮“排队中”，
+            // 连接器随后会用 queued/running 覆盖成更准确的状态
+            try {
+                toolSink.accept(new ToolProgress(ToolProgress.STATUS_QUEUED, null, null, "等待本地模型连接"));
+            } catch (Throwable ignored) {
+                // 展示失败不影响请求
+            }
+        }
 
         return CompletableFuture.supplyAsync(() -> {
             while (true) {
@@ -1106,6 +1354,9 @@ public class LocalModelHandshaker implements WebsocketEvents {
 
                     future = new CompletableFuture<>();
                     ars.put(reqid, future);
+                    if (toolSink != null) {
+                        progressListeners.put(reqid, toolSink);
+                    }
                     // 记录请求来源：连接 + 客户端标识。断线重连后客户端标识不变，可用于接续任务
                     requestChannels.put(reqid, ch);
                     String clientId = channelClients.get(ch);
@@ -1122,7 +1373,7 @@ public class LocalModelHandshaker implements WebsocketEvents {
                             + (targetUser == null ? "(shared)" : targetUser) + " channel=" + ch.remoteAddress()
                             + " 超时=" + waitMillis + "ms 报文=" + payload.length() + "B");
                     long sentAt = System.currentTimeMillis();
-                    ch.writeAndFlush(new TextWebSocketFrame(payload));
+                    sendRequest(ch, reqid, payload);
 
                     while (true) {
                         long remaining = deadline.get() - System.currentTimeMillis();

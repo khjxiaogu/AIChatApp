@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工具调用状态可视化 · 界面草案</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --card: #ffffff;
+    --line: #e5eaf3;
+    --ink: #1f2937;
+    --muted: #6b7a90;
+    --think-bg: #f8f9fc;
+    --think-line: #94a3b8;
+    --chip-bg: #eef2ff;
+    --chip-ink: #1e40af;
+    --ok: #15803d;
+    --run: #1d4ed8;
+    --queue: #b45309;
+    --bad: #b91c1c;
+    --track: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 20px 40px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .shell { max-width: 760px; margin: 0 auto; }
+  .page-title { font-size: 13px; color: var(--muted); margin: 0 0 14px 4px; letter-spacing: .02em; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 3px 14px rgba(30, 48, 80, .05);
+    overflow: hidden;
+  }
+  .chat { padding: 20px 22px 24px; }
+  .msg { display: flex; gap: 12px; margin-bottom: 18px; }
+  .msg:last-child { margin-bottom: 0; }
+  .avatar {
+    flex: none; width: 30px; height: 30px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+  }
+  .avatar.user { background: #dbeafe; color: #1d4ed8; }
+  .avatar.ai { background: #e0e7ff; color: #3730a3; }
+  .bubble { flex: 1; min-width: 0; }
+  .name { font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .user-text {
+    background: #f1f5fb; border-radius: 12px; padding: 9px 13px; font-size: 14px;
+  }
+  .thinking {
+    background: var(--think-bg);
+    border-left: 3px solid var(--think-line);
+    border-radius: 10px;
+    padding: 10px 12px 12px;
+    margin-bottom: 12px;
+  }
+  .thinking-label {
+    font-size: 11px; color: #7c8aa0; letter-spacing: .04em; margin-bottom: 8px;
+  }
+  .thought-text { font-size: 12.5px; color: #4b5a6e; margin: 0 0 10px; }
+  .tool {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    gap: 0 9px;
+    align-items: center;
+    padding: 8px 10px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-top: 8px;
+  }
+  .tool .ico {
+    width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+    background: var(--chip-bg); font-size: 12px;
+  }
+  .tool .main { min-width: 0; }
+  .tool .title { font-size: 13px; font-weight: 600; color: #243449; }
+  .tool .title .raw { font-weight: 400; color: #9aa8bb; font-size: 11px; margin-left: 6px; }
+  .tool .sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+  .state {
+    font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 9px; border-radius: 999px;
+  }
+  .state.done { color: var(--ok); background: #ecfdf3; }
+  .state.running { color: var(--run); background: #eef4ff; }
+  .state.queued { color: var(--queue); background: #fff7e8; }
+  .state.notstarted { color: #6b7a90; background: #f1f5f9; }
+  .state.failed { color: var(--bad); background: #fef2f2; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .spin {
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 2px solid #c7d7f5; border-top-color: var(--run);
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-row {
+    grid-column: 2 / 4;
+    display: flex; align-items: center; gap: 9px; margin-top: 7px;
+  }
+  .track { flex: 1; height: 5px; background: var(--track); border-radius: 999px; overflow: hidden; }
+  .fill { height: 100%; width: 38%; background: linear-gradient(90deg, #60a5fa, #2563eb); border-radius: 999px; }
+  .pct { font-size: 11px; color: var(--run); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .assistant-text { font-size: 14px; }
+  .caret { display: inline-block; width: 7px; height: 15px; background: #94a3b8; vertical-align: -2px; margin-left: 2px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* 输入区 */
+  .composer-wrap { border-top: 1px solid var(--line); background: #fbfcfe; padding: 12px 16px 14px; }
+  .activity {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: #43536b;
+    background: #f1f6ff; border: 1px solid #dbe7ff; border-radius: 9px;
+    padding: 6px 10px; margin-bottom: 10px;
+  }
+  .activity .spin { flex: none; }
+  .activity b { font-weight: 600; color: #1e40af; }
+  .activity .sep { color: #b6c3d8; }
+  .activity .elapsed { margin-left: auto; color: #6b7a90; font-variant-numeric: tabular-nums; }
+  .composer {
+    display: flex; gap: 10px; align-items: flex-end;
+    background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px 9px 13px;
+  }
+  .composer .hint { flex: 1; color: #a3b0c2; font-size: 13px; padding: 2px 0; }
+  .send {
+    flex: none; background: #2563eb; color: #fff; border: 0; border-radius: 9px;
+    padding: 7px 16px; font-size: 13px; font-weight: 600;
+  }
+
+  /* 图例 */
+  .legend {
+    margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px 10px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
+  .legend .h { flex-basis: 100%; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .legend .item { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #43536b; padding: 3px 0; }
+  .legend .note { flex-basis: 100%; font-size: 11.5px; color: #8b98ab; border-top: 1px dashed var(--line); padding-top: 9px; margin-top: 3px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <p class="page-title">绘画页 · 工具调用状态草案（静态示意，非真实页面）</p>
+
+  <div class="card">
+    <div class="chat">
+      <div class="msg">
+        <div class="avatar user">我</div>
+        <div class="bubble">
+          <div class="name">你</div>
+          <div class="user-text">画一张雨夜霓虹街道的赛博朋克少女，参考图在附件里，画完直接发我。</div>
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="avatar ai">AI</div>
+        <div class="bubble">
+          <div class="name">绘图助手</div>
+
+          <div class="thinking">
+            <div class="thinking-label">思考过程</div>
+            <p class="thought-text">先确认角色设定和参考图，然后生成图片，最后把成图发出去。</p>
+
+            <div class="tool">
+              <div class="ico">🔍</div>
+              <div class="main">
+                <div class="title">搜索角色设定 <span class="raw">search_character</span></div>
+                <div class="sub">用时 1.8 秒</div>
+              </div>
+            </div>
+
+            <div class="tool">
+              <div class="ico">🎨</div>
+              <div class="main">
+                <div class="title">生成图片 <span class="raw">sdxl_gen_image</span></div>
+                <div class="sub">已下发 ComfyUI · 第 8/20 步</div>
+              </div>
+              <div class="state running"><span class="spin"></span>执行中</div>
+              <div class="progress-row">
+                <div class="track"><div class="fill"></div></div>
+                <span class="pct">38%</span>
+              </div>
+            </div>
+
+            <div class="tool">
+              <div class="ico">📤</div>
+              <div class="main">
+                <div class="title">发送图片 <span class="raw">send_image</span></div>
+                <div class="sub">等待前一个工具执行完成</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="assistant-text">正在生成，马上就好<span class="caret"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer-wrap">
+      <div class="activity">
+        <span class="spin"></span>
+        <span><b>1</b> 个执行中</span>
+        <span class="sep">·</span>
+        <span>生成图片 38%</span>
+        <span class="elapsed" data-start="14200">00:14</span>
+      </div>
+      <div class="composer">
+        <div class="hint">描述画面，或继续补充要求…</div>
+        <button class="send">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="h">状态语义（建议统一定义）</div>
+    <div class="item"><span class="state queued"><span class="dot"></span>排队中</span>等待本地模型资源（P2，连接器 queued）</div>
+    <div class="item"><span class="state running"><span class="spin"></span>执行中</span>有真实进度用真实值；没有则按 ETA 每 10% 推进到 90%</div>
+    <div class="note">草案：状态只做临时展示，不写进历史；刷新后工具行仍保留，但只显示“调用工具：…”与结果，不再回放计时。</div>
+  </div>
+</div>
+
+<script>
+  // 让计时器真的走起来，截图时也能看到“活的”时间
+  document.querySelectorAll('.elapsed').forEach(function (el) {
+    var start = Date.now() - Number(el.dataset.start || 0);
+    function tick() {
+      var s = Math.max(0, Math.floor((Date.now() - start) / 1000));
+      var m = Math.floor(s / 60);
+      el.textContent = (m < 10 ? '0' : '') + m + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+    }
+    tick();
+    setInterval(tick, 1000);
+  });
+</script>
+</body>
+</html>

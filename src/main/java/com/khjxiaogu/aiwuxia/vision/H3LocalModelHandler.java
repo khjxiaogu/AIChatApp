@@ -10,23 +10,28 @@ import com.google.gson.JsonObject;
 
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
+import com.khjxiaogu.aiwuxia.tools.TaskPriority;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.ProgressReporter;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.RequestHandler;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.Response;
+import com.khjxiaogu.aiwuxia.voice.LocalModelEta;
 
 /**
  * MiniMax H3（本地 ComfyUI）的请求处理器。
  * <p>
  * 只负责“把服务器请求翻译成 ComfyUI 调用”，不再持有网络连接；连接、重连、进度上报由
  * {@link LocalModelClient} 统一管理。资源锁按 H3 规则使用：先等到至少
- * {@value #MIN_RESOURCE_AMOUNT} 份，再一次性占满当前剩余资源。
+ * {@value #MIN_RESOURCE_AMOUNT} 份，再一次性占满当前剩余资源；Foley 配音固定占
+ * {@value #FOLEY_RESOURCE_AMOUNT} 份。
  * </p>
  */
 public final class H3LocalModelHandler {
 
 	/** H3 生视频的最低资源要求。 */
 	public static final int MIN_RESOURCE_AMOUNT = H3VideoApi.MIN_RESOURCE_AMOUNT;
+	/** Foley 配音固定占用的资源份数。 */
+	public static final int FOLEY_RESOURCE_AMOUNT = 10;
 	/** 未传入资源锁时自建锁的容量：至少要能容纳 H3 的最低要求。 */
 	private static final int FALLBACK_LOCK_CAPACITY = 12;
 	/** ComfyUI 健康检查路径（与 Qwen 共用同一个进程）。 */
@@ -81,27 +86,81 @@ public final class H3LocalModelHandler {
 		boolean sparse = JsonConfig.getBool(request, "sparse", true);
 		// 视频 MCP 一律禁用音频；请求显式打开时也只按 false 处理
 		boolean audio = false;
+		String action = JsonConfig.getTrimmed(request, "action");
 		progress.queued("等待本地模型资源");
+		long queuedAt = System.currentTimeMillis();
 		ResourcePermit permit = null;
 		try {
-			// int8 档：至少 8 份后占满剩余；NVFP4 档：固定占 10 份
-			permit = tier.resourceAmount() > 0 ? lock.acquire(tier.resourceAmount())
-					: lock.acquireAtLeast(MIN_RESOURCE_AMOUNT);
+			// Foley 配音固定占 10 份；int8 档至少 8 份后占满剩余；NVFP4 档固定占 10 份
+			permit = ("foley".equals(action) || "foley_segment".equals(action))
+					? lock.acquire(FOLEY_RESOURCE_AMOUNT, TaskPriority.LOW)
+					: tier.resourceAmount() > 0
+							? lock.acquire(tier.resourceAmount(), TaskPriority.LOW)
+							: lock.acquireAtLeast(MIN_RESOURCE_AMOUNT, TaskPriority.LOW);
+			if (request.has("reqid")) {
+				System.out.println("[H3-LocalModel] 已获取资源锁（排队 "
+						+ (System.currentTimeMillis() - queuedAt) + "ms，占用 " + permit.amount() + " 份）reqid="
+						+ request.get("reqid").getAsString());
+			}
 			H3VideoApi api = new H3VideoApi(baseUrl).setModelTier(tier).setSteps(steps).setSparse(sparse)
 					.setAudioEnabled(audio);
 			api.setProgressListener(progress::progress);
-			String action = JsonConfig.getTrimmed(request, "action");
 			if (!action.isEmpty() && !"video".equals(action) && !"text2video".equals(action)
-					&& !"image2video".equals(action) && !"extract_frame".equals(action)) {
+					&& !"image2video".equals(action) && !"extract_frame".equals(action)
+					&& !"video_duration".equals(action) && !"foley".equals(action)
+					&& !"foley_segment".equals(action)) {
 				throw new IllegalArgumentException("unknown h3 action: " + action);
 			}
 			if ("extract_frame".equals(action)) {
 				// 视频截帧：上传视频 → LoadVideo/ImageFromBatch → 返回 png
 				H3VideoApi.InputImage video = readMedia(request, "video", "frame.mp4");
 				int frame = JsonConfig.getInt(request, "frame", 0);
-				progress.running("已下发 ComfyUI");
+				// 截帧与视频生成是不同 API，可分别配置预计耗时
+				progress.running("已下发 ComfyUI", LocalModelEta.resolve(15_000L,
+						LocalModelEta.propertyName("h3", "extract_frame"), "h3FrameEtaMs"));
 				H3VideoApi.ImageResult image = api.extractFrameUnlocked(video, frame);
 				return new Response(image.data, "png");
+			}
+			if ("video_duration".equals(action)) {
+				// 只读视频时长，供视频配音计费；返回 JSON 文本
+				H3VideoApi.InputImage video = readMedia(request, "video", "video.mp4");
+				// 只读时长，通常比生成快得多；单独给 video_duration 留覆盖项
+				progress.running("已下发 ComfyUI", LocalModelEta.resolve(15_000L,
+						LocalModelEta.propertyName("h3", "video_duration"), "h3FrameEtaMs"));
+				double duration = api.probeVideoDuration(video);
+				JsonObject result = new JsonObject();
+				result.addProperty("duration", duration);
+				return new Response(result.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8), "json");
+			}
+			if ("foley".equals(action) || "foley_segment".equals(action)) {
+				// HunyuanVideo-Foley 视频配音：整段或局部
+				String foleyPrompt = JsonConfig.getTrimmed(request, "prompt");
+				if (foleyPrompt.isEmpty()) {
+					throw new IllegalArgumentException("missing foley prompt");
+				}
+				H3VideoApi.InputImage video = readMedia(request, "video", "video.mp4");
+				String negative = JsonConfig.getTrimmed(request, "negative");
+				// foley / foley_segment 是不同 API：段式配音可能比整段快，可分别配置
+				progress.running("已下发 ComfyUI", LocalModelEta.resolve(300_000L,
+						LocalModelEta.propertyName("h3", action), "h3FoleyEtaMs"));
+				H3VideoApi.FoleyResult result;
+				if ("foley_segment".equals(action)) {
+					double start = JsonConfig.getDouble(request, "start", 0d);
+					double length = JsonConfig.getDouble(request, "length", 0d);
+					result = api.foleySegment(video, start, length, foleyPrompt,
+							negative.isEmpty() ? null : negative, true);
+				} else {
+					result = api.foley(video, foleyPrompt,
+							negative.isEmpty() ? null : negative, true);
+				}
+				if (result.video != null && result.video.data != null && result.video.data.length > 0) {
+					// 时长从 foley 图的 PreviewAny(10) 节点读取，随结果格式一起回传，避免再调一次 API
+					String format = result.duration > 0d
+							? String.format(java.util.Locale.ROOT, "mp4;duration=%.3f", result.duration)
+							: "mp4";
+					return new Response(result.video.data, format);
+				}
+				throw new IllegalStateException("ComfyUI 没有返回配音视频");
 			}
 			String prompt = JsonConfig.getTrimmed(request, "prompt");
 			if (prompt.isEmpty()) {
@@ -116,34 +175,39 @@ public final class H3LocalModelHandler {
 			H3VideoApi.InputImage lastFrame = readMedia(request, "last_frame", "frame.png");
 			H3VideoApi.InputImage firstVideo = readMedia(request, "first_video", "first.mp4");
 			H3VideoApi.InputImage lastVideo = readMedia(request, "last_video", "last.mp4");
-			boolean useVideoLastFrame = JsonConfig.getBool(request, "use_video_last_frame", false);
-			if (firstVideo != null) {
-				if (firstFrame != null) {
-					throw new IllegalArgumentException("first_video 与 first_frame 不能同时提供");
-				}
-				firstFrame = new H3VideoApi.InputImage(api.extractFrameUnlocked(firstVideo, 0).data, "first.png");
-				if (useVideoLastFrame) {
-					lastFrame = new H3VideoApi.InputImage(api.extractFrameUnlocked(firstVideo, -1).data, "last.png");
-				}
+			int firstStart = JsonConfig.getInt(request, "first_start", 0);
+			int firstLength = JsonConfig.getInt(request, "first_length", 0);
+			int lastStart = JsonConfig.getInt(request, "last_start", 0);
+			int lastLength = JsonConfig.getInt(request, "last_length", 0);
+			H3VideoApi.VideoResult chosen;
+			if (firstFrame != null && firstVideo != null) {
+				throw new IllegalArgumentException("首帧不能同时提供图片和视频");
 			}
-			if (lastVideo != null) {
-				if (lastFrame != null) {
-					throw new IllegalArgumentException("last_video 与 last_frame 不能同时提供");
-				}
-				lastFrame = new H3VideoApi.InputImage(api.extractFrameUnlocked(lastVideo, -1).data, "last.png");
+			if (lastFrame != null && lastVideo != null) {
+				throw new IllegalArgumentException("尾帧不能同时提供图片和视频");
 			}
-			if (lastFrame != null && firstFrame == null) {
-				throw new IllegalArgumentException("last_frame requires first_frame");
+			boolean hasFirst = firstFrame != null || firstVideo != null;
+			boolean hasLast = lastFrame != null || lastVideo != null;
+			if (hasLast && !hasFirst) {
+				throw new IllegalArgumentException("提供尾帧时必须同时提供首帧");
 			}
-			// 排队结束、正式把请求下发给 ComfyUI 的那一刻才切到“执行中”
-			progress.running("已下发 ComfyUI");
-			List<H3VideoApi.VideoResult> videos = api.video(prompt, width, height, frames, seed, firstFrame,
-					lastFrame, true);
+			if (firstVideo != null || lastVideo != null) {
+				// 视频生视频：首/尾可分别是图片或视频，由 h3-clips 工作流在 ComfyUI 内取帧/拼接
+				progress.running("已下发 ComfyUI", LocalModelEta.resolve(180_000L,
+						LocalModelEta.propertyName("h3", "video"), "h3EtaMs"));
+				H3VideoApi.H3Output output = api.videoFromSources(prompt, width, height, frames, seed,
+						firstFrame, firstVideo, firstStart, firstLength,
+						lastFrame, lastVideo, lastStart, lastLength, true);
+				chosen = output.stitched != null ? output.stitched : firstVideo(output.videos);
+			} else {
+				// 纯图片首尾帧：普通 H3 图生视频
+				progress.running("已下发 ComfyUI", LocalModelEta.resolve(180_000L,
+						LocalModelEta.propertyName("h3", "video"), "h3EtaMs"));
+				chosen = firstVideo(api.video(prompt, width, height, frames, seed, firstFrame, lastFrame, true));
+			}
 			// 结果直接回传 mp4 原始字节：由连接器按二进制分块发送，不再包成 Base64 的 JSON
-			for (H3VideoApi.VideoResult video : videos) {
-				if (video != null && video.data != null && video.data.length > 0) {
-					return new Response(video.data, "mp4");
-				}
+			if (chosen != null && chosen.data != null && chosen.data.length > 0) {
+				return new Response(chosen.data, "mp4");
 			}
 			throw new IllegalStateException("ComfyUI 没有返回视频文件");
 		} catch (Throwable ex) {
@@ -157,6 +221,18 @@ public final class H3LocalModelHandler {
 				permit.release();
 			}
 		}
+	}
+
+	/** 取第一个有数据的视频结果。 */
+	private static H3VideoApi.VideoResult firstVideo(List<H3VideoApi.VideoResult> videos) {
+		if (videos != null) {
+			for (H3VideoApi.VideoResult video : videos) {
+				if (video != null && video.data != null && video.data.length > 0) {
+					return video;
+				}
+			}
+		}
+		return null;
 	}
 
 	/** 取最内层异常的描述，便于回传给工具端。 */

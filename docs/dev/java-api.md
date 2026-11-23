@@ -470,8 +470,9 @@ qwen.reference(List.of(new QwenImageApi.InputImage(bytes, "ref.png")), "让她�
 - 生成的 `ImageResult.data` 是图片字节，可直接上传对象存储；
 - 可选 `ResourceLock`：生成、上传、显存释放都会占用资源并自动释放（Qwen 默认 6 份）；
 - `QwenImageMcp` 提供 `qwen_gen_image` / `qwen_edit_image` 两个工具，但**不注册给群聊连接器**；
-  其中同步文生图工具会挂到 `SDXLAgent` 的子 agent 工具表，作为“参考底图生成器”使用，
-  见 `SDXLAgentMcp.createImage(...)`。
+  其中同步文生图工具会挂到 `SDXLAgent` 的子 agent 工具表，作为“参考底图生成器”使用；
+  绘画页（`ui: "painter"`）也会注册同步文生图工具 `qwen_gen_image`，与 SDXL 图片工具共享
+  每轮 5 次额度，见 `AIChatService#registerPainterTools`；
 
 ### 10.2.1 MiniMax H3 视频（ComfyUI）
 
@@ -514,7 +515,7 @@ h3.video("她转头微笑", 864, 480, 124, seed,
   参考图（1 张首帧 / 2 张首尾帧）、参考视频（`video`，1 个取首末帧、2 个取首/末）、
   画面比例（16:9/9:16/1:1/4:3/3:4）和时长：
   - `h3_gen_video`（int8，8 步，1~15 秒，默认 5，画布 864×480 一档）；
-  - `h3_gen_anim`（NVFP4，6 步，1~8 秒，默认 3，画布 640×352 一档）；
+  - `h3_gen_anim`（NVFP4，6 步，1~8 秒，默认 3，画布 960×544 一档；基础 640×352 宽高各 +50%）；
   - `video_extract_frame`（`video` + 可选 `frame`，0 首帧、-1 末帧、-2 倒数第二帧，返回图片 id）。
   尺寸、帧数换算、步数、采样、种子、模型、显存释放全部由代码固定。视频生成耗时远超图片，
   工具通过 `LocalModel.require(..., timeoutMs)` 把等待上限放大到 90 分钟，并依赖进度协商在生成
@@ -538,6 +539,10 @@ h3.video("她转头微笑", 864, 480, 124, seed,
   结束后作为外层工具附件返回；内层视频的算力用量也会补记到外层 `AIOutput`，不会漏计费；
 - 与直接注册 `h3_gen_video` 的区别：主模型不需要懂 H3 提示词写法，也不用自己决定比例/时长，
   适合“给我来一段……”这类模糊需求；确定参数时直接用 `h3video` 技能更省 token。
+- 绘画页（`PainterSession`）只注册 `h3_gen_video` / `h3_gen_anim`，**不注册** `h3_video_agent`。
+  两件直连工具通过 `AIChatService` 的同步包装使用：强制 `async=false`，并去掉结果附件里的
+  `VideoContent`，只把视频 id 文本返回给模型；需要展示视频时由模型调用 `send_video` 显式发送。
+  这样绘画页的 H3 视频不会自动写进助手回复，而是在同一轮内完成并结算配额。
 
 同步版本的工具在调用线程里直接执行（不再嵌套线程池任务），避免子 agent 与生成任务同时
 占用公共线程池造成并发阻塞。
@@ -628,9 +633,23 @@ SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，�
   服务端用 `FileChunkAssembler` 收齐 `1..total` 后才完成任务；`-DlocalModelFileTimeoutMs`
   （默认 60 秒）内没有新分块则任务失败并丢弃已收到的块，连接断开同样丢弃。
   旧的文本 Base64 响应仍然兼容；
+- **协议能力标记（`flags`）**：与模型类型分开——`model_type` 说明“能跑什么模型”，
+  `flags` 说明“支持协议的哪些可选部分”。连接器在握手 URL 写 `flags=chunked`（可逗号分隔多个），
+  或运行期发 `{"type":"capabilities","model_types":[...],"flags":["chunked"]}` 更新；
+  `LocalModelProtocol.FLAG_CHUNKED` 表示支持分块/大报文；
+- **请求也支持二进制分块**：连接器声明 `chunked` 后，服务器把超过
+  `-DlocalModelRequestChunkSize`（默认 1 MiB）的请求拆成 `LMR1` 分块下发，连接器收齐再按普通
+  请求处理；`LocalModelHandshaker#supportsChunked(uid, modelType)`（或通用的
+  `supportsFlag(uid, modelType, flag)`）可查询“这次会落到哪个连接器、它声明了哪些能力”。
+  SDXL 的图生图 / 分区图生图 / 反推提示词据此选择参考图的发送方式：支持分块时直接把图片文件
+  以 Base64 放进请求报文，否则只传链接；读图失败时回退链接（见 `SDXLMcp#referencePayload`）；
 - 进度协商：处理器用 `ProgressReporter` 上报状态，语义固定——`queued` = 正在等待本地资源锁
   （排队），`running` = 请求已经正式下发给对应的本地软件（SD WebUI / localemp / ComfyUI / TTS，
-  执行中），另有可选的进度比例。连接器默认每 20 秒（`-DlocalModelProgressIntervalMs`）自动心跳；
+  执行中），另有可选的进度比例和预计总耗时 `eta`。连接器在状态/进度**变化时立即上报**；
+  与上次成功上报完全相同（状态、进度、ETA、说明都没变）的更新会被丢弃，避免重复报文。
+  ETA 由各处理器按请求的 API/动作解析（`LocalModelEta`）：先查 `-D<模型><动作>EtaMs`（例如
+  `-DsdxlImg2imgEtaMs`），再回落到原来的 ETA 属性（如 `sdxlEtaMs`、`h3FrameEtaMs`），最后用内置默认值；
+  空闲超过一个心跳间隔（`-DlocalModelProgressIntervalMs`，默认 20 秒）时连接器会补一条心跳，防止服务端判超时；
   服务端收到 `progress` 报文后把该任务超时延长到现在 + 3 分钟（`-DlocalModelProgressTimeoutMs`），
   `registerTask` 注册的外部任务同样适用；
 - 能力集合：连接 URL 的 `model_type` 是初始值，运行期 `LocalModelClient.setModelTypes(...)`（或
@@ -688,3 +707,4 @@ SvsMcp 不设置默认音色、每次请求无状态：`voice` 传角色名，�
 | 显示名和 `meta.json` 里的 `name` 不一致 | 正常：显示名取 `getName()`，`meta.name` 只用于加载门槛 |
 | 改完文件不生效 | app 实例是全局单例，构造在启动/`reload()` 时完成，**改提示词要重启或触发 reload** |
 | `meta.json` 写了但应用不出现 | `enabled` 为 `false`、缺 `name`、`type` 未注册、或构造函数抛异常（看启动日志） |
+

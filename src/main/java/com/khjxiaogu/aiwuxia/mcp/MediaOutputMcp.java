@@ -10,26 +10,28 @@ import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
+import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 
 /**
- * 多媒体输出工具集：把图片、表情包等媒体作为工具结果附件交给会话，由会话按自己的方式下发。
+ * 多媒体输出工具集：把图片、视频、表情包等媒体作为工具结果附件交给会话，由会话按自己的方式下发。
  * <p>
- * 工具只校验参数并构造 {@link ImageContent} 附件，本身不直接发送任何消息。发送图片按用途提供
- * 两个变体：网页/绘画会话用带 {@code description} 的描述版，聊天软件用带 {@code is_nsfw}
- * 的不宜内容标记版；两者的工具名同为 {@code send_image}，由不同会话分别注册。
+ * 工具只校验参数并构造 {@link ImageContent} / {@link VideoContent} 附件，本身不直接发送任何消息。
+ * 发送图片按用途提供两个变体：网页/绘画会话用带 {@code description} 的描述版，聊天软件用带
+ * {@code is_nsfw} 的不宜内容标记版；两者的工具名同为 {@code send_image}，由不同会话分别注册。
+ * 发送视频目前只提供网页/绘画会话使用的描述版 {@code send_video}。
  * </p>
  * <p>
- * 附件里保存的是<b>图片 id</b>（对象存储键），不是图片内容本身，发送时再按 id 从对象存储取图。
- * 这样历史记录不会因为图片被写成 base64 data URL 而膨胀，摘要提示也不会把整张图片当成正文。
+ * 附件里保存的是<b>媒体 id</b>（对象存储键），不是图片/视频内容本身，发送时再按 id 从对象存储取用。
+ * 这样历史记录不会因为媒体被写成 base64 data URL 而膨胀，摘要提示也不会把整个文件当成正文。
  * </p>
  */
 public final class MediaOutputMcp {
 
-	/** 图片描述的最大长度：描述会进入网页 alt/下载文件名与模型上下文。 */
+	/** 媒体描述的最大长度：描述会进入网页 alt/下载文件名与模型上下文。 */
 	private static final int MAX_DESCRIPTION_LENGTH = 120;
 
-	/** 图片 id 的标准长度（16 进制内容哈希）。 */
-	private static final int IMAGE_ID_LENGTH = 72;
+	/** 媒体 id 的标准长度（16 进制内容哈希）。 */
+	private static final int MEDIA_ID_LENGTH = 72;
 
 	private MediaOutputMcp() {
 	}
@@ -58,6 +60,39 @@ public final class MediaOutputMcp {
 						// 只保存图片 id，发送时由会话从对象存储取图；不要把 base64 写进附件
 						return CompletableFuture.completedFuture(ToolResult.of("图片已提交发送",
 								new ImageContent(fn, readDescription(jo))));
+					} catch (Throwable t) {
+						t.printStackTrace();
+					}
+					return CompletableFuture.completedFuture(ToolResult.text("参数格式错误，请检查输入。"));
+				}).build();
+	}
+
+	/**
+	 * 发送视频（网页/绘画会话）：额外提供视频描述，供网页说明与下载文件名使用。
+	 *
+	 * @param tos 对象存储
+	 * @return 独立的工具定义
+	 */
+	public static ToolData createSendVideo(ObjectStorageProvider tos) {
+		return new ToolData.Builder("send_video",
+				"把已生成/上传的视频发送到当前对话：video_id 传 72 位视频 id。"
+						+ "只有需要让用户直接看到视频时才调用；如果只是告知视频 id，不必调用本工具。")
+				.sessionOnly()
+				.orderSensitive()
+				.putParam("video_id", "72位16进制的视频id，只包含视频id本身", "视频ID")
+				.putParam("description", "视频的简短描述，用作网页说明与下载文件名；建议 20 字以内，可为空字符串。",
+						"视频描述")
+				.presenter(ToolCallPresenter.ofBrief(call -> "发送视频"))
+				.tool((data, output, manager) -> {
+					try {
+						JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
+						String fn = jo.get("video_id").getAsString();
+						if (!tos.exists(fn, output == null ? null : output::addUsage)) {
+							return CompletableFuture.completedFuture(missingVideo(fn));
+						}
+						// 只保存视频 id，发送时由会话按 id 取用；不要把视频内容写进附件
+						return CompletableFuture.completedFuture(ToolResult.of("视频已提交发送",
+								new VideoContent(fn, readDescription(jo))));
 					} catch (Throwable t) {
 						t.printStackTrace();
 					}
@@ -104,7 +139,13 @@ public final class MediaOutputMcp {
 	/** 图片 id 不存在时的统一提示（顺带提示长度错误这一常见原因）。 */
 	private static ToolResult missingImage(String fn) {
 		return ToolResult.text("图片id不存在"
-				+ (fn.length() == IMAGE_ID_LENGTH ? "" : "，该错误是因为图片ID长度不是72导致，请检查输入") + "。");
+				+ (fn.length() == MEDIA_ID_LENGTH ? "" : "，该错误是因为图片ID长度不是72导致，请检查输入") + "。");
+	}
+
+	/** 视频 id 不存在时的统一提示（顺带提示长度错误这一常见原因）。 */
+	private static ToolResult missingVideo(String fn) {
+		return ToolResult.text("视频id不存在"
+				+ (fn.length() == MEDIA_ID_LENGTH ? "" : "，该错误是因为视频ID长度不是72导致，请检查输入") + "。");
 	}
 
 	/**

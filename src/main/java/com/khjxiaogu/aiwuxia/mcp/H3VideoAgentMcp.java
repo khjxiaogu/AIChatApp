@@ -82,8 +82,8 @@ public class H3VideoAgentMcp {
 			+ "3. 不要写负面提示词、CFG、步数、采样器、模型名或像素尺寸：H3 没有负面条件，这些参数由代码固定。\n"
 			+ "4. 不要引用没有提供给你的参考图编号；只有确实提供了参考图才写“首帧/尾帧”。\n"
 			+ "\n=== 模式选择 ===\n"
-			+ "1. 用户要“简单动图、短动图、快速预览、低成本”或只是让画面轻微动起来时，用 h3_gen_anim"
-			+ "（NVFP4，1~8 秒，默认 3 秒，画布更小）。\n"
+			+ "1. 用户要“简单动图、短动图、快速预览”或只是让画面轻微动起来时，用 h3_gen_anim"
+			+ "（NVFP4，1~8 秒，默认 3 秒，采样步数更少，画布宽高各 +50%）。\n"
 			+ "2. 用户要完整视频、较长镜头、首尾帧转场或更高质量时，用 h3_gen_video"
 			+ "（int8，1~15 秒，默认 5 秒）。\n"
 			+ "3. 只有一个明确视频需求时不要两种模式都跑；每种模式最多生成 2 次视频。\n"
@@ -94,16 +94,20 @@ public class H3VideoAgentMcp {
 			+ "用户明确要求时取范围内最接近的值。\n"
 			+ "3. reference：用户给的参考图按顺序是首帧、尾帧，原样把图片 id 传给生成工具，"
 			+ "不要改写、不要凭空编造图片 id。\n"
-			+ "4. video：用户给的参考视频用 video 字段（与 reference 二选一）：1 个视频取它的首帧和末帧，"
-			+ "2 个视频取第一个的首帧、第二个的末帧；原样传视频 id，不要改写。\n"
+			+ "4. video：用户给的参考视频用 video 字段（与 reference 二选一）：使用视频生视频工作流，"
+			+ "1 个视频取片段末帧作首帧（延续生成），2 个视频取第一个的末帧、第二个的首帧；原样传视频 id，不要改写。\n"
+			+ "5. first/last：首/尾来源可以自由选择图片或视频（与 reference/video 二选一）。first 是首帧来源，"
+			+ "last 是尾帧来源且必须同时给 first；图片直接作帧，视频取片段末帧/首帧。\n"
 			+ "\n=== 工具使用 ===\n"
 			+ "1. 需要看懂用户给的参考图时，先用 image_recognition；参考视频需要看某一帧时用 video_extract_frame。\n"
-			+ "2. 用户没给图、但视频需要一个明确的开场画面时，可以先用 qwen_gen_image 生成首帧，"
+			+ "2. 用户要求给已有视频重新配音效时，用 video_foley（保留画面、只换音效）；不要用视频生成工具重画。"
+			+ "只改一段时给 start/length（length 最长 30 秒），其余保留原音轨；整段重配可省略。\n"
+			+ "3. 用户没给图、但视频需要一个明确的开场画面时，可以先用 qwen_gen_image 生成首帧，"
 			+ "再把返回的图片 id 作为生成工具的首帧参考图。\n"
-			+ "3. 视频截帧得到的图片 id 也可以作为生成工具的首帧/尾帧；需要单独某一帧时用 video_extract_frame，"
+			+ "4. 视频截帧得到的图片 id 也可以作为生成工具的首帧/尾帧；需要单独某一帧时用 video_extract_frame，"
 			+ "帧号 0 为首帧、-1 为末帧。\n"
-			+ "4. 每种模式最多生成 2 次视频；两次都不满意就停止，把最后一次的视频 id 与描述交给用户判断。\n"
-			+ "5. 每次成功生成都会得到视频 id，最终输出必须包含最后一次成功的视频 id。\n"
+			+ "5. 每种模式最多生成 2 次视频；两次都不满意就停止，把最后一次的视频 id 与描述交给用户判断。\n"
+			+ "6. 每次成功生成都会得到视频 id，最终输出必须包含最后一次成功的视频 id。\n"
 			+ "\n=== 输出协议 ===\n"
 			+ "1. 禁止在输出中提及内部工具名、参数名或任何技术细节。\n"
 			+ "2. 输出自然语言，不包含 markdown、列表符号或代码块。\n"
@@ -131,15 +135,22 @@ public class H3VideoAgentMcp {
 						+ "子 agent 会扩写提示词、选择画面比例与时长并完成生成。"
 						+ "需求里可以写画面内容、镜头运动、期望时长（秒）和画面比例；"
 						+ "子 agent 会在 H3 视频制作（h3_gen_video）与 NVFP4 简单动图（h3_gen_anim）之间选择，"
-						+ "所有视频均无声（禁用音频）。不需要写分辨率、步数等技术参数，这些由代码固定。"
+						+ "首/尾来源可以自由使用图片或视频（first/last），所有视频均无声（禁用音频）。"
+						+ "不需要写分辨率、步数等技术参数，这些由代码固定。"
 						+ "调用后视频在后台生成（5 秒约 2~5 分钟），完成后会作为附件自动返回对话。")
 				.putOptionalParam("reference",
 						"参考图列表：图片id（或带扩展名的图片id）用英文逗号分隔，按顺序是首帧、尾帧；没有参考图就留空。",
 						"参考图")
 				.putOptionalParam("video",
-						"参考视频列表：视频id用英文逗号分隔，与 reference 二选一。1 个视频=取它的首帧和末帧；"
-								+ "2 个=第一个视频的首帧、第二个视频的末帧；没有参考视频就留空。",
+						"参考视频列表：视频id用英文逗号分隔，与 reference 二选一。使用视频生视频工作流："
+								+ "1 个视频=取片段末帧作首帧；2 个=第一个的末帧、第二个的首帧；没有参考视频就留空。",
 						"参考视频")
+				.putOptionalParam("first",
+						"首帧来源：图片或视频 id 均可，与 reference/video 二选一。视频取片段末帧，图片直接作首帧。",
+						"首帧来源")
+				.putOptionalParam("last",
+						"尾帧来源：图片或视频 id 均可，必须同时提供 first。视频取片段首帧，图片直接作尾帧。",
+						"尾帧来源")
 				.putParam("prompt",
 						"视频需求，使用中文自然语言描述即可，例如“黄昏天台，女孩转身看向镜头，风声和远处的城市噪音，竖屏 8 秒”。",
 						"提示词")
@@ -162,6 +173,17 @@ public class H3VideoAgentMcp {
 					}
 					List<String> references = H3VideoMcp.splitReferences(JsonConfig.getTrimmed(jo, "reference"));
 					List<String> referenceVideos = H3VideoMcp.splitReferences(JsonConfig.getTrimmed(jo, "video"));
+					String firstSource = JsonConfig.getTrimmed(jo, "first");
+					String lastSource = JsonConfig.getTrimmed(jo, "last");
+					boolean explicitSources = !firstSource.isEmpty() || !lastSource.isEmpty();
+					if (explicitSources && (!references.isEmpty() || !referenceVideos.isEmpty())) {
+						return CompletableFuture
+								.completedFuture(ToolResult.text("参数错误：first/last 与 reference/video 只能二选一。"));
+					}
+					if (!lastSource.isEmpty() && firstSource.isEmpty()) {
+						return CompletableFuture
+								.completedFuture(ToolResult.text("参数错误：提供 last 时必须同时提供 first。"));
+					}
 					if (references.size() > 2) {
 						return CompletableFuture.completedFuture(ToolResult.text("参数错误：参考图最多 2 张。"));
 					}
@@ -170,10 +192,11 @@ public class H3VideoAgentMcp {
 					}
 					if (!references.isEmpty() && !referenceVideos.isEmpty()) {
 						return CompletableFuture
-								.completedFuture(ToolResult.text("参数错误：参考图与参考视频只能二选一。"));
+								.completedFuture(ToolResult.text("参数错误：参考图与参考视频只能二选一；"
+										+ "混合首尾来源请用 first/last。"));
 					}
 					StringBuilder refs = new StringBuilder();
-					if (!references.isEmpty() || !referenceVideos.isEmpty()) {
+					if (!references.isEmpty() || !referenceVideos.isEmpty() || explicitSources) {
 						if (tos == null) {
 							return CompletableFuture
 									.completedFuture(ToolResult.failure("视频存储不可用，无法读取参考图/视频。"));
@@ -201,6 +224,22 @@ public class H3VideoAgentMcp {
 							}
 							refs.append("视频").append(++index).append("id:").append(id).append("\n");
 						}
+						if (!firstSource.isEmpty()) {
+							if (!AttachmentResolver.isStorageId(firstSource)
+									|| !tos.exists(firstSource, output == null ? null : output::addUsage)) {
+								return CompletableFuture
+										.completedFuture(ToolResult.text("参数错误：first 来源无效或不存在。"));
+							}
+							refs.append("首帧来源id:").append(firstSource).append("\n");
+						}
+						if (!lastSource.isEmpty()) {
+							if (!AttachmentResolver.isStorageId(lastSource)
+									|| !tos.exists(lastSource, output == null ? null : output::addUsage)) {
+								return CompletableFuture
+										.completedFuture(ToolResult.text("参数错误：last 来源无效或不存在。"));
+							}
+							refs.append("尾帧来源id:").append(lastSource).append("\n");
+						}
 					}
 					Builder builder = AIRequest.builder("h3VideoAgent").modelHint("deepseek/pro")
 							.taskType(TaskType.STORY).strength(ReasoningStrength.MEDIUM)
@@ -218,10 +257,12 @@ public class H3VideoAgentMcp {
 							output, H3VideoMcp.Mode.NVFP4);
 					// 视频截帧：可以把视频里的任意一帧转成图片，供生成工具作为首/尾帧
 					ToolData extractFrame = H3VideoMcp.createExtractFrameTool(tos, false);
+					ToolData foley = H3VideoMcp.createFoleyTool(tos, false);
 					ToolCallManager subManager = new ToolCallManager()
 							.registerTool(h3)
 							.registerTool(nvfp4)
 							.registerTool(extractFrame)
+							.registerTool(foley)
 							.registerTool(qwenTextToImage)
 							.setMaxRounds(SUBAGENT_MAX_ROUNDS)
 							.setDisableAsyncTasks(true)

@@ -119,6 +119,9 @@
   ```xml
   <group-update group_id="群id" name="群名称" />
   ```
+- 每条群消息的格式是 `<message senderName="..." senderId="..." id="...">正文</message>`：
+  `senderId` 是发送者账号（NapCat 为 QQ 号，QQ 官方为群成员 `member_openid`），
+  `id` 是消息 id；`group_history` 的结果同样带 `名字(账号)：内容`。
 - 私人 agent 的提示词要求：除非必要，不要在私聊里查询群上下文。
 
 ## 公屏防抖
@@ -201,6 +204,9 @@ save/config/multi-prompts/
   用户点按钮或直接回复后，结果作为异步任务返回并触发下一轮 AI。
 - 任意 agent 用 `send_group` 向公屏发消息后，这条消息会被追加到**其他所有 agent** 的记录/缓冲区，
   保证公屏总览和其他私人 agent 都知道群里说过什么（只记录，不额外触发 AI）。
+- 私聊 agent 往公屏发消息时，正文会自动加 `用户名` 的署名：`张三的agent：内容`
+  （用户名取私聊昵称/群名片，取不到时退回账号 id）。其他 agent 的上下文里这条消息以
+  `senderName="张三的agent"` 表示，不会重复前缀；公屏 agent 的发言不加署名。
 - 所有会话都可注册 `recall_message`：不传 `message_id` 时撤回本会话最近一条，`count` 可撤回最近
   1–5 条；只允许撤回本会话自己发出的消息。QQ 官方限制发出后 2 分钟内，超时会返回接口错误。
 

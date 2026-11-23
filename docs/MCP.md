@@ -141,6 +141,14 @@ registry.addSource(new McpToolSource() {
 `sdxl_gen_image`、`regional_image`、`image_to_image`，以及配置了角色列表时的 `search_character`），
 与绘画会话使用同一套按用户绑定的本地模型。
 
+图生图 / 分区图生图 / 反推提示词需要把参考图交给本地模型。参考图的发送方式由接管该请求的
+本地模型连接器声明的协议能力标记决定：连接器声明了 `flags=chunked`（表示支持分块/大报文，
+`LocalModelConnectionService` 永远声明）时，服务器直接读取对象存储里的图片文件、以 Base64 放进
+请求报文（大请求由服务器按分块下发）；没有声明该标记的连接（例如 `/aichat/painter-local`
+浏览器接入页）仍然只收到 `/aichat/mcp/media?file_id=...` 或 `/painter/image?image_id=...` 链接。
+读取失败时自动回退成链接，不会让生成直接失败（见 `SDXLMcp#referencePayload` 与
+`LocalModelHandshaker#supportsChunked`）。
+
 同时注册本地语音工具：
 
 | 工具 | 参数 | 说明 |

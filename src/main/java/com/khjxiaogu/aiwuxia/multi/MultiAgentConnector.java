@@ -89,6 +89,8 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
     private final Map<String, PrivateBuffer> privateBuffers = new ConcurrentHashMap<>();
     /** 会话当前私聊对象：send_private / handover_private 省略 user 时用。 */
     private final Map<AIGroupSession, String> privatePeers = new ConcurrentHashMap<>();
+    /** 私聊用户显示名：用于该用户的 agent 在公屏发言时的署名。 */
+    private final Map<String, String> privateUserNames = new ConcurrentHashMap<>();
     /** 私聊防抖调度器。 */
     private final ScheduledExecutorService privateScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "multi-private");
@@ -320,7 +322,8 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
                 continue;
             }
             String line = groupUpdateNotice(agent, groupId) + "<message senderName=\""
-                    + escape(msg.getSenderName()) + "\" id=\"" + escape(msg.getMessageId()) + "\">"
+                    + escape(msg.getSenderName()) + "\" senderId=\"" + escape(msg.getSenderId())
+                    + "\" id=\"" + escape(msg.getMessageId()) + "\">"
                     + text + "</message>";
             agent.addMessage(msg.getMessageId(),
                     Collections.singletonList(() -> new PlainText(line)), false);
@@ -578,8 +581,12 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         text.append("群 ").append(groupId).append("（").append(groupName(groupId)).append("）最近 ")
                 .append(selected.size()).append(" 条：\n");
         for (GroupEntry entry : selected) {
-            text.append("- ").append(entry.senderName == null ? entry.senderId : entry.senderName)
-                    .append("：").append(entry.text).append('\n');
+            String who = entry.senderName == null || entry.senderName.trim().isEmpty()
+                    ? (entry.senderId == null ? "" : entry.senderId)
+                    : (entry.senderId == null || entry.senderId.isEmpty()
+                            ? entry.senderName
+                            : entry.senderName + "(" + entry.senderId + ")");
+            text.append("- ").append(who).append("：").append(entry.text).append('\n');
         }
         return text.toString().trim();
     }
@@ -598,19 +605,34 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         if (multi == null || from == null || text == null || text.trim().isEmpty()) {
             return;
         }
-        String name;
-        try {
-            name = from.getRoleName(Role.ASSISTANT);
-        } catch (Throwable t) {
-            name = from.getAiapp().getName();
-        }
-        String id = "sent-" + System.nanoTime();
         if (groupId == null || groupId.startsWith("private:")) {
             return;
         }
-        recordGroup(groupId, id, from.botId, name, text);
+        String name;
+        String body = text;
+        if (from instanceof MultiAgentSession && !((MultiAgentSession) from).isPublicAgent()) {
+            // 私聊 agent 的公屏发言：正文已带「<用户名>的agent：」前缀，上下文里改用 senderName
+            // 表示署名，避免同一条消息里前缀出现两次
+            String label = privateAgentLabel(((MultiAgentSession) from).getPeer(), groupId);
+            String prefix = label + "：";
+            if (body.startsWith(prefix)) {
+                body = body.substring(prefix.length()).trim();
+            }
+            name = label;
+        } else {
+            try {
+                name = from.getRoleName(Role.ASSISTANT);
+            } catch (Throwable t) {
+                name = from.getAiapp().getName();
+            }
+        }
+        if (body.isEmpty()) {
+            return;
+        }
+        String id = "sent-" + System.nanoTime();
+        recordGroup(groupId, id, from.botId, name, body);
         String line = "<message senderName=\"" + escape(name) + "\" senderId=\""
-                + escape(from.botId) + "\" self=\"true\">" + escape(text) + "</message>";
+                + escape(from.botId) + "\" self=\"true\">" + escape(body) + "</message>";
         // 让配置了该群上下文的会话（如第一个群的私聊）也看到公屏发言；只记录，不额外触发
         for (AIGroupSession session : getSessions()) {
             if (session == from || !(session instanceof MultiAgentSession)) {
@@ -635,6 +657,7 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         if (multi.botId.equals(userId)) {
             return true;
         }
+        rememberPrivateUserName(userId, msg.getSenderName());
         if (!isPrivateUser(userId) && ensurePrivateSession(userId) == null) {
             // 配置之外的私聊：可能是之前 send_private / handover_private 临时接管过的用户
             return handleRoutedPrivateMessage(msg);
@@ -681,6 +704,7 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         if (text == null || text.trim().isEmpty() || userId == null || userId.isEmpty()) {
             return false;
         }
+        rememberPrivateUserName(userId, msg.getSenderName());
         final String selfId = msg.getSelfId().isEmpty() ? null : msg.getSelfId();
         AIGroupSession target = null;
         // 路由优先：按 `botId:qq` 找到之前接管的 agent；路由过期就顺手清掉
@@ -854,6 +878,72 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         appendMid(mid, state.botId);
         recordSentMessage(state, mid);
         return "已私聊发送给 " + target + (mid == null || mid.isEmpty() ? "" : "，消息id：" + mid);
+    }
+
+    /**
+     * 私聊 agent 往公屏发消息时，在正文前加「{@code <用户名>的agent：}」署名，让群成员和其他
+     * agent 知道这是哪个用户的 agent 在说话；公屏 agent 的发言不受影响。
+     */
+    @Override
+    public String sendExplicitGroupTo(AIGroupSession state, String groupId, String text) throws Exception {
+        return super.sendExplicitGroupTo(state, groupId, decoratePrivateAgentGroupText(state, groupId, text));
+    }
+
+    private String decoratePrivateAgentGroupText(AIGroupSession state, String groupId, String text) {
+        if (text == null || text.trim().isEmpty() || groupId == null || groupId.startsWith("private:")) {
+            return text;
+        }
+        if (!(state instanceof MultiAgentSession) || ((MultiAgentSession) state).isPublicAgent()) {
+            return text;
+        }
+        String user = ((MultiAgentSession) state).getPeer();
+        if (user == null || user.isEmpty()) {
+            return text;
+        }
+        String prefix = privateAgentLabel(user, groupId) + "：";
+        return text.startsWith(prefix) ? text : prefix + text;
+    }
+
+    /** 私聊用户在公屏上的署名：{@code <用户名>的agent}，查不到昵称时退回账号 id。 */
+    private String privateAgentLabel(String userId, String groupId) {
+        return privateUserName(userId, groupId) + "的agent";
+    }
+
+    /**
+     * 私聊用户的显示名：优先用私聊消息里见过的昵称/群名片，其次问适配器（群名片 &gt; 昵称），
+     * 都查不到时退回账号 id。结果会缓存，避免每次发言都查一次。
+     */
+    private String privateUserName(String userId, String groupId) {
+        if (userId == null || userId.isEmpty()) {
+            return "";
+        }
+        String known = privateUserNames.get(userId);
+        if (known != null && !known.isEmpty()) {
+            return known;
+        }
+        try {
+            String name = getAdapter().getDisplayName(userId, groupId).get(2, TimeUnit.SECONDS);
+            if (name != null && !name.trim().isEmpty()) {
+                String value = name.trim();
+                privateUserNames.put(userId, value);
+                return value;
+            }
+        } catch (Throwable ignored) {
+            // 适配器查不到（例如官方 openid 不在该群命名空间）就退回账号 id
+        }
+        privateUserNames.put(userId, userId);
+        return userId;
+    }
+
+    /** 记住私聊用户的显示名，用于他名下的 agent 在公屏发言时的署名。 */
+    private void rememberPrivateUserName(String userId, String name) {
+        if (userId == null || userId.isEmpty() || name == null) {
+            return;
+        }
+        String value = name.trim();
+        if (!value.isEmpty()) {
+            privateUserNames.put(userId, value);
+        }
     }
 
     @Override

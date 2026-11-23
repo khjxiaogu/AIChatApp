@@ -133,7 +133,7 @@ public final class AudioLocalModelHandler {
 			throw new IllegalStateException("未配置本机 TTS 地址（-D" + URL_PROPERTY + "）");
 		}
 		// TTS 不占资源锁，没有排队阶段：正式发起请求时直接进入“执行中”
-		progress.running("已下发本机 TTS");
+		progress.running("已下发本机 TTS", Long.getLong("ttsEtaMs", 8000L));
 		String target = joinUrl(base, path);
 		HttpURLConnection connection = null;
 		try {

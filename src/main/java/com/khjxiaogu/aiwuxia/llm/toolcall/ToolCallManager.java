@@ -99,6 +99,8 @@ public class ToolCallManager {
 	private final AtomicLong taskSequence = new AtomicLong();
 	/** 异步任务监听器。 */
 	private volatile ToolTaskListener taskListener;
+	/** 工具调用状态监听器（排队/执行中/进度/结束）。 */
+	private volatile ToolCallListener toolCallListener;
 	/** 是否已关闭（关闭后不再登记/通知任务）。 */
 	private volatile boolean closed;
 	/** 异步任务创建提示文本模板。 */
@@ -607,6 +609,43 @@ public class ToolCallManager {
 	public ToolCallManager setTaskListener(ToolTaskListener listener) {
 		this.taskListener = listener;
 		return this;
+	}
+
+	/**
+	 * 设置工具调用状态监听器（排队/执行中/进度/结束）。
+	 * <p>
+	 * 只用于展示，不影响工具执行。子 agent 使用临时管理器时不会注册这个监听器。
+	 * </p>
+	 *
+	 * @param listener 监听器，可为 null
+	 * @return 本管理器，便于链式调用
+	 */
+	public ToolCallManager setToolCallListener(ToolCallListener listener) {
+		this.toolCallListener = listener;
+		return this;
+	}
+
+	/**
+	 * 通知一次工具调用状态事件；没有监听器时直接忽略。
+	 * <p>
+	 * 监听器异常只打印，不能影响工具执行。
+	 * </p>
+	 *
+	 * @param event 状态事件，可为 null
+	 */
+	public void notifyToolCallEvent(ToolCallEvent event) {
+		if (event == null) {
+			return;
+		}
+		ToolCallListener listener = toolCallListener;
+		if (listener == null) {
+			return;
+		}
+		try {
+			listener.onToolCallEvent(event);
+		} catch (Throwable ex) {
+			ex.printStackTrace();
+		}
 	}
 
 	/** 异步任务创建提示文本模板。 */

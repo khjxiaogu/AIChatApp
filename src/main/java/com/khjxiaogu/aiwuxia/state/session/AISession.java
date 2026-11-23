@@ -56,6 +56,7 @@ import com.khjxiaogu.aiwuxia.llm.providers.grok.GrokUsage;
 import com.khjxiaogu.aiwuxia.llm.scheme.Choice.ToolCall;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallEvent;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTaskListener;
@@ -197,6 +198,14 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * </p>
 	 */
 	private final ToolCallManager toolCallManager = new ToolCallManager();
+
+	/**
+	 * 当前轮仍处于排队/执行中的工具调用（call_id → 最新事件）。
+	 * <p>
+	 * 只保存非终态，供前端状态帧和重连快照使用；终态事件会立即移除。
+	 * </p>
+	 */
+	private final Map<String, ToolCallEvent> toolActivities = new ConcurrentHashMap<>();
 
 	/** 轮次结束原因；目前只用于日志/恢复标记，不影响会话本身的行为。 */
 	public enum RoundEndReason {
@@ -578,6 +587,54 @@ public class AISession implements ISaveData,AutoCloseable{
 				handleToolTaskCompleted(task);
 			}
 		});
+		// 工具调用状态只用于展示：排队/执行中/进度由 ToolCallContext 产生，终态用来清掉前端状态
+		toolCallManager.setToolCallListener(this::handleToolCallEvent);
+	}
+
+	/**
+	 * 工具调用状态事件的分发。
+	 * <p>
+	 * 非终态记入 {@link #toolActivities} 供快照使用，终态直接移除；随后调用
+	 * {@link #onToolCallStatusChanged(ToolCallEvent)}，由有下行通道的会话转成帧。
+	 * </p>
+	 *
+	 * @param event 状态事件，可为 null
+	 */
+	private void handleToolCallEvent(ToolCallEvent event) {
+		if (event == null) {
+			return;
+		}
+		if (event.getState().isTerminal()) {
+			toolActivities.remove(event.getCallId());
+		} else {
+			toolActivities.put(event.getCallId(), event);
+		}
+		try {
+			onToolCallStatusChanged(event);
+		} catch (Throwable ex) {
+			// 展示失败不能影响工具执行
+			ex.printStackTrace();
+		}
+	}
+
+	/**
+	 * 工具调用状态变化钩子，默认空实现。
+	 * <p>
+	 * 只有具备前端下行通道的会话（{@link WebSocketAISession}）需要重写它。
+	 * </p>
+	 *
+	 * @param event 状态事件
+	 */
+	protected void onToolCallStatusChanged(ToolCallEvent event) {
+	}
+
+	/**
+	 * 当前仍处于排队/执行中的工具调用快照。
+	 *
+	 * @return 事件列表，永不为 null
+	 */
+	public Collection<ToolCallEvent> getToolActivities() {
+		return new ArrayList<>(toolActivities.values());
 	}
 
 	/**
@@ -1405,6 +1462,8 @@ public class AISession implements ISaveData,AutoCloseable{
 	 * </p>
 	 */
 	public void onGenerateStart() {
+		// 新一轮只应展示本轮的工具状态；上一轮未收到终态的事件在这里兜底清掉
+		toolActivities.clear();
 		// 先取快照再置生成标记：本轮后续产生的用量都算在这一轮里
 		turnUsageBase = getExtraData().usage.getTotalEquivantTokens();
 		lastTurnTokens = 0;
@@ -1639,6 +1698,7 @@ public class AISession implements ISaveData,AutoCloseable{
 		// 会话结束前把后台思维链写入等完，避免任务在会话释放后继续写历史
 		awaitReasonerWrites();
 		// 取消仍在运行的异步工具任务，完成回调不会再通知已关闭的会话
+		toolActivities.clear();
 		toolCallManager.shutdown();
 		commandExec.shutdown();
 	}

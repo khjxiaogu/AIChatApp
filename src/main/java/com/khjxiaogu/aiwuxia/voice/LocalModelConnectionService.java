@@ -59,6 +59,27 @@ public class LocalModelConnectionService implements AutoCloseable {
 	/** 未传入资源锁时自建锁的资源总量，与聊天控制器的默认值保持一致。 */
 	private static final int DEFAULT_RESOURCE_AMOUNT = 12;
 
+	/**
+	 * 读取“一个任务最多被插队几次”，默认 {@value ResourceLock#DEFAULT_MAX_OVERTAKES}。
+	 * <p>
+	 * 用 {@code -DlocalModelMaxOvertakes=N} 调整；达到上限的任务会在资源锁里转为优先调度。
+	 * </p>
+	 *
+	 * @return 插队次数上限
+	 */
+	private static int readMaxOvertakes() {
+		String raw = System.getProperty("localModelMaxOvertakes", "").trim();
+		if (raw.isEmpty()) {
+			return ResourceLock.DEFAULT_MAX_OVERTAKES;
+		}
+		try {
+			int value = Integer.parseInt(raw);
+			return value > 0 ? value : ResourceLock.DEFAULT_MAX_OVERTAKES;
+		} catch (NumberFormatException ex) {
+			return ResourceLock.DEFAULT_MAX_OVERTAKES;
+		}
+	}
+
 	/** 运行数据目录，用于读取站点配置。 */
 	private final File dataFolder;
 	/** 与其它本地模型调用共享的资源锁；只有模型服务一侧持有。 */
@@ -91,7 +112,9 @@ public class LocalModelConnectionService implements AutoCloseable {
 	public LocalModelConnectionService(File dataFolder, ResourceLock resourceLock, boolean autoReconnect,
 			long reconnectIntervalMs) {
 		this.dataFolder = dataFolder;
-		this.resourceLock = resourceLock == null ? new ResourceLock(DEFAULT_RESOURCE_AMOUNT) : resourceLock;
+		this.resourceLock = resourceLock == null
+				? new ResourceLock(DEFAULT_RESOURCE_AMOUNT, readMaxOvertakes())
+				: resourceLock;
 		this.autoReconnect = autoReconnect;
 		this.reconnectIntervalMs = reconnectIntervalMs > 0 ? reconnectIntervalMs : DEFAULT_RECONNECT_INTERVAL_MS;
 	}
@@ -354,7 +377,7 @@ public class LocalModelConnectionService implements AutoCloseable {
 		// 本地模型服务由本进程独有：部署端点 + 回调端点，聊天入口只启回环网关
 		VoiceModelLocalServer.startInBackground(dataFolder);
 		LocalModelConnectionService service = LocalModelConnectionService.start(dataFolder,
-				new ResourceLock(DEFAULT_RESOURCE_AMOUNT));
+				new ResourceLock(DEFAULT_RESOURCE_AMOUNT, readMaxOvertakes()));
 		Runtime.getRuntime().addShutdownHook(new Thread(service::close, "local-model-deploy-shutdown"));
 		System.out.println("[LocalModelDeploy] 已单独启动本地模型服务（未启动聊天适配器）");
 		for (URI uri : service.deployUris()) {

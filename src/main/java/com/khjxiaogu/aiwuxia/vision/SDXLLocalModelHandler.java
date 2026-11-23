@@ -7,11 +7,13 @@ import com.google.gson.JsonObject;
 
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
+import com.khjxiaogu.aiwuxia.tools.TaskPriority;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.ProgressReporter;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.RequestHandler;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.Response;
+import com.khjxiaogu.aiwuxia.voice.LocalModelEta;
 
 /**
  * SDXL（SD WebUI / A1111 / Forge）的请求处理器。
@@ -78,11 +80,16 @@ public final class SDXLLocalModelHandler {
 		String sdwebuiUrl = System.getProperty("sdwebuiUrl");
 		progress.queued("等待本地模型资源");
 		long queuedAt = System.currentTimeMillis();
-		try (ResourcePermit permit = lock.acquire(RESOURCE_AMOUNT)) {
+		try (ResourcePermit permit = lock.acquire(RESOURCE_AMOUNT, TaskPriority.HIGH)) {
 			long waited = System.currentTimeMillis() - queuedAt;
 			Gson gson = new Gson();
 			// 排队结束、正式把请求下发给 SD WebUI 的那一刻才切到“执行中”
-			progress.running("已下发 SD WebUI");
+			// 没有真实进度，给一个预计总耗时：前端按 10% 步进到 90%，避免长时间空转。
+			// 不同 API 的耗时不同：API 级配置优先，其次模型级 sdxlEtaMs，最后按 API 取默认值
+			String api = sdxlApi(path);
+			progress.running("已下发 SD WebUI", LocalModelEta.resolve(
+					"interrogate".equals(api) ? 15_000L : 45_000L,
+					LocalModelEta.propertyName("sdxl", api), "sdxlEtaMs"));
 			String body = gson.fromJson(request.get("data").toString(), String.class);
 			long sentAt = System.currentTimeMillis();
 			System.out.println("[SDXL] 已获取资源锁（排队 " + waited + "ms），请求 SD WebUI：reqid=" + reqid
@@ -110,5 +117,25 @@ public final class SDXLLocalModelHandler {
 			ex.printStackTrace();
 			throw ex;
 		}
+	}
+
+	/**
+	 * 按请求路径识别 SD WebUI 的 API 名，用于选择对应的预计耗时。
+	 *
+	 * @param path 请求路径，例如 {@code /sdapi/v1/txt2img}
+	 * @return {@code txt2img} / {@code img2img} / {@code interrogate}；未知路径返回 null
+	 */
+	private static String sdxlApi(String path) {
+		String value = path == null ? "" : path.trim().toLowerCase(java.util.Locale.ROOT);
+		if (value.contains("interrogate")) {
+			return "interrogate";
+		}
+		if (value.contains("img2img")) {
+			return "img2img";
+		}
+		if (value.contains("txt2img")) {
+			return "txt2img";
+		}
+		return null;
 	}
 }

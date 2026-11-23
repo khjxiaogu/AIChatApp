@@ -51,7 +51,7 @@ save/
 | `sdxl/reference-images.json` | 参考图：`{"名称": "图片地址"}`，供 Seedream 生图/生视频带参考图；生视频时这些名字会列进脚本 agent 的提示词，由 agent 自行选用 | 忽略（部署本地） |
 | `sdxl/agent/` | 绘画 agent 提示词：`role.txt`（角色）、`charaset.txt`（设定）、`rules.txt`（规则） | `rules.txt` 入库，`role.txt`、`charaset.txt` 忽略（含个人信息） |
 | `sdxl/agent/character-list.txt` | 角色设定索引：`[work]` 作品、`[public]` 公共设定、`[character]` 角色设定与 `别名：`（人类可读，格式见文件头注释）。角色设定工具的数据来源，不依赖 `charaset.txt` | 入库 |
-| `h3/agent/` | 视频子 agent 提示词：群聊 `h3video-agent` 与绘画会话（`h3_video_agent`）共用。`role.txt`（角色）、`charaset.txt`（人物设定，可选）、`rules.txt`（规则）。三个文件都不存在时使用 `H3VideoAgentMcp` 内置的“视频导演”提示词；文件存在则按 `role + charaset + rules` 拼接，并自动追加“必须等工具真实返回、必须输出视频 id、视频一律无声（禁用音频）”的硬性要求 | 按需（建议 `rules.txt` 入库） |
+| `h3/agent/` | 视频子 agent 提示词：供群聊 `h3video-agent` 使用；绘画会话不注册视频子 agent，只使用直连 H3 工具。`role.txt`（角色）、`charaset.txt`（人物设定，可选）、`rules.txt`（规则）。三个文件都不存在时使用 `H3VideoAgentMcp` 内置的“视频导演”提示词；文件存在则按 `role + charaset + rules` 拼接，并自动追加“必须等工具真实返回、必须输出视频 id、视频一律无声（禁用音频）”的硬性要求 | 按需（建议 `rules.txt` 入库） |
 
 ## 从旧位置迁移
 

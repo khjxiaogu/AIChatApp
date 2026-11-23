@@ -47,10 +47,32 @@ public final class LocalModelProtocol {
 	public static final String FIELD_ERROR = "error";
 	/** 能力集合字段。 */
 	public static final String FIELD_MODEL_TYPES = "model_types";
+	/**
+	 * 协议能力标记字段（字符串数组）。
+	 * <p>
+	 * 与 {@link #FIELD_MODEL_TYPES} 并列：模型类型说明“这台机器能跑什么模型”，能力标记说明
+	 * “这条连接支持协议的哪些可选部分”。服务器据此决定能不能把大报文/多媒体文件直接塞进报文，
+	 * 不需要事先知道连接器是程序还是浏览器。
+	 * </p>
+	 */
+	public static final String FIELD_FLAGS = "flags";
+	/**
+	 * 能力标记：支持分块收发大报文。
+	 * <p>
+	 * 声明该标记的连接可以接收按 {@code LMR1} 分块下发的请求，也可以接收/发送按 {@code LMF1}
+	 * 分块回传的结果文件；因此服务器可以直接把图片等多媒体内容放进报文，而不是只给一个链接。
+	 * </p>
+	 */
+	public static final String FLAG_CHUNKED = "chunked";
+	/** 已知能力标记（用于文档与校验；未知标记按普通字符串保存，便于将来扩展）。 */
+	public static final List<String> KNOWN_FLAGS = java.util.Collections
+			.unmodifiableList(java.util.Arrays.asList(FLAG_CHUNKED));
 	/** 任务状态字段。 */
 	public static final String FIELD_STATUS = "status";
 	/** 进度比例字段（0~1，可选）。 */
 	public static final String FIELD_PROGRESS = "progress";
+	/** 预计总耗时字段（毫秒，可选）；没有真实进度时前端据此按 10% 步进到 90%。 */
+	public static final String FIELD_ETA = "eta";
 	/** 进度说明字段（可选）。 */
 	public static final String FIELD_MESSAGE = "message";
 
@@ -66,8 +88,18 @@ public final class LocalModelProtocol {
 
 	/** 二进制文件分块魔数。 */
 	public static final byte[] FILE_MAGIC = { 'L', 'M', 'F', '1' };
+	/** 请求分块魔数：服务器把过大的模型请求分块下发给连接器时使用。 */
+	public static final byte[] REQUEST_MAGIC = { 'L', 'M', 'R', '1' };
 	/** 每块内容体上限：5 MiB。 */
 	public static final int DEFAULT_FILE_CHUNK_SIZE = 5 * 1024 * 1024;
+	/**
+	 * 请求分块默认大小：1 MiB。
+	 * <p>
+	 * 请求比结果更“怕大帧”：经过反向代理时单个 WebSocket 帧过大会被拒绝或缓冲，因此请求默认用
+	 * 更小的块；可用 {@code -DlocalModelRequestChunkSize} 调整。
+	 * </p>
+	 */
+	public static final int DEFAULT_REQUEST_CHUNK_SIZE = 1024 * 1024;
 	/** 请求 ID 的 UTF-8 长度上限。 */
 	public static final int MAX_REQID_BYTES = 512;
 	/** 格式名的 UTF-8 长度上限。 */
@@ -149,6 +181,43 @@ public final class LocalModelProtocol {
 	}
 
 	/**
+	 * 报文里的协议能力标记（{@code flags}）。
+	 * <p>
+	 * 没有该字段时返回空列表：调用方应理解为“对端没有声明”，不要据此清空已知能力
+	 * （例如能力集合变更报文可以只更新模型类型）。
+	 * </p>
+	 *
+	 * @param message 报文
+	 * @return 能力标记列表，永不为 null
+	 */
+	public static List<String> flags(JsonObject message) {
+		List<String> flags = new ArrayList<>();
+		if (message == null || !message.has(FIELD_FLAGS) || !message.get(FIELD_FLAGS).isJsonArray()) {
+			return flags;
+		}
+		for (JsonElement element : message.getAsJsonArray(FIELD_FLAGS)) {
+			if (element != null && element.isJsonPrimitive()) {
+				String value = element.getAsString();
+				if (value != null && !value.trim().isEmpty()) {
+					flags.add(value.trim());
+				}
+			}
+		}
+		return flags;
+	}
+
+	/**
+	 * 判断报文是否声明了指定能力标记。
+	 *
+	 * @param message 报文
+	 * @param flag    能力标记，例如 {@link #FLAG_CHUNKED}
+	 * @return 声明了该标记时返回 true
+	 */
+	public static boolean hasFlag(JsonObject message, String flag) {
+		return flag != null && flags(message).contains(flag);
+	}
+
+	/**
 	 * 构造进度报文。
 	 *
 	 * @param reqid    请求 ID
@@ -158,12 +227,33 @@ public final class LocalModelProtocol {
 	 * @return 报文
 	 */
 	public static JsonObject progress(String reqid, String status, Double progress, String detail) {
+		return progress(reqid, status, progress, detail, null);
+	}
+
+	/**
+	 * 构造带预计耗时的进度报文。
+	 * <p>
+	 * {@code eta} 是本次任务预计要花的总时长（毫秒），不是剩余时间。任务没有真实进度时，
+	 * 前端按 {@code startedAt + eta} 每 10% 推进一次，到预计时间时显示 90%，等待真正完成。
+	 * </p>
+	 *
+	 * @param reqid    请求 ID
+	 * @param status   状态（{@link #STATUS_QUEUED} / {@link #STATUS_RUNNING}）
+	 * @param progress 进度比例，可为 null
+	 * @param detail   说明，可为 null
+	 * @param etaMs    预计总耗时（毫秒），可为 null
+	 * @return 报文
+	 */
+	public static JsonObject progress(String reqid, String status, Double progress, String detail, Long etaMs) {
 		JsonObject message = new JsonObject();
 		message.addProperty(FIELD_TYPE, TYPE_PROGRESS);
 		message.addProperty(FIELD_REQID, reqid);
 		message.addProperty(FIELD_STATUS, status == null || status.isEmpty() ? STATUS_RUNNING : status);
 		if (progress != null) {
 			message.addProperty(FIELD_PROGRESS, Math.max(0d, Math.min(1d, progress)));
+		}
+		if (etaMs != null && etaMs > 0) {
+			message.addProperty(FIELD_ETA, etaMs);
 		}
 		if (detail != null && !detail.trim().isEmpty()) {
 			message.addProperty(FIELD_MESSAGE, detail.trim());
@@ -172,12 +262,28 @@ public final class LocalModelProtocol {
 	}
 
 	/**
-	 * 构造能力集合报文（变更或回执）。
+	 * 构造能力集合报文（变更或回执），不带协议能力标记。
 	 *
 	 * @param modelTypes 模型类型名（小写）
 	 * @return 报文
 	 */
 	public static JsonObject capabilities(Collection<String> modelTypes) {
+		return capabilities(modelTypes, null);
+	}
+
+	/**
+	 * 构造能力集合报文（变更或回执），同时声明协议能力标记。
+	 * <p>
+	 * 报文形如 {@code {"type":"capabilities","model_types":["sdxl"],"flags":["chunked"]}}。
+	 * 模型类型与能力标记分开：前者说明能跑什么模型，后者说明支持协议的哪些可选部分
+	 * （例如 {@link #FLAG_CHUNKED} 表示支持分块/大报文）。
+	 * </p>
+	 *
+	 * @param modelTypes 模型类型名（小写）
+	 * @param flags      协议能力标记，可为 null
+	 * @return 报文
+	 */
+	public static JsonObject capabilities(Collection<String> modelTypes, Collection<String> flags) {
 		JsonObject message = new JsonObject();
 		message.addProperty(FIELD_TYPE, TYPE_CAPABILITIES);
 		JsonArray array = new JsonArray();
@@ -189,6 +295,15 @@ public final class LocalModelProtocol {
 			}
 		}
 		message.add(FIELD_MODEL_TYPES, array);
+		JsonArray flagArray = new JsonArray();
+		if (flags != null) {
+			for (String flag : flags) {
+				if (flag != null && !flag.trim().isEmpty()) {
+					flagArray.add(flag.trim());
+				}
+			}
+		}
+		message.add(FIELD_FLAGS, flagArray);
 		return message;
 	}
 
@@ -238,7 +353,7 @@ public final class LocalModelProtocol {
 	}
 
 	/**
-	 * 构造单个二进制分块帧（便于大文件逐块发送，避免一次性持有全部帧）。
+	 * 构造单个结果文件分块帧（便于大文件逐块发送，避免一次性持有全部帧）。
 	 *
 	 * @param reqid   请求 ID
 	 * @param format  结果格式
@@ -252,6 +367,33 @@ public final class LocalModelProtocol {
 	 */
 	public static byte[] encodeFileChunk(String reqid, String format, byte[] data, int offset, int length,
 			int current, int total) {
+		return encodeChunk(FILE_MAGIC, reqid, format, data, offset, length, current, total);
+	}
+
+	/**
+	 * 构造单个“请求分块”帧，用于服务器把过大的模型请求分块下发给连接器。
+	 * <p>
+	 * 帧结构与结果分块完全相同，只是魔数是 {@link #REQUEST_MAGIC}，接收方据此区分“请求”和“结果”。
+	 * </p>
+	 *
+	 * @param reqid   请求 ID
+	 * @param format  请求格式（一般 {@code json}）
+	 * @param data    完整请求字节
+	 * @param offset  本块偏移
+	 * @param length  本块内容长度，必须不超过 5 MiB
+	 * @param current 当前块序号，从 1 开始
+	 * @param total   总块数
+	 * @return 二进制帧
+	 * @throws IllegalArgumentException 参数超出协议限制
+	 */
+	public static byte[] encodeRequestChunk(String reqid, String format, byte[] data, int offset, int length,
+			int current, int total) {
+		return encodeChunk(REQUEST_MAGIC, reqid, format, data, offset, length, current, total);
+	}
+
+	/** 按指定魔数构造分块帧；结果分块与请求分块共用同一套结构。 */
+	private static byte[] encodeChunk(byte[] magic, String reqid, String format, byte[] data, int offset,
+			int length, int current, int total) {
 		String id = reqid == null ? "" : reqid;
 		String fmt = format == null || format.trim().isEmpty() ? "bin" : format.trim();
 		byte[] idBytes = id.getBytes(StandardCharsets.UTF_8);
@@ -272,9 +414,9 @@ public final class LocalModelProtocol {
 		if (offset < 0 || offset + length > payload.length) {
 			throw new IllegalArgumentException("分块偏移越界：" + offset + "+" + length);
 		}
-		int size = FILE_MAGIC.length + 2 + idBytes.length + 2 + fmtBytes.length + 4 + 4 + length;
+		int size = magic.length + 2 + idBytes.length + 2 + fmtBytes.length + 4 + 4 + length;
 		ByteBuffer buffer = ByteBuffer.allocate(size);
-		buffer.put(FILE_MAGIC);
+		buffer.put(magic);
 		buffer.putShort((short) idBytes.length);
 		buffer.put(idBytes);
 		buffer.putShort((short) fmtBytes.length);
@@ -319,17 +461,32 @@ public final class LocalModelProtocol {
 	}
 
 	/**
-	 * 是否是二进制文件分块帧。
+	 * 是否是结果文件分块帧。
 	 *
 	 * @param frame 二进制报文字节
 	 * @return true 表示魔数匹配
 	 */
 	public static boolean isFileChunk(byte[] frame) {
-		if (frame == null || frame.length < FILE_MAGIC.length) {
+		return matchesMagic(frame, FILE_MAGIC);
+	}
+
+	/**
+	 * 是否是请求分块帧（服务器 → 连接器的大请求）。
+	 *
+	 * @param frame 二进制报文字节
+	 * @return true 表示魔数匹配
+	 */
+	public static boolean isRequestChunk(byte[] frame) {
+		return matchesMagic(frame, REQUEST_MAGIC);
+	}
+
+	/** 帧头魔数是否匹配。 */
+	private static boolean matchesMagic(byte[] frame, byte[] magic) {
+		if (frame == null || frame.length < magic.length) {
 			return false;
 		}
-		for (int i = 0; i < FILE_MAGIC.length; i++) {
-			if (frame[i] != FILE_MAGIC[i]) {
+		for (int i = 0; i < magic.length; i++) {
+			if (frame[i] != magic[i]) {
 				return false;
 			}
 		}
@@ -337,18 +494,33 @@ public final class LocalModelProtocol {
 	}
 
 	/**
-	 * 解析一条二进制文件分块帧；格式非法时返回 null。
+	 * 解析一条结果文件分块帧；格式非法时返回 null。
 	 *
 	 * @param frame 二进制报文字节
 	 * @return 分块对象或 null
 	 */
 	public static FileChunk parseFileChunk(byte[] frame) {
-		if (!isFileChunk(frame) || frame.length < FILE_MAGIC.length + 2 + 2 + 4 + 4) {
+		return parseChunk(FILE_MAGIC, frame);
+	}
+
+	/**
+	 * 解析一条请求分块帧；格式非法时返回 null。
+	 *
+	 * @param frame 二进制报文字节
+	 * @return 分块对象或 null
+	 */
+	public static FileChunk parseRequestChunk(byte[] frame) {
+		return parseChunk(REQUEST_MAGIC, frame);
+	}
+
+	/** 按指定魔数解析分块帧。 */
+	private static FileChunk parseChunk(byte[] magic, byte[] frame) {
+		if (!matchesMagic(frame, magic) || frame.length < magic.length + 2 + 2 + 4 + 4) {
 			return null;
 		}
 		try {
 			ByteBuffer buffer = ByteBuffer.wrap(frame);
-			buffer.position(FILE_MAGIC.length);
+			buffer.position(magic.length);
 			int idLength = Short.toUnsignedInt(buffer.getShort());
 			if (idLength <= 0 || idLength > MAX_REQID_BYTES || buffer.remaining() < idLength + 2) {
 				return null;

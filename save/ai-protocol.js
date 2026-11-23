@@ -18,13 +18,15 @@
  *     }});
  *
  * 统一下行协议（服务端 -> 浏览器，全部带 type）：
- *   status{generating,[conversation_id,price,tokens,isVoiceEnabled,isVoiceSupported,isVoiceUsable,models,modelTree,model,tasks[]]}
+ *   status{generating,[conversation_id,price,tokens,isVoiceEnabled,isVoiceSupported,isVoiceUsable,models,modelTree,model,tasks[],toolCalls[]]}
  *   model{model} / voice{isVoiceEnabled?|isVoiceSupported?|isVoiceUsable?} / notice{content}
  *   sendResult{msgId,ok,reason}（对某次发送的确认/拒收，只发给发起连接）
  *   sendbox{action:"refill",content,msgId?,requestId?}（有条件回填，不再表示清空）
  *   message{id,title,content[]} / content{id,content[]} / remove{id} / batch_messages{messages[],prepend,hasMore,oldestId,newestId}
- *   thinking{content} / tool_call{tool_name} / audio{id,audioId} / done{price,tokens} / scene{scene,scene_data}
- *   task{state:"created"|"done"|"failed",id,tool,name,time[,message]}（异步工具任务，视频生成等长任务）
+ *   thinking{content} / tool_call{call_id,tool_name} / audio{id,audioId} / done{price,tokens} / scene{scene,scene_data}
+ *   tool_status{call_id,state:"queued"|"running"|"succeeded"|"failed"|"cancelled"|"rejected",tool,name,time,startedAt[,eta][,progress][,message]}
+ *   （只展示 queued=排队中、running=执行中；其余状态仅用于清理显示，不显示“完成”）
+ *   task{state:"created"|"done"|"failed",id,tool,name,time[,message]}（异步工具任务，即梦视频等长任务；H3 已改为同步）
  *   input{input,prompt} / toolApproval{...} / toolApprovalResult{...} / local_request{...} / pong{id}
  * 其中 content[] 为结构化内容数组：
  *   {type:"text",text}
@@ -35,6 +37,10 @@
  * 异步任务：
  *   task 帧用于增量通知；status.tasks[] 是重连/刷新后的全量快照
  *   （每项 {id,tool,name,time}），页面据此显示“视频生成中”。
+ * 工具状态：
+ *   tool_status 帧增量更新；status.toolCalls[] 是重连/刷新后的全量快照（只含排队/执行中）。
+ *   没有真实 progress 时，公共层按 startedAt + eta 做合成进度：每 10% 一档，到 eta 时 90%，
+ *   之后保持 90%，直到终态帧或 done 清掉状态。
  * tokens 为本轮新增的配额用量（当轮累计 getEquivantTokens 的增加值，只有数值、不带明细）；
  * 历史记录（batch_messages 的每一项）另带 token_cost，表示该条记录所属轮次的配额用量
  * （标准化后为 aiOnBatch 收到的 items[].tokenCost），实时轮次的同一个值由 done.tokens 下发。
@@ -180,6 +186,8 @@
 				// ---- 异步工具任务（视频生成等长任务）：由 task 帧增量维护，status.tasks 恢复全量 ----
 				aiTasks: [],               // [{id,tool,name,time,message}]，空数组表示没有运行中的任务
 				aiTaskClock: 0,            // 任务计时用的节拍（每秒更新，页面用 aiTaskElapsed 显示已等待时长）
+				// ---- 工具调用状态：只展示排队中/执行中（含进度），终态帧只用于清理 ----
+				aiToolCalls: [],           // [{call_id,tool,name,state,time,startedAt,etaMs,progress,message}]
 				// ---- 场景图片：地址 + 加载状态都由公共层维护，模板直接绑定 aiImages / aiImageLists ----
 				aiImages: images,          // 各槽位首图 {front:'', side:'', back:''}，单图场景直接绑定这个
 				aiImageLists: imageLists,  // 各槽位完整图片列表 {front:[...], ...}，多角色站位等场景绑定这个
@@ -337,6 +345,16 @@
 			aiOnThinking: function (frame) {},
 			/** 工具调用展示（绘画前端） */
 			aiOnToolCall: function (frame) {},
+			/**
+			 * 工具调用状态变化（排队中/执行中/进度）。
+			 * <p>
+			 * 公共层已把状态合并进 {@code aiToolCalls}；页面按 {@code call_id} 把它贴到对应的
+			 * 工具行上即可。终态帧只用于清理，不显示“完成”。
+			 * </p>
+			 *
+			 * @param {Object} frame tool_status 帧
+			 */
+			aiOnToolStatus: function (frame) {},
 			/** 本地代理请求（本地绘画模式） */
 			aiOnLocalRequest: function (frame) {},
 			/** 浏览器后退 */
@@ -669,6 +687,8 @@
 			 *   <li>空内容一律忽略（旧服务端的“清空”不再生效）；</li>
 			 *   <li>带 msgId 的回填只处理本标签页自己的发送（在 Outbox 或 recentSends 中）；</li>
 			 *   <li>带 requestId 的回填只处理最近一次 revert/regen 的发起方；</li>
+			 *   <li>页面可通过 {@code aiNormalizeRefillContent(text)} 预处理回填文本：
+			 *       例如去掉图片/视频标记、把引用格式还原成引用状态；</li>
 			 *   <li>输入框为空才自动恢复，否则不覆盖，只给“恢复”入口。</li>
 			 * </ul>
 			 *
@@ -707,6 +727,19 @@
 				}
 				if (action && action !== 'refill')
 					return;
+				// 页面可预处理回填文本：例如绘画页去掉媒体标记、把引用格式还原成引用状态
+				var normalized = String(content);
+				var normalizedExtras = null;
+				if (typeof this.aiNormalizeRefillContent === 'function') {
+					var normalizedResult = this.aiNormalizeRefillContent(normalized);
+					if (normalizedResult && typeof normalizedResult === 'object') {
+						normalized = normalizedResult.text == null ? '' : String(normalizedResult.text);
+						normalizedExtras = normalizedResult.extras || null;
+					}
+				}
+				// 只剩媒体标记（例如撤回一张图片）：消息本身已经删除，不再往输入框回填
+				if (normalized.trim() === '' && !normalizedExtras)
+					return;
 				var msgId = frame.msgId || '';
 				var requestId = frame.requestId || '';
 				if (requestId && requestId !== this._aiRequestId)
@@ -732,21 +765,22 @@
 					this.aiPruneAppliedRefills();
 				}
 				// 有本地草稿快照时优先还原用户正文，服务端下发的完整文本作为兜底
-				var restoreText = known && known.draftText != null ? known.draftText : String(content);
+				var restoreText = known && known.draftText != null ? known.draftText : normalized;
+				var restoreExtras = known && known.extras ? known.extras : normalizedExtras;
 				if (this.aiGetDraft() === '') {
-					this.aiRestoreDraft(restoreText, known && known.extras, msgId || null);
+					this.aiRestoreDraft(restoreText, restoreExtras, msgId || null);
 					this.aiToast('已恢复未发送的内容', { kind: 'info' });
 				} else {
 					this._aiPendingRefill = {
 						text: restoreText,
-						extras: known && known.extras,
+						extras: restoreExtras,
 						msgId: msgId || null,
 					};
 					this.aiOutboxPersist();
 					this.aiShowRefillChip();
 				}
 				if (typeof this.aiOnSendbox === 'function')
-					this.aiOnSendbox(String(content));
+					this.aiOnSendbox(normalized);
 			},
 			/** 显示“恢复未发送内容”的浮动提示条 */
 			aiShowRefillChip: function () {
@@ -1040,12 +1074,12 @@
 			/**
 			 * 构造带引用消息的用户文本。
 			 * <p>
-			 * 引用正文逐行加 {@code > } 前缀，并用「【引用消息·对方/我】」与
-			 * 「【引用结束】」包起来，便于模型区分引用内容与用户本轮输入；
-			 * 前端也用同一格式还原引用块。
+			 * 引用正文逐行加 {@code > } 前缀，并用「【引用消息·对方/我·消息id=...】」与
+			 * 「【引用结束】」包起来，便于模型区分引用内容与用户本轮输入，并可用
+			 * {@code history_get} 按消息 id 读取被引用记录的全文；前端也用同一格式还原引用块。
 			 * </p>
 			 *
-			 * @param {Object} quote 被引用消息 {role:'user'|'assistant', text:'...'}
+			 * @param {Object} quote 被引用消息 {role:'user'|'assistant', id:消息id, text:'...'}
 			 * @param {String} body  用户本轮输入
 			 * @return {String} 发送给服务端的完整文本
 			 */
@@ -1054,14 +1088,23 @@
 				if (!quote || !quote.text)
 					return content;
 				var author = quote.role === 'assistant' ? '对方' : '我';
+				var messageId = quote.id == null ? '' : String(quote.id).trim();
+				var head = '【引用消息·' + author;
+				if (messageId) {
+					head += '·消息id=' + messageId;
+				}
+				head += '】';
 				var lines = String(quote.text).replace(/\r\n/g, '\n').split('\n');
 				var quoted = lines.map(function (line) {
 					return '> ' + line;
 				}).join('\n');
-				return '【引用消息·' + author + '】\n' + quoted + '\n【引用结束】\n\n' + content;
+				return head + '\n' + quoted + '\n【引用结束】\n\n' + content;
 			},
 			/**
-			 * 解析带引用消息的文本，返回 {author, quoted, body}；不是引用消息时返回 null。
+			 * 解析带引用消息的文本，返回 {author, id, quoted, body}；不是引用消息时返回 null。
+			 * <p>
+			 * 兼容旧格式：没有「消息id=...」时 id 为空串。
+			 * </p>
 			 *
 			 * @param {String} text 消息文本
 			 * @return {Object|null}
@@ -1071,7 +1114,7 @@
 				var lines = src.split('\n');
 				if (!lines.length)
 					return null;
-				var head = /^【引用消息(?:·(我|对方))?】$/.exec(lines[0].trim());
+				var head = /^【引用消息(?:·(我|对方))?(?:·消息id=([^】]+))?】$/.exec(lines[0].trim());
 				if (!head)
 					return null;
 				var end = -1;
@@ -1087,7 +1130,12 @@
 					return line.replace(/^>\s?/, '');
 				}).join('\n');
 				var body = lines.slice(end + 1).join('\n').replace(/^\n+/, '');
-				return { author: head[1] || '', quoted: quoted, body: body };
+				return {
+					author: head[1] || '',
+					id: head[2] == null ? '' : head[2].trim(),
+					quoted: quoted,
+					body: body
+				};
 			},
 			/**
 			 * 把引用正文裁剪到指定长度，避免引用整段超长回复撑爆上下文。
@@ -1840,10 +1888,16 @@
 						this.aiApplyStatus(frame);
 						this.aiOnStatus(frame);
 						return;
+					case 'tool_status':
+						this.aiApplyToolStatus(frame);
+						this.aiOnToolStatus(frame);
+						return;
 					case 'done':
 						this.aiGenerating = false;
 						// 本轮结束：退出"停止中"，按钮恢复可用
 						this.aiStopping = false;
+						// 终态帧可能晚到/丢失，本轮结束时兜底清掉工具状态
+						this.aiClearToolStatus();
 						if (frame.price != null)
 							this.aiPrice = formatPrice(frame.price);
 						// 本轮配额用量（累计 getEquivantTokens 的增加值），只有数值、不带明细
@@ -1955,6 +2009,9 @@
 				// 重连/刷新后的运行中任务全量快照（增量由 task 帧维护）
 				if (Array.isArray(frame.tasks))
 					this.aiApplyTaskSnapshot(frame.tasks);
+				// 重连/刷新后的工具调用状态全量快照（增量由 tool_status 帧维护）
+				if (Array.isArray(frame.toolCalls))
+					this.aiApplyToolSnapshot(frame.toolCalls);
 			},
 			/**
 			 * 把一条 task 帧合并进 {@code aiTasks}。
@@ -2020,10 +2077,216 @@
 				this.aiSyncTaskClock();
 			},
 			/**
-			 * 按需启停任务计时器：有任务时每秒刷新 {@code aiTaskClock}，没有任务时停止。
+			 * 把一条 tool_status 帧合并进 {@code aiToolCalls}。
+			 * <p>
+			 * 只保留排队中/执行中；{@code succeeded/failed/cancelled/rejected} 视为终态，直接从
+			 * 列表移除（界面上不显示“完成”，只让工具行停止显示状态）。
+			 * </p>
+			 *
+			 * @param {Object} frame tool_status 帧
+			 */
+			aiApplyToolStatus: function (frame) {
+				if (!frame || !frame.call_id)
+					return;
+				if (!this.aiToolCalls)
+					this.aiToolCalls = [];
+				var state = frame.state || 'running';
+				var terminal = state === 'succeeded' || state === 'failed' || state === 'cancelled'
+					|| state === 'rejected';
+				var index = -1;
+				for (var i = 0; i < this.aiToolCalls.length; i++) {
+					if (this.aiToolCalls[i].call_id === frame.call_id) {
+						index = i;
+						break;
+					}
+				}
+				if (terminal) {
+					if (index >= 0)
+						this.aiToolCalls.splice(index, 1);
+				} else {
+					var progress = (frame.progress === undefined || frame.progress === null)
+						? null : Number(frame.progress);
+					var previous = index >= 0 ? this.aiToolCalls[index] : null;
+					var progressAt = 0;
+					if (progress !== null) {
+						if (previous && previous.progress !== null && previous.progress !== undefined
+							&& Number(previous.progress) === progress && previous.progressAt) {
+							// 心跳/重复上报没有改变进度：保留上次变化时间，剩余时间才能平滑减少
+							progressAt = previous.progressAt;
+						} else {
+							progressAt = Date.now();
+						}
+					}
+					var item = {
+						call_id: frame.call_id,
+						tool: frame.tool || '',
+						name: frame.name || frame.tool || '工具',
+						state: state,
+						time: Number(frame.time) || Date.now(),
+						startedAt: Number(frame.startedAt) || 0,
+						etaMs: Number(frame.eta) || 0,
+						progress: progress,
+						progressAt: progressAt,
+						// 服务器事件时间和本地时间的差，用来把 startedAt 换算到本地时钟
+						serverOffset: (Number(frame.time) || Date.now()) - Date.now(),
+						message: frame.message || '',
+					};
+					if (index >= 0)
+						this.aiToolCalls.splice(index, 1, item);
+					else
+						this.aiToolCalls.push(item);
+				}
+				this.aiSyncTaskClock();
+			},
+			/**
+			 * 用 status.toolCalls 全量替换运行中的工具状态（重连/刷新时恢复）。
+			 *
+			 * @param {Array} list 状态数组
+			 */
+			aiApplyToolSnapshot: function (list) {
+				var result = [];
+				if (Array.isArray(list)) {
+					for (var i = 0; i < list.length; i++) {
+						var frame = list[i];
+						if (!frame || !frame.call_id)
+							continue;
+						var state = frame.state || 'running';
+						if (state === 'succeeded' || state === 'failed' || state === 'cancelled'
+							|| state === 'rejected')
+							continue;
+						var progress = (frame.progress === undefined || frame.progress === null)
+							? null : Number(frame.progress);
+						var startedAt = Number(frame.startedAt) || 0;
+						var frameTime = Number(frame.time) || 0;
+						result.push({
+							call_id: frame.call_id,
+							tool: frame.tool || '',
+							name: frame.name || frame.tool || '工具',
+							state: state,
+							time: frameTime || Date.now(),
+							startedAt: startedAt,
+							etaMs: Number(frame.eta) || 0,
+							progress: progress,
+							progressAt: progress !== null ? Date.now() : 0,
+							serverOffset: frameTime ? frameTime - Date.now() : 0,
+							message: frame.message || '',
+						});
+					}
+				}
+				this.aiToolCalls = result;
+				this.aiSyncTaskClock();
+			},
+			/** 取某个 call_id 当前的状态，没有时返回 null。 */
+			aiToolStatus: function (callId) {
+				if (!callId || !this.aiToolCalls)
+					return null;
+				for (var i = 0; i < this.aiToolCalls.length; i++) {
+					if (this.aiToolCalls[i].call_id === callId)
+						return this.aiToolCalls[i];
+				}
+				return null;
+			},
+			/** 清空工具状态（本轮结束兜底）。 */
+			aiClearToolStatus: function () {
+				this.aiToolCalls = [];
+				this.aiSyncTaskClock();
+			},
+			/**
+			 * 取工具进度：有真实 progress 用真实值；否则按预计时间每 10% 推进，到 ETA 时 90%。
+			 * <p>
+			 * 没有预计时间也没有真实进度时返回 null（页面只显示“执行中”）。
+			 * </p>
+			 *
+			 * @param {Object} tool 工具状态
+			 * @return {Number|null} 0~1 的进度
+			 */
+			aiToolProgress: function (tool) {
+				if (!tool)
+					return null;
+				if (tool.progress !== null && tool.progress !== undefined && !isNaN(Number(tool.progress)))
+					return Math.max(0, Math.min(1, Number(tool.progress)));
+				var eta = Number(tool.etaMs) || 0;
+				var started = Number(tool.startedAt) || 0;
+				if (eta <= 0 || started <= 0)
+					return null;
+				var now = (this.aiTaskClock || Date.now()) + (Number(tool.serverOffset) || 0);
+				var elapsed = Math.max(0, now - started);
+				// 10% 一档：eta/9 一档，到预计时间时正好 90%
+				var step = Math.floor(elapsed / (eta / 9));
+				return Math.min(0.9, Math.max(0, step) * 0.1);
+			},
+			/** 工具进度的百分比文本，没有进度时返回空串。 */
+			aiToolProgressText: function (tool) {
+				var value = this.aiToolProgress(tool);
+				return value === null ? '' : Math.round(value * 100) + '%';
+			},
+			/**
+			 * 估算工具剩余时间（毫秒）。
+			 * <p>
+			 * 用预计总耗时 {@code eta}、开始时间和当前百分比一起估算：
+			 * 一路按“eta − 已用时间”兜底，另一路按“eta × (1 − 百分比)”从收到进度起倒数，
+			 * 取较小值，避免百分比粗跳时时间反而变长。时间每秒平滑减少，进度更新时才重新校准。
+			 * </p>
+			 *
+			 * @param {Object} tool 工具状态
+			 * @return {Number|null} 剩余毫秒数，无法估算时返回 null
+			 */
+			aiToolRemainingMs: function (tool) {
+				if (!tool)
+					return null;
+				var started = Number(tool.startedAt) || 0;
+				if (started <= 0)
+					return null;
+				var clientNow = this.aiTaskClock || Date.now();
+				var now = clientNow + (Number(tool.serverOffset) || 0);
+				var elapsed = Math.max(0, now - started);
+				var eta = Number(tool.etaMs) || 0;
+				var progress = (tool.progress === null || tool.progress === undefined
+					|| isNaN(Number(tool.progress))) ? null : Math.max(0, Math.min(1, Number(tool.progress)));
+				var remaining = null;
+				if (eta > 0) {
+					var byEta = eta - elapsed;
+					if (progress !== null && tool.progressAt) {
+						var byPercent = eta * (1 - progress)
+							- Math.max(0, clientNow - Number(tool.progressAt));
+						remaining = Math.min(byEta, byPercent);
+					} else {
+						remaining = byEta;
+					}
+					remaining = Math.min(remaining, eta);
+				}
+				if (remaining === null || !isFinite(remaining))
+					return null;
+				return Math.max(0, remaining);
+			},
+			/** 毫秒数 → “x 分 y 秒”。 */
+			aiDurationText: function (ms) {
+				var seconds = Math.max(0, Math.ceil(Number(ms) / 1000));
+				var minutes = Math.floor(seconds / 60);
+				var rest = seconds % 60;
+				return minutes > 0 ? minutes + ' 分 ' + (rest < 10 ? '0' + rest : rest) + ' 秒'
+					: rest + ' 秒';
+			},
+			/**
+			 * 工具剩余时间文案，例如“预计剩余 1 分 20 秒”；无法估算时返回空串。
+			 *
+			 * @param {Object} tool 工具状态
+			 * @return {String} 文案
+			 */
+			aiToolRemainingText: function (tool) {
+				var ms = this.aiToolRemainingMs(tool);
+				if (ms === null)
+					return '';
+				if (ms <= 1000)
+					return '即将完成';
+				return '预计剩余 ' + this.aiDurationText(ms);
+			},
+			/**
+			 * 按需启停任务计时器：有任务或工具状态时每秒刷新 {@code aiTaskClock}，都没有时停止。
 			 */
 			aiSyncTaskClock: function () {
-				var active = !!(this.aiTasks && this.aiTasks.length);
+				var active = !!(this.aiTasks && this.aiTasks.length)
+					|| !!(this.aiToolCalls && this.aiToolCalls.length);
 				if (active && !this._aiTaskTimer && typeof setInterval === 'function') {
 					var self = this;
 					this.aiTaskClock = Date.now();

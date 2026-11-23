@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -24,7 +25,9 @@ import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.aiwuxia.vision.H3VideoApi;
+import com.khjxiaogu.aiwuxia.vision.FoleyVideoUsage;
 import com.khjxiaogu.aiwuxia.vision.H3VideoUsage;
+import com.khjxiaogu.aiwuxia.vision.Mp4Duration;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.voice.ModelType;
@@ -60,14 +63,19 @@ public class H3VideoMcp implements ToolProvider {
 	public static final String TOOL_ANIM = "h3_gen_anim";
 	/** 视频截帧工具名。 */
 	public static final String TOOL_FRAME = "video_extract_frame";
+	/** 视频配音（Foley）工具名。 */
+	public static final String TOOL_FOLEY = "video_foley";
 	/** 单次生成最长等待时间（分钟）：15 秒视频在 16GB 卡上可能跑十几分钟。 */
 	private static final long GENERATE_TIMEOUT_MINUTES = 90L;
 	/** 参考图上限：1 张首帧，或首帧 + 尾帧。 */
 	private static final int MAX_REFERENCE_IMAGES = 2;
-	/** 参考视频上限：1 个视频的首尾帧，或两个视频各取一帧。 */
+	/** 参考视频上限：1 个视频作为首帧来源，或两个视频分别作首/尾帧来源。 */
 	private static final int MAX_REFERENCE_VIDEOS = 2;
-	/** 参考视频/视频截帧的大小上限：视频会以 Base64 走本地模型通道文本报文，需留出报文头余量。 */
-	private static final int MAX_REFERENCE_VIDEO_BYTES = 6 * 1024 * 1024;
+	/**
+	 * NVFP4 画布在基础尺寸上的放大比例：宽高各提高 50%，再按 H3 的 32 倍数向上取整。
+	 * <p>以 16:9 为例，基础 640×352 → 960×544；1:1 为 768×768。</p>
+	 */
+	private static final double NVFP4_RESOLUTION_SCALE = 1.2d;
 
 	/**
 	 * 视频生成模式。
@@ -75,7 +83,7 @@ public class H3VideoMcp implements ToolProvider {
 	public enum Mode {
 		/** H3 视频制作：int8 主模型，8 步，默认 5 秒，最长 15 秒。 */
 		H3(TOOL_GENERATE, "H3 视频制作", H3VideoApi.ModelTier.INT8, 5d, 1d, 15d),
-		/** NVFP4 简单动图：NVFP4 主模型，6 步，默认 3 秒，最长 8 秒，画布更小。 */
+		/** NVFP4 简单动图：NVFP4 主模型，6 步，默认 3 秒，最长 8 秒，画布宽高为基础尺寸的 1.5 倍。 */
 		NVFP4(TOOL_ANIM, "NVFP4 简单动图", H3VideoApi.ModelTier.NVFP4, 3d, 1d, 8d);
 
 		private final String toolName;
@@ -142,6 +150,7 @@ public class H3VideoMcp implements ToolProvider {
 		tools.add(createGenerateTool(tos, true, Mode.H3));
 		tools.add(createGenerateTool(tos, true, Mode.NVFP4));
 		tools.add(createExtractFrameTool(tos, true));
+		tools.add(createFoleyTool(tos, true));
 	}
 
 	@Override
@@ -179,7 +188,8 @@ public class H3VideoMcp implements ToolProvider {
 		String description = "使用本地 MiniMax H3（" + effectiveMode.tier().id()
 				+ " 主模型）生成**无声**视频。" + effectiveMode.displayName() + "：只需要提示词、参考图/参考视频、画面比例和时长，"
 				+ "尺寸、帧数换算、步数、采样、种子、模型都由代码固定。不生成音频。"
-				+ "参考图留空为文生视频；给 1 张作首帧；给 2 张（逗号分隔）作首帧和尾帧。";
+				+ "参考图留空为文生视频；给 1 张作首帧；给 2 张（逗号分隔）作首帧和尾帧。"
+				+ "首/尾来源也可以用 first/last 自由选择图片或视频。";
 		ToolData.Builder builder = new ToolData.Builder(effectiveMode.toolName(), description)
 				.putParam("prompt", "视频提示词：描述画面、镜头运动即可，用英文短句。开头是视频风格，中间以[1s-2s]类似的格式表达时间戳和动作，最后是视频统一指导。",
 						"提示词")
@@ -188,10 +198,18 @@ public class H3VideoMcp implements ToolProvider {
 								+ "（尾帧必须与首帧同时给出）。首帧会拉伸到所选画布，建议参考图本身就是目标比例。",
 						"参考图")
 				.putOptionalParam("video",
-						"参考视频对象存储 ID，与 reference 二选一。1 个视频=取它的首帧和末帧；2 个用逗号分隔="
-								+ "第一个视频的首帧、第二个视频的末帧。视频会先由本地模型服务用 ComfyUI 截帧，"
-								+ "再作为 H3 的首/尾帧。",
+						"参考视频对象存储 ID，与 reference 二选一。使用 ComfyUI 的视频生视频工作流："
+								+ "1 个视频=取所选片段的末帧作为首帧（延续生成）；2 个用逗号分隔="
+								+ "第一个视频的末帧 + 第二个视频的首帧，作为中段的首/尾帧。",
 						"参考视频")
+				.putOptionalParam("first",
+						"首帧来源：图片或视频对象存储 id 均可（二选一）。与 reference/video 二选一；"
+								+ "视频取片段末帧，图片直接作为首帧。",
+						"首帧来源")
+				.putOptionalParam("last",
+						"尾帧来源：图片或视频对象存储 id 均可（二选一）。必须同时提供 first；"
+								+ "视频取片段首帧，图片直接作为尾帧。",
+						"尾帧来源")
 				.putOptionalParam("resolution",
 						"画面比例，必须是 16:9/9:16/1:1/4:3/3:4 之一；默认 16:9（横屏）。", "画面比例")
 				.putOptionalParam("duration",
@@ -209,6 +227,15 @@ public class H3VideoMcp implements ToolProvider {
 									JsonConfig.getNonBlankString(jo, "reference", ""));
 							List<String> referenceVideos = splitReferences(
 									JsonConfig.getNonBlankString(jo, "video", ""));
+							String firstSource = JsonConfig.getNonBlankString(jo, "first", "");
+							String lastSource = JsonConfig.getNonBlankString(jo, "last", "");
+							boolean explicitSources = !firstSource.isEmpty() || !lastSource.isEmpty();
+							if (explicitSources && (!references.isEmpty() || !referenceVideos.isEmpty())) {
+								return ToolResult.text("参数错误：first/last 与 reference/video 只能二选一。");
+							}
+							if (!lastSource.isEmpty() && firstSource.isEmpty()) {
+								return ToolResult.text("参数错误：提供 last 时必须同时提供 first。");
+							}
 							if (references.size() > MAX_REFERENCE_IMAGES) {
 								return ToolResult.text("参数错误：参考图最多 " + MAX_REFERENCE_IMAGES
 										+ " 张（首帧、尾帧各一张）。");
@@ -217,9 +244,11 @@ public class H3VideoMcp implements ToolProvider {
 								return ToolResult.text("参数错误：参考视频最多 " + MAX_REFERENCE_VIDEOS + " 个。");
 							}
 							if (!references.isEmpty() && !referenceVideos.isEmpty()) {
-								return ToolResult.text("参数错误：reference（图片）与 video（视频）只能二选一。");
+								return ToolResult.text("参数错误：reference（图片）与 video（视频）只能二选一；"
+										+ "混合首尾来源请用 first/last。");
 							}
-							if ((!references.isEmpty() || !referenceVideos.isEmpty()) && tos == null) {
+							if ((!references.isEmpty() || !referenceVideos.isEmpty() || explicitSources)
+									&& tos == null) {
 								return ToolResult.failure("视频存储不可用，无法读取参考图/参考视频。");
 							}
 							int[] size = dimensions(JsonConfig.getNonBlankString(jo, "resolution", "16:9"),
@@ -237,46 +266,51 @@ public class H3VideoMcp implements ToolProvider {
 							request.addProperty("height", size[1]);
 							request.addProperty("seconds", seconds);
 							request.addProperty("seed", H3VideoApi.randomSeed());
-							for (int i = 0; i < references.size(); i++) {
-								String id = references.get(i);
-								if (!tos.exists(id, output == null ? null : output::addUsage)) {
-									return ToolResult.text("参数错误：参考图" + id + "已清理或不存在。");
+							if (explicitSources) {
+								ToolResult sourceError = addSource(request, "first", firstSource, tos, output);
+								if (sourceError != null) {
+									return sourceError;
 								}
-								byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
-								// 视频与图片共用同一套内容哈希 id：视频 id 能通过 exists 检查，
-								// 但作为首帧/尾帧提交会让 ComfyUI 收到非图片数据，这里按内容明确拒绝
-								if (!LocalStorage.detectMimeType(bytes, id).startsWith("image/")) {
-									return ToolResult.text("参数错误：参考图" + id + "不是图片，不能作为视频的首帧/尾帧。");
+								if (!lastSource.isEmpty()) {
+									sourceError = addSource(request, "last", lastSource, tos, output);
+									if (sourceError != null) {
+										return sourceError;
+									}
 								}
-								JsonObject image = new JsonObject();
-								image.addProperty("filename", id + ".png");
-								image.addProperty("data", Base64.getEncoder().encodeToString(bytes));
-								request.add(i == 0 ? "first_frame" : "last_frame", image);
-							}
-							for (int i = 0; i < referenceVideos.size(); i++) {
-								String id = referenceVideos.get(i);
-								if (!tos.exists(id, output == null ? null : output::addUsage)) {
-									return ToolResult.text("参数错误：参考视频" + id + "已清理或不存在。");
+							} else {
+								for (int i = 0; i < references.size(); i++) {
+									String id = references.get(i);
+									if (!tos.exists(id, output == null ? null : output::addUsage)) {
+										return ToolResult.text("参数错误：参考图" + id + "已清理或不存在。");
+									}
+									byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
+									// 视频与图片共用同一套内容哈希 id：视频 id 能通过 exists 检查，
+									// 但作为首帧/尾帧提交会让 ComfyUI 收到非图片数据，这里按内容明确拒绝
+									if (!LocalStorage.detectMimeType(bytes, id).startsWith("image/")) {
+										return ToolResult.text("参数错误：参考图" + id + "不是图片，不能作为视频的首帧/尾帧。");
+									}
+									JsonObject image = new JsonObject();
+									image.addProperty("filename", id + ".png");
+									image.addProperty("data", Base64.getEncoder().encodeToString(bytes));
+									request.add(i == 0 ? "first_frame" : "last_frame", image);
 								}
-								byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
-								if (bytes.length > MAX_REFERENCE_VIDEO_BYTES) {
-									return ToolResult.text("参数错误：参考视频过大（上限 "
-											+ (MAX_REFERENCE_VIDEO_BYTES / 1024 / 1024) + "MB）。");
-								}
-								if (!LocalStorage.detectMimeType(bytes, id).startsWith("video/")) {
-									return ToolResult.text("参数错误：参考视频" + id + "不是视频文件。");
-								}
-								JsonObject video = new JsonObject();
-								video.addProperty("filename", id + ".mp4");
-								video.addProperty("data", Base64.getEncoder().encodeToString(bytes));
-								if (referenceVideos.size() == 1) {
-									// 同一个视频：只传一份视频，由本地服务取首帧和末帧
-									request.add("first_video", video);
-									request.addProperty("use_video_last_frame", true);
-								} else if (i == 0) {
-									request.add("first_video", video);
-								} else {
-									request.add("last_video", video);
+								for (int i = 0; i < referenceVideos.size(); i++) {
+									String id = referenceVideos.get(i);
+									if (!tos.exists(id, output == null ? null : output::addUsage)) {
+										return ToolResult.text("参数错误：参考视频" + id + "已清理或不存在。");
+									}
+									byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
+									if (!LocalStorage.detectMimeType(bytes, id).startsWith("video/")) {
+										return ToolResult.text("参数错误：参考视频" + id + "不是视频文件。");
+									}
+									JsonObject video = new JsonObject();
+									video.addProperty("filename", id + ".mp4");
+									video.addProperty("data", Base64.getEncoder().encodeToString(bytes));
+									if (i == 0) {
+										request.add("first_video", video);
+									} else {
+										request.add("last_video", video);
+									}
 								}
 							}
 							List<H3VideoApi.VideoResult> videos = generate(request);
@@ -299,6 +333,184 @@ public class H3VideoMcp implements ToolProvider {
 			builder.async();
 		}
 		return builder.build();
+	}
+
+	/**
+	 * 把 first/last 来源（图片或视频）加入生成请求。
+	 *
+	 * @param request 请求 JSON
+	 * @param role    {@code first} / {@code last}
+	 * @param id      对象存储 id
+	 * @param tos     对象存储
+	 * @param output  用量输出，可为 null
+	 * @return 失败结果；成功返回 null
+	 * @throws IOException 读取失败
+	 */
+	private static ToolResult addSource(JsonObject request, String role, String id, ObjectStorageProvider tos,
+			AIOutput output) throws IOException {
+		if (!tos.exists(id, output == null ? null : output::addUsage)) {
+			return ToolResult.text("参数错误：首尾来源" + id + "已清理或不存在。");
+		}
+		byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
+		String mime = LocalStorage.detectMimeType(bytes, id);
+		JsonObject media = new JsonObject();
+		media.addProperty("data", Base64.getEncoder().encodeToString(bytes));
+		if (mime.startsWith("image/")) {
+			media.addProperty("filename", id + ".png");
+			request.add(role + "_frame", media);
+			return null;
+		}
+		if (mime.startsWith("video/")) {
+			media.addProperty("filename", id + ".mp4");
+			request.add(role + "_video", media);
+			return null;
+		}
+		return ToolResult.text("参数错误：首尾来源" + id + "既不是图片也不是视频。");
+	}
+
+	/**
+	 * 创建视频配音（HunyuanVideo-Foley）工具。
+	 *
+	 * @param tos   对象存储
+	 * @param async true 表示异步
+	 * @return 工具定义
+	 */
+	public static ToolData createFoleyTool(ObjectStorageProvider tos, boolean async) {
+		ToolData.Builder builder = new ToolData.Builder(TOOL_FOLEY,
+				"给已有视频重新配音效：保留原画面，生成与画面同步的环境音/动作音，并输出带新音轨的视频，提示词必须是英文。"
+						+ "默认整段重配；给 start/length 时只重配该片段，其余保留原音轨（原视频需带音轨）。")
+				.putParam("video", "视频对象存储 id（72 位哈希，可带扩展名）", "视频")
+				.putParam("prompt", "想要的音效描述，例如 footsteps on wet asphalt, distant traffic, wind", "音效提示词")
+				.putParam("negative",
+						"不想出现的声音，例如 speech, dialogue, human voice, vocals, music。",
+						"负面提示词")
+				.putOptionalParam("start",
+						"局部重配起点（秒），默认 0；只改一段时与 length 一起给。",
+						"起点（秒）")
+				.putOptionalParam("length",
+						"局部重配长度（秒），最长 30 秒；省略则整段重配。",
+						"长度（秒）")
+				.presenter(ToolCallPresenter.ofArgument("视频配音", "prompt"))
+				.tool((data, output, manager) -> {
+					Supplier<ToolResult> work = () -> {
+						try {
+							JsonObject jo = JsonParser.parseString(data).getAsJsonObject();
+							String videoId = JsonConfig.getNonBlankString(jo, "video", "");
+							String prompt = JsonConfig.getNonBlankString(jo, "prompt", "");
+							String negative = JsonConfig.getNonBlankString(jo, "negative", "");
+							double start = JsonConfig.getDouble(jo, "start", 0d);
+							double length = JsonConfig.getDouble(jo, "length", 0d);
+							boolean segment = jo.has("start") || jo.has("length");
+							if (segment) {
+								if (start < 0d) {
+									return ToolResult.text("参数错误：start 不能小于 0。");
+								}
+								if (length <= 0d) {
+									return ToolResult.text("参数错误：局部重配必须提供大于 0 的 length。");
+								}
+								if (length > 30d) {
+									return ToolResult.text("参数错误：单段配音最长 30 秒。");
+								}
+							}
+							if (videoId.isEmpty()) {
+								return ToolResult.text("参数错误：缺少视频 video。");
+							}
+							if (prompt.isEmpty()) {
+								return ToolResult.text("参数错误：缺少音效提示词 prompt。");
+							}
+							if (tos == null) {
+								return ToolResult.failure("视频存储不可用，无法读取视频。");
+							}
+							if (!tos.exists(videoId, output == null ? null : output::addUsage)) {
+								return ToolResult.text("参数错误：视频" + videoId + "已清理或不存在。");
+							}
+							byte[] videoBytes = tos.download(videoId, output == null ? null : output::addUsage);
+							if (!LocalStorage.detectMimeType(videoBytes, videoId).startsWith("video/")) {
+								return ToolResult.text("参数错误：video 不是视频文件。");
+							}
+							JsonObject video = new JsonObject();
+							video.addProperty("filename", videoId + ".mp4");
+							video.addProperty("data", Base64.getEncoder().encodeToString(videoBytes));
+							JsonObject request = new JsonObject();
+							request.addProperty("action", segment ? "foley_segment" : "foley");
+							request.add("video", video);
+							request.addProperty("prompt", prompt);
+							if (!negative.isEmpty()) {
+								request.addProperty("negative", negative);
+							}
+							if (segment) {
+								request.addProperty("start", start);
+								request.addProperty("length", length);
+							}
+							// 只调用一次 foley；时长由部署端从 foley 图的 PreviewAny(10) 节点读出，
+							// 随结果格式带回，不再额外提交 video_duration 探测任务
+							FoleyGeneration generated = generateFoley(request);
+							byte[] result = generated.data;
+							double duration = generated.duration > 0d ? generated.duration
+									: Mp4Duration.seconds(result);
+							String id = tos.uploadIfNotExists(result, ".mp4",
+									output == null ? null : output::addUsage);
+							if (output != null) {
+								output.addUsage(new FoleyVideoUsage(duration));
+							}
+							return ToolResult.of("视频配音完成，视频id为：" + id + "。",
+									new VideoContent(id, "视频配音"));
+						} catch (IllegalArgumentException ex) {
+							return ToolResult.text("参数错误：" + ex.getMessage());
+						} catch (Throwable ex) {
+							return ToolResult.failure("视频配音失败：" + failureMessage(ex));
+						}
+					};
+					return async ? CompletableFuture.supplyAsync(work)
+							: CompletableFuture.completedFuture(work.get());
+				});
+		if (async) {
+			builder.async();
+		}
+		return builder.build();
+	}
+
+	/** 通过本地模型通道执行 Foley 配音，并带回部署端从时长节点读出的时长。 */
+	static FoleyGeneration generateFoley(JsonObject request) throws Exception {
+		CompletableFuture<ModelGenerationResult> future = LocalModel.require(ModelType.H3,
+				UUID.randomUUID().toString(), request, TimeUnit.MINUTES.toMillis(60));
+		ModelGenerationResult result = future.get(61, TimeUnit.MINUTES);
+		if (result == null || result.bodyData == null || result.bodyData.length == 0) {
+			throw new IllegalStateException("本地模型没有返回配音视频");
+		}
+		String rawFormat = result.format == null ? "" : result.format.trim();
+		String format = rawFormat.toLowerCase();
+		if ("json".equals(format)) {
+			JsonObject response = JsonParser
+					.parseString(new String(result.bodyData, StandardCharsets.UTF_8)).getAsJsonObject();
+			String error = JsonConfig.getNonBlankString(response, "error", "");
+			if (!error.isEmpty()) {
+				throw new IllegalStateException(error);
+			}
+		}
+		double duration = 0d;
+		int marker = format.indexOf("duration=");
+		if (marker >= 0) {
+			int end = format.indexOf(';', marker);
+			String value = end >= 0 ? format.substring(marker + 9, end) : format.substring(marker + 9);
+			try {
+				duration = Double.parseDouble(value.trim());
+			} catch (NumberFormatException ignored) {
+				duration = 0d;
+			}
+		}
+		return new FoleyGeneration(result.bodyData, duration);
+	}
+
+	/** Foley 结果：视频字节 + 部署端从 PreviewAny(10) 读出的时长。 */
+	static final class FoleyGeneration {
+		final byte[] data;
+		final double duration;
+
+		FoleyGeneration(byte[] data, double duration) {
+			this.data = data;
+			this.duration = duration;
+		}
 	}
 
 	/**
@@ -330,10 +542,6 @@ public class H3VideoMcp implements ToolProvider {
 								return ToolResult.text("参数错误：视频" + videoId + "已清理或不存在。");
 							}
 							byte[] videoBytes = tos.download(videoId, output == null ? null : output::addUsage);
-							if (videoBytes.length > MAX_REFERENCE_VIDEO_BYTES) {
-								return ToolResult.text("参数错误：视频过大（上限 "
-										+ (MAX_REFERENCE_VIDEO_BYTES / 1024 / 1024) + "MB）。");
-							}
 							if (!LocalStorage.detectMimeType(videoBytes, videoId).startsWith("video/")) {
 								return ToolResult.text("参数错误：video 不是视频文件。");
 							}
@@ -412,7 +620,8 @@ public class H3VideoMcp implements ToolProvider {
 	/**
 	 * 画面比例 → 实际尺寸。全部是 32 的倍数。
 	 * <p>
-	 * H3（int8）用 864×480 一档的面积；NVFP4 简单动图用 640×352 一档，显存与耗时更低。
+	 * H3（int8）用 864×480 一档的面积；NVFP4 简单动图以 640×352 为基准，
+	 * 宽高各提高 50% 并向上对齐到 32 的倍数（16:9=960×544、1:1=768×768）。
 	 * </p>
 	 *
 	 * @param ratio 比例字符串，全角冒号也会被规整
@@ -425,19 +634,31 @@ public class H3VideoMcp implements ToolProvider {
 		boolean small = mode == Mode.NVFP4;
 		switch (key) {
 		case "16:9":
-			return small ? new int[] { 640, 352 } : new int[] { 864, 480 };
+			return small ? new int[] { nvfp4Size(864), nvfp4Size(480) } : new int[] { 864, 480 };
 		case "9:16":
-			return small ? new int[] { 352, 640 } : new int[] { 480, 864 };
+			return small ? new int[] { nvfp4Size(480), nvfp4Size(864) } : new int[] { 480, 864 };
 		case "1:1":
-			return small ? new int[] { 512, 512 } : new int[] { 640, 640 };
+			return small ? new int[] { nvfp4Size(640), nvfp4Size(640) } : new int[] { 640, 640 };
 		case "4:3":
-			return small ? new int[] { 576, 448 } : new int[] { 736, 544 };
+			return small ? new int[] { nvfp4Size(736), nvfp4Size(544) } : new int[] { 736, 544 };
 		case "3:4":
-			return small ? new int[] { 448, 576 } : new int[] { 544, 736 };
+			return small ? new int[] { nvfp4Size(544), nvfp4Size(736) } : new int[] { 544, 736 };
 		default:
 			throw new IllegalArgumentException(
 					"不支持的比例 " + key + "，必须是 16:9/9:16/1:1/4:3/3:4 之一");
 		}
+	}
+
+	/**
+	 * NVFP4 画布尺寸：基础尺寸按 {@link #NVFP4_RESOLUTION_SCALE} 放大，并向上取到
+	 * {@link H3VideoApi#SIZE_MULTIPLE} 的倍数。
+	 *
+	 * @param base 基础尺寸（宽或高）
+	 * @return 放大并 32 对齐后的尺寸
+	 */
+	private static int nvfp4Size(int base) {
+		int step = H3VideoApi.SIZE_MULTIPLE;
+		return (int) (Math.ceil(base * NVFP4_RESOLUTION_SCALE / step) * step);
 	}
 
 	/** 兼容旧调用：H3 模式的尺寸。 */

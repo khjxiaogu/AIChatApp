@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,6 +16,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
@@ -25,6 +28,8 @@ import com.khjxiaogu.aiwuxia.llm.scheme.ToolCallCollector;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolCallContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ToolContent;
+import com.khjxiaogu.aiwuxia.utils.ToolProgress;
+import com.khjxiaogu.aiwuxia.utils.ToolProgressContext;
 
 /**
  * 单次模型调用（一次生成）的工具调用上下文。
@@ -193,29 +198,47 @@ public class ToolCallContext {
 		private final CompletableFuture<ToolResult> future;
 		/** 是否为等待 1 秒后再决定是否转异步的工具 */
 		private final boolean asyncCandidate;
+		/** 状态事件使用的调用标识；没有状态事件时为 null */
+		private final String callId;
+		private final int round;
+		private final int index;
+		private final int count;
+		/** 是否已经发过终态（避免完成回调与异步任务重复发） */
+		private final AtomicBoolean finished;
+		/** 真正开始执行的时间（毫秒） */
+		private final AtomicLong startedAt;
 		/** 是否已经取过结果 */
 		private boolean awaited;
 
 		private Execution(ToolContent immediate, ToolCall call, ToolCallDisplay display,
-				CompletableFuture<ToolResult> future, boolean asyncCandidate) {
+				CompletableFuture<ToolResult> future, boolean asyncCandidate, String callId, int round, int index,
+				int count, AtomicBoolean finished, AtomicLong startedAt) {
 			this.immediate = immediate;
 			this.call = call;
 			this.display = display;
 			this.future = future;
 			this.asyncCandidate = asyncCandidate;
+			this.callId = callId;
+			this.round = round;
+			this.index = index;
+			this.count = count;
+			this.finished = finished;
+			this.startedAt = startedAt;
 		}
 
 		static Execution finished(ToolContent result) {
-			return new Execution(result, null, null, null, false);
+			return new Execution(result, null, null, null, false, null, 0, 0, 0, null, null);
 		}
 
-		static Execution running(ToolCall call, ToolCallDisplay display, CompletableFuture<ToolResult> future) {
-			return new Execution(null, call, display, future, false);
+		static Execution running(ToolCall call, ToolCallDisplay display, CompletableFuture<ToolResult> future,
+				String callId, int round, int index, int count, AtomicBoolean finished, AtomicLong startedAt) {
+			return new Execution(null, call, display, future, false, callId, round, index, count, finished, startedAt);
 		}
 
 		static Execution asyncCandidate(ToolCall call, ToolCallDisplay display,
-				CompletableFuture<ToolResult> future) {
-			return new Execution(null, call, display, future, true);
+				CompletableFuture<ToolResult> future, String callId, int round, int index, int count,
+				AtomicBoolean finished, AtomicLong startedAt) {
+			return new Execution(null, call, display, future, true, callId, round, index, count, finished, startedAt);
 		}
 	}
 
@@ -318,6 +341,11 @@ public class ToolCallContext {
 		}
 
 		int round = countsRoundLimit(toolCalls) ? rounds.incrementAndGet() : rounds.get();
+		int callCount = toolCalls.size();
+		// 给没有 id 的调用补一个稳定标识：状态事件、实时帧、历史都按同一个 call_id 对齐
+		for (int i = 0; i < callCount; i++) {
+			callIdOf(toolCalls.get(i), round, i);
+		}
 		// 原始调用信息 → 用户友好显示（简述替代工具名 + 具体内容），交给转换器处理
 		List<ToolCallDisplay> displays = buildCallDisplays(toolCalls);
 		ToolCallContent toolCallContent = new ToolCallContent(toolCalls, displays);
@@ -341,7 +369,9 @@ public class ToolCallContext {
 			ToolCall call = toolCalls.get(i);
 			if (roundExceeded && !manager.isRoundExempt(nameOf(call))) {
 				limitReached.set(true);
-				Execution execution = Execution.finished(notExecuted(call, manager.getLimitMessage(), displays.get(i)));
+				ToolContent rejected = notExecuted(call, manager.getLimitMessage(), displays.get(i));
+				emitRejected(call, displays.get(i), round, i, callCount, rejected.toText());
+				Execution execution = Execution.finished(rejected);
 				executions.set(i, execution);
 				results.set(i, execution.immediate);
 				continue;
@@ -357,7 +387,7 @@ public class ToolCallContext {
 				}
 			}
 
-			Execution execution = start(call, displays.get(i));
+			Execution execution = start(call, displays.get(i), round, i, callCount);
 			executions.set(i, execution);
 			if (execution.immediate != null) {
 				results.set(i, execution.immediate);
@@ -457,6 +487,7 @@ public class ToolCallContext {
 
 	/** 1 秒内未完成的异步工具转为后台任务，并返回任务已创建的结果。 */
 	private ToolContent submitAsyncNow(Execution execution, List<ToolContent> results, int index) {
+		// call_id 与 toolCallId 用同一个值，前端可以据此把 task 与工具行关联起来
 		ToolTask task = manager.submitTask(execution.call.function.name, execution.call.id, execution.future,
 				execution.display);
 		ToolContent result = task == null
@@ -465,6 +496,18 @@ public class ToolCallContext {
 						ToolCallDisplay.of(execution.display.getBrief()));
 		results.set(index, result);
 		execution.awaited = true;
+		if (execution.finished != null) {
+			synchronized (execution.finished) {
+				if (execution.finished.compareAndSet(false, true)) {
+					// 转成后台任务后由 task 帧负责“生成中”；工具行不再显示状态
+					emitState(execution.callId, execution.call, execution.display, execution.round,
+							execution.index, execution.count,
+							task == null ? ToolCallState.REJECTED : ToolCallState.SUCCEEDED,
+							System.currentTimeMillis(), execution.startedAt.get(), null, null,
+							task == null ? manager.getToolErrorMessage() : "已转后台任务");
+				}
+			}
+		}
 		return result;
 	}
 
@@ -513,6 +556,10 @@ public class ToolCallContext {
 	 * @return 处理结果（{@code interrupted} 为 true、{@code shouldContinue} 为 false）
 	 */
 	private ProcessResult writeInterrupted(List<ToolCall> toolCalls, String reasonerText) {
+		int round = rounds.get();
+		for (int i = 0; i < toolCalls.size(); i++) {
+			callIdOf(toolCalls.get(i), round, i);
+		}
 		List<ToolCallDisplay> displays = buildCallDisplays(toolCalls);
 		ToolCallContent toolCallContent = new ToolCallContent(toolCalls, displays);
 		emit(toolCallContent);
@@ -539,34 +586,44 @@ public class ToolCallContext {
 	 * 还是登记为后台任务。
 	 * </p>
 	 */
-	private Execution start(ToolCall call, ToolCallDisplay callDisplay) {
+	private Execution start(ToolCall call, ToolCallDisplay callDisplay, int round, int index, int count) {
 		if (call.function == null) {
-			return Execution.finished(notExecuted(call, manager.getMissingToolMessage(), callDisplay));
+			ToolContent rejected = notExecuted(call, manager.getMissingToolMessage(), callDisplay);
+			emitRejected(call, callDisplay, round, index, count, rejected.toText());
+			return Execution.finished(rejected);
 		}
 		ToolRegistration registration = manager.getRegistration(call.function.name);
 		if (registration == null) {
-			return Execution.finished(notExecuted(call, manager.getMissingToolMessage(), callDisplay));
+			ToolContent rejected = notExecuted(call, manager.getMissingToolMessage(), callDisplay);
+			emitRejected(call, callDisplay, round, index, count, rejected.toText());
+			return Execution.finished(rejected);
 		}
 		ToolData data = registration.getData();
 		// 声明为不限次的工具不参与任何次数校验，也不占用总次数上限的额度
 		boolean unlimited = manager.isUnlimited(call.function.name);
 		if (!unlimited && manager.hasCallLimit() && calls.get() >= manager.getMaxCalls()) {
 			callLimitExhausted.set(true);
-			return Execution.finished(notExecuted(call, manager.getLimitMessage(), callDisplay));
+			ToolContent rejected = notExecuted(call, manager.getLimitMessage(), callDisplay);
+			emitRejected(call, callDisplay, round, index, count, rejected.toText());
+			return Execution.finished(rejected);
 		}
 		int groupId = registration.getGroupId();
 		if (!unlimited && groupId > 0 && manager.hasGroupLimit(groupId)) {
 			int groupLimit = manager.getGroupMaxCalls(groupId);
 			if (getGroupCallCount(groupId) >= groupLimit) {
 				callLimitExhausted.set(true);
-				return Execution.finished(notExecuted(call, manager.getGroupLimitMessage(), callDisplay));
+				ToolContent rejected = notExecuted(call, manager.getGroupLimitMessage(), callDisplay);
+				emitRejected(call, callDisplay, round, index, count, rejected.toText());
+				return Execution.finished(rejected);
 			}
 		}
 		// 单个工具的执行次数上限（属于共享组时以组上限为准）
 		if (!unlimited && groupId <= 0 && registration.getMaxCalls() >= 0
 				&& getToolCallCount(call.function.name) >= registration.getMaxCalls()) {
 			callLimitExhausted.set(true);
-			return Execution.finished(notExecuted(call, manager.getToolLimitMessage(), callDisplay));
+			ToolContent rejected = notExecuted(call, manager.getToolLimitMessage(), callDisplay);
+			emitRejected(call, callDisplay, round, index, count, rejected.toText());
+			return Execution.finished(rejected);
 		}
 
 		// 权限由管理器上的全部监听器合并判定（拒绝 > 询问 > 允许 > 忽略，遇拒绝短路）
@@ -585,7 +642,10 @@ public class ToolCallContext {
 					: ToolCallDecision.deny(approval.getReasonOr(manager.getUnapprovedMessage()));
 		}
 		if (!decision.isAllowed()) {
-			return Execution.finished(notExecuted(call, decision.getReasonOr(ToolCallManager.DEFAULT_DENY_MESSAGE), callDisplay));
+			ToolContent rejected = notExecuted(call, decision.getReasonOr(ToolCallManager.DEFAULT_DENY_MESSAGE),
+					callDisplay);
+			emitRejected(call, callDisplay, round, index, count, rejected.toText());
+			return Execution.finished(rejected);
 		}
 
 		if (!unlimited) {
@@ -597,36 +657,132 @@ public class ToolCallContext {
 			groupCalls.computeIfAbsent(groupId, n -> new AtomicInteger()).incrementAndGet();
 		}
 		if (data.tool == null) {
-			return Execution.finished(notExecuted(call, manager.getToolErrorMessage(), callDisplay));
+			ToolContent failed = notExecuted(call, manager.getToolErrorMessage(), callDisplay);
+			emitRejected(call, callDisplay, round, index, count, failed.toText());
+			return Execution.finished(failed);
 		}
+
+		final String callId = callIdOf(call, round, index);
+		final long startTime = System.currentTimeMillis();
+		final AtomicLong startedAt = new AtomicLong(startTime);
+		final AtomicBoolean finished = new AtomicBoolean();
+		// 工具一开始执行就先亮“执行中”；本地模型随后上报 queued 时会切到“排队中”
+		emitState(callId, call, callDisplay, round, index, count, ToolCallState.RUNNING, startTime, startTime, null,
+				null, "");
+		final Consumer<ToolProgress> sink = progress -> emitProgress(callId, call, callDisplay, round, index, count,
+				startedAt, finished, progress);
 		// 工具本体放到工具线程池上运行：同批调用因此可以并发执行，不再一个个阻塞等待
 		CompletableFuture<ToolResult> future;
 		try {
-			future = CompletableFuture.supplyAsync(() -> {
+			future = CompletableFuture.supplyAsync(() -> ToolProgressContext.callWith(sink, () -> {
 				try {
 					return data.tool.run(call.function.arguments, output, manager);
 				} catch (Throwable ex) {
 					throw new CompletionException(ex);
 				}
-			}, TOOL_EXECUTOR).thenCompose(next -> next == null ? CompletableFuture.<ToolResult>completedFuture(null)
+			}), TOOL_EXECUTOR).thenCompose(next -> next == null ? CompletableFuture.<ToolResult>completedFuture(null)
 					: next);
 		} catch (Throwable ex) {
 			ex.printStackTrace();
+			synchronized (finished) {
+				if (finished.compareAndSet(false, true)) {
+					emitState(callId, call, callDisplay, round, index, count, ToolCallState.FAILED,
+							System.currentTimeMillis(), startedAt.get(), null, null, manager.getToolErrorMessage());
+				}
+			}
 			return Execution.finished(notExecuted(call, manager.getToolErrorMessage(), callDisplay));
 		}
+		future.whenComplete((result, error) -> {
+			synchronized (finished) {
+				if (!finished.compareAndSet(false, true)) {
+					return;
+				}
+				ToolCallState state = error == null && result != null ? ToolCallState.SUCCEEDED
+						: error instanceof CancellationException ? ToolCallState.CANCELLED : ToolCallState.FAILED;
+				String message = error == null ? "" : (error.getMessage() == null ? error.toString() : error.getMessage());
+				emitState(callId, call, callDisplay, round, index, count, state, System.currentTimeMillis(),
+						startedAt.get(), null, null, message);
+			}
+		});
 		if (registration.isAsync() && !manager.isDisableAsyncTasks()) {
 			if (!batchAsyncDecisionMade) {
 				batchAsyncDecisionMade = true;
 				batchAsyncAllowed = manager.hasAsyncTaskCapacity();
 			}
 			if (!batchAsyncAllowed) {
-				return Execution.finished(
-						notExecuted(call, manager.getAsyncTaskLimitMessage(), callDisplay));
+				ToolContent rejected = notExecuted(call, manager.getAsyncTaskLimitMessage(), callDisplay);
+				synchronized (finished) {
+					if (finished.compareAndSet(false, true)) {
+						emitState(callId, call, callDisplay, round, index, count, ToolCallState.REJECTED,
+								System.currentTimeMillis(), startedAt.get(), null, null,
+								manager.getAsyncTaskLimitMessage());
+					}
+				}
+				return Execution.finished(rejected);
 			}
 			// 先启动工具，等待窗口结束后再决定直接返回结果还是转后台任务
-			return Execution.asyncCandidate(call, callDisplay, future);
+			return Execution.asyncCandidate(call, callDisplay, future, callId, round, index, count, finished,
+					startedAt);
 		}
-		return Execution.running(call, callDisplay, future);
+		return Execution.running(call, callDisplay, future, callId, round, index, count, finished, startedAt);
+	}
+
+	/**
+	 * 给没有 id 的调用补一个稳定标识（同一批内唯一），并返回它。
+	 * <p>
+	 * 状态事件、实时 {@code tool_call} 帧和历史里的工具段都使用同一个 id，前端才能把
+	 * “排队中/执行中”贴到正确的工具行上。
+	 * </p>
+	 */
+	private static String callIdOf(ToolCall call, int round, int index) {
+		if (call == null) {
+			return "call-" + round + "-" + index;
+		}
+		if (call.id == null || call.id.isEmpty()) {
+			call.id = "call-" + round + "-" + index;
+		}
+		return call.id;
+	}
+
+	/** 发一次工具调用状态事件。 */
+	private void emitState(String callId, ToolCall call, ToolCallDisplay display, int round, int index, int count,
+			ToolCallState state, long time, long startedAt, Long etaMs, Double progress, String message) {
+		manager.notifyToolCallEvent(new ToolCallEvent(callId, nameOf(call),
+				display == null ? "" : display.getBrief(), state, round, index, count, time, startedAt, etaMs,
+				progress, message));
+	}
+
+	/** 发一次“未执行”的终态（超限/无权限/工具不存在等），只用于让前端清掉状态。 */
+	private void emitRejected(ToolCall call, ToolCallDisplay display, int round, int index, int count,
+			String message) {
+		emitState(callIdOf(call, round, index), call, display, round, index, count, ToolCallState.REJECTED,
+				System.currentTimeMillis(), 0, null, null, message);
+	}
+
+	/** 把本地模型上报的排队/执行/进度转成工具调用状态事件。 */
+	private void emitProgress(String callId, ToolCall call, ToolCallDisplay display, int round, int index,
+			int count, AtomicLong startedAt, AtomicBoolean finished, ToolProgress progress) {
+		if (progress == null) {
+			return;
+		}
+		synchronized (finished) {
+			if (finished.get()) {
+				return;
+			}
+			long now = System.currentTimeMillis();
+			if (ToolProgress.STATUS_QUEUED.equals(progress.getStatus())) {
+				// 排队期间不算执行时间；真正开始执行时再记 start
+				startedAt.set(0);
+				emitState(callId, call, display, round, index, count, ToolCallState.QUEUED, now, 0, null, null,
+						progress.getMessage());
+			} else {
+				if (startedAt.get() == 0) {
+					startedAt.set(now);
+				}
+				emitState(callId, call, display, round, index, count, ToolCallState.RUNNING, now, startedAt.get(),
+						progress.getEtaMs(), progress.getProgress(), progress.getMessage());
+			}
+		}
 	}
 
 	/**

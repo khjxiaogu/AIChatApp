@@ -2,6 +2,7 @@ package com.khjxiaogu.aiwuxia.mcp;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -76,6 +77,16 @@ public class SDXLMcp implements ToolProvider {
 	 * </p>
 	 */
 	private final boolean contentIdMode;
+	/**
+	 * 请求经本地模型连接器执行时，连接器所属的用户标识（null 表示共享连接池）。
+	 * <p>
+	 * 只用于判断“这次请求会落到哪个连接器上、它是否声明了分块/大报文能力”，
+	 * 见 {@link #referencePayload(String, AIOutput)}。
+	 * </p>
+	 */
+	private final String connectorUid;
+	/** 请求是否经本地模型连接器执行；为 false 时参考图始终按 {@link #urlGetter} 的形式发送。 */
+	private final boolean viaLocalModelConnector;
 
 	public static class LoraConfigurations{
 		public final List<LoraConfiguration> li=new ArrayList<>(5);
@@ -299,11 +310,17 @@ public class SDXLMcp implements ToolProvider {
 
     /**
      * 创建绑定到指定用户的 SDXL 图片工具集，并指定结果内容里是否放对象存储 id。
+     * <p>
+     * 参考图（图生图 / 分区图生图 / 反推提示词）的发送方式取决于实际接管的本地模型连接器：
+     * 连接器声明了分块/大报文能力（{@code flags} 含 {@code chunked}）时直接把图片文件以 Base64 放进请求报文，
+     * 否则仍然只传 {@code urlGetter} 给出的链接。判断逻辑见
+     * {@link #referencePayload(String, AIOutput)}。
+     * </p>
      *
      * @param uid           用户标识，可为 null 或空（等价于共享池）
      * @param tos           对象存储
      * @param lora          Lora 配置
-     * @param urlGetter     图片 id → 图片内容
+     * @param urlGetter     图片 id → 图片引用（通常是链接；支持分块的连接器下会被替换成文件内容）
      * @param isNsfw        是否允许不宜内容
      * @param contentIdMode true 表示结果内容里放对象存储 id，由 MCP 服务端转换成统一媒体入口
      * @return 绑定该用户的工具集
@@ -312,7 +329,7 @@ public class SDXLMcp implements ToolProvider {
             Map<String, LoraConfigurations> lora, BiFunction<String, AIOutput, String> urlGetter, boolean isNsfw,
             boolean contentIdMode) {
         BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,data)->LocalModel.require(uid,ModelType.SDXL,UUID.randomUUID().toString(), JsonBuilder.object().add("path", url).add("data", data).end()).thenApply(t->JsonParser.parseString(new String(t.bodyData,StandardCharsets.UTF_8)).getAsJsonObject());
-        return create(tos,lora,isNsfw,urlGetter,func,contentIdMode);
+        return create(tos,lora,isNsfw,urlGetter,func,contentIdMode,uid,true);
     }
 	public static SDXLMcp createLocal(ObjectStorageProvider tos,Map<String,LoraConfigurations> lora,boolean isNsfw,ResourceLock lock) {
 		BiFunction<String,String,CompletableFuture<JsonObject>> func=(url,payload)->CompletableFuture.supplyAsync(()->{
@@ -368,6 +385,106 @@ public class SDXLMcp implements ToolProvider {
 				throw new RuntimeException(e);
 			}
 		};
+	}
+
+	/**
+	 * 参考图在 SDXL 请求报文里的取值。
+	 * <p>
+	 * 经本地模型连接器执行、且该连接器声明了分块/大报文能力（握手 URL 或能力集合报文的 {@code flags} 含 {@code chunked}）时，
+	 * 直接把图片文件以 Base64 放进报文，而不是只给一个链接：声明了该标记的连接接收大请求时会按分块
+	 * 下发，不受单个 WebSocket 帧大小限制，连接器以及它后面的 SD WebUI 也不需要能访问本服务器
+	 * 的图片链接。其它情况（例如浏览器接入页这类没有声明分块能力的连接）保持原来的链接形式；
+	 * 读不到图片时也回退到链接，避免整次生成失败。
+	 * </p>
+	 *
+	 * @param reference 图片引用：对象存储 id，或 {@code /painter/image?image_id=...}、
+	 *                  {@code /aichat/mcp/media?file_id=...} 这类链接
+	 * @param output    用量接收方，可为 null
+	 * @return 放进请求报文的取值
+	 */
+	private String referencePayload(String reference, AIOutput output) {
+		if (viaLocalModelConnector && LocalModel.supportsChunked(connectorUid, ModelType.SDXL)) {
+			String inline = inlineReference(reference, output);
+			if (inline != null) {
+				return inline;
+			}
+		}
+		return urlGetter.apply(reference, output);
+	}
+
+	/**
+	 * 按对象存储 id 读取图片并编码成 Base64，供声明了分块能力的连接器直接在报文里接收文件。
+	 *
+	 * @param reference 图片引用
+	 * @param output    用量接收方，可为 null
+	 * @return Base64 内容；不是可读取的对象存储 id 或读取失败时返回 null
+	 */
+	private String inlineReference(String reference, AIOutput output) {
+		String id = storageIdOf(reference);
+		if (id == null || tos == null) {
+			return null;
+		}
+		try {
+			byte[] data = tos.download(id, output == null ? null : output::addUsage);
+			if (data == null || data.length == 0) {
+				System.err.println("[SDXL] 参考图内容为空，回退为链接：" + id);
+				return null;
+			}
+			System.out.println("[SDXL] 连接器支持分块，参考图随报文下发：id=" + id + " 大小=" + data.length + "B");
+			return Base64.getEncoder().encodeToString(data);
+		} catch (Throwable ex) {
+			System.err.println("[SDXL] 参考图读取失败，回退为链接：" + id + " 错误=" + ex);
+			return null;
+		}
+	}
+
+	/** 对象存储 id：72 位十六进制内容哈希，可带扩展名。 */
+	private static final Pattern STORAGE_ID_PATTERN = Pattern.compile("[0-9a-fA-F]{72}(?:\\.[0-9A-Za-z]{1,16})?");
+	/** 参考图链接里的对象存储 id 参数名。 */
+	private static final String[] STORAGE_ID_PARAMS = { "file_id=", "image_id=" };
+
+	/**
+	 * 从图片引用里取出对象存储 id。
+	 * <p>
+	 * 既接受裸 id（72 位十六进制，可带扩展名），也接受本程序的图片链接：
+	 * {@code /painter/image?image_id=...}、{@code /aichat/mcp/media?file_id=...}。
+	 * </p>
+	 *
+	 * @param reference 图片引用，可为 null
+	 * @return 对象存储 id；无法识别时返回 null
+	 */
+	public static String storageIdOf(String reference) {
+		if (reference == null) {
+			return null;
+		}
+		String value = reference.trim();
+		if (value.isEmpty()) {
+			return null;
+		}
+		if (STORAGE_ID_PATTERN.matcher(value).matches()) {
+			return value;
+		}
+		for (String param : STORAGE_ID_PARAMS) {
+			int index = value.indexOf(param);
+			if (index < 0) {
+				continue;
+			}
+			String id = value.substring(index + param.length());
+			int amp = id.indexOf('&');
+			if (amp >= 0) {
+				id = id.substring(0, amp);
+			}
+			try {
+				id = URLDecoder.decode(id, "UTF-8");
+			} catch (java.io.UnsupportedEncodingException ex) {
+				// UTF-8 一定可用；保留原值
+			}
+			id = id.trim();
+			if (STORAGE_ID_PATTERN.matcher(id).matches()) {
+				return id;
+			}
+		}
+		return null;
 	}
 	/**
 	 * 从字符串列表中搜索同时包含所有搜索关键词的字符串。
@@ -461,7 +578,28 @@ public class SDXLMcp implements ToolProvider {
 	public static SDXLMcp create(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
 			BiFunction<String, AIOutput, String> urlGetter,
 			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode) {
-		return new SDXLMcp(tos, lora, isNsfw, urlGetter, func, contentIdMode);
+		return create(tos, lora, isNsfw, urlGetter, func, contentIdMode, null, false);
+	}
+
+	/**
+	 * 创建图片工具集，并指定参考图在本地模型连接器上的发送方式所需的信息。
+	 *
+	 * @param tos                  对象存储
+	 * @param lora                 Lora 配置
+	 * @param isNsfw               是否允许不宜内容
+	 * @param urlGetter            图片 id → 图片引用（链接或 Base64）
+	 * @param func                 调用 SDXL 服务的函数
+	 * @param contentIdMode        true 表示结果内容里放对象存储 id，由 MCP 服务端统一转换链接
+	 * @param connectorUid         本地模型连接器所属用户，可为 null（共享连接池）
+	 * @param viaLocalModelConnector 是否经本地模型连接器执行；true 时连接器声明了 {@code flags=chunked}
+	 *                             就把参考图文件直接放进报文
+	 * @return 工具集
+	 */
+	public static SDXLMcp create(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
+			BiFunction<String, AIOutput, String> urlGetter,
+			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode,
+			String connectorUid, boolean viaLocalModelConnector) {
+		return new SDXLMcp(tos, lora, isNsfw, urlGetter, func, contentIdMode, connectorUid, viaLocalModelConnector);
 	}
 
 	/**
@@ -501,12 +639,34 @@ public class SDXLMcp implements ToolProvider {
 	public SDXLMcp(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
 			BiFunction<String, AIOutput, String> urlGetter,
 			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode) {
+		this(tos, lora, isNsfw, urlGetter, func, contentIdMode, null, false);
+	}
+
+	/**
+	 * 创建 SDXL 图片工具集。
+	 *
+	 * @param tos                    对象存储
+	 * @param lora                    Lora 配置
+	 * @param isNsfw                  是否允许不宜内容
+	 * @param urlGetter               图片 id → 图片引用（链接或 Base64）
+	 * @param func                    调用 SDXL 服务的函数
+	 * @param contentIdMode           true 表示结果内容里放对象存储 id
+	 * @param connectorUid            本地模型连接器所属用户，可为 null（共享连接池）
+	 * @param viaLocalModelConnector  是否经本地模型连接器执行；为 true 时按连接器的分块能力
+	 *                                决定参考图是内嵌文件还是只给链接
+	 */
+	public SDXLMcp(ObjectStorageProvider tos, Map<String, LoraConfigurations> lora, boolean isNsfw,
+			BiFunction<String, AIOutput, String> urlGetter,
+			BiFunction<String, String, CompletableFuture<JsonObject>> func, boolean contentIdMode,
+			String connectorUid, boolean viaLocalModelConnector) {
 		this.tos = tos;
 		this.lora = lora;
 		this.isNsfw = isNsfw;
 		this.urlGetter = urlGetter;
 		this.func = func;
 		this.contentIdMode = contentIdMode;
+		this.connectorUid = connectorUid;
+		this.viaLocalModelConnector = viaLocalModelConnector;
 
 		resolutions.put("16:9", new int[] { 1920, 1080 });
 		resolutions.put("9:16", new int[] { 1080, 1920 });
@@ -537,7 +697,7 @@ public class SDXLMcp implements ToolProvider {
 					if (mtch.find()) {
 						String id = mtch.group(1);
 						try {
-							JsonObject datax = interrogate(urlGetter.apply(id, output),func);
+							JsonObject datax = interrogate(referencePayload(id, output),func);
 							StringBuilder sb=new StringBuilder("按可能性从大到小排列的提示词：");
 							for(String key:datax.keySet()) {
 								sb.append(key).append(",");
@@ -707,7 +867,7 @@ public class SDXLMcp implements ToolProvider {
 									else if(jes.isNumber())
 										strength=jes.getAsFloat();
 								}
-								image=generateRegionalImage2Image(urlGetter.apply(jo.get("picture_id").getAsString(),output),prompt,negative,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
+								image=generateRegionalImage2Image(referencePayload(jo.get("picture_id").getAsString(),output),prompt,negative,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
 										its[0],
 										its[1],isRow,ratio,strength*0.2f+0.6f,func);
 							}else{
@@ -796,7 +956,7 @@ public class SDXLMcp implements ToolProvider {
 						System.out.println(negative);
 						try {
 
-							byte[] image=generateImage2Image(urlGetter.apply(pid,output),prompt,negative
+							byte[] image=generateImage2Image(referencePayload(pid,output),prompt,negative
 									,(int) (20+(Math.min(Math.max(strength-0.5, 0),1)*10)),
 									its[0],
 									its[1],strength*0.2f+0.6f,func);

@@ -42,6 +42,7 @@ public class LocalModelClientTest {
 		testProgressReporting();
 		testFileChunk();
 		testOutboxReplay();
+		testChunkedRequest();
 		System.out.println("LocalModelClientTest: 全部用例通过");
 	}
 
@@ -103,6 +104,9 @@ public class LocalModelClientTest {
 				"应发送 capabilities 报文，实际：" + message);
 		List<String> types = LocalModelProtocol.modelTypes(message);
 		check(types.equals(List.of("h3")), "未注册的 svs 应被忽略，实际：" + types);
+		List<String> flags = LocalModelProtocol.flags(message);
+		check(flags.contains(LocalModelProtocol.FLAG_CHUNKED),
+				"capabilities 报文应带分块/大报文能力标记，实际：" + flags);
 		check(client.getModelTypes().equals(Set.of(ModelType.H3)), "本地能力集合应同步为 h3");
 
 		transport.sent.clear();
@@ -216,6 +220,47 @@ public class LocalModelClientTest {
 		client.closeService();
 	}
 
+	/**
+	 * 服务器把过大的请求按二进制分块下发时，连接器应组装后按普通请求处理。
+	 */
+	private static void testChunkedRequest() throws Exception {
+		FakeFactory factory = new FakeFactory();
+		LocalModelClient client = new LocalModelClient(factory, SERVER, Map.of(), false, 1000);
+		AtomicReference<String> prompt = new AtomicReference<>();
+		client.register(ModelType.H3, request -> {
+			prompt.set(request.has("prompt") ? request.get("prompt").getAsString() : "");
+			return new LocalModelClient.Response("ok".getBytes(StandardCharsets.UTF_8), "json");
+		});
+		check(client.connectBlocking(), "假传输应连接成功");
+		FakeTransport transport = factory.last;
+		check(transport.uri.toString().contains("flags=chunked"),
+				"连接地址应声明分块/大报文能力，实际：" + transport.uri);
+
+		String json = "{\"reqid\":\"chunked\",\"type\":\"h3\",\"prompt\":\"分块请求测试\"}";
+		byte[] data = json.getBytes(StandardCharsets.UTF_8);
+		int chunkSize = 16;
+		int total = LocalModelProtocol.fileChunkCount(data.length, chunkSize);
+		check(total > 1, "测试数据应分成多块，实际：" + total);
+		for (int i = 1; i <= total; i++) {
+			int offset = (i - 1) * chunkSize;
+			int length = Math.min(chunkSize, data.length - offset);
+			transport.receiveBinary(
+					LocalModelProtocol.encodeRequestChunk("chunked", "json", data, offset, length, i, total));
+		}
+
+		await("分块请求应被组装并处理", () -> "分块请求测试".equals(prompt.get()));
+		check("分块请求测试".equals(prompt.get()), "处理器应收到组装后的请求，实际：" + prompt.get());
+
+		// 两种分块靠魔数区分，不能互相误判
+		byte[] requestFrame = LocalModelProtocol.encodeRequestChunk("x", "json", data, 0, data.length, 1, 1);
+		byte[] resultFrame = LocalModelProtocol.encodeFileChunk("x", "json", data, 0, data.length, 1, 1);
+		check(LocalModelProtocol.parseRequestChunk(requestFrame) != null, "请求分块应能解析");
+		check(LocalModelProtocol.parseFileChunk(requestFrame) == null, "请求分块不应被当成结果分块");
+		check(LocalModelProtocol.parseFileChunk(resultFrame) != null, "结果分块应能解析");
+		check(LocalModelProtocol.parseRequestChunk(resultFrame) == null, "结果分块不应被当成请求分块");
+		client.closeService();
+	}
+
 	/** 取最后一条消息的 JSON。 */
 	private static JsonObject lastJson(List<String> sent) {
 		check(!sent.isEmpty(), "应当发送过报文");
@@ -323,6 +368,13 @@ public class LocalModelClientTest {
 		private void receive(String message) {
 			if (listener != null) {
 				listener.onMessage(message);
+			}
+		}
+
+		/** 模拟服务器下发一条二进制帧（例如分块请求）。 */
+		private void receiveBinary(byte[] frame) {
+			if (listener != null) {
+				listener.onBinary(frame);
 			}
 		}
 	}

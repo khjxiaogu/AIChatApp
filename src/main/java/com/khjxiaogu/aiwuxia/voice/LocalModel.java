@@ -77,6 +77,37 @@ public class LocalModel {
     }
 
     /**
+     * 判断指定用户接下来会取用的连接器是否声明了某个协议能力标记。
+     * <p>
+     * 标记在握手 URL（{@code flags=...}）或运行期 {@code capabilities} 报文里声明。
+     * 例如 {@link com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol#FLAG_CHUNKED}
+     * 表示支持分块/大报文，可以在报文里直接内嵌图片等多媒体内容，而不是只给链接。
+     * 取用顺序与 {@link #require(String, ModelType, String, JsonObject)} 一致：
+     * 用户专属连接优先，用户没有可用连接时看共享连接池。
+     * </p>
+     *
+     * @param uid       用户标识，可为 null 或空（只检查共享连接池）
+     * @param modelType 模型类型
+     * @param flag      协议能力标记
+     * @return 取用顺序上的连接声明了该标记时返回 true
+     */
+    public static boolean supportsFlag(String uid, ModelType modelType, String flag) {
+        return lhs.supportsFlag(uid, modelType, flag);
+    }
+
+    /**
+     * 判断指定用户接下来会取用的连接器是否支持分块/大报文
+     * （{@code LocalModelProtocol.FLAG_CHUNKED}）。
+     *
+     * @param uid       用户标识，可为 null 或空（只检查共享连接池）
+     * @param modelType 模型类型
+     * @return 支持时返回 true
+     */
+    public static boolean supportsChunked(String uid, ModelType modelType) {
+        return lhs.supportsChunked(uid, modelType);
+    }
+
+    /**
      * 检查是否有任何在线可用的连接。
      *
      * @return 如果至少有一个活跃的 WebSocket 连接则返回 true

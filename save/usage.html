@@ -1184,6 +1184,65 @@
                     </div>
                 </div>
             </div>
+
+            <!-- H3 视频生成：给定时长 × 每秒系数即可估算配额 -->
+            <div class="card">
+                <div class="card-header">
+                    <span>H3 视频生成消耗</span>
+                    <span style="font-size: 13px; font-weight: normal; margin-left: auto; color: #5b6e8c;">配额 / 秒</span>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>画面比例</th>
+                                <th>H3 视频制作</th>
+                                <th>NVFP4 简单动图</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>16:9 / 9:16</td>
+                                <td><span class="price-number">12,900</span><span class="price-sub">配额/秒</span></td>
+                                <td><span class="price-number">14,800</span><span class="price-sub">配额/秒</span></td>
+                            </tr>
+                            <tr>
+                                <td>1:1</td>
+                                <td><span class="price-number">12,700</span><span class="price-sub">配额/秒</span></td>
+                                <td><span class="price-number">17,600</span><span class="price-sub">配额/秒</span></td>
+                            </tr>
+                            <tr>
+                                <td>4:3 / 3:4</td>
+                                <td><span class="price-number">12,300</span><span class="price-sub">配额/秒</span></td>
+                                <td><span class="price-number">17,200</span><span class="price-sub">配额/秒</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="footnote">
+                    <div class="footnote-item">
+                        <span class="asterisk">*</span>
+                        <span><strong>计算方式：</strong>配额 ≈ 表中“配额/秒” × 时长（秒）。例如 16:9 的 5 秒 H3 视频约
+                            <strong>{{ formatNumber(12900 * 5) }}</strong> 配额。</span>
+                    </div>
+                    <div class="footnote-item">
+                        <span class="asterisk">*</span>
+                        <span>表内为按固定参数估算的近似线性系数，已忽略 17k+5 帧数取整、冷加载与文本编码的细微差异，实际以结算用量为准。</span>
+                    </div>
+                    <div class="footnote-item">
+                        <span class="asterisk">*</span>
+                        <span><strong>视频配音（Foley）：</strong>计算时间 T ≈ 12 + 1.6 × 视频时长（秒），
+                            配额 = T / 3600 × 1,000,000。例如 10 秒视频约 28 秒计算时间、约 7,778 配额。</span>
+                    </div>
+                </div>
+                <!--
+                  每秒配额系数（由 H3VideoUsage 计算后取整）：
+                  H3（int8，8 步，10 秒基准）：16:9/9:16 = 12925，1:1 = 12699，4:3/3:4 = 12296
+                  NVFP4（6 步，6 秒基准）：16:9/9:16 = 14868，1:1 = 17586，4:3/3:4 = 17200
+                  配额 ≈ 每秒系数 × 时长；不需要考虑具体帧数取整。
+                  视频配音（Foley）：T = 12 + 1.6 * duration，配额 = T / 3600 * 1000000。
+                -->
+            </div>
         </div>
     </div>
 

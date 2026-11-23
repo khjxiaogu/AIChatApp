@@ -12,6 +12,7 @@ import com.google.gson.JsonObject;
 
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
+import com.khjxiaogu.aiwuxia.tools.TaskPriority;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.voice.LocalModel;
 import com.khjxiaogu.aiwuxia.voice.LocalModelClient.ProgressReporter;
@@ -74,7 +75,10 @@ public final class SvsLocalModelHandler {
 	private static Response handle(JsonObject request, ResourceLock lock, String svsHost,
 			ProgressReporter progress) {
 		progress.queued("等待本地模型资源");
-		try (ResourcePermit permit = lock.acquire(SVS_RESOURCE_AMOUNT)) {
+		long queuedAt = System.currentTimeMillis();
+		try (ResourcePermit permit = lock.acquire(SVS_RESOURCE_AMOUNT, TaskPriority.NORMAL)) {
+			System.out.println("[SVS-LocalModel] 已获取资源锁（排队 " + (System.currentTimeMillis() - queuedAt)
+					+ "ms）" + (request.has("reqid") ? " reqid=" + request.get("reqid").getAsString() : ""));
 			String url = JsonConfig.getTrimmed(request, "url");
 			if (url.isEmpty()) {
 				throw new IllegalArgumentException("missing svs url");
@@ -108,7 +112,7 @@ public final class SvsLocalModelHandler {
 					.append("&protect=").append(protect)
 					.append("&do_split=").append(doSplit);
 			// 排队结束、正式把请求下发给 localemp 的那一刻才切到“执行中”
-			progress.running("已下发 localemp");
+			progress.running("已下发 localemp", Long.getLong("svsEtaMs", 60000L));
 			String response = HttpRequestBuilder.create("http", svsHost).url(query.toString())
 					.get().readString();
 			System.out.println("[SVS-LocalModel] " + response);

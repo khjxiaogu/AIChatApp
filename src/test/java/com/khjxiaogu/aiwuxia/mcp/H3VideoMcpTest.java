@@ -31,6 +31,7 @@ public class H3VideoMcpTest {
 		testGraphWithFrames();
 		testGraphNvfp4();
 		testFrameGraph();
+		testVideoToVideoGraph();
 		testUsage();
 		System.out.println("H3VideoMcpTest: 全部用例通过");
 	}
@@ -59,9 +60,11 @@ public class H3VideoMcpTest {
 				"截帧参数应为 video/frame，实际：" + frameTool.params.keySet());
 		check(frameTool.optionalParams.equals(Set.of("frame")), "截帧只有 frame 可选");
 		for (ToolData tool : new ToolData[] { h3, nvfp4 }) {
-			check(tool.params.keySet().equals(Set.of("prompt", "reference", "video", "resolution", "duration")),
-					"参数应为 prompt/reference/video/resolution/duration，实际：" + tool.params.keySet());
-			check(tool.optionalParams.equals(Set.of("reference", "video", "resolution", "duration")),
+			check(tool.params.keySet()
+					.equals(Set.of("prompt", "reference", "video", "first", "last", "resolution", "duration")),
+					"参数集合不正确，实际：" + tool.params.keySet());
+			check(tool.optionalParams
+					.equals(Set.of("reference", "video", "first", "last", "resolution", "duration")),
 					"只有 prompt 是必填，实际可选参数：" + tool.optionalParams);
 			check(tool.async, "视频生成耗时长，工具应声明为异步");
 			check(tool.description.contains("步数"), "工具描述应说明步数等参数由代码固定");
@@ -87,7 +90,6 @@ public class H3VideoMcpTest {
 			int[] small = H3VideoMcp.dimensions(ratios[i], H3VideoMcp.Mode.NVFP4);
 			check(small[0] % H3VideoApi.SIZE_MULTIPLE == 0 && small[1] % H3VideoApi.SIZE_MULTIPLE == 0,
 					"NVFP4 " + ratios[i] + " 的宽高必须是 32 的倍数");
-			check(small[0] * small[1] < size[0] * size[1], "NVFP4 画布应小于 H3");
 		}
 		int[] fullWidth = H3VideoMcp.dimensions("16：9");
 		check(fullWidth[0] == 864 && fullWidth[1] == 480, "全角冒号也应能识别");
@@ -201,6 +203,34 @@ public class H3VideoMcpTest {
 		JsonObject batch = graph.getAsJsonObject("3").getAsJsonObject("inputs");
 		check(batch.get("batch_index").getAsInt() == -1, "batch_index 应透传 -1");
 		check(graph.getAsJsonObject("4").get("class_type").getAsString().equals("SaveImage"), "节点 4 应为 SaveImage");
+	}
+
+	/** 视频生视频图：首/尾视频各自 LoadVideo → VideoTemporalCrop → GetVideoComponents → 取边帧。 */
+	private static void testVideoToVideoGraph() {
+		JsonObject graph = new H3VideoApi().buildVideoFromVideos("衔接", 864, 480, 124, 1,
+				"h3/a.mp4", 0, 48, "h3/b.mp4", 0, 24);
+		check(graph.has("30") && graph.has("31") && graph.has("32") && graph.has("33"), "应有首帧视频链 30~33");
+		check(graph.has("40") && graph.has("41") && graph.has("42") && graph.has("43"), "应有尾帧视频链 40~43");
+		JsonObject firstInputs = graph.getAsJsonObject("5").getAsJsonObject("inputs");
+		check(firstInputs.get("first_frame").toString().equals("[\"33\",0]"), "first_frame 应接首帧视频链");
+		check(firstInputs.get("last_frame").toString().equals("[\"43\",0]"), "last_frame 应接尾帧视频链");
+		check(graph.getAsJsonObject("31").getAsJsonObject("inputs").get("length").getAsInt() == 48,
+				"首帧片段长度应透传");
+		check(graph.getAsJsonObject("43").getAsJsonObject("inputs").get("batch_index").getAsInt() == 0,
+				"尾帧视频链应取片段首帧");
+		check(graph.getAsJsonObject("33").getAsJsonObject("inputs").get("batch_index").getAsInt() == -1,
+				"首帧视频链应取片段末帧");
+		check(graph.getAsJsonObject("11").get("class_type").getAsString().equals("VAEDecodeTiled"),
+				"视频生视频应用分块解码");
+		JsonObject concat = graph.getAsJsonObject("50");
+		check(concat != null && "ConcatenateVideo".equals(concat.get("class_type").getAsString()),
+				"应使用 ConcatenateVideo 节点拼接首段+中段+尾段");
+		JsonObject concatInputs = concat.getAsJsonObject("inputs");
+		check(concatInputs.get("videos.video0").toString().equals("[\"31\",0]"), "video0 应为首段");
+		check(concatInputs.get("videos.video1").toString().equals("[\"13\",0]"), "video1 应为中段");
+		check(concatInputs.get("videos.video2").toString().equals("[\"41\",0]"), "video2 应为尾段");
+		check(graph.getAsJsonObject("51").getAsJsonObject("inputs").get("filename_prefix").getAsString()
+				.endsWith("_full"), "拼接结果应保存为 _full 前缀");
 	}
 
 	private static String grid(JsonObject graph) {

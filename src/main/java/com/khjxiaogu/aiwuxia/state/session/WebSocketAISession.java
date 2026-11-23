@@ -55,6 +55,7 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolApprovalRequest;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallApprover;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallEvent;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
@@ -201,6 +202,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 				.add("models", buildModelList())
 				.add("modelTree", buildModelTree())
 				.add("model", getModelHint()).end();
+		openingStatus.add("toolCalls", buildToolCallSnapshot());
 		appendStatusExtras(openingStatus);
 		conn.writeAndFlush(new TextWebSocketFrame(openingStatus.toString()));
 		// 上次回填时连接已经断开：等这条新连接建立后再补发，避免失败的用户输入永久丢失
@@ -993,6 +995,61 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	public void sendFrame(String content) {
 		conn.writeAndFlush(new TextWebSocketFrame(content));
 	}
+
+	/**
+	 * 工具调用状态变化：下发 {@code tool_status} 帧。
+	 * <p>
+	 * 前端只展示 {@code queued}（排队中）与 {@code running}（执行中/进度）；
+	 * 终态帧用于让前端结束展示，不显示“完成”之类的文字。
+	 * </p>
+	 */
+	@Override
+	protected void onToolCallStatusChanged(ToolCallEvent event) {
+		if (event == null) {
+			return;
+		}
+		JsonObject frame = new JsonObject();
+		frame.addProperty("type", "tool_status");
+		fillToolCallJson(frame, event);
+		sendFrame(frame.toString());
+	}
+
+	/**
+	 * 当前工具调用状态快照，供连接建立/重连时恢复排队与进度提示。
+	 *
+	 * @return JSON 数组，永不为 null
+	 */
+	protected JsonArray buildToolCallSnapshot() {
+		JsonArray array = new JsonArray();
+		for (ToolCallEvent event : getToolActivities()) {
+			JsonObject item = new JsonObject();
+			fillToolCallJson(item, event);
+			array.add(item);
+		}
+		return array;
+	}
+
+	/** 把一条工具调用状态写进 JSON（帧与快照共用）。 */
+	private static void fillToolCallJson(JsonObject target, ToolCallEvent event) {
+		target.addProperty("call_id", event.getCallId());
+		target.addProperty("tool", event.getTool());
+		target.addProperty("name", event.getName());
+		target.addProperty("state", event.getState().wireName());
+		target.addProperty("round", event.getRound());
+		target.addProperty("index", event.getIndex());
+		target.addProperty("count", event.getCount());
+		target.addProperty("time", event.getTime());
+		target.addProperty("startedAt", event.getStartedAt());
+		if (event.getEtaMs() != null) {
+			target.addProperty("eta", event.getEtaMs());
+		}
+		if (event.getProgress() != null) {
+			target.addProperty("progress", event.getProgress());
+		}
+		if (event.getMessage() != null && !event.getMessage().isEmpty()) {
+			target.addProperty("message", event.getMessage());
+		}
+	}
 	@Override
 	public void postAudioComplete(int id,String audioId) {
 		super.postAudioComplete(id, audioId);
@@ -1031,6 +1088,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 							ToolCallDisplay display=getToolCallDisplay(content, idx);
 							JsonObjectBuilder<JsonObject> seg=JsonBuilder.object()
 								.add("type", "tool_call")
+								.add("call_id", call==null||call.id==null?"":call.id)
 								.add("tool_name", display.getBrief())
 								.add("tool", call==null||call.function==null?"":call.function.name);
 							if(display.hasContent())
@@ -1098,6 +1156,7 @@ public class WebSocketAISession extends AISession implements WebsocketEvents,Cha
 	protected void sendGenerationStatus() {
 		JsonObject status = JsonBuilder.object().add("type", "status").add("generating", isGenerating())
 				.add("tokens", getLastTurnTokens()).end();
+		status.add("toolCalls", buildToolCallSnapshot());
 		appendStatusExtras(status);
 		sendFrame(status.toString());
 	}

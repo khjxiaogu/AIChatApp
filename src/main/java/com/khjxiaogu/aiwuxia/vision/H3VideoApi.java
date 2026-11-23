@@ -214,11 +214,17 @@ public class H3VideoApi {
 	private int resourceAmount = DEFAULT_RESOURCE_AMOUNT;
 	/** 可选的进度回调：生成过程各阶段会回调一次，供本地模型连接器向服务器上报进度。 */
 	private volatile ProgressListener progressListener;
+	/** 进度扩展接口不可用时置 true，避免每个任务重复 404。 */
+	private volatile boolean progressApiUnavailable;
+	/** 当前任务最近一次上报的进度，防止重复/回退。 */
+	private double lastProgressRatio = -1d;
 
 	/**
 	 * 生成进度回调。
 	 * <p>
-	 * 只报告粗粒度阶段（已提交、采样完成、下载中、完成），用于进度协商；不保证实时百分比。
+	 * 优先通过 ComfyUI 的 {@code /api/progress/{prompt_id}} 扩展读取采样步进，按
+	 * {@code 0.1 + 0.7 * percent} 回调实时比例；扩展未安装时退回粗粒度阶段
+	 * （已提交、采样完成、下载中、完成）。
 	 * </p>
 	 */
 	public interface ProgressListener {
@@ -544,6 +550,498 @@ public class H3VideoApi {
 	}
 
 	/**
+	 * 视频生视频：用视频片段的首/末帧作为 H3 的首/尾帧（由工作流截取，不在客户端截帧）。
+	 *
+	 * @param prompt      提示词
+	 * @param width       宽
+	 * @param height      高
+	 * @param frames      帧数
+	 * @param seed        随机种子
+	 * @param firstVideo  首帧来源视频，可为 null
+	 * @param firstStart  首帧片段起始帧
+	 * @param firstLength 首帧片段长度，<=0 表示到结尾
+	 * @param lastVideo   尾帧来源视频，可为 null
+	 * @param lastStart   尾帧片段起始帧
+	 * @param lastLength  尾帧片段长度，<=0 表示到结尾
+	 * @param freeAfter   是否提交前标记任务结束后卸载
+	 * @return 完整输出（中间 mp4 + 首/末帧）
+	 * @throws IOException 上传或生成失败
+	 */
+	public H3Output videoFromVideos(String prompt, int width, int height, int frames, long seed,
+			InputImage firstVideo, int firstStart, int firstLength,
+			InputImage lastVideo, int lastStart, int lastLength, boolean freeAfter) throws IOException {
+		return videoFromSources(prompt, width, height, frames, seed, null, firstVideo, firstStart, firstLength,
+				null, lastVideo, lastStart, lastLength, freeAfter);
+	}
+
+	/**
+	 * 视频生视频（首/尾来源可分别是图片或视频）。
+	 *
+	 * @param prompt      提示词
+	 * @param width       宽
+	 * @param height      高
+	 * @param frames      帧数
+	 * @param seed        随机种子
+	 * @param firstImage  首帧来源图片，可为 null
+	 * @param firstVideo  首帧来源视频，可为 null
+	 * @param firstStart  首帧片段起始帧
+	 * @param firstLength 首帧片段长度
+	 * @param lastImage   尾帧来源图片，可为 null
+	 * @param lastVideo   尾帧来源视频，可为 null
+	 * @param lastStart   尾帧片段起始帧
+	 * @param lastLength  尾帧片段长度
+	 * @param freeAfter   是否提交前标记任务结束后卸载
+	 * @return 完整输出（拼接 mp4 + 首/末帧）
+	 * @throws IOException 上传或生成失败
+	 */
+	public H3Output videoFromSources(String prompt, int width, int height, int frames, long seed,
+			InputImage firstImage, InputImage firstVideo, int firstStart, int firstLength,
+			InputImage lastImage, InputImage lastVideo, int lastStart, int lastLength, boolean freeAfter)
+			throws IOException {
+		if (firstImage != null && firstVideo != null) {
+			throw new IllegalArgumentException("首帧不能同时提供图片和视频");
+		}
+		if (lastImage != null && lastVideo != null) {
+			throw new IllegalArgumentException("尾帧不能同时提供图片和视频");
+		}
+		if ((lastImage != null || lastVideo != null) && firstImage == null && firstVideo == null) {
+			throw new IllegalArgumentException("提供尾帧时必须同时提供首帧");
+		}
+		ResourcePermit permit = acquire();
+		try {
+			String firstImageName = firstImage == null ? null : uploadImageUnlocked(firstImage);
+			String firstVideoName = firstVideo == null ? null : uploadImageUnlocked(firstVideo);
+			String lastImageName = lastImage == null ? null : uploadImageUnlocked(lastImage);
+			String lastVideoName = lastVideo == null ? null : uploadImageUnlocked(lastVideo);
+			return runUnlockedOutput(buildVideoFromSources(prompt, width, height, frames, seed,
+					firstImageName, firstVideoName, firstStart, firstLength,
+					lastImageName, lastVideoName, lastStart, lastLength), freeAfter);
+		} finally {
+			release(permit);
+		}
+	}
+
+	/**
+	 * HunyuanVideo-Foley 视频配音：原画面 + 新音效。
+	 *
+	 * @param video     视频
+	 * @param prompt    音效提示词
+	 * @param negative  负面提示词，null 时使用默认值
+	 * @param freeAfter 是否提交前标记任务结束后卸载
+	 * @return 合成视频、单独音轨与实际时长
+	 * @throws IOException 上传、生成或下载失败
+	 */
+	public FoleyResult foley(InputImage video, String prompt, String negative, boolean freeAfter)
+			throws IOException {
+		if (video == null || video.data == null || video.data.length == 0) {
+			throw new IllegalArgumentException("视频不能为空");
+		}
+		ResourcePermit permit = acquire();
+		try {
+			if (freeAfter) {
+				try {
+					freeUnlocked();
+				} catch (Exception ex) {
+					System.err.println("[H3Video] 标记显存释放失败：" + ex.getMessage());
+				}
+			}
+			String uploaded = uploadImageUnlocked(video);
+			String promptId = submit(buildFoleyGraph(uploaded, prompt, negative), "7", "8", "10");
+			JsonObject entry = waitFor(promptId);
+			VideoResult outputVideo = downloadNodeFile(entry, "7", "images", true);
+			AudioResult audio = downloadNodeAudio(entry, "8", "audio");
+			double duration = parseDuration(entry);
+			return new FoleyResult(outputVideo, audio, duration);
+		} finally {
+			release(permit);
+		}
+	}
+
+	/**
+	 * 局部重配音：只替换 {@code [start, start+length)} 的音效，其余保留原音轨。
+	 *
+	 * @param video     视频（必须带原音轨）
+	 * @param start     起点（秒）
+	 * @param length    重配长度（秒），上限 30 秒
+	 * @param prompt    音效提示词
+	 * @param negative  负面提示词
+	 * @param freeAfter 是否提交前标记任务结束后卸载
+	 * @return 合成视频、音轨与本次实际重配时长
+	 * @throws IOException 上传、探测或生成失败
+	 */
+	public FoleyResult foleySegment(InputImage video, double start, double length, String prompt,
+			String negative, boolean freeAfter) throws IOException {
+		if (video == null || video.data == null || video.data.length == 0) {
+			throw new IllegalArgumentException("视频不能为空");
+		}
+		if (length <= 0d) {
+			throw new IllegalArgumentException("重配长度必须大于 0 秒");
+		}
+		if (length > 30d) {
+			throw new IllegalArgumentException("单段重配最长 30 秒，当前 " + length + " 秒");
+		}
+		if (start < 0d) {
+			throw new IllegalArgumentException("起点不能小于 0 秒");
+		}
+		ResourcePermit permit = acquire();
+		try {
+			if (freeAfter) {
+				try {
+					freeUnlocked();
+				} catch (Exception ex) {
+					System.err.println("[H3Video] 标记显存释放失败：" + ex.getMessage());
+				}
+			}
+			String uploaded = uploadImageUnlocked(video);
+			VideoInfo info = probeVideoInfoUnlocked(uploaded);
+			double total = info.duration;
+			double fps = info.fps > 0d ? info.fps : 24d;
+			if (start >= total) {
+				throw new IllegalArgumentException("起点超出视频长度（" + total + " 秒）");
+			}
+			double end = Math.min(start + length, total);
+			// 结束点离片尾不到 0.5 秒时直接算到结尾，避免拼出一小段碎音
+			if (total - end <= 0.5d) {
+				end = total;
+			}
+			double segment = end - start;
+			if (segment <= 0d) {
+				throw new IllegalArgumentException("重配片段为空");
+			}
+			String promptId = submit(buildFoleySegmentGraph(uploaded, prompt, negative, total, fps,
+					start, segment), "7", "8", "10");
+			JsonObject entry = waitFor(promptId);
+			VideoResult outputVideo = downloadNodeFile(entry, "7", "images", true);
+			AudioResult audio = downloadNodeAudio(entry, "8", "audio");
+			double duration = parseDuration(entry);
+			return new FoleyResult(outputVideo, audio, duration > 0d ? duration : segment);
+		} finally {
+			release(permit);
+		}
+	}
+
+	/**
+	 * 读取视频时长（秒），用于配音计费。
+	 *
+	 * @param video 视频
+	 * @return 时长（秒）
+	 * @throws IOException 上传或执行失败
+	 */
+	public double probeVideoDuration(InputImage video) throws IOException {
+		if (video == null || video.data == null || video.data.length == 0) {
+			throw new IllegalArgumentException("视频不能为空");
+		}
+		ResourcePermit permit = acquire();
+		try {
+			String uploaded = uploadImageUnlocked(video);
+			return probeVideoInfoUnlocked(uploaded).duration;
+		} finally {
+			release(permit);
+		}
+	}
+
+	/** 读取视频时长和帧率（调用方已持有资源锁，视频已上传）。 */
+	private VideoInfo probeVideoInfoUnlocked(String uploaded) throws IOException {
+		String promptId = submit(buildInfoGraph(uploaded), "4", "5");
+		JsonObject entry = waitFor(promptId);
+		double duration = parseNodeText(entry, "4");
+		double fps = parseNodeText(entry, "5");
+		return new VideoInfo(duration, fps);
+	}
+
+	/**
+	 * 构造 Foley 配音工作流（对应 {@code api/graphs/foley.json}）。
+	 * <p>
+	 * 只暴露视频、正面提示词、负面提示词；其它参数固定为文档值。
+	 * </p>
+	 *
+	 * @param uploadedVideo 已上传视频名
+	 * @param prompt        音效提示词
+	 * @param negative      负面提示词，null/空时使用默认值
+	 * @return 工作流图
+	 */
+	public JsonObject buildFoleyGraph(String uploadedVideo, String prompt, String negative) {
+		if (uploadedVideo == null || uploadedVideo.trim().isEmpty()) {
+			throw new IllegalArgumentException("视频名不能为空");
+		}
+		String negativePrompt = negative == null || negative.trim().isEmpty()
+				? "speech, dialogue, human voice, vocals, singing, music"
+				: negative.trim();
+		JsonObject graph = new JsonObject();
+		JsonObject load = node("LoadVideo");
+		load.getAsJsonObject("inputs").addProperty("file", uploadedVideo.trim());
+		graph.add("1", load);
+		JsonObject components = node("GetVideoComponents");
+		components.getAsJsonObject("inputs").add("video", ref("1", 0));
+		graph.add("2", components);
+
+		JsonObject model = node("HunyuanModelLoader");
+		JsonObject modelInputs = model.getAsJsonObject("inputs");
+		modelInputs.addProperty("model_name", "hunyuanvideo_foley_fp8_e4m3fn.safetensors");
+		modelInputs.addProperty("precision", "auto");
+		modelInputs.addProperty("quantization", "auto");
+		graph.add("3", model);
+		JsonObject deps = node("HunyuanDependenciesLoader");
+		JsonObject depsInputs = deps.getAsJsonObject("inputs");
+		depsInputs.addProperty("vae_name", "vae_128d_48k_fp16.safetensors");
+		depsInputs.addProperty("synchformer_name", "synchformer_state_dict_fp16.safetensors");
+		graph.add("4", deps);
+		JsonObject blockSwap = node("HunyuanBlockSwap");
+		JsonObject blockInputs = blockSwap.getAsJsonObject("inputs");
+		blockInputs.addProperty("blocks_to_swap", 20);
+		blockInputs.addProperty("use_non_blocking", false);
+		blockInputs.addProperty("prefetch_blocks", 1);
+		blockInputs.addProperty("block_swap_debug", false);
+		graph.add("11", blockSwap);
+
+		JsonObject sampler = node("HunyuanFoleySampler");
+		JsonObject samplerInputs = sampler.getAsJsonObject("inputs");
+		samplerInputs.add("hunyuan_model", ref("3", 0));
+		samplerInputs.add("hunyuan_deps", ref("4", 0));
+		samplerInputs.add("frame_rate", ref("2", 2));
+		// 节点 10 是 PreviewAny，输出 STRING；HunyuanFoleySampler.duration 需要 FLOAT，
+		// 必须直接接 VideoDurationFromFrames(9) 的输出，不能接 PreviewAny(10)
+		samplerInputs.add("duration", ref("9", 0));
+		samplerInputs.addProperty("prompt", prompt == null ? "" : prompt);
+		samplerInputs.addProperty("negative_prompt", negativePrompt);
+		samplerInputs.addProperty("cfg_scale", 7.0);
+		samplerInputs.addProperty("steps", 25);
+		samplerInputs.addProperty("sampler", "euler");
+		samplerInputs.addProperty("batch_size", 1);
+		samplerInputs.addProperty("seed", 0);
+		samplerInputs.addProperty("force_offload", true);
+		samplerInputs.add("image", ref("2", 0));
+		samplerInputs.add("block_swap_args", ref("11", 0));
+		graph.add("5", sampler);
+
+		JsonObject create = node("CreateVideo");
+		JsonObject createInputs = create.getAsJsonObject("inputs");
+		createInputs.add("images", ref("2", 0));
+		createInputs.add("fps", ref("2", 2));
+		createInputs.add("audio", ref("5", 0));
+		createInputs.addProperty("bit_depth", 8);
+		graph.add("6", create);
+		JsonObject saveVideo = node("SaveVideo");
+		JsonObject saveVideoInputs = saveVideo.getAsJsonObject("inputs");
+		saveVideoInputs.add("video", ref("6", 0));
+		saveVideoInputs.addProperty("filename_prefix", "video/Foley");
+		saveVideoInputs.addProperty("format", "auto");
+		saveVideoInputs.addProperty("codec", "auto");
+		graph.add("7", saveVideo);
+		JsonObject saveAudio = node("SaveAudio");
+		JsonObject saveAudioInputs = saveAudio.getAsJsonObject("inputs");
+		saveAudioInputs.add("audio", ref("5", 0));
+		saveAudioInputs.addProperty("filename_prefix", "audio/Foley");
+		graph.add("8", saveAudio);
+		JsonObject duration = node("VideoDurationFromFrames");
+		JsonObject durationInputs = duration.getAsJsonObject("inputs");
+		durationInputs.add("images", ref("2", 0));
+		durationInputs.add("fps", ref("2", 2));
+		graph.add("9", duration);
+		JsonObject preview = node("PreviewAny");
+		preview.getAsJsonObject("inputs").add("source", ref("9", 0));
+		graph.add("10", preview);
+		return graph;
+	}
+
+	/** 读取视频时长 + 帧率的工作流。 */
+	private JsonObject buildInfoGraph(String uploadedVideo) {
+		JsonObject graph = new JsonObject();
+		JsonObject load = node("LoadVideo");
+		load.getAsJsonObject("inputs").addProperty("file", uploadedVideo.trim());
+		graph.add("1", load);
+		JsonObject components = node("GetVideoComponents");
+		components.getAsJsonObject("inputs").add("video", ref("1", 0));
+		graph.add("2", components);
+		JsonObject duration = node("VideoDurationFromFrames");
+		JsonObject durationInputs = duration.getAsJsonObject("inputs");
+		durationInputs.add("images", ref("2", 0));
+		durationInputs.add("fps", ref("2", 2));
+		graph.add("3", duration);
+		JsonObject durationPreview = node("PreviewAny");
+		durationPreview.getAsJsonObject("inputs").add("source", ref("3", 0));
+		graph.add("4", durationPreview);
+		JsonObject fpsPreview = node("PreviewAny");
+		fpsPreview.getAsJsonObject("inputs").add("source", ref("2", 2));
+		graph.add("5", fpsPreview);
+		return graph;
+	}
+
+	/**
+	 * 构造局部重配音工作流（对应 {@code foley_segment} 动态图）。
+	 * <p>
+	 * 保留原画面，只把 {@code [start, start+segment)} 的音效替换为新 Foley，
+	 * 前后片段用 {@code TrimAudioDuration + AudioConcat} 拼回。
+	 * </p>
+	 *
+	 * @param uploadedVideo 已上传视频
+	 * @param prompt        音效提示词
+	 * @param negative      负面提示词
+	 * @param total         视频总时长（秒）
+	 * @param fps           视频帧率
+	 * @param start         起点（秒）
+	 * @param segment       重配长度（秒）
+	 * @return 工作流图
+	 */
+	public JsonObject buildFoleySegmentGraph(String uploadedVideo, String prompt, String negative,
+			double total, double fps, double start, double segment) {
+		if (uploadedVideo == null || uploadedVideo.trim().isEmpty()) {
+			throw new IllegalArgumentException("视频名不能为空");
+		}
+		double end = Math.min(start + segment, total);
+		if (total - end <= 0.5d) {
+			end = total;
+		}
+		double actual = end - start;
+		if (actual <= 0d) {
+			throw new IllegalArgumentException("重配片段为空");
+		}
+		int startFrame = Math.max(0, (int) Math.round(start * fps));
+		int frameLength = Math.max(1, (int) Math.round(actual * fps));
+		String negativePrompt = negative == null || negative.trim().isEmpty()
+				? "speech, dialogue, human voice, vocals, singing"
+				: negative.trim();
+		JsonObject graph = new JsonObject();
+		JsonObject load = node("LoadVideo");
+		load.getAsJsonObject("inputs").addProperty("file", uploadedVideo.trim());
+		graph.add("1", load);
+		JsonObject components = node("GetVideoComponents");
+		components.getAsJsonObject("inputs").add("video", ref("1", 0));
+		graph.add("2", components);
+		JsonObject crop = node("VideoTemporalCrop");
+		JsonObject cropInputs = crop.getAsJsonObject("inputs");
+		cropInputs.add("video", ref("1", 0));
+		cropInputs.addProperty("start_frame", startFrame);
+		cropInputs.addProperty("length", frameLength);
+		graph.add("3", crop);
+		JsonObject cropComponents = node("GetVideoComponents");
+		cropComponents.getAsJsonObject("inputs").add("video", ref("3", 0));
+		graph.add("4", cropComponents);
+		JsonObject model = node("HunyuanModelLoader");
+		JsonObject modelInputs = model.getAsJsonObject("inputs");
+		modelInputs.addProperty("model_name", "hunyuanvideo_foley_fp8_e4m3fn.safetensors");
+		modelInputs.addProperty("precision", "auto");
+		modelInputs.addProperty("quantization", "auto");
+		graph.add("5", model);
+		JsonObject deps = node("HunyuanDependenciesLoader");
+		JsonObject depsInputs = deps.getAsJsonObject("inputs");
+		depsInputs.addProperty("vae_name", "vae_128d_48k_fp16.safetensors");
+		depsInputs.addProperty("synchformer_name", "synchformer_state_dict_fp16.safetensors");
+		graph.add("6", deps);
+		JsonObject blockSwap = node("HunyuanBlockSwap");
+		JsonObject blockInputs = blockSwap.getAsJsonObject("inputs");
+		blockInputs.addProperty("blocks_to_swap", 30);
+		blockInputs.addProperty("use_non_blocking", false);
+		blockInputs.addProperty("prefetch_blocks", 1);
+		blockInputs.addProperty("block_swap_debug", false);
+		graph.add("12", blockSwap);
+		JsonObject sampler = node("HunyuanFoleySampler");
+		JsonObject samplerInputs = sampler.getAsJsonObject("inputs");
+		samplerInputs.add("hunyuan_model", ref("5", 0));
+		samplerInputs.add("hunyuan_deps", ref("6", 0));
+		samplerInputs.add("block_swap_args", ref("12", 0));
+		samplerInputs.add("frame_rate", ref("4", 2));
+		samplerInputs.add("duration", ref("9", 0));
+		samplerInputs.addProperty("prompt", prompt == null ? "" : prompt);
+		samplerInputs.addProperty("negative_prompt", negativePrompt);
+		samplerInputs.addProperty("cfg_scale", 7.0);
+		samplerInputs.addProperty("steps", 25);
+		samplerInputs.addProperty("sampler", "euler");
+		samplerInputs.addProperty("batch_size", 1);
+		samplerInputs.addProperty("seed", 0);
+		samplerInputs.addProperty("force_offload", true);
+		samplerInputs.add("image", ref("4", 0));
+		graph.add("11", sampler);
+		JsonObject duration = node("VideoDurationFromFrames");
+		JsonObject durationInputs = duration.getAsJsonObject("inputs");
+		durationInputs.add("images", ref("4", 0));
+		durationInputs.add("fps", ref("4", 2));
+		graph.add("9", duration);
+		JsonObject preview = node("PreviewAny");
+		preview.getAsJsonObject("inputs").add("source", ref("9", 0));
+		graph.add("10", preview);
+
+		JsonArray merged = ref("11", 0);
+		int nodeId = 14;
+		if (start > 0.01d) {
+			JsonObject trim = node("TrimAudioDuration");
+			JsonObject trimInputs = trim.getAsJsonObject("inputs");
+			trimInputs.add("audio", ref("2", 1));
+			trimInputs.addProperty("start_index", 0.0);
+			trimInputs.addProperty("duration", round3(start));
+			graph.add(String.valueOf(nodeId), trim);
+			JsonObject concat = node("AudioConcat");
+			JsonObject concatInputs = concat.getAsJsonObject("inputs");
+			concatInputs.add("audio1", ref(String.valueOf(nodeId), 0));
+			concatInputs.add("audio2", merged);
+			concatInputs.addProperty("direction", "after");
+			graph.add(String.valueOf(nodeId + 1), concat);
+			merged = ref(String.valueOf(nodeId + 1), 0);
+			nodeId += 2;
+		}
+		if (end < total - 0.01d) {
+			JsonObject trim = node("TrimAudioDuration");
+			JsonObject trimInputs = trim.getAsJsonObject("inputs");
+			trimInputs.add("audio", ref("2", 1));
+			trimInputs.addProperty("start_index", round3(end));
+			trimInputs.addProperty("duration", round3(Math.max(0d, total - end)));
+			graph.add(String.valueOf(nodeId), trim);
+			JsonObject concat = node("AudioConcat");
+			JsonObject concatInputs = concat.getAsJsonObject("inputs");
+			concatInputs.add("audio1", merged);
+			concatInputs.add("audio2", ref(String.valueOf(nodeId), 0));
+			concatInputs.addProperty("direction", "after");
+			graph.add(String.valueOf(nodeId + 1), concat);
+			merged = ref(String.valueOf(nodeId + 1), 0);
+			nodeId += 2;
+		}
+		JsonObject create = node("CreateVideo");
+		JsonObject createInputs = create.getAsJsonObject("inputs");
+		createInputs.add("images", ref("2", 0));
+		createInputs.add("fps", ref("2", 2));
+		createInputs.add("audio", merged);
+		createInputs.addProperty("bit_depth", 8);
+		graph.add("13", create);
+		JsonObject saveVideo = node("SaveVideo");
+		JsonObject saveVideoInputs = saveVideo.getAsJsonObject("inputs");
+		saveVideoInputs.add("video", ref("13", 0));
+		saveVideoInputs.addProperty("filename_prefix", "video/Foley_seg");
+		saveVideoInputs.addProperty("format", "auto");
+		saveVideoInputs.addProperty("codec", "auto");
+		graph.add("7", saveVideo);
+		JsonObject saveAudio = node("SaveAudio");
+		JsonObject saveAudioInputs = saveAudio.getAsJsonObject("inputs");
+		saveAudioInputs.add("audio", merged);
+		saveAudioInputs.addProperty("filename_prefix", "audio/Foley_seg");
+		graph.add("8", saveAudio);
+		return graph;
+	}
+
+	private static double round3(double value) {
+		return Math.round(value * 1000d) / 1000d;
+	}
+
+	/** 只读取视频时长的工作流。 */
+	private JsonObject buildDurationGraph(String uploadedVideo) {
+		JsonObject graph = new JsonObject();
+		JsonObject load = node("LoadVideo");
+		load.getAsJsonObject("inputs").addProperty("file", uploadedVideo.trim());
+		graph.add("1", load);
+		JsonObject components = node("GetVideoComponents");
+		components.getAsJsonObject("inputs").add("video", ref("1", 0));
+		graph.add("2", components);
+		JsonObject duration = node("VideoDurationFromFrames");
+		JsonObject durationInputs = duration.getAsJsonObject("inputs");
+		durationInputs.add("images", ref("2", 0));
+		durationInputs.add("fps", ref("2", 2));
+		graph.add("3", duration);
+		JsonObject preview = node("PreviewAny");
+		preview.getAsJsonObject("inputs").add("source", ref("3", 0));
+		graph.add("4", preview);
+		return graph;
+	}
+
+	/**
 	 * 构造 H3 工作流（不提交），便于调试或自行改写参数。
 	 * <p>
 	 * 节点 ID 与 {@code api/graphs/h3-*.json} 保持一致：{@code 5} 提示词/尺寸/帧数、
@@ -706,6 +1204,153 @@ public class H3VideoApi {
 	}
 
 	/**
+	 * 构造“视频生视频”工作流（对应 {@code api/graphs/h3-clips.json}）。
+	 * <p>
+	 * 不再由客户端截首/尾帧，而是把视频接到图里：
+	 * {@code LoadVideo → VideoTemporalCrop → GetVideoComponents → ImageFromBatch}。
+	 * 首帧视频取所选片段的最后一帧，尾帧视频取所选片段的第一帧，中间由 H3 生成。
+	 * </p>
+	 *
+	 * @param prompt        提示词
+	 * @param width         宽度
+	 * @param height        高度
+	 * @param frames        帧数
+	 * @param seed          随机种子
+	 * @param firstVideo    已上传的首帧来源视频名，可为 null
+	 * @param firstStart    首帧片段起始帧
+	 * @param firstLength   首帧片段长度（<=0 表示取到结尾）
+	 * @param lastVideo     已上传的尾帧来源视频名，可为 null
+	 * @param lastStart     尾帧片段起始帧
+	 * @param lastLength    尾帧片段长度（<=0 表示取到结尾）
+	 * @return 工作流图
+	 */
+	public JsonObject buildVideoFromVideos(String prompt, int width, int height, int frames, long seed,
+			String firstVideo, int firstStart, int firstLength,
+			String lastVideo, int lastStart, int lastLength) {
+		return buildVideoFromSources(prompt, width, height, frames, seed,
+				null, firstVideo, firstStart, firstLength, null, lastVideo, lastStart, lastLength);
+	}
+
+	/**
+	 * 构造“视频生视频”工作流，首/尾来源可分别是图片或视频。
+	 * <p>
+	 * 与 {@code api/graphs/h3-clips.json} 一致：节点 30/40 可以是 {@code LoadImage} 或
+	 * {@code LoadVideo}；视频分支再经过 {@code VideoTemporalCrop → GetVideoComponents →
+	 * ImageFromBatch} 取片段边帧。首/尾来源都是视频时用 {@code ConcatenateVideo} 拼接
+	 * 首段 + 中段 + 尾段。
+	 * </p>
+	 *
+	 * @param prompt      提示词
+	 * @param width       宽度
+	 * @param height      高度
+	 * @param frames      帧数
+	 * @param seed        随机种子
+	 * @param firstImage  已上传的首帧图片名，可为 null
+	 * @param firstVideo  已上传的首帧视频名，可为 null
+	 * @param firstStart  首帧视频片段起始帧
+	 * @param firstLength 首帧视频片段长度
+	 * @param lastImage   已上传的尾帧图片名，可为 null
+	 * @param lastVideo   已上传的尾帧视频名，可为 null
+	 * @param lastStart   尾帧视频片段起始帧
+	 * @param lastLength  尾帧视频片段长度
+	 * @return 工作流图
+	 */
+	public JsonObject buildVideoFromSources(String prompt, int width, int height, int frames, long seed,
+			String firstImage, String firstVideo, int firstStart, int firstLength,
+			String lastImage, String lastVideo, int lastStart, int lastLength) {
+		if (notBlank(firstImage) && notBlank(firstVideo)) {
+			throw new IllegalArgumentException("首帧不能同时提供图片和视频");
+		}
+		if (notBlank(lastImage) && notBlank(lastVideo)) {
+			throw new IllegalArgumentException("尾帧不能同时提供图片和视频");
+		}
+		JsonObject graph = buildVideo(prompt, width, height, frames, seed, null, null);
+		// 与 api/graphs/h3-clips.json 一致：视频生视频用分块解码，降低显存峰值
+		JsonObject decode = graph.getAsJsonObject("11");
+		decode.addProperty("class_type", "VAEDecodeTiled");
+		JsonObject decodeInputs = decode.getAsJsonObject("inputs");
+		decodeInputs.addProperty("tile_size", 512);
+		decodeInputs.addProperty("overlap", 64);
+		decodeInputs.addProperty("temporal_size", 64);
+		decodeInputs.addProperty("temporal_overlap", 8);
+		JsonObject videoInputs = graph.getAsJsonObject("5").getAsJsonObject("inputs");
+		boolean firstIsVideo = notBlank(firstVideo);
+		boolean lastIsVideo = notBlank(lastVideo);
+		if (notBlank(firstImage)) {
+			JsonObject image = node("LoadImage");
+			image.getAsJsonObject("inputs").addProperty("image", firstImage.trim());
+			graph.add("30", image);
+			videoInputs.add("first_frame", ref("30", 0));
+		} else if (firstIsVideo) {
+			addVideoClip(graph, 30, firstVideo, firstStart, firstLength, -1);
+			videoInputs.add("first_frame", ref("33", 0));
+		}
+		if (notBlank(lastImage)) {
+			JsonObject image = node("LoadImage");
+			image.getAsJsonObject("inputs").addProperty("image", lastImage.trim());
+			graph.add("40", image);
+			videoInputs.add("last_frame", ref("40", 0));
+		} else if (lastIsVideo) {
+			addVideoClip(graph, 40, lastVideo, lastStart, lastLength, 0);
+			videoInputs.add("last_frame", ref("43", 0));
+		}
+		if (firstIsVideo || lastIsVideo) {
+			// 与 MiniMax-H3-视频首尾帧.json 一致：只拼接视频片段 + 中段
+			JsonObject concat = node("ConcatenateVideo");
+			JsonObject concatInputs = concat.getAsJsonObject("inputs");
+			int index = 0;
+			if (firstIsVideo) {
+				concatInputs.add("videos.video" + index++, ref("31", 0));
+			}
+			concatInputs.add("videos.video" + index++, ref("13", 0));
+			if (lastIsVideo) {
+				concatInputs.add("videos.video" + index++, ref("41", 0));
+			}
+			concatInputs.addProperty("codec", "auto");
+			graph.add("50", concat);
+			JsonObject saveFull = node("SaveVideo");
+			JsonObject saveFullInputs = saveFull.getAsJsonObject("inputs");
+			saveFullInputs.add("video", ref("50", 0));
+			saveFullInputs.addProperty("filename_prefix", filenamePrefix + "_full");
+			saveFullInputs.addProperty("format", "auto");
+			saveFullInputs.addProperty("codec", "auto");
+			graph.add("51", saveFull);
+		}
+		return graph;
+	}
+
+	/** 字符串非空白。 */
+	private static boolean notBlank(String value) {
+		return value != null && !value.trim().isEmpty();
+	}
+
+	/** VideoTemporalCrop 支持的最大片段长度（文档上限 99999）。 */
+	public static final int MAX_CLIP_LENGTH = 99999;
+
+	/** 在图中挂一段“取片段某一帧”的视频链，节点号 base..base+3。 */
+	private static void addVideoClip(JsonObject graph, int base, String uploadedVideo, int start, int length,
+			int batchIndex) {
+		JsonObject load = node("LoadVideo");
+		load.getAsJsonObject("inputs").addProperty("file", uploadedVideo.trim());
+		graph.add(String.valueOf(base), load);
+		JsonObject crop = node("VideoTemporalCrop");
+		JsonObject cropInputs = crop.getAsJsonObject("inputs");
+		cropInputs.add("video", ref(String.valueOf(base), 0));
+		cropInputs.addProperty("start_frame", Math.max(0, start));
+		cropInputs.addProperty("length", length > 0 ? Math.min(length, MAX_CLIP_LENGTH) : MAX_CLIP_LENGTH);
+		graph.add(String.valueOf(base + 1), crop);
+		JsonObject components = node("GetVideoComponents");
+		components.getAsJsonObject("inputs").add("video", ref(String.valueOf(base + 1), 0));
+		graph.add(String.valueOf(base + 2), components);
+		JsonObject image = node("ImageFromBatch");
+		JsonObject imageInputs = image.getAsJsonObject("inputs");
+		imageInputs.add("image", ref(String.valueOf(base + 2), 0));
+		imageInputs.addProperty("batch_index", batchIndex);
+		imageInputs.addProperty("length", 1);
+		graph.add(String.valueOf(base + 3), image);
+	}
+
+	/**
 	 * 构造“从视频取一帧”的工作流（对应 {@code api/graphs/video-frame.json}）。
 	 * <p>
 	 * 帧号使用 {@code batch_index}：{@code 0} 首帧、{@code -1} 末帧、{@code -2} 倒数第二帧。
@@ -849,14 +1494,46 @@ public class H3VideoApi {
 	 * @throws IOException 提交失败
 	 */
 	public String submit(JsonObject graph) throws IOException {
+		return submit(graph, new String[0]);
+	}
+
+	/**
+	 * 提交工作流，并显式指定要执行的输出节点。
+	 * <p>
+	 * ComfyUI 的 {@code /prompt} 正常会执行所有 OUTPUT_NODE；某些版本/时序下可能只挑到
+	 * PreviewAny 之类的节点，导致 SaveVideo/SaveAudio 被忽略。Foley 必须显式带上
+	 * {@code partial_execution_targets}，否则历史里可能只有时长节点、没有视频节点。
+	 * </p>
+	 *
+	 * @param graph       工作流图
+	 * @param outputNodes 输出节点 ID，可为空
+	 * @return prompt_id
+	 * @throws IOException 提交失败或节点校验失败
+	 */
+	public String submit(JsonObject graph, String... outputNodes) throws IOException {
 		JsonObject request = new JsonObject();
 		request.add("prompt", graph);
+		if (outputNodes != null && outputNodes.length > 0) {
+			JsonArray targets = new JsonArray();
+			for (String node : outputNodes) {
+				if (node != null && !node.trim().isEmpty()) {
+					targets.add(node.trim());
+				}
+			}
+			if (targets.size() > 0) {
+				request.add("partial_execution_targets", targets);
+			}
+		}
 		String body = new HttpRequestBuilder(baseUrl).url("/prompt")
 				.header("Content-Type", "application/json")
 				.header("Accept", "application/json")
 				.readTimeout(30000)
 				.post().send(request.toString()).readString();
 		JsonObject response = parseJsonObject(body, "提交工作流");
+		if (response.has("node_errors") && response.get("node_errors").isJsonObject()
+				&& response.getAsJsonObject("node_errors").size() > 0) {
+			throw new IOException("H3 提交失败：节点校验未通过 " + response.getAsJsonObject("node_errors"));
+		}
 		if (!response.has("prompt_id") || response.get("prompt_id").isJsonNull()) {
 			throw new IOException("H3 提交失败：响应缺少 prompt_id");
 		}
@@ -872,7 +1549,27 @@ public class H3VideoApi {
 	 */
 	public JsonObject waitFor(String promptId) throws IOException {
 		long start = System.currentTimeMillis();
+		lastProgressRatio = 0.1d;
 		while (System.currentTimeMillis() - start < timeoutMillis) {
+			RemoteProgress progress = fetchProgress(promptId);
+			if (progress != null) {
+				if ("error".equals(progress.state)) {
+					throw new IOException("H3 视频生成失败：进度接口报告 error");
+				}
+				double ratio = 0.1d + 0.7d * Math.max(0d, Math.min(100d, progress.percent)) / 100d;
+				String detail;
+				if ("pending".equals(progress.state)) {
+					detail = "排队中（队列剩余 " + progress.queueRemaining + "）";
+				} else if (progress.total > 0) {
+					detail = "采样 " + progress.step + "/" + progress.total;
+				} else {
+					detail = "采样中";
+				}
+				if (ratio > lastProgressRatio || "pending".equals(progress.state)) {
+					lastProgressRatio = Math.max(lastProgressRatio, ratio);
+					notifyProgress(ratio, detail);
+				}
+			}
 			JsonObject history = getHistory(promptId);
 			JsonElement entryElement = history.get(promptId);
 			if (entryElement != null && entryElement.isJsonObject()) {
@@ -890,6 +1587,64 @@ public class H3VideoApi {
 			sleep(pollIntervalMillis);
 		}
 		throw new IOException("H3 视频生成超时（" + timeoutMillis + "ms）：" + promptId);
+	}
+
+	/**
+	 * 读取 ComfyUI 进度扩展 {@code GET /api/progress/{prompt_id}}。
+	 * <p>
+	 * 文档里的进度服务不是 ComfyUI 本体的一部分；接口不存在时只尝试一次，之后退回
+	 * {@code /history} 轮询，不影响出片。
+	 * </p>
+	 *
+	 * @param promptId 任务 id
+	 * @return 进度状态；不可用时返回 null
+	 */
+	private RemoteProgress fetchProgress(String promptId) {
+		if (progressApiUnavailable) {
+			return null;
+		}
+		try {
+			String body = new HttpRequestBuilder(baseUrl)
+					.url("/api/progress/" + enc(promptId))
+					.header("Accept", "application/json")
+					.readTimeout(5000).get().readString();
+			if (body == null || body.trim().isEmpty()) {
+				return null;
+			}
+			JsonElement element = JsonParser.parseString(body.trim());
+			if (element == null || !element.isJsonObject()) {
+				return null;
+			}
+			JsonObject json = element.getAsJsonObject();
+			RemoteProgress progress = new RemoteProgress();
+			progress.state = json.has("state") && !json.get("state").isJsonNull()
+					? json.get("state").getAsString() : "unknown";
+			progress.step = json.has("step") && !json.get("step").isJsonNull()
+					? json.get("step").getAsInt() : 0;
+			progress.total = json.has("total") && !json.get("total").isJsonNull()
+					? json.get("total").getAsInt() : 0;
+			progress.percent = json.has("percent") && !json.get("percent").isJsonNull()
+					? json.get("percent").getAsDouble() : 0d;
+			progress.queueRemaining = json.has("queue_remaining") && !json.get("queue_remaining").isJsonNull()
+					? json.get("queue_remaining").getAsInt() : 0;
+			if (progress.total > 0 && progress.percent <= 0d) {
+				progress.percent = 100d * progress.step / progress.total;
+			}
+			return progress;
+		} catch (Throwable ex) {
+			// 扩展没装/接口 404/JSON 不合法：停用进度接口，继续用 /history
+			progressApiUnavailable = true;
+			return null;
+		}
+	}
+
+	/** 进度扩展返回的一次状态。 */
+	private static final class RemoteProgress {
+		String state;
+		int step;
+		int total;
+		double percent;
+		int queueRemaining;
 	}
 
 	/**
@@ -988,6 +1743,104 @@ public class H3VideoApi {
 	/** 只返回图片输出（例如视频截帧）。 */
 	public List<ImageResult> downloadImages(JsonObject historyEntry) throws IOException {
 		return downloadOutputs(historyEntry).images;
+	}
+
+	/** 下载 history 中指定节点/字段的第一个文件。 */
+	private VideoResult downloadNodeFile(JsonObject historyEntry, String nodeId, String field, boolean video)
+			throws IOException {
+		JsonObject item = firstOutputItem(historyEntry, nodeId, field);
+		if (item == null) {
+			throw new IOException("ComfyUI 没有返回节点 " + nodeId + " 的输出");
+		}
+		return new VideoResult(text(item, "filename"), text(item, "subfolder"), text(item, "type"), download(item));
+	}
+
+	/** 下载 history 中指定节点的音频文件。 */
+	private AudioResult downloadNodeAudio(JsonObject historyEntry, String nodeId, String field) throws IOException {
+		JsonObject item = firstOutputItem(historyEntry, nodeId, field);
+		if (item == null) {
+			return null;
+		}
+		return new AudioResult(text(item, "filename"), text(item, "subfolder"), text(item, "type"), download(item));
+	}
+
+	/** 取 outputs[node][field] 的第一个对象。 */
+	private static JsonObject firstOutputItem(JsonObject historyEntry, String nodeId, String field) {
+		if (historyEntry == null || !historyEntry.has("outputs") || !historyEntry.get("outputs").isJsonObject()) {
+			return null;
+		}
+		JsonObject outputs = historyEntry.getAsJsonObject("outputs");
+		if (!outputs.has(nodeId) || !outputs.get(nodeId).isJsonObject()) {
+			return null;
+		}
+		JsonObject node = outputs.getAsJsonObject(nodeId);
+		if (!node.has(field) || !node.get(field).isJsonArray()) {
+			return null;
+		}
+		for (JsonElement element : node.getAsJsonArray(field)) {
+			if (element.isJsonObject()) {
+				return element.getAsJsonObject();
+			}
+		}
+		return null;
+	}
+
+	/** 读取输出对象里的字符串字段。 */
+	private static String text(JsonObject item, String field) {
+		return item.has(field) && !item.get(field).isJsonNull() ? item.get(field).getAsString() : "";
+	}
+
+	/** 下载输出对象。 */
+	private byte[] download(JsonObject item) throws IOException {
+		String filename = text(item, "filename");
+		String subfolder = text(item, "subfolder");
+		String type = item.has("type") && !item.get("type").isJsonNull() ? item.get("type").getAsString() : "output";
+		if (filename.isEmpty()) {
+			throw new IOException("ComfyUI 输出缺少 filename");
+		}
+		return new HttpRequestBuilder(baseUrl)
+				.url("/view?filename=" + enc(filename) + "&subfolder=" + enc(subfolder) + "&type=" + enc(type))
+				.header("Accept", "*/*").readTimeout(600000).get().readBytes();
+	}
+
+	/** 读取 PreviewAny 输出的视频时长。 */
+	private static double parseDuration(JsonObject historyEntry) {
+		// foley 图用节点 10；单独的时长探测图用节点 4
+		for (String nodeId : new String[] { "10", "4" }) {
+			double value = parseNodeText(historyEntry, nodeId);
+			if (value > 0d) {
+				return value;
+			}
+		}
+		return 0d;
+	}
+
+	/** 读取指定节点 PreviewAny 的文本数值。 */
+	private static double parseNodeText(JsonObject historyEntry, String nodeId) {
+		if (historyEntry == null || !historyEntry.has("outputs") || !historyEntry.get("outputs").isJsonObject()) {
+			return 0d;
+		}
+		JsonObject outputs = historyEntry.getAsJsonObject("outputs");
+		if (!outputs.has(nodeId) || !outputs.get(nodeId).isJsonObject()) {
+			return 0d;
+		}
+		JsonObject node = outputs.getAsJsonObject(nodeId);
+		if (!node.has("text")) {
+			return 0d;
+		}
+		JsonElement text = node.get("text");
+		try {
+			if (text.isJsonPrimitive()) {
+				return Double.parseDouble(text.getAsString().trim());
+			}
+			if (text.isJsonArray() && text.getAsJsonArray().size() > 0
+					&& text.getAsJsonArray().get(0).isJsonPrimitive()) {
+				return Double.parseDouble(text.getAsJsonArray().get(0).getAsString().trim());
+			}
+		} catch (RuntimeException ignored) {
+			// 解析失败按 0 处理，不阻断出片
+		}
+		return 0d;
 	}
 
 	private static boolean isVideoFilename(String lower) {
@@ -1247,6 +2100,54 @@ public class H3VideoApi {
 		}
 	}
 
+	/** 视频时长 / 帧率。 */
+	public static final class VideoInfo {
+		/** 时长（秒）。 */
+		public final double duration;
+		/** 帧率。 */
+		public final double fps;
+
+		public VideoInfo(double duration, double fps) {
+			this.duration = duration;
+			this.fps = fps;
+		}
+	}
+
+	/** 一段生成的音频（Foley 单独音轨）。 */
+	public static final class AudioResult {
+		/** 服务端文件名。 */
+		public final String filename;
+		/** 输出子目录。 */
+		public final String subfolder;
+		/** 输出类型。 */
+		public final String type;
+		/** 音频字节（wav）。 */
+		public final byte[] data;
+
+		public AudioResult(String filename, String subfolder, String type, byte[] data) {
+			this.filename = filename;
+			this.subfolder = subfolder;
+			this.type = type;
+			this.data = data;
+		}
+	}
+
+	/** Foley 配音结果。 */
+	public static final class FoleyResult {
+		/** 原画面 + 新音效的 mp4。 */
+		public final VideoResult video;
+		/** 单独音轨 wav，没有时为 null。 */
+		public final AudioResult audio;
+		/** 视频实际时长（秒）。 */
+		public final double duration;
+
+		public FoleyResult(VideoResult video, AudioResult audio, double duration) {
+			this.video = video;
+			this.audio = audio;
+			this.duration = duration;
+		}
+	}
+
 	/** 一次 H3 任务的完整输出：视频 + 首/末帧。 */
 	public static final class H3Output {
 		/** 视频文件，通常是 mp4。 */
@@ -1257,12 +2158,25 @@ public class H3VideoApi {
 		public final ImageResult firstFrame;
 		/** 末帧图片，没有时为 null。 */
 		public final ImageResult lastFrame;
+		/** 视频生视频的拼接结果（SaveVideo 前缀以 {@code _full} 结尾），没有时为 null。 */
+		public final VideoResult stitched;
 
 		public H3Output(List<VideoResult> videos, List<ImageResult> images) {
 			this.videos = videos == null ? new ArrayList<>() : videos;
 			this.images = images == null ? new ArrayList<>() : images;
 			this.firstFrame = findFrame(this.images, "_first", true);
 			this.lastFrame = findFrame(this.images, "_last", false);
+			this.stitched = findStitched(this.videos);
+		}
+
+		private static VideoResult findStitched(List<VideoResult> videos) {
+			for (VideoResult video : videos) {
+				String name = video.filename == null ? "" : video.filename.toLowerCase(java.util.Locale.ROOT);
+				if (name.contains("_full")) {
+					return video;
+				}
+			}
+			return null;
 		}
 
 		private static ImageResult findFrame(List<ImageResult> images, String marker, boolean first) {

@@ -15,6 +15,7 @@ import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,7 +30,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.voice.protocol.FileChunkAssembler;
 import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol;
+import com.khjxiaogu.aiwuxia.voice.protocol.LocalModelProtocol.FileChunk;
 import com.khjxiaogu.aiwuxia.voice.transport.LocalModelTransport;
 import com.khjxiaogu.aiwuxia.voice.transport.LocalModelTransportFactory;
 import com.khjxiaogu.aiwuxia.voice.transport.WebSocketTransportFactory;
@@ -44,7 +47,8 @@ import com.khjxiaogu.aiwuxia.voice.transport.WebSocketTransportFactory;
  * <ul>
  *   <li>模型类型通过连接 URL 的 {@code model_type} 参数初始声明，连接后可随时用
  *       {@link #setModelTypes(Collection)} 发送 {@code capabilities} 报文动态改变；</li>
- *   <li>收到服务器请求时按请求里的 {@code type} 字段挑选处理器；</li>
+ *   <li>收到服务器请求时按请求里的 {@code type} 字段挑选处理器；请求可以是文本 JSON，
+ *       也可以是服务器分块下发的二进制帧（连接时声明 {@code flags=chunked}，组装完再按同样流程处理）；</li>
  *   <li>请求处理在独立线程池上执行，WebSocket 读线程只负责收发报文：长任务（生图/视频）
  *       不会因为读线程无法应答 ping/pong 而被判定掉线；</li>
  *   <li>每个请求都记住来源连接，结果、进度与错误只回给该连接；即使执行期间发生过重连，
@@ -82,12 +86,16 @@ public class LocalModelClient {
 	private static final boolean DEBUG = Boolean.parseBoolean(System.getProperty("localModelDebug", "false"));
 	/** 单次处理超过该时长时打印一次“仍在生成”的提示。 */
 	private static final long LONG_TASK_WARN_MS = 60_000L;
-	/** 掉线提示的最小间隔：连接反复抖动时把多条掉线合并成一条。 */
+	/** 只用于合并连接抖动：恢复后该时间内再次掉线，不再重复提示。 */
 	private static final long OUTAGE_LOG_INTERVAL_MS = 60_000L;
 	/** 断线期间最多暂存多少个结果。 */
 	private static final int MAX_BUFFERED_RESULTS = 8;
 	/** 断线期间暂存结果的总字节上限。 */
 	private static final long MAX_BUFFERED_BYTES = 256L * 1024 * 1024;
+	/** 请求分块接收的空闲超时：超过这个时间没有新分块就丢弃已收到的块。 */
+	private static final long REQUEST_ASSEMBLY_TIMEOUT_MS = 60_000L;
+	/** 同时接收的请求分块上限，防止对端一次性塞入过多未完成的请求。 */
+	private static final int MAX_PENDING_REQUESTS = 8;
 
 	/**
 	 * 本地服务健康检查接口。实现方在本地服务可用时返回 {@code true}。
@@ -146,7 +154,9 @@ public class LocalModelClient {
 	 *   <li>{@link #progress(double, String)}：执行中并附带可选进度。</li>
 	 * </ul>
 	 * <p>
-	 * 此外本类会按固定间隔自动发送心跳，即使处理器没有主动上报，长任务也不会被服务器判超时。
+	 * 状态/进度发生变化时会立即上报；与上次成功上报完全相同的内容不会重复发送。
+	 * 如果空闲超过一个心跳间隔（{@code -DlocalModelProgressIntervalMs}，默认 20 秒），
+	 * 本类会自动补一条心跳，即使处理器没有主动上报，长任务也不会被服务器判超时。
 	 * </p>
 	 */
 	public interface ProgressReporter {
@@ -180,12 +190,37 @@ public class LocalModelClient {
 		void running(String detail);
 
 		/**
+		 * 汇报“执行中”并附带预计总耗时。
+		 * <p>
+		 * 没有真实进度时，服务器/前端会按预计时间每 10% 推进到 90%，因此本地部署端应该给一个
+		 * 尽量接近实际的估计值。
+		 * </p>
+		 *
+		 * @param detail 说明，可为 null
+		 * @param etaMs  预计总耗时（毫秒），非正数表示不提供
+		 */
+		default void running(String detail, long etaMs) {
+			running(detail);
+		}
+
+		/**
 		 * 汇报“执行中”并附带进度。
 		 *
 		 * @param ratio  进度比例，0~1
 		 * @param detail 说明，可为 null
 		 */
 		void progress(double ratio, String detail);
+
+		/**
+		 * 汇报“执行中”并附带进度与预计总耗时。
+		 *
+		 * @param ratio  进度比例，0~1
+		 * @param detail 说明，可为 null
+		 * @param etaMs  预计总耗时（毫秒），非正数表示沿用已有估计
+		 */
+		default void progress(double ratio, String detail, long etaMs) {
+			progress(ratio, detail);
+		}
 	}
 
 	/**
@@ -241,6 +276,15 @@ public class LocalModelClient {
 	private final Map<ModelType, AtomicInteger> healthFailures = new ConcurrentHashMap<>();
 	/** 当前连接声明的能力集合。 */
 	private final Set<ModelType> modelTypes = ConcurrentHashMap.newKeySet();
+	/**
+	 * 本连接器声明的协议能力标记。
+	 * <p>
+	 * 与模型类型分开：模型类型说明“能跑什么模型”，能力标记说明“支持协议的哪些可选部分”。
+	 * 本客户端实现分块收发，因此始终声明 {@link LocalModelProtocol#FLAG_CHUNKED}：
+	 * 服务器据此把过大的请求按分块下发，也可以放心把图片等多媒体内容直接放进报文。
+	 * </p>
+	 */
+	private final Set<String> flags = ConcurrentHashMap.newKeySet();
 
 	/** 当前网络传输；重连时会被替换。 */
 	private volatile LocalModelTransport transport;
@@ -290,6 +334,10 @@ public class LocalModelClient {
 	private final Object outboxLock = new Object();
 	/** 缓冲区当前占用字节数。 */
 	private final AtomicLong outboxBytes = new AtomicLong();
+	/** 正在接收的请求分块：reqid → 组装器。 */
+	private final Map<String, FileChunkAssembler> pendingRequests = new ConcurrentHashMap<>();
+	/** 请求分块超时清理只启动一次。 */
+	private final AtomicBoolean requestCleanupStarted = new AtomicBoolean(false);
 
 	private static ScheduledExecutorService daemonScheduler(String name) {
 		return Executors.newSingleThreadScheduledExecutor(r -> {
@@ -331,6 +379,8 @@ public class LocalModelClient {
 		this.headers = headers == null ? Collections.emptyMap() : headers;
 		this.autoReconnect = autoReconnect;
 		this.reconnectIntervalMs = reconnectIntervalMs;
+		// 本客户端实现分块收发：始终声明分块/大报文能力（flags=chunked）
+		this.flags.add(LocalModelProtocol.FLAG_CHUNKED);
 	}
 
 	/** 读取进度心跳间隔，非法值回退到默认值。 */
@@ -419,17 +469,40 @@ public class LocalModelClient {
 		}
 		modelTypes.clear();
 		modelTypes.addAll(updated);
-		System.out.println("[LocalModelClient] 能力集合更新：" + getModelTypeNames());
+		System.out.println("[LocalModelClient] 能力集合更新：" + getModelTypeNames() + " flags=" + getFlags());
 		sendCapabilitiesIfOpen();
 	}
 
-	/** 已连接时发送一次能力集合报文。 */
+	/** 已连接时发送一次能力集合报文（模型类型 + 协议能力标记）。 */
 	private void sendCapabilitiesIfOpen() {
 		LocalModelTransport current = transport;
 		if (current == null || !current.isOpen()) {
 			return;
 		}
-		current.send(LocalModelProtocol.capabilities(getModelTypeNames()).toString());
+		current.send(LocalModelProtocol.capabilities(getModelTypeNames(), getFlags()).toString());
+	}
+
+	/** 当前声明的协议能力标记（只读）。 */
+	public Set<String> getFlags() {
+		return Collections.unmodifiableSet(new LinkedHashSet<>(flags));
+	}
+
+	/**
+	 * 追加一个协议能力标记。
+	 * <p>
+	 * 已连接时会立即发送一次能力集合报文，服务器据此更新该连接的能力；重连时标记会写进
+	 * 握手 URL 的 {@code flags} 参数。例如 {@link LocalModelProtocol#FLAG_CHUNKED} 表示
+	 * 支持分块/大报文，服务器因此可以直接把多媒体内容放进报文而不是只给链接。
+	 * </p>
+	 *
+	 * @param flag 能力标记，null 或空串忽略
+	 */
+	public void addFlag(String flag) {
+		if (flag == null || flag.trim().isEmpty()) {
+			return;
+		}
+		flags.add(flag.trim().toLowerCase(java.util.Locale.ROOT));
+		sendCapabilitiesIfOpen();
 	}
 
 	// ==================== 连接生命周期 ====================
@@ -458,6 +531,13 @@ public class LocalModelClient {
 	private boolean createAndConnect() throws InterruptedException {
 		// client_id 让服务器把重连后的连接认成同一个客户端，断线期间暂存的结果才能在重连后补交
 		String base = addQueryParam(serverUri.toString(), "client_id", clientId);
+		// 声明协议能力标记：chunked 表示支持分块/大报文，服务器因此可以把过大的模型请求
+		// 按分块下发，也可以把图片等多媒体内容直接放进报文。没有声明该标记的客户端
+		// 仍然只按文本帧接收，也只会收到链接。
+		Set<String> declaredFlags = getFlags();
+		if (!declaredFlags.isEmpty()) {
+			base = addQueryParam(base, "flags", String.join(",", declaredFlags));
+		}
 		LocalModelTransport created = transportFactory.create(
 				addModelType(base, new LinkedHashSet<>(modelTypes)), headers);
 		created.setListener(new LocalModelTransport.Listener() {
@@ -488,7 +568,8 @@ public class LocalModelClient {
 
 			@Override
 			public void onBinary(byte[] message) {
-				// 服务器不向连接器发送文件，忽略二进制报文
+				// 服务器把过大的模型请求按分块发过来时走这里
+				receiveRequestChunk(message);
 			}
 
 			@Override
@@ -586,19 +667,26 @@ public class LocalModelClient {
 	/**
 	 * 判断本次掉线是否值得打印提示。
 	 * <p>
-	 * 同一次掉线只提示一次；断线期间每秒一次的重连失败不再输出。连接抖动（刚恢复又断开）时
-	 * 以 {@value #OUTAGE_LOG_INTERVAL_MS} 毫秒为最小间隔合并，避免日志被反复刷屏。
+	 * 同一次掉线只提示一次：断线期间每次重连失败都会走到这里，必须靠
+	 * {@link #outageLogged} 一直保持“已提示”到下次 {@code onOpen}，否则按时间重新放行会变成
+	 * 每分钟一条（服务端一直没起来时尤其明显）。
+	 * </p>
+	 * <p>
+	 * 时间间隔只用于合并抖动：连接恢复后 {@value #OUTAGE_LOG_INTERVAL_MS} 毫秒内又断开，
+	 * 说明是同一段不稳定状态，并到上一条提示里；直到真正稳定连接过一次才重新允许提示。
 	 * </p>
 	 *
 	 * @return true 表示应该打印这一条掉线提示
 	 */
 	private boolean reportOutage() {
+		if (!outageLogged.compareAndSet(false, true)) {
+			return false;
+		}
 		long now = System.currentTimeMillis();
 		if (now - lastOutageLogAt < OUTAGE_LOG_INTERVAL_MS) {
 			return false;
 		}
 		lastOutageLogAt = now;
-		outageLogged.set(true);
 		return true;
 	}
 
@@ -618,6 +706,7 @@ public class LocalModelClient {
 		progressTimer.shutdownNow();
 		handlerExecutor.shutdownNow();
 		clearOutbox();
+		pendingRequests.clear();
 		LocalModelTransport current = transport;
 		if (current != null) {
 			try {
@@ -692,6 +781,97 @@ public class LocalModelClient {
 		}
 	}
 
+	// ==================== 请求分块接收 ====================
+
+	/**
+	 * 接收服务器分块下发的模型请求。
+	 * <p>
+	 * 服务器在客户端声明 {@code flags=chunked} 后，会把超过阈值的请求拆成若干
+	 * {@code LMR1} 二进制帧（结构与结果分块完全相同）；这里按 reqid 组装，收齐后转成 JSON
+	 * 交给 {@link #dispatch(String)}，与普通文本请求走同一条处理流程。
+	 * </p>
+	 *
+	 * @param frame 二进制帧
+	 */
+	private void receiveRequestChunk(byte[] frame) {
+		FileChunk chunk = LocalModelProtocol.parseRequestChunk(frame);
+		if (chunk == null) {
+			System.err.println("[LocalModelClient] 丢弃无法解析的请求分块（"
+					+ (frame == null ? 0 : frame.length) + " 字节）");
+			return;
+		}
+		FileChunkAssembler assembler = pendingRequests.get(chunk.reqid);
+		if (assembler == null) {
+			if (pendingRequests.size() >= MAX_PENDING_REQUESTS) {
+				System.err.println("[LocalModelClient] 同时接收的分块请求过多，丢弃：reqid=" + chunk.reqid
+						+ "（上限 " + MAX_PENDING_REQUESTS + "）");
+				return;
+			}
+			try {
+				assembler = FileChunkAssembler.start(chunk,
+						System.currentTimeMillis() + REQUEST_ASSEMBLY_TIMEOUT_MS);
+			} catch (IllegalArgumentException ex) {
+				System.err.println("[LocalModelClient] 请求分块非法：reqid=" + chunk.reqid + " 错误=" + ex.getMessage());
+				return;
+			}
+			pendingRequests.put(chunk.reqid, assembler);
+			startRequestCleanup();
+			System.out.println("[LocalModelClient] 开始接收分块请求：reqid=" + chunk.reqid + " 分块="
+					+ chunk.total + " 首块=" + chunk.content.length + "B 来源=" + serverUri);
+		} else {
+			try {
+				assembler.accept(chunk);
+				assembler.touch(System.currentTimeMillis() + REQUEST_ASSEMBLY_TIMEOUT_MS);
+			} catch (IllegalArgumentException ex) {
+				pendingRequests.remove(chunk.reqid);
+				System.err.println("[LocalModelClient] 请求分块不匹配，已丢弃：reqid=" + chunk.reqid + " 错误="
+						+ ex.getMessage());
+				return;
+			}
+		}
+		if (!assembler.isComplete()) {
+			return;
+		}
+		pendingRequests.remove(chunk.reqid);
+		byte[] data;
+		try {
+			data = assembler.assemble();
+		} catch (IllegalStateException ex) {
+			System.err.println("[LocalModelClient] 请求分块拼接失败：reqid=" + chunk.reqid + " 错误=" + ex.getMessage());
+			return;
+		}
+		System.out.println("[LocalModelClient] 分块请求接收完成：reqid=" + chunk.reqid + " 大小=" + data.length
+				+ "B 来源=" + serverUri);
+		dispatch(new String(data, StandardCharsets.UTF_8));
+	}
+
+	/** 启动请求分块的超时清理（只启动一次）。 */
+	private void startRequestCleanup() {
+		if (!requestCleanupStarted.compareAndSet(false, true)) {
+			return;
+		}
+		try {
+			progressTimer.scheduleWithFixedDelay(this::cleanupPendingRequests, 30_000L, 30_000L,
+					TimeUnit.MILLISECONDS);
+		} catch (RejectedExecutionException ignored) {
+			// 客户端正在关闭，不需要清理
+		}
+	}
+
+	/** 丢弃超时未收齐的请求分块，避免半截请求长期占用内存。 */
+	private void cleanupPendingRequests() {
+		if (pendingRequests.isEmpty()) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		for (Map.Entry<String, FileChunkAssembler> entry : pendingRequests.entrySet()) {
+			if (entry.getValue().isExpired(now) && pendingRequests.remove(entry.getKey(), entry.getValue())) {
+				System.err.println("[LocalModelClient] 请求分块接收超时，已丢弃：reqid=" + entry.getKey()
+						+ "（已收到 " + entry.getValue().received() + "/" + entry.getValue().total() + " 块）");
+			}
+		}
+	}
+
 	// ==================== 报文处理 ====================
 
 	/** 处理一条服务器报文（应用协议见 {@link LocalModelProtocol}）。 */
@@ -706,7 +886,7 @@ public class LocalModelClient {
 			return;
 		}
 		if (LocalModelProtocol.isCapabilities(request)) {
-			System.out.println("[LocalModelClient] 服务器已确认能力集合：" + LocalModelProtocol.modelTypes(request));
+			System.out.println("[LocalModelClient] 服务器已确认能力集合：" + LocalModelProtocol.modelTypes(request) + " flags=" + LocalModelProtocol.flags(request));
 			return;
 		}
 		String reqid = LocalModelProtocol.reqid(request);
@@ -756,21 +936,20 @@ public class LocalModelClient {
 		try {
 			activeRequests.incrementAndGet();
 			ProgressState state = new ProgressState();
-			final String heartbeatReqid = reqid;
 			final String taskTypeName = typeName;
-			final LocalModelTransport replyTo = source;
+			// 同一个 Reporter 既负责处理器的即时上报，也负责空闲时的心跳，避免两边状态各自为政
+			Reporter reporter = new Reporter(source, reqid, state);
 			ScheduledFuture<?> heartbeat = progressTimer.scheduleWithFixedDelay(
-					() -> heartbeatProgress(replyTo, heartbeatReqid, state), progressIntervalMs, progressIntervalMs,
-					TimeUnit.MILLISECONDS);
+					reporter::heartbeat, progressIntervalMs, progressIntervalMs, TimeUnit.MILLISECONDS);
 			// 长任务提示：请求已经离开读线程，这里只用于说明本地软件仍在生成
 			ScheduledFuture<?> longTaskWarning = progressTimer.schedule(
 					() -> System.out.println("[LocalModelClient] 任务已执行 " + (LONG_TASK_WARN_MS / 1000)
-							+ "s 仍未返回，本地软件仍在生成：reqid=" + heartbeatReqid + " type=" + taskTypeName),
+							+ "s 仍未返回，本地软件仍在生成：reqid=" + reqid + " type=" + taskTypeName),
 					LONG_TASK_WARN_MS, TimeUnit.MILLISECONDS);
 			long startedAt = System.currentTimeMillis();
 			Response response;
 			try {
-				response = handler.handle(request, new Reporter(replyTo, reqid, state));
+				response = handler.handle(request, reporter);
 			} finally {
 				longTaskWarning.cancel(false);
 				heartbeat.cancel(false);
@@ -787,10 +966,10 @@ public class LocalModelClient {
 			}
 			if (response != null && response.data != null) {
 				// 文件按二进制分块发送，每块内容体最大 5 MiB，不再塞进文本 JSON 的 Base64
-				sendFileChunks(replyTo, reqid, response.format, response.data);
+				sendFileChunks(source, reqid, response.format, response.data);
 			} else {
 				System.err.println("[LocalModelClient] 处理器没有返回结果，回错误：reqid=" + reqid);
-				sendReply(replyTo, LocalModelProtocol.error(reqid, "handler returned null"));
+				sendReply(source, LocalModelProtocol.error(reqid, "handler returned null"));
 			}
 		} catch (Exception e) {
 			System.err.println("[LocalModelClient] 处理请求出错：reqid=" + reqid + " 错误=" + e);
@@ -1035,47 +1214,44 @@ public class LocalModelClient {
 	 * @param status 状态
 	 * @param progress 进度比例，可为 null
 	 * @param detail 说明，可为 null
+	 * @param etaMs  预计总耗时（毫秒），可为 null
+	 * @return 是否成功发出
 	 */
-	private void reportProgress(LocalModelTransport target, String reqid, String status, Double progress,
-			String detail) {
+	private boolean reportProgress(LocalModelTransport target, String reqid, String status, Double progress,
+			String detail, Long etaMs) {
 		if (target == null) {
 			if (DEBUG) {
 				System.err.println("[LocalModelClient] 无连接，进度未上报：reqid=" + reqid + " status=" + status);
 			}
-			return;
+			return false;
 		}
 		if (!target.isOpen()) {
 			if (DEBUG) {
 				System.err.println("[LocalModelClient] 来源连接已断开，进度未上报：reqid=" + reqid + " status=" + status);
 			}
-			return;
+			return false;
 		}
 		try {
-			target.send(LocalModelProtocol.progress(reqid, status, progress, detail).toString());
+			target.send(LocalModelProtocol.progress(reqid, status, progress, detail, etaMs).toString());
 			if (DEBUG) {
 				System.out.println("[LocalModelClient] 进度上报：reqid=" + reqid + " status=" + status
 						+ (progress == null ? "" : " " + Math.round(progress * 100) + "%")
+						+ (etaMs == null || etaMs <= 0 ? "" : " eta=" + etaMs + "ms")
 						+ (detail == null ? "" : "（" + detail + "）"));
 			}
+			return true;
 		} catch (Throwable t) {
 			// 进度只是协商信息，发送失败不影响任务本身，但失败会让服务端提前判超时，必须能看到
 			System.err.println("[LocalModelClient] 进度上报失败：reqid=" + reqid + " status=" + status + " " + t);
+			return false;
 		}
-	}
-
-	/** 定时心跳：用最近一次上报的状态续期，处理器没有主动上报时按“执行中”续期。 */
-	private void heartbeatProgress(LocalModelTransport target, String reqid, ProgressState state) {
-		if (DEBUG) {
-			System.out.println("[LocalModelClient] 心跳续期：reqid=" + reqid + " status=" + state.status
-					+ (state.detail == null ? "" : "（" + state.detail + "）"));
-		}
-		reportProgress(target, reqid, state.status, state.progress, state.detail);
 	}
 
 	/** 一次任务期间最近一次上报的状态，供心跳复用。 */
 	private static final class ProgressState {
 		private volatile String status = LocalModelProtocol.STATUS_RUNNING;
 		private volatile Double progress;
+		private volatile Long etaMs;
 		private volatile String detail;
 	}
 
@@ -1084,6 +1260,13 @@ public class LocalModelClient {
 		private final LocalModelTransport target;
 		private final String reqid;
 		private final ProgressState state;
+		/** 上一次成功发出的快照，用于抑制重复报文。 */
+		private String lastStatus;
+		private Double lastProgress;
+		private Long lastEtaMs;
+		private String lastDetail;
+		/** 上一次成功发出的时间（毫秒）。 */
+		private long lastSentAt;
 
 		private Reporter(LocalModelTransport target, String reqid, ProgressState state) {
 			this.target = target;
@@ -1091,28 +1274,86 @@ public class LocalModelClient {
 			this.state = state;
 		}
 
+		/**
+		 * 按需上报进度。
+		 * <p>
+		 * 普通上报只在状态/进度/说明/预计时间变化时立即发出，没有变化就丢弃；
+		 * 心跳只在距上次成功上报超过 {@code progressIntervalMs} 时补一条，用来延长服务端超时。
+		 * 这样进度更新及时，又不会把同一个状态每隔 20 秒重复发一遍。
+		 * </p>
+		 *
+		 * @param heartbeat true 表示定时心跳，false 表示处理器主动上报
+		 */
+		private synchronized void publish(boolean heartbeat) {
+			long now = System.currentTimeMillis();
+			boolean changed = !Objects.equals(state.status, lastStatus)
+					|| !Objects.equals(state.progress, lastProgress)
+					|| !Objects.equals(state.etaMs, lastEtaMs)
+					|| !Objects.equals(state.detail, lastDetail);
+			if (heartbeat) {
+				// 心跳只是为了续期：刚发过就不用再发
+				if (lastSentAt > 0 && now - lastSentAt < progressIntervalMs) {
+					return;
+				}
+				if (DEBUG) {
+					System.out.println("[LocalModelClient] 心跳续期：reqid=" + reqid + " status=" + state.status
+							+ (state.detail == null ? "" : "（" + state.detail + "）"));
+				}
+			} else if (!changed) {
+				// 本地服务没有更新进度：不重复发
+				return;
+			}
+			if (reportProgress(target, reqid, state.status, state.progress, state.detail, state.etaMs)) {
+				lastStatus = state.status;
+				lastProgress = state.progress;
+				lastEtaMs = state.etaMs;
+				lastDetail = state.detail;
+				lastSentAt = now;
+			}
+		}
+
 		@Override
-		public void queued(String detail) {
+		public synchronized void queued(String detail) {
 			state.status = LocalModelProtocol.STATUS_QUEUED;
 			state.progress = null;
+			state.etaMs = null;
 			state.detail = detail;
-			reportProgress(target, reqid, LocalModelProtocol.STATUS_QUEUED, null, detail);
+			publish(false);
 		}
 
 		@Override
 		public void running(String detail) {
+			running(detail, 0L);
+		}
+
+		@Override
+		public synchronized void running(String detail, long etaMs) {
 			state.status = LocalModelProtocol.STATUS_RUNNING;
 			state.progress = null;
+			state.etaMs = etaMs > 0 ? Long.valueOf(etaMs) : null;
 			state.detail = detail;
-			reportProgress(target, reqid, LocalModelProtocol.STATUS_RUNNING, null, detail);
+			publish(false);
 		}
 
 		@Override
 		public void progress(double ratio, String detail) {
+			progress(ratio, detail, 0L);
+		}
+
+		@Override
+		public synchronized void progress(double ratio, String detail, long etaMs) {
 			state.status = LocalModelProtocol.STATUS_RUNNING;
 			state.progress = ratio;
+			if (etaMs > 0) {
+				state.etaMs = Long.valueOf(etaMs);
+			}
 			state.detail = detail;
-			reportProgress(target, reqid, LocalModelProtocol.STATUS_RUNNING, ratio, detail);
+			publish(false);
+		}
+
+		/** 定时心跳：长时间没有上报时补一条，避免服务端判超时。 */
+		private synchronized void heartbeat() {
+			publish(true);
 		}
 	}
 

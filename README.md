@@ -447,11 +447,18 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 为视频 token 的 **35 倍**；输出尺寸默认从 `videoResolution` + `videoRatio` 推导，帧率默认 24，
 可用 `videoWidth` / `videoHeight` / `videoFps` 校准。
 
-**绘画页（`ui: "painter"`）也会自动获得视频能力**，不需要在 `tools` 里配置：本地 H3 视频导演
-`h3_video_agent` 始终注册（本地模型离线时调用会返回可读错误），即梦 `jimeng_video` 在配置了
-`apiKey` 时注册。视频生成是异步长任务，生成期间前端显示“视频生成中”，完成后把视频续写到本轮
-助手回复里；本地 H3 的视频通过 `GET /aichat/painter/video?video_id=` 播放（支持 Range），即梦返回远端
-地址直接播放。绘画页也支持上传视频作为用户消息内容，详见
+绘画页的图片生成工具除 SDXL 系列外，还会自动注册 Qwen-Image 2.1 文生图 `qwen_gen_image`（支持中文
+提示词与 8 步极速草稿，走本地模型通道）；它和 SDXL 图片工具共享**每轮最多 5 次**生成额度，生成的
+图片 id 可直接用于图生图 / 分区出图。
+
+**绘画页（`ui: "painter"`）也会自动获得视频能力**，不需要在 `tools` 里配置：本地 H3 直连生成
+`h3_gen_video` / `h3_gen_anim` 始终注册（本地模型离线时调用会返回可读错误），即梦 `jimeng_video`
+在配置了 `apiKey` 时注册；绘画页不注册视频导演子 agent。两件本地 H3 工具在绘画页是**同步工具**：
+本轮内等待生成完成，只把视频 id 返回给模型，不把视频附件写进回复；两者共用**每轮最多 1 次**的额度。
+需要把视频展示给用户时，由模型再调用 `send_video`（传视频 id）显式发送。即梦视频仍是异步长任务，
+生成期间前端显示“视频生成中”，完成后续写到本轮助手回复里。
+本地 H3 视频按 id 通过 `GET /aichat/painter/video?video_id=` 取用（支持 Range），即梦返回远端地址直接播放。
+绘画页也支持上传视频作为用户消息内容，详见
 [docs/apps/configuration.md](docs/apps/configuration.md) 的“绘画页视频”一节。
 
 工具调用审核写在 `save/config/agents.json` 的机器人配置里：
@@ -646,12 +653,13 @@ java -Ddeepseektoken=your_token -jar aichat.jar   # 同时启用 Deepseek 对话
 
 | `type` | 字段 | 说明 |
 |---|---|---|
-| `status` | `generating`, `tokens`, `price`, `conversation_id`, `isVoice*`, `models`, `modelTree`, `model`, `tasks[]` | 状态快照；重连后据此纠正生成状态并恢复异步任务提示 |
+| `status` | `generating`, `tokens`, `price`, `conversation_id`, `isVoice*`, `models`, `modelTree`, `model`, `tasks[]`, `toolCalls[]` | 状态快照；重连后据此纠正生成状态并恢复异步任务/工具状态提示 |
 | `message` | `id`, `role`, `title`, `content[]` | 整条消息（首次下发/历史重放） |
 | `content` | `id`, `content[]` | 流式追加内容 |
 | `remove` | `id` | 删除一条消息 |
 | `batch_messages` | `messages[]`, `prepend`, `hasMore`, `oldestId`, `newestId` | 历史分页；每条另带 `token_cost` |
-| `thinking` / `tool_call` | `content` / `tool_name`, `tool`, `content[]` | 思维链与工具调用展示 |
+| `thinking` / `tool_call` | `content` / `call_id`, `tool_name`, `tool`, `content[]` | 思维链与工具调用展示；`call_id` 用于关联工具状态 |
+| `tool_status` | `call_id`, `state`(`queued`/`running`/`succeeded`/`failed`/`cancelled`/`rejected`), `tool`, `name`, `time`, `startedAt`, `eta?`, `progress?`, `message?` | 工具调用状态：前端只展示 `queued`（排队中）与 `running`（执行中/进度），其余状态只用于清理显示 |
 | `task` | `state`(`created`/`done`/`failed`), `id`, `tool`, `name`, `time`, `message?` | 异步长任务（视频生成等）状态变化 |
 | `done` | `price`, `tokens` | 本轮结束；`tokens` 是本轮新增配额用量 |
 | `notice` / `sendResult` / `sendbox` | — | 轻提示 / 发送 ACK / 有条件回填输入框 |
@@ -796,17 +804,39 @@ SceneSelector selector = builder.build();
 | 模型调用 | `vision.*LocalModelHandler` / `AudioLocalModelHandler` | 只负责把请求翻译成 SD WebUI / localemp / ComfyUI / TTS 调用 |
 
 - 每条部署通道只建**一条连接**，所有模型共用它，不再各持一条；
+- **请求支持二进制分块**：连接器在握手 URL 里用 `flags=chunked` 声明“支持分块 / 大报文”
+  （也可在运行期发 `{"type":"capabilities","model_types":[...],"flags":["chunked"]}` 更新）；
+  服务器遇到超过 `-DlocalModelRequestChunkSize`（默认 **1 MiB**）的请求时，按
+  `[LMR1][reqidLen][reqid][formatLen][format][current][total][content]` 分块下发，连接器收齐后
+  组装回原来的 JSON 再走普通处理流程。没有声明该标记的客户端仍然收到单个文本帧。
+  两个方向的分块帧结构相同，只是魔数不同（结果 `LMF1`、请求 `LMR1`）。
+  `flags` 是通用的协议能力声明（与 `model_type` 分开：前者说明“支持协议的哪些可选部分”，
+  后者说明“能跑什么模型”），将来新增可选能力只需加一个标记，服务器据此自动降级；
+- **SDXL 参考图按连接器能力选择发送方式**：图生图 / 分区图生图 / 反推提示词要把参考图交给本地模型，
+  连接器声明了 `chunked` 时直接把图片文件以 Base64 放进请求报文（大请求按上面的分块下发，
+  连接器与它后面 SD WebUI 不需要能访问服务器的图片链接）；没有声明该标记的连接（例如
+  `/aichat/painter-local` 浏览器接入页）仍然只收到 `/painter/image?image_id=...` 或
+  `/aichat/mcp/media?file_id=...` 链接。图片读不到时自动回退成链接，不会让生成直接失败；
 - **结果文件走二进制分块**：连接器把图片/视频/音频原始字节按
   `[LMF1][reqidLen][reqid][formatLen][format][current][total][content]` 的二进制帧发送，
   每块内容体最大 **5 MiB**，超过自动分包；服务端收齐 `1..total` 全部块后才完成任务，
   `-DlocalModelFileTimeoutMs`（默认 60 秒）内没有新分块视为失败并丢弃已收到的块。
   图片/视频/音频不再在 JSON 里套 Base64，`format` 直接是 `png` / `mp4` / `mp3` 等；
-- 进度协商：连接器处理任务时定期上报
-  `{"type":"progress","reqid":"...","status":"queued|running","progress":0.35,"message":"..."}`。
+- 进度协商：连接器在状态/进度**发生变化时立即上报**
+  `{"type":"progress","reqid":"...","status":"queued|running","progress":0.35,"eta":45000,"message":"..."}`；
+  与上次成功上报完全相同（状态、进度、ETA、说明都没变）的更新会被丢弃，不重复发。
   状态语义固定：`queued` = **正在等待资源锁**（排队），`running` = **请求已下发给对应的本地软件**
   （SD WebUI / localemp / ComfyUI / TTS，执行中），`progress` 为可选的执行进度；
+  `eta` 是**预计总耗时（毫秒）**，用于没有真实进度的任务：前端按 10% 一档推进，到预计时间时显示 90%，
+  之后保持 90% 直到任务真正结束。各模型的默认估计可用 `-DsdxlEtaMs`、`-DqwenEtaMs`、`-Dh3EtaMs`、
+  `-Dh3FrameEtaMs`、`-DttsEtaMs`、`-DsvsEtaMs` 调整（配置在本地模型部署端进程上）；同一模型内不同
+  API/动作还可以单独覆盖，属性名是“模型 + 动作 + `EtaMs`”，例如 `-DsdxlTxt2imgEtaMs`、
+  `-DsdxlImg2imgEtaMs`、`-DsdxlInterrogateEtaMs`、`-DqwenText2imageEtaMs`、`-DqwenEditEtaMs`、
+  `-Dh3VideoEtaMs`、`-Dh3ExtractFrameEtaMs`、`-Dh3VideoDurationEtaMs`、`-Dh3FoleySegmentEtaMs`；
+  没有单独配置时沿用原来的 ETA 属性或内置默认值；
   服务端收到后把该任务（含 `registerTask` 注册的外部任务）的超时延长到“当前时间 + 3 分钟”
-  （`-DlocalModelProgressTimeoutMs` 可调）；心跳间隔默认 20 秒（`-DlocalModelProgressIntervalMs`）；
+  （`-DlocalModelProgressTimeoutMs` 可调）；如果空闲超过一个心跳间隔（默认 20 秒），连接器会补一条心跳
+  （`-DlocalModelProgressIntervalMs` 可调），避免服务端因为长时间没有进度而判超时；
 - 健康检查按模型类型分别进行：某类本地服务连续失败只把该类型从能力集合移除（发送能力集合报文），
   连接与其它模型不受影响，恢复后自动重新加入；
 - **断线结果缓冲**：结果、进度与错误只回给请求来自的那个接收地址（连接器与服务器都会校验来源，
@@ -816,6 +846,11 @@ SceneSelector selector = builder.build();
   （没有 `client_id` 的连接，例如浏览器页面，仍在断开时立即失败）；
 - 资源锁只在模型服务一侧：`LocalModelConnectionService` 持有一把锁，聊天进程的 MCP 不再加锁。
   H3 的 int8 档先等到至少 8 份，再占满当前剩余全部资源；NVFP4 档固定占用 **10 份**。
+- **任务调度优先级**：连接器里多个任务同时等显存时按类型排序——SDXL / Qwen 生图这类快速任务最优先，
+  SVS 其次，H3 视频最后（TTS 不占资源锁，不需要排队）；已经在执行的任务不会被抢占。
+  为避免慢任务被一直插队，一个任务最多被插队 `-DlocalModelMaxOvertakes` 次（默认 **5** 次），
+  达到后转为优先调度：资源够时先分给它，资源不够时其它任务也不许抢占，等资源归还。
+  实现见 `tools.ResourceLock` + `tools.TaskPriority`，日志里会打印各任务的实际排队时长。
 
 **语音合成（audio）**：只有显式配置了 `-DttsUrl`（或 `TTS_URL`）时，模型服务才会注册 `audio`
 处理器，把聊天进程下发的朗读请求原样 POST 给本机 TTS（路径 `-DttsPath`，默认 `/`；回传格式
@@ -840,7 +875,7 @@ MiMo / 火山提供；都没有时回复会自动退回文本。
 | 模式 | 主模型 | 步数 | 时长 | 画布（16:9） | 资源占用 |
 | --- | --- | --- | --- | --- | --- |
 | `h3_gen_video` | int8 | 8 | 1~15，默认 5 | 864×480 | 至少 8 份后占满剩余 |
-| `h3_gen_anim` | NVFP4 | 6 | 1~8，默认 3 | 640×352 | 固定 10 份 |
+| `h3_gen_anim` | NVFP4 | 6 | 1~8，默认 3 | 960×544（基础 640×352 的 1.5 倍宽高） | 固定 10 份 |
 
 - **全部视频 MCP 均禁用音频**：工作流不加载音频 VAE、不做音频解码，输出无声 mp4；
 - 宽高 32 的倍数、帧数按 24fps 向上吸附到 **17k+5**（5 秒→124、10 秒→243、15 秒→362 帧）、
@@ -905,13 +940,15 @@ Stable Diffusion WebUI 反向代理到服务器。页面不向用户收集 uid�
 排查接入问题时，服务端日志会打印实际接入的 uid：
 
 ```
-[LocalModel] connected from ... uid=<客户端发送的值> (shared|user-bound) client=<client_id> provider: [sdxl]
+[LocalModel] connected from ... uid=<客户端发送的值> (shared|user-bound) client=<client_id> flags=[chunked] provider: [sdxl]
 [Painter] local SDXL unavailable for session user=<session 用户>
 ```
 
 `shared` 表示占位值/未提供 uid，按共享连接处理；`user-bound` 表示已绑定到该用户。
 `client=<client_id>` 是连接器自己的稳定标识（没有时为 `(none)`）；断线重连后该值不变，
 服务器据此把重连前后的连接认成同一个客户端，接续断线期间暂存的结果。
+`flags=[chunked]`（为空时是 `flags=[]`）是该连接声明的协议能力：`chunked` 表示支持分块/大报文，
+服务器才会对过大的请求分块下发，也才会把多媒体内容直接放进报文而不是只给链接。
 
 ### SVS 歌声合成
 

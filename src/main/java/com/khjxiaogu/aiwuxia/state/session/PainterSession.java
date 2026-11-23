@@ -128,6 +128,7 @@ public class PainterSession extends WebSocketAISession {
      * </p>
      * <ul>
      *   <li>{@code send_image}（绘画会话的发送图片工具）；</li>
+     *   <li>{@code send_video}（绘画会话的发送视频工具）；</li>
      *   <li>{@code search_character}（{@link SDXLMcp} 搜索角色提示词）；</li>
      *   <li>{@code web_view}（{@link FetchMcp} 抓取网页，即“fetch”）；</li>
      *   <li>{@code web_search}（{@link DeepseekSearchMcp} 的 DeepSeek 网页搜索，未配置
@@ -142,8 +143,8 @@ public class PainterSession extends WebSocketAISession {
      * </p>
      */
     private static final Set<String> UNLIMITED_TOOLS = Collections.unmodifiableSet(
-        new LinkedHashSet<>(Arrays.asList("send_image", "search_character", "web_view", "web_search", "moegirl_search",
-                "list_characters", "search_characters", "get_character_setting")));
+        new LinkedHashSet<>(Arrays.asList("send_image", "send_video", "search_character", "web_view", "web_search",
+                "moegirl_search", "list_characters", "search_characters", "get_character_setting")));
 
     public PainterSession(AIChatService par, String uid, String chatid, AIApplication aiapp,
                           ApplicationAttributes attr, File fn, ISaveData data) {
@@ -383,6 +384,7 @@ public class PainterSession extends WebSocketAISession {
                         : session.getToolCallDisplay(content, i);
                     JsonObjectBuilder<JsonObject> frame = JsonBuilder.object()
                         .add("type", "tool_call")
+                        .add("call_id", call == null || call.id == null ? "" : call.id)
                         .add("tool_name", display.getBrief()) // 用户友好简述替代原始工具名称
                         .add("tool", call == null || call.function == null ? "" : call.function.name);
                     if (display.hasContent()) {
@@ -456,14 +458,15 @@ public class PainterSession extends WebSocketAISession {
             .end().toString());
     }
 
-    // ==================== 异步长任务（视频生成） ====================
+    // ==================== 异步长任务（即梦视频等） ====================
 
     /**
      * 异步工具任务创建：把任务状态下发给绘画前端。
      * <p>
-     * 视频生成（H3 / 即梦）耗时几分钟，本轮回复往往先结束；前端据此在输入框上方一直显示
+     * 即梦等异步视频任务耗时几分钟，本轮回复往往先结束；前端据此在输入框上方一直显示
      * “视频生成中”，避免用户以为没有响应而重复发起。任务完成后由
      * {@link #handleToolTaskCompleted(ToolTask)} 下发结果。
+     * 本地 H3 视频已改为同步工具，不经过这里。
      * </p>
      *
      * @param task 新任务
@@ -479,7 +482,7 @@ public class PainterSession extends WebSocketAISession {
     /**
      * 异步工具任务结束：在会话命令线程里结算，先下发任务状态，再把结果附件写入历史。
      * <p>
-     * 任务通常在本轮回复结束之后才完成（视频生成需要数分钟），此时本轮写入上下文已经关闭，
+     * 任务通常在本轮回复结束之后才完成（即梦视频等长任务需要数分钟），此时本轮写入上下文已经关闭，
      * 直接交给父类会把附件写进一条已经结束的记录里而丢失。因此这里续写最后一条助手回复
      * （最后一条不是助手时新起一条）：前端收到更新后的 {@code message} 帧后重新渲染这条回复，
      * 视频就此出现在本轮结果里，历史里也能重新加载出来。
@@ -557,8 +560,9 @@ public class PainterSession extends WebSocketAISession {
     /**
      * 释放会话前的判断：没有连接、也没有仍在运行的后台任务时才释放。
      * <p>
-     * 视频生成在本轮回复结束后还会继续几分钟，因此本轮结束时不能直接释放会话：会话关闭会取消
+     * 即梦视频等异步任务在本轮回复结束后还会继续几分钟，因此本轮结束时不能直接释放会话：会话关闭会取消
      * 后台任务，用户刷新回来就看不到结果。这里等最后一个任务完成、视频已写入历史之后再释放。
+     * H3 视频是同步工具，本轮内就已完成，不依赖这段逻辑。
      * </p>
      */
     private void releaseIfIdle() {
