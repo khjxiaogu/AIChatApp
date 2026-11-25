@@ -40,6 +40,40 @@ public class HistoryRequestBuilder {
 
 	}
 	public static Gson gs=new GsonBuilder().registerTypeHierarchyAdapter(ToolCall.class, new ToolCallSerilizer()).create();
+
+	/**
+	 * 多模态内容项的序列化策略。
+	 * <p>
+	 * 各提供者的请求格式并不完全一致（视频的 fps 放哪、音频字段名、以及是否支持该模态都可能不同），
+	 * 因此具体内容块由提供者自己实现；本类只负责公共的消息骨架（角色、思考内容、工具调用/结果、
+	 * 服务端联网记录等）。返回 {@code null} 表示该内容项按带 ID 的文本标签降级。
+	 * </p>
+	 */
+	@FunctionalInterface
+	public interface MediaPartSerializer {
+		/**
+		 * 把一段多媒体内容序列化成提供者要求的 content 内容项。
+		 *
+		 * @param content  内容（图片/视频/音频）
+		 * @param resolver 附件解析器：对象存储 ID → 提供者可访问的地址
+		 * @return 内容项；{@code null} 表示不支持该内容，调用方降级为文本
+		 */
+		JsonObject serialize(MessageContent content, AttachmentResolver resolver);
+	}
+
+	/**
+	 * 默认策略：只序列化图片（OpenAI 兼容的 {@code image_url}），视频/音频降级为文本标签。
+	 * <p>
+	 * 仅用于没有自定义多模态格式的提供者；需要视频/音频的提供者应传入自己的策略。
+	 * </p>
+	 */
+	public static final MediaPartSerializer OPENAI_MEDIA_PARTS = (content, resolver) -> {
+		if (content instanceof ImageContent) {
+			ImageContent image = (ImageContent) content;
+			return imagePart(resolver.resolveUrl(image.getImageUrl()));
+		}
+		return null;
+	};
 	/**
 	 * 构造 OpenAI 兼容的 messages 数组，不回传服务端联网工具的调用记录。
 	 * <p>
@@ -52,7 +86,7 @@ public class HistoryRequestBuilder {
 	 * @return messages 数组
 	 */
 	public static JsonArray createRequest(AIRequest request) {
-		return createRequest(request, false);
+		return createRequest(request, false, OPENAI_MEDIA_PARTS);
 	}
 
 	/**
@@ -69,6 +103,24 @@ public class HistoryRequestBuilder {
 	 * @return messages 数组
 	 */
 	public static JsonArray createRequest(AIRequest request, boolean replayServerToolCalls) {
+		return createRequest(request, replayServerToolCalls, OPENAI_MEDIA_PARTS);
+	}
+
+	/**
+	 * 构造 OpenAI 兼容的 messages 数组，并指定多模态内容项的序列化策略。
+	 * <p>
+	 * 消息骨架由本类统一构造；图片/视频/音频的内容项怎么写由提供者通过 {@code media} 决定，
+	 * 因为各家的字段结构不一致（例如视频 fps 的位置、音频字段名）。请求声明的模态由
+	 * {@link AIRequest#multimodal} 把关：未声明的模态不会交给序列化策略，而是降级成文本标签。
+	 * </p>
+	 *
+	 * @param request                请求
+	 * @param replayServerToolCalls  是否原样回传服务端联网工具的调用记录
+	 * @param media                  多媒体内容项序列化策略，为 {@code null} 时只按文本降级
+	 * @return messages 数组
+	 */
+	public static JsonArray createRequest(AIRequest request, boolean replayServerToolCalls,
+			MediaPartSerializer media) {
 		JsonArray messages=new JsonArray();
 		AttachmentResolver resolver=AttachmentResolver.of(request);
 		for(HistoryItem hi:request.history) {
@@ -127,7 +179,7 @@ public class HistoryRequestBuilder {
 						}
 					}
 					if(hasPrevious) {
-						messages.get(messages.size()-1).getAsJsonObject().add("content", createMessageContent(hi.getContextContent(), request, resolver));
+						messages.get(messages.size()-1).getAsJsonObject().add("content", createMessageContent(hi.getContextContent(), request, resolver, media));
 						shouldSkipContent=true;
 					}
 				}
@@ -136,7 +188,7 @@ public class HistoryRequestBuilder {
 			if(!shouldSkipContent) {
 				JsonObject msg=new JsonObject();
 				msg.addProperty("role", hi.getRole().getRoleName());
-				msg.add("content", createMessageContent(hi.getContextContent(), request, resolver));
+				msg.add("content", createMessageContent(hi.getContextContent(), request, resolver, media));
 				messages.add(msg);
 			}
 
@@ -192,44 +244,53 @@ public class HistoryRequestBuilder {
 	/**
 	 * 构造一条普通消息的 content。
 	 * <p>
-	 * 纯文本保持字符串形式；当请求声明支持图片且消息里确实有图片时，按 OpenAI 兼容的
-	 * content 数组提交，图片地址由 {@link AttachmentResolver} 从对象存储 ID 解析。
-	 * 不支持图片的提供者则把图片降级为带 ID 的文本标签，消息里仍然只有对象存储 ID。
+	 * 纯文本保持字符串形式；只有请求声明了对应模态、消息里确实有该模态的附件、并且提供者的
+	 * {@link MediaPartSerializer} 能序列化它时，才按 content 数组提交，附件地址由
+	 * {@link AttachmentResolver} 从对象存储 ID 解析。其余情况（未声明模态、提供者不支持）
+	 * 一律降级为带 ID 的文本标签，消息里仍然只有对象存储 ID。
 	 * </p>
 	 */
 	private static JsonElement createMessageContent(MessageContents contents, AIRequest request,
-			AttachmentResolver resolver) {
+			AttachmentResolver resolver, MediaPartSerializer media) {
 		if (contents == null) {
 			return new JsonPrimitive("");
 		}
-		if (!request.multimodal.image || !containsImage(contents)) {
-			return new JsonPrimitive(normalizeIds(contents, resolver));
-		}
 		JsonArray array = new JsonArray();
+		boolean hasMediaPart = false;
 		for (MessageContent content : contents) {
 			if (content == null) {
 				continue;
 			}
-			if (content instanceof ImageContent) {
-				ImageContent image = (ImageContent) content;
-				JsonObject part = imagePart(resolver.resolveUrl(image.getImageUrl()));
-				array.add(part);
-			} else {
-				JsonObject part = new JsonObject();
-				part.addProperty("type", "text");
-				part.addProperty("text", resolvedText(content, resolver));
-				array.add(part);
+			JsonObject part = null;
+			if (media != null && isDeclaredMedia(content, request)) {
+				part = media.serialize(content, resolver);
 			}
+			if (part != null) {
+				array.add(part);
+				hasMediaPart = true;
+			} else {
+				JsonObject text = new JsonObject();
+				text.addProperty("type", "text");
+				text.addProperty("text", resolvedText(content, resolver));
+				array.add(text);
+			}
+		}
+		if (!hasMediaPart) {
+			return new JsonPrimitive(normalizeIds(contents, resolver));
 		}
 		return array;
 	}
 
-	/** 消息里是否包含图片。 */
-	private static boolean containsImage(MessageContents contents) {
-		for (MessageContent content : contents) {
-			if (content instanceof ImageContent) {
-				return true;
-			}
+	/** 内容是否是请求已声明、可以交给提供者序列化策略的多媒体类型。 */
+	private static boolean isDeclaredMedia(MessageContent content, AIRequest request) {
+		if (content instanceof ImageContent) {
+			return request.multimodal.image;
+		}
+		if (content instanceof VideoContent) {
+			return request.multimodal.video;
+		}
+		if (content instanceof AudioContent) {
+			return request.multimodal.audio;
 		}
 		return false;
 	}

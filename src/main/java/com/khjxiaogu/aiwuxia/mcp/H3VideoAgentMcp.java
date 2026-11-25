@@ -138,18 +138,18 @@ public class H3VideoAgentMcp {
 						+ "首/尾来源可以自由使用图片或视频（first/last），所有视频均无声（禁用音频）。"
 						+ "不需要写分辨率、步数等技术参数，这些由代码固定。"
 						+ "调用后视频在后台生成（5 秒约 2~5 分钟），完成后会作为附件自动返回对话。")
-				.putOptionalParam("reference",
-						"参考图列表：图片id（或带扩展名的图片id）用英文逗号分隔，按顺序是首帧、尾帧；没有参考图就留空。",
+				.putOptionalUrlParam("reference",
+						"参考图（可多张，按顺序是首帧、尾帧；没有参考图就留空）。",
 						"参考图")
-				.putOptionalParam("video",
-						"参考视频列表：视频id用英文逗号分隔，与 reference 二选一。使用视频生视频工作流："
-								+ "1 个视频=取片段末帧作首帧；2 个=第一个的末帧、第二个的首帧；没有参考视频就留空。",
+				.putOptionalUrlParam("video",
+						"参考视频（与 reference 二选一）：1 个视频=取片段末帧作首帧；"
+								+ "2 个=第一个的末帧、第二个的首帧；没有参考视频就留空。",
 						"参考视频")
-				.putOptionalParam("first",
-						"首帧来源：图片或视频 id 均可，与 reference/video 二选一。视频取片段末帧，图片直接作首帧。",
+				.putOptionalUrlParam("first",
+						"首帧来源（图片或视频），与 reference/video 二选一。视频取片段末帧，图片直接作首帧。",
 						"首帧来源")
-				.putOptionalParam("last",
-						"尾帧来源：图片或视频 id 均可，必须同时提供 first。视频取片段首帧，图片直接作尾帧。",
+				.putOptionalUrlParam("last",
+						"尾帧来源（图片或视频），必须同时提供 first。视频取片段首帧，图片直接作尾帧。",
 						"尾帧来源")
 				.putParam("prompt",
 						"视频需求，使用中文自然语言描述即可，例如“黄昏天台，女孩转身看向镜头，风声和远处的城市噪音，竖屏 8 秒”。",
@@ -372,7 +372,7 @@ public class H3VideoAgentMcp {
 				builder.putParam(param.getKey(), param.getValue(), source.getParamLabel(param.getKey()));
 			}
 		}
-		return builder.tool((data, output, manager) -> source.tool.run(data, output, manager)
+		return builder.tool((data, output, context) -> source.tool.run(data, output, context)
 				.thenApply(result -> {
 					boolean hasVideo = false;
 					if (result != null && result.hasAttachments()) {

@@ -29,17 +29,33 @@ public final class AttachmentRef {
 	public final String filename;
 	/** 字节数，未知时为 -1。 */
 	public final long size;
+	/**
+	 * 内容键（形如 72 位十六进制，可带媒体扩展名），未知时为空串。
+	 * <p>
+	 * 服务端在附件来源本身就是按内容寻址的对象存储时填这个字段（值就是对象存储 id）。
+	 * 接收端可以据此在自己的磁盘缓存里直接找到同一份内容，从而跳过
+	 * {@code attachment.get} 拉取；它只用于缓存命中，不参与访问控制，
+	 * 真正读取附件仍然需要调用报文里的 {@link #id}。
+	 * </p>
+	 */
+	public final String key;
 
 	public AttachmentRef(String id, String kind, String format, String filename, long size) {
+		this(id, kind, format, filename, size, null);
+	}
+
+	public AttachmentRef(String id, String kind, String format, String filename, long size, String key) {
 		this.id = id;
 		this.kind = kind == null || kind.isEmpty() ? KIND_BINARY : kind;
 		this.format = format == null ? "" : format;
 		this.filename = filename == null ? "" : filename;
 		this.size = size;
+		this.key = key == null ? "" : key;
 	}
 
 	@Override
 	public String toString() {
-		return "AttachmentRef[id=" + id + ", kind=" + kind + ", format=" + format + ", size=" + size + "]";
+		return "AttachmentRef[id=" + id + ", kind=" + kind + ", format=" + format + ", size=" + size
+				+ (key.isEmpty() ? "" : ", key=" + key) + "]";
 	}
 }

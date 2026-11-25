@@ -12,7 +12,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 
 /**
@@ -48,6 +48,18 @@ public class ToolData {
 	 * </p>
 	 */
 	public final Map<String, String> paramLabels;
+	/**
+	 * URL 参数声明：参数名 → 基础说明。
+	 * <p>
+	 * 通过 {@link Builder#putUrlParam(String, String)} 声明。声明后：
+	 * </p>
+	 * <ul>
+	 *   <li>对象存储上下文（内部 AI 工具）显示“基础说明，内容为72位id”；</li>
+	 *   <li>URL 上下文（MCP 服务端）显示“基础说明，内容为http或者https链接”；</li>
+	 *   <li>MCP 服务端执行前会把该参数的 URL 下载并转存成对象存储 ID。</li>
+	 * </ul>
+	 */
+	public final Map<String, String> urlParams;
 	/**
 	 * 工具调用显示转换器：把原始调用信息转换为用户友好的简述与具体内容。
 	 * <p>默认转换器随工具一起创建：简述为工具名称、具体内容为空。</p>
@@ -110,6 +122,16 @@ public class ToolData {
 	public ToolData(Tool tool, String name, String description, Map<String, String> params,
 			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive,
 			Map<String, String> paramLabels, Set<String> optionalParams) {
+		this(tool, name, description, params, presenter, async, maxCalls, sessionOnly, orderSensitive, paramLabels,
+				optionalParams, Collections.emptyMap());
+	}
+
+	/**
+	 * @param urlParams URL 参数声明（参数名 → 基础说明），可为 null
+	 */
+	public ToolData(Tool tool, String name, String description, Map<String, String> params,
+			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive,
+			Map<String, String> paramLabels, Set<String> optionalParams, Map<String, String> urlParams) {
 		super();
 		this.tool = tool;
 		this.name = name;
@@ -118,6 +140,8 @@ public class ToolData {
 		this.paramLabels = paramLabels == null ? Collections.emptyMap() : paramLabels;
 		this.optionalParams = optionalParams == null ? Collections.emptySet()
 				: Collections.unmodifiableSet(new HashSet<>(optionalParams));
+		this.urlParams = urlParams == null ? Collections.emptyMap()
+				: Collections.unmodifiableMap(new HashMap<>(urlParams));
 		this.presenter = presenter == null ? ToolCallPresenter.defaults() : presenter;
 		this.async = async;
 		this.maxCalls = maxCalls;
@@ -147,6 +171,43 @@ public class ToolData {
 	 */
 	public boolean isOptionalParam(String paramName) {
 		return paramName != null && optionalParams.contains(paramName);
+	}
+
+	/** 是否声明了 URL 参数。 */
+	public boolean hasUrlParams() {
+		return !urlParams.isEmpty();
+	}
+
+	/**
+	 * 判断某个参数是否声明为 URL 参数。
+	 *
+	 * @param paramName 参数名
+	 * @return true 表示该参数可按 URL 传入
+	 */
+	public boolean isUrlParam(String paramName) {
+		return paramName != null && urlParams.containsKey(paramName);
+	}
+
+	/**
+	 * 返回 URL 上下文使用的工具副本：URL 参数说明改为“内容为http或者https链接”。
+	 * <p>
+	 * 对象存储上下文继续使用当前实例（“内容为72位id”）。副本与原工具共享执行函数，
+	 * 只有参数说明不同，因此 MCP 服务端可以安全地对外暴露 URL 版本。
+	 * </p>
+	 *
+	 * @return URL 上下文的工具副本；没有 URL 参数时返回当前实例
+	 */
+	public ToolData forUrlContext() {
+		if (urlParams.isEmpty()) {
+			return this;
+		}
+		Map<String, String> urlDescriptions = new HashMap<>(params == null ? Collections.emptyMap() : params);
+		for (Map.Entry<String, String> entry : urlParams.entrySet()) {
+			String base = entry.getValue() == null ? "" : entry.getValue();
+			urlDescriptions.put(entry.getKey(), base + "，内容为http或者https链接");
+		}
+		return new ToolData(tool, name, description, urlDescriptions, presenter, async, maxCalls, sessionOnly,
+				orderSensitive, paramLabels, optionalParams, urlParams);
 	}
 
 	/**
@@ -224,7 +285,13 @@ public class ToolData {
 	/** 三参数、直接返回文本的简单工具实现。 */
 	@FunctionalInterface
 	public interface TextTool {
-		String run(String params, AIOutput output, ToolCallManager manager);
+		/**
+		 * @param params  模型给出的参数
+		 * @param output  本次生成的输出对象，可为 null
+		 * @param context 本次生成的工具调用上下文，可为 null（服务端直调时）
+		 * @return 结果文本
+		 */
+		String run(String params, AIOutput output, ToolCallContext context);
 	}
 
 	public static class Builder {
@@ -234,6 +301,7 @@ public class ToolData {
 		private Map<String, String> params = new HashMap<>();
 		private Map<String, String> paramLabels = new HashMap<>();
 		private Set<String> optionalParams = new HashSet<>();
+		private Map<String, String> urlParams = new HashMap<>();
 		private ToolCallPresenter presenter;
 		private boolean async;
 		private int maxCalls = -1;
@@ -253,7 +321,7 @@ public class ToolData {
 		 * @return 当前 Builder
 		 */
 		public Builder tool(Function<String, String> simple) {
-			this.tool = (params, output, manager) -> CompletableFuture
+			this.tool = (params, output, context) -> CompletableFuture
 					.completedFuture(ToolResult.text(simple.apply(params)));
 			return this;
 		}
@@ -266,8 +334,8 @@ public class ToolData {
 		 * @return 当前 Builder
 		 */
 		public Builder toolText(TextTool textTool) {
-			this.tool = (params, output, manager) -> CompletableFuture
-					.completedFuture(ToolResult.text(textTool.run(params, output, manager)));
+			this.tool = (params, output, context) -> CompletableFuture
+					.completedFuture(ToolResult.text(textTool.run(params, output, context)));
 			return this;
 		}
 
@@ -278,7 +346,7 @@ public class ToolData {
 		 * @return 当前 Builder
 		 */
 		public Builder toolFuture(Function<String, CompletableFuture<String>> futureTool) {
-			this.tool = (params, output, manager) -> futureTool.apply(params)
+			this.tool = (params, output, context) -> futureTool.apply(params)
 					.thenApply(ToolResult::text);
 			return this;
 		}
@@ -290,7 +358,7 @@ public class ToolData {
 		 * @return 当前 Builder
 		 */
 		public Builder toolResult(Function<String, CompletableFuture<ToolResult>> resultTool) {
-			this.tool = (params, output, manager) -> resultTool.apply(params);
+			this.tool = (params, output, context) -> resultTool.apply(params);
 			return this;
 		}
 
@@ -417,6 +485,7 @@ public class ToolData {
 		 */
 		public Builder putParam(String key, String value, String label) {
 			this.params.put(key, value);
+			this.urlParams.remove(key);
 			this.optionalParams.remove(key);
 			if (label != null && !label.trim().isEmpty()) {
 				this.paramLabels.put(key, label.trim());
@@ -447,6 +516,7 @@ public class ToolData {
 		 */
 		public Builder putOptionalParam(String key, String value, String label) {
 			this.params.put(key, value);
+			this.urlParams.remove(key);
 			this.optionalParams.add(key);
 			if (label != null && !label.trim().isEmpty()) {
 				this.paramLabels.put(key, label.trim());
@@ -456,9 +526,84 @@ public class ToolData {
 			return this;
 		}
 
+		/**
+		 * 添加一个 URL 参数：值可以是对象存储 ID，也可以是 http(s)/data URL。
+		 * <p>
+		 * 对象存储上下文的参数说明为“基础说明，内容为72位id”；URL 上下文
+		 * （MCP 服务端）为“基础说明，内容为http或者https链接”。执行时由
+		 * {@code ToolCallManager} 的文件解析器把 URL 转成对象存储 ID。
+		 * </p>
+		 *
+		 * @param key         参数名（给模型看的 JSON 字段名）
+		 * @param description 基础说明，例如“输入图片”
+		 * @return 当前 Builder
+		 */
+		public Builder putUrlParam(String key, String description) {
+			return putUrlParam(key, description, null);
+		}
+
+		/**
+		 * 添加一个 URL 参数，并声明它在审核等界面中的人可读名称。
+		 *
+		 * @param key         参数名
+		 * @param description 基础说明，例如“输入图片”
+		 * @param label       人可读名称；为 null 或空时回退为参数名
+		 * @return 当前 Builder
+		 */
+		public Builder putUrlParam(String key, String description, String label) {
+			putUrlParamInternal(key, description, label, false);
+			return this;
+		}
+
+		/**
+		 * 添加一个可选的 URL 参数。
+		 *
+		 * @param key         参数名
+		 * @param description 基础说明，例如“参考图”
+		 * @return 当前 Builder
+		 */
+		public Builder putOptionalUrlParam(String key, String description) {
+			return putOptionalUrlParam(key, description, null);
+		}
+
+		/**
+		 * 添加一个可选的 URL 参数，并声明它在审核等界面中的人可读名称。
+		 *
+		 * @param key         参数名
+		 * @param description 基础说明，例如“参考图”
+		 * @param label       人可读名称；为 null 或空时回退为参数名
+		 * @return 当前 Builder
+		 */
+		public Builder putOptionalUrlParam(String key, String description, String label) {
+			putUrlParamInternal(key, description, label, true);
+			return this;
+		}
+
+		/** URL 参数统一写入：对象存储上下文的默认说明 + 可选标记。 */
+		private void putUrlParamInternal(String key, String description, String label, boolean optional) {
+			String base = description == null ? "" : description.trim();
+			this.params.put(key, base + "，内容为72位id");
+			this.urlParams.put(key, base);
+			if (optional) {
+				this.optionalParams.add(key);
+			} else {
+				this.optionalParams.remove(key);
+			}
+			if (label != null && !label.trim().isEmpty()) {
+				this.paramLabels.put(key, label.trim());
+			} else {
+				this.paramLabels.remove(key);
+			}
+		}
+
 		// 批量添加参数（覆盖已有键）
 		public Builder params(Map<String, String> params) {
-			this.params.putAll(params);
+			if (params != null) {
+				for (String key : params.keySet()) {
+					this.urlParams.remove(key);
+				}
+				this.params.putAll(params);
+			}
 			return this;
 		}
 
@@ -467,8 +612,9 @@ public class ToolData {
 			Map<String, String> immutableParams = new HashMap<>(params);
 			Map<String, String> immutableLabels = new HashMap<>(paramLabels);
 			Set<String> immutableOptional = new HashSet<>(optionalParams);
+			Map<String, String> immutableUrlParams = new HashMap<>(urlParams);
 			return new ToolData(tool, name, description, immutableParams, presenter, async, maxCalls, sessionOnly,
-					orderSensitive, immutableLabels, immutableOptional);
+					orderSensitive, immutableLabels, immutableOptional, immutableUrlParams);
 		}
 
 		public Builder(String name, String description) {

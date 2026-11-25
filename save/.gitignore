@@ -16,11 +16,14 @@
 /site.json
 /config/object-storage.json
 /config/image-generation.json
+/config/tencent-docs.json
+/config/feishu-bitable.json
 /config/local-voice.json
 /config/volcano-voice.json
 /config/agents.json
 /config/private-chat.json
 /config/crontab.json
+/config/ticket-sheet.json
 /config/sdxl/loras.json
 /config/sdxl/reference-images.json
 

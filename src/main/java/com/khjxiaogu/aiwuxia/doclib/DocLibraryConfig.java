@@ -69,7 +69,56 @@ public final class DocLibraryConfig {
         boolean write = JsonConfig.getBool(dl, "write", true);
         List<String> listen = JsonConfig.getStringList(dl, "listen");
         boolean wake = JsonConfig.getBool(dl, "wakeOnNotify", false);
+        return build(dataFolder, id, write, listen, wake);
+    }
 
+    /**
+     * 解析一个“系统库”的配置：不绑定 AI 会话，允许直写。
+     * <p>工单系统等基于文档库的扩展用它打开自己的库；库参数同样来自
+     * {@code save/config/doclibs.json}，没有配置时使用默认值和默认目录 {@code doclibs/<id>}。</p>
+     *
+     * @param dataFolder 数据目录（save/）
+     * @param libraryId  库 id
+     * @return 配置
+     */
+    public static DocLibraryConfig forLibrary(File dataFolder, String libraryId) {
+        return forLibrary(dataFolder, libraryId, Collections.<String>emptyList());
+    }
+
+    /**
+     * 解析一个“系统库”的配置，并指定系统监听者关心的文档前缀。
+     *
+     * @param dataFolder 数据目录（save/）
+     * @param libraryId  库 id
+     * @param listen     监听模式，例如 {@code ["ticket/*"]}
+     * @return 配置
+     */
+    public static DocLibraryConfig forLibrary(File dataFolder, String libraryId, List<String> listen) {
+        return forLibrary(dataFolder, libraryId, listen, false);
+    }
+
+    /**
+     * 解析一个“系统库”的配置，并指定系统监听者关心的文档前缀与是否主动唤醒。
+     * <p>工单系统等扩展用它按会话注册监听者：{@code wakeOnNotify} 由调用方从会话配置
+     * （{@code ticket.wakeOnNotify}）透传，默认 false 只入队不唤醒。</p>
+     *
+     * @param dataFolder    数据目录（save/）
+     * @param libraryId     库 id
+     * @param listen        监听模式，例如 {@code ["ticket/*"]}
+     * @param wakeOnNotify  收到通知后是否主动唤醒会话
+     * @return 配置
+     */
+    public static DocLibraryConfig forLibrary(File dataFolder, String libraryId, List<String> listen,
+            boolean wakeOnNotify) {
+        String id = libraryId == null ? "" : libraryId.trim();
+        if (id.isEmpty()) {
+            id = "default";
+        }
+        return build(dataFolder, id, true, listen, wakeOnNotify);
+    }
+
+    private static DocLibraryConfig build(File dataFolder, String id, boolean write, List<String> listen,
+            boolean wake) {
         JsonObject lib = loadLibrary(dataFolder, id);
         String path = JsonConfig.getString(lib, "path", "doclibs/" + safeName(id));
         int maxDocChars = Math.max(1000, JsonConfig.getInt(lib, "maxDocChars", 40000));

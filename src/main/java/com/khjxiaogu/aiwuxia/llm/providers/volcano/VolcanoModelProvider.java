@@ -132,7 +132,11 @@ public class VolcanoModelProvider implements ModelProvider{
 				JsonObject msgjo=new JsonObject();
 				if(msgc instanceof VideoContent) {
 					msgjo.addProperty("type", "video_url");
-					msgjo.addProperty("video_url", resolver.resolveUrl(((VideoContent)msgc).getVideoUrl()));
+					// 方舟 Chat Completions 的 video_url 是对象（{"url": ...}，可选 fps），
+					// 与 Responses API 直接给字符串不同；对象存储 id 在这里解析成可访问地址
+					JsonObject video = new JsonObject();
+					video.addProperty("url", resolver.resolveUrl(((VideoContent)msgc).getVideoUrl()));
+					msgjo.add("video_url", video);
 				}else if(msgc instanceof ImageContent) {
 					
 					msgjo.addProperty("type", "image_url");

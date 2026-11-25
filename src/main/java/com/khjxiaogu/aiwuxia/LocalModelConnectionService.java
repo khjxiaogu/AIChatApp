@@ -15,6 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelGateway;
 import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
+import com.khjxiaogu.aiwuxia.modelproxy.cache.LocalModelFileCache;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.utils.SiteConfig;
 import com.khjxiaogu.aiwuxia.vision.H3LocalModelHandler;
@@ -95,6 +96,8 @@ public class LocalModelConnectionService implements AutoCloseable {
 	private final long reconnectIntervalMs;
 	/** 已托管的统一连接管理器，持有引用避免长连接被回收。 */
 	private final List<LocalModelClient> clients = new ArrayList<>();
+	/** 部署侧磁盘缓存：输出落盘、输入附件命中时跳过拉取；null 表示不启用。 */
+	private LocalModelFileCache fileCache;
 	/** 是否已经建过连接。 */
 	private boolean started;
 
@@ -234,11 +237,26 @@ public class LocalModelConnectionService implements AutoCloseable {
 		started = true;
 		Map<ModelType, LocalModelClient.RequestHandler> handlers = createHandlers();
 		Map<ModelType, LocalModelClient.HealthCheck> healthChecks = createHealthChecks();
+		// 部署侧缓存：所有通道共用一份，输出与输入都按内容哈希落盘。
+		// 服务端登记附件时会带上同一个内容键（对象存储 id），后续“用上次的输出继续处理”可以直接命中。
+		if (fileCache == null) {
+			fileCache = LocalModelFileCache.open(dataFolder);
+			// 处理器（H3/Qwen 旧报文路径）通过静态入口把输入文件也写进这份缓存
+			LocalModelFileCache.install(fileCache);
+			if (fileCache == null) {
+				System.out.println("[LocalModelCache] 已禁用（-D" + LocalModelFileCache.ENABLED_PROPERTY
+						+ "=off/false/0 或 -D" + LocalModelFileCache.MAX_MB_PROPERTY + " 为负数）");
+			} else {
+				System.out.println("[LocalModelCache] 目录：" + fileCache.directory() + "，上限："
+						+ (fileCache.maxBytes() <= 0 ? "不限" : fileCache.maxBytes() / (1024L * 1024L) + " MB"));
+			}
+		}
 		// 打印实际注册的处理器与健康检查：用于核对服务端看到的 provider 列表为什么是某个集合
 		System.out.println("[LocalModelDeploy] 注册处理器：" + names(handlers.keySet()) + "，健康检查："
 				+ names(healthChecks.keySet()));
 		for (URI uri : deployUris()) {
-			LocalModelClient client = new LocalModelClient(uri, headers(), autoReconnect, reconnectIntervalMs);
+			LocalModelClient client = new LocalModelClient(uri, headers(), autoReconnect, reconnectIntervalMs)
+					.setFileCache(fileCache);
 			for (Map.Entry<ModelType, LocalModelClient.RequestHandler> entry : handlers.entrySet()) {
 				client.register(entry.getKey(), entry.getValue(), healthChecks.get(entry.getKey()));
 			}
@@ -340,6 +358,15 @@ public class LocalModelConnectionService implements AutoCloseable {
 	}
 
 	/**
+	 * 部署侧磁盘缓存（输出落盘 / 输入附件命中），未启用时返回 null。
+	 *
+	 * @return 缓存实例或 null
+	 */
+	public synchronized LocalModelFileCache getFileCache() {
+		return fileCache;
+	}
+
+	/**
 	 * 断开与服务器的连接并释放客户端；重复调用无副作用。
 	 */
 	@Override
@@ -353,6 +380,9 @@ public class LocalModelConnectionService implements AutoCloseable {
 		}
 		clients.clear();
 		started = false;
+		if (fileCache != null) {
+			System.out.println("[LocalModelCache] 关闭：" + fileCache.summary());
+		}
 	}
 
 	/**

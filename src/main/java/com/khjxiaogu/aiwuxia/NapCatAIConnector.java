@@ -94,6 +94,8 @@ import com.khjxiaogu.aiwuxia.doclib.DocLibraryConfig;
 import com.khjxiaogu.aiwuxia.doclib.DocLibraryMcp;
 import com.khjxiaogu.aiwuxia.doclib.DocLibraryRegistry;
 import com.khjxiaogu.aiwuxia.doclib.DocLibraryRuntime;
+import com.khjxiaogu.aiwuxia.ticket.TicketMcp;
+import com.khjxiaogu.aiwuxia.ticket.TicketService;
 import com.khjxiaogu.aiwuxia.mcp.chat.MessageMcp;
 import com.khjxiaogu.aiwuxia.mcp.chat.GroupChatHost;
 import com.khjxiaogu.aiwuxia.mcp.chat.GroupChatMcp;
@@ -108,6 +110,7 @@ import com.khjxiaogu.aiwuxia.mcp.CodexMcp;
 import com.khjxiaogu.aiwuxia.mcp.CrontabMcp;
 import com.khjxiaogu.aiwuxia.mcp.DeepseekSearchMcp;
 import com.khjxiaogu.aiwuxia.mcp.FetchMcp;
+import com.khjxiaogu.aiwuxia.mcp.GroupFileMcp;
 import com.khjxiaogu.aiwuxia.mcp.H3VideoAgentMcp;
 import com.khjxiaogu.aiwuxia.mcp.H3VideoMcp;
 import com.khjxiaogu.aiwuxia.mcp.HistorySearchMcp;
@@ -129,6 +132,7 @@ import com.khjxiaogu.aiwuxia.objectstorage.TOStorage;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.history.HistoryItem;
 import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
+import com.khjxiaogu.aiwuxia.state.history.message.FileContent;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContents;
@@ -512,6 +516,14 @@ public class NapCatAIConnector implements GroupChatHost {
 								}
 								return new PlainText(summary);
 							});
+						} else if (content instanceof IncomingContent.FileBlock) {
+							// 群文件只给出引用，不在这里下载：文件可能很大，交给 download_group_file 按需取用
+							IncomingContent.FileBlock file = (IncomingContent.FileBlock) content;
+							hasText = true;
+							String line = "<file name=\"" + escapeXmlText(file.getFileName())
+									+ "\" size=\"" + file.getSize() + "\" messageId=\""
+									+ escapeXmlText(msg.getMessageId()) + "\" />";
+							mes.add(() -> new PlainText(line));
 						}
 					}
 					// 管理员指令：配置了管理员、且发送者确实是其中之一时才处理
@@ -542,7 +554,7 @@ public class NapCatAIConnector implements GroupChatHost {
 						// 主动回复判定只累积文本；纯图片消息用占位文本表示
 						String judgeText = textContent.toString().trim();
 						if (judgeText.isEmpty()) {
-							judgeText = "（图片或媒体消息）";
+							judgeText = "（图片、文件或媒体消息）";
 						}
 						autoReply.onMessage(state, sender, senderid, judgeText);
 					}
@@ -1026,6 +1038,29 @@ public class NapCatAIConnector implements GroupChatHost {
 			sends.add(() -> privateUser != null
 					? adapter.sendPrivateRecord(privateUser, file)
 					: adapter.sendRecord(target, file));
+		} else if (content instanceof FileContent) {
+			FileContent fileContent = (FileContent) content;
+			try {
+				// 文件 id 换成可直接下载的地址；名字由工具指定（接收者看到的文件名）
+				String fileRef = fileContent.getFileId();
+				final String file;
+				if (isDirectMediaUrl(fileRef)) {
+					file = fileRef;
+				} else if (fileRef == null || fileRef.isEmpty()) {
+					throw new IOException("文件 id 为空");
+				} else {
+					file = tos.getPreferredUrl(fileRef, null);
+				}
+				final String name = fileContent.getName();
+				sends.add(() -> privateUser != null
+						? adapter.sendPrivateFile(privateUser, file, name)
+						: adapter.sendFile(target, file, name));
+			} catch (Exception e) {
+				e.printStackTrace();
+				sends.add(privateUser != null
+						? () -> privateTextSend(privateUser, "文件发送失败：文件不存在或当前协议不支持发送文件")
+						: textSend(state, "文件发送失败：文件不存在或当前协议不支持发送文件"));
+			}
 		}
 		return sends;
 	}
@@ -1190,6 +1225,10 @@ public class NapCatAIConnector implements GroupChatHost {
 			ToolData recognition = MultiModalMcp.createImageRecognition(tos);
 			state.registerTool(recognition);
 			recordTool(toolNamesBySkill, "multimodal", recognition);
+			// 视频理解与图片识别并列：不同点在于必须由调用方提供 prompt 说明要确认什么
+			ToolData videoRecognition = MultiModalMcp.createVideoRecognition(tos);
+			state.registerTool(videoRecognition);
+			recordTool(toolNamesBySkill, "multimodal", videoRecognition);
 		}
 
 		if (toolSettings.isEnabled("qq")) {
@@ -1208,6 +1247,18 @@ public class NapCatAIConnector implements GroupChatHost {
 			ToolData sendEmoji = MediaOutputMcp.createSendEmojiImage(emojis);
 			state.registerTool(sendEmoji);
 			recordTool(toolNamesBySkill, "qq", sendEmoji);
+			// 发送文件：只有协议支持上传文件（NapCat / QQ 官方）时才注册
+			if (adapter.supportsFileSend()) {
+				ToolData sendFile = MediaOutputMcp.createSendFileForChat(tos);
+				state.registerTool(sendFile);
+				recordTool(toolNamesBySkill, "qq", sendFile);
+			}
+			// 群文件下载：只有协议能定位群文件（例如 QQ 官方协议消息附件）时才注册
+			if (adapter.supportsGroupFileDownload()) {
+				ToolData downloadGroupFile = GroupFileMcp.createDownloadGroupFile(adapter, tos, state.groupId);
+				state.registerTool(downloadGroupFile);
+				recordTool(toolNamesBySkill, "qq", downloadGroupFile);
+			}
 		}
 
 		if (toolSettings.isEnabled("sdxl")) {
@@ -1459,8 +1510,10 @@ public class NapCatAIConnector implements GroupChatHost {
 			try {
 				DocLibraryConfig dlCfg = DocLibraryConfig.forAgent(dataFolder, config);
 				DocLibraryRuntime lib = DocLibraryRegistry.open(dataFolder, dlCfg);
-				DocAgent dlAgent = lib.register(state, dlCfg, () -> submitMessage(state));
-				ToolProvider doclib = DocLibraryMcp.forAgent(lib, dlAgent, dlCfg);
+				DocLibraryMcp doclib = DocLibraryMcp.forAgent(lib, dlCfg,
+						text -> notifyDocUpdate(state, text, dlCfg.wakeOnNotify));
+				DocAgent dlAgent = lib.register(state, dlCfg, doclib);
+				doclib.bindAgent(dlAgent);
 				state.registerTools(doclib);
 				recordTools(toolNamesBySkill, "doclib", doclib.getTools());
 				System.out.println("[QQ] 文档库已接入：" + dlAgent.displayName
@@ -1468,6 +1521,32 @@ public class NapCatAIConnector implements GroupChatHost {
 			} catch (Throwable t) {
 				t.printStackTrace();
 				System.out.println("[QQ] 文档库接入失败：" + t.getMessage());
+			}
+		}
+		if (toolSettings.isEnabled("ticket") || toolSettings.isEnabled("ticketmcp")) {
+			// 工单系统：基于共享文档库的独立工具组（ticket_*），通过 agents.json / multi.json 的 tools 启用；
+			// 是否暴露给 MCP 由对应的工具来源决定。工单的结构化字段保存在文档文件开头的 JSON meta 里。
+			try {
+				JsonObject ticketConfig = JsonConfig.getObject(config, "ticket");
+				String ticketLibrary = ticketConfig == null ? "tickets"
+						: JsonConfig.getString(ticketConfig, "libraryId", "tickets").trim();
+				if (ticketLibrary.isEmpty()) {
+					ticketLibrary = "tickets";
+				}
+				// 每个会话独立决定收到工单变更后是否主动唤醒（默认只入队，避免通知风暴）
+				boolean ticketWake = ticketConfig != null
+						&& JsonConfig.getBool(ticketConfig, "wakeOnNotify", false);
+				TicketService ticketService = new TicketService(dataFolder, ticketLibrary, ticketWake);
+				TicketMcp ticket = new TicketMcp(ticketService, state, () -> submitMessage(state));
+				state.registerTools(ticket);
+				recordTools(toolNamesBySkill, "ticket", ticket.getTools());
+				recordTools(toolNamesBySkill, "ticketmcp", ticket.getTools());
+				System.out.println("[QQ] 工单 MCP 已接入：" + state.getRoleName(Role.ASSISTANT)
+						+ "，库 " + ticketService.libraryId() + "，目录 " + ticketService.root().getPath()
+						+ "，唤醒 " + ticketWake);
+			} catch (Throwable t) {
+				t.printStackTrace();
+				System.out.println("[QQ] 工单 MCP 接入失败：" + t.getMessage());
 			}
 		}
 		if (isExplicitSend(state, config)) {
@@ -2151,6 +2230,27 @@ public class NapCatAIConnector implements GroupChatHost {
 
 	public void beforeSendMessage(AIGroupSession state) {
 		
+	}
+
+	/**
+	 * 把文档库的通知投递进会话：入队一条重要消息，必要时唤醒 agent。
+	 * <p>文档库的工具本身不接触会话，这是唯一需要会话的出口，因此实现放在连接器里。</p>
+	 *
+	 * @param state        会话
+	 * @param text         通知文本
+	 * @param wakeOnNotify 是否允许主动唤醒
+	 */
+	private void notifyDocUpdate(AIGroupSession state, String text, boolean wakeOnNotify) {
+		state.getCommandExec().submit(() -> {
+			try {
+				state.addMessage(Collections.singletonList(() -> new PlainText(text)), true);
+				if (wakeOnNotify && !state.isGenerating()) {
+					submitMessage(state);
+				}
+			} catch (Throwable t) {
+				t.printStackTrace();
+			}
+		});
 	}
 
 	public void submitMessage(AIGroupSession state) {

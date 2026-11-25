@@ -21,7 +21,6 @@ import com.khjxiaogu.aiwuxia.llm.ModelRouteException;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
-import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
@@ -112,7 +111,8 @@ public class SeedreamMcpVideoTest {
 						usage.accept(new SeedanceVideoUsage(720, 1280, 24, duration));
 					return CompletableFuture.completedFuture("https://video.example/test.mp4");
 				});
-		video.tool.run("{\"prompt\":\"测试\",\"duration\":8}", output, new ToolCallManager()).join();
+		// 直接调用工具，没有生成过程，不需要工具调用上下文（见 Tool#run 说明）
+		video.tool.run("{\"prompt\":\"测试\",\"duration\":8}", output, null).join();
 		check(collected.size() == 1, "应回报1条视频用量，实际：" + collected.size());
 		check(collected.get(0) instanceof SeedanceVideoUsage, "用量类型应为 SeedanceVideoUsage，实际：" + collected.get(0));
 		SeedanceVideoUsage usage = (SeedanceVideoUsage) collected.get(0);
@@ -247,7 +247,7 @@ public class SeedreamMcpVideoTest {
 							"开关工具只需要 reason 参数，实际：" + reject.params.keySet());
 					AIOutput.StreamedAIOutput agentOutput = new AIOutput.StreamedAIOutput();
 					String toolResult = reject.tool
-							.run("{\"reason\":\"" + reason + "\"}", agentOutput, new ToolCallManager()).join().getText();
+							.run("{\"reason\":\"" + reason + "\"}", agentOutput, null).join().getText();
 					check(toolResult.contains("已停止"), "开关工具应回传已停止生成，实际：" + toolResult);
 					check(agentOutput.isInterrupted(), "开关应同时中断脚本 agent 的输出，避免继续跑下一轮");
 					// 被停下后模型没有正文，脚本 agent 返回空串
@@ -365,7 +365,7 @@ public class SeedreamMcpVideoTest {
 
 		ToolResult result;
 		try {
-			result = video.tool.run(params.toString(), null, new ToolCallManager()).get(5, TimeUnit.MINUTES);
+			result = video.tool.run(params.toString(), null, null).get(5, TimeUnit.MINUTES);
 		} catch (ExecutionException e) {
 			Throwable cause = e.getCause();
 			if (hasCause(cause, ModelRouteException.class)) {
@@ -441,7 +441,7 @@ public class SeedreamMcpVideoTest {
 
 	/** 直接执行工具（同步工具会立即完成，不涉及网络）。 */
 	private static String run(ToolData tool, String params) {
-		ToolResult result = tool.tool.run(params, null, new ToolCallManager()).join();
+		ToolResult result = tool.tool.run(params, null, null).join();
 		return result.getText();
 	}
 

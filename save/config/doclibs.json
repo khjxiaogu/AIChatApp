@@ -10,6 +10,17 @@
       "maxDocsPerNotice": 20,
       "retainRevisions": 50,
       "allowedListeners": ["*"]
+    },
+    "tickets": {
+      "path": "doclibs/tickets",
+      "maxDocChars": 40000,
+      "maxRoundMs": 600000,
+      "maxWritesPerRound": 32,
+      "waitTimeoutMs": 10000,
+      "notifyBatchMs": 200,
+      "maxDocsPerNotice": 20,
+      "retainRevisions": 50,
+      "allowedListeners": ["*"]
     }
   }
 }

@@ -233,6 +233,9 @@ public class AICodexAgentMain extends AIApplication {
                 .append("- codex_latest：按需读输出（恢复会话、用户问进度、看完整过程时用一次）。\n")
                 .append("- codex_pending / codex_feedback：处理审批与提问。\n")
                 .append("- codex_review_approval：预审 Codex 的审批请求（approve / ask_user / reject）。\n")
+                .append("- codex_pull_file：把对象存储里的文件（例如用户发来的图片 id）下载到项目固定目录，只需给纯文件名；")
+                .append("用户要求「把这张图放进项目叫 xxx」时用，文件名按用户要求，目录固定不能改。\n")
+                .append("- codex_push_file：把项目固定目录里的同名文件上传成对象存储 id；需要把该目录里的文件发出来时用。\n")
                 .append("- kb_search / kb_read：只读了解/查资料时优先用；在项目知识库（根目录文件 + ")
                 .append("design/docs/diary/discussion 子目录）搜关键字、读 .md。中英文文档都有，搜索时用 | ")
                 .append("同时给中英文关键词（如 天气|weather）。\n")
@@ -270,7 +273,10 @@ public class AICodexAgentMain extends AIApplication {
                 .append("6. 检查完成通知的正文：如果 Codex 只写了本地图片路径（例如 `screenshots/a.png`）却没有用 `![说明](路径)`，")
                 .append("且本轮没有图片附件，就用 codex_send 发一句「请用 ![说明](路径) 输出图片，不要只给路径」；")
                 .append("同一问题只提醒一次，再汇报。\n")
-                .append("7. 用户追问进度或恢复会话时才 codex_latest 一次，不要连续轮询；用户问「之前做到哪」直接读历史。\n\n");
+                .append("7. 用户要求把图片/素材放进项目并命名时：先用 codex_pull_file（file_id 用消息里的图片 id，")
+                .append("name 写用户要的文件名，纯文件名、不要带目录），成功后再 codex_send 把返回的 relative 交给 Codex；")
+                .append("目录是固定的，不要替用户改目录。不要指望 Codex 自己拿到对象存储里的图片。\n")
+                .append("8. 用户追问进度或恢复会话时才 codex_latest 一次，不要连续轮询；用户问「之前做到哪」直接读历史。\n\n");
         prompt.append("## 回复用户\n")
                 .append("- 中文、简洁、像聊天；先结论后细节，不贴大段 diff/代码。\n")
                 .append("- **不要透露内部细节**：不提工具名、会话/游标、附件 id、存储、沙箱/审批配置、配置文件路径等，")

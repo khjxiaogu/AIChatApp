@@ -166,9 +166,11 @@ public final class SDXLApi {
 
 		JsonObject jsonResponse = endpoint.request("/tagger/v1/interrogate", payload.toString());
 		try {
-			// 反推模型占显存，拿到结果后立刻让 SD WebUI 卸载它
+			// 反推模型占显存，拿到结果后立刻让 SD WebUI 卸载它。
+			// 这个接口返回的是纯文本（例如 "Successfully unload 1 model(s)"），不能按 JSON 解析；
+			// 卸载失败也不能影响已经拿到的反推结果。
 			endpoint.request("/tagger/v1/unload-interrogators", "");
-		} catch (IOException ex) {
+		} catch (IOException | RuntimeException ex) {
 			System.err.println("[SDXL] 卸载反推模型失败：" + ex);
 		}
 		return jsonResponse.get("caption").getAsJsonObject().get("tag").getAsJsonObject();

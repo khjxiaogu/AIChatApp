@@ -203,6 +203,8 @@ public class SiliconFlowModelProvider implements ModelProvider{
 		// 工具调用的收集、次数限制、权限、许可与执行统一交给 ToolCallManager
 		ToolCallContext toolContext=ToolCallContext.create(request.getToolCallManager(), readable, ToolCallHistory.of(ja));
 		exec.submit(()->{
+			// 本轮工具调用上下文是否以失败收尾；由 endRound 交给需要感知轮次的工具子系统
+			boolean failed=false;
 			try {
 				AtomicBoolean shouldContinueRequest =new AtomicBoolean(true);
 				while(shouldContinueRequest.get()) {
@@ -262,6 +264,7 @@ public class SiliconFlowModelProvider implements ModelProvider{
 					usage.add(crnusage);
 				}
 			} catch (Exception e) {
+				failed=true;
 				e.printStackTrace();
 				if(e instanceof IOException)
 					readable.exception((IOException)e);
@@ -274,6 +277,11 @@ public class SiliconFlowModelProvider implements ModelProvider{
 			try {
 				readable.addUsage(usage);
 			}finally {
+				// 本轮工具调用结束：先回调轮次监听器（文档库在这里提交草稿并解锁），再关闭输出流
+				toolContext.endRound(readable.isInterrupted()
+						? ToolCallContext.RoundEndReason.INTERRUPTED
+						: failed ? ToolCallContext.RoundEndReason.ERROR
+								: ToolCallContext.RoundEndReason.NORMAL);
 				readable.endContent();
 			}
 		});

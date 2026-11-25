@@ -1,12 +1,12 @@
 package com.khjxiaogu.aiwuxia.objectstorage;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.function.Consumer;
 
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.utils.ContentHash;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 
 public interface ObjectStorageProvider {
@@ -58,15 +58,7 @@ public interface ObjectStorageProvider {
 		return getDataUrl(fn,addUsage);
 	}
 	default boolean exists(byte[] data,Consumer<UsageIntf<?>> addUsage) {
-		MessageDigest md;
-		try {
-			md = getSha256Digest();
-		} catch (NoSuchAlgorithmException e) {
-			e.printStackTrace();
-			throw new IllegalArgumentException(e);
-		}
-		String name=bytesToHex(md.digest(data))+bytesToHex(ByteBuffer.allocate(4).putInt(data.length).array());
-		return exists(name,addUsage);
+		return exists(ContentHash.keyOf(data),addUsage);
 	}
 	default String uploadIfNotExists(byte[] data,Consumer<UsageIntf<?>> addUsage) throws IOException {
 		return uploadIfNotExists(data, "", addUsage);
@@ -93,19 +85,11 @@ public interface ObjectStorageProvider {
 	 */
 	default String uploadIfNotExists(byte[] data, String extension, Consumer<UsageIntf<?>> addUsage)
 			throws IOException {
-		MessageDigest md;
-		try {
-			md = getSha256Digest();
-		} catch (NoSuchAlgorithmException e) {
-			e.printStackTrace();
-			throw new IllegalArgumentException(e);
-		}
 		String suffix = extension == null ? "" : extension.trim();
 		if (!suffix.isEmpty() && !suffix.startsWith(".")) {
 			suffix = "." + suffix;
 		}
-		String name = bytesToHex(md.digest(data)) + bytesToHex(ByteBuffer.allocate(4).putInt(data.length).array())
-				+ suffix;
+		String name = ContentHash.keyOf(data) + suffix;
 		if (exists(name, addUsage)) {
 			return name;
 		}

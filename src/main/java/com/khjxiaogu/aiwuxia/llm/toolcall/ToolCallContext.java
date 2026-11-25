@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import com.khjxiaogu.aiwuxia.llm.AIOutput.StreamedAIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
@@ -134,9 +135,60 @@ public class ToolCallContext {
 		}
 	}
 
+	/**
+	 * 本轮（一次生成的工具调用周期）的结束原因。
+	 * <p>
+	 * 只描述工具调用上下文这一层的收尾语义，不依赖会话层：由提供者在生成流收尾时给出，
+	 * 需要感知轮次的工具子系统（例如共享文档库）自行决定每种原因怎么处理。
+	 * </p>
+	 */
+	public enum RoundEndReason {
+		/** 正常跑完；用户主动中断时也归入此类，已产生的写入同样有效。 */
+		NORMAL,
+		/** 请求或流处理出错。 */
+		ERROR,
+		/** 用户主动停止生成。 */
+		INTERRUPTED,
+		/** 上下文被直接关闭（会话关闭等）。 */
+		CLOSED
+	}
+
+	/**
+	 * 本轮数据对象：工具挂在上下文上的本轮状态，同时充当轮次状态监听者。
+	 * <p>
+	 * 工具不再向上下文登记“监听器”：它把本轮的 <b>数据对象</b> 放进上下文
+	 * （{@link #computeRoundState(String, Supplier)}），上下文在轮次开始时创建它、结束时回调它。
+	 * 数据对象按需覆盖 {@link #onRoundStart()} / {@link #onRoundEnd(RoundEndReason)} 就能感知并
+	 * 记录轮次状态；不需要回调时只当普通数据对象用即可。
+	 * </p>
+	 */
+	public interface RoundState {
+		/** 数据对象首次被放进上下文时回调一次，在创建它的线程上同步执行。 */
+		default void onRoundStart() {
+		}
+
+		/**
+		 * 本轮结束，只会回调一次。
+		 *
+		 * @param reason 结束原因
+		 */
+		default void onRoundEnd(RoundEndReason reason) {
+		}
+	}
+
 	private final ToolCallManager manager;
 	private final StreamedAIOutput output;
 	private final ToolCallHistory history;
+
+	/**
+	 * 本轮数据对象表：key → 工具自己放进去的本轮状态对象，与本次生成同生命周期。
+	 * <p>创建与结束在同一把锁上串行化，保证“放进来的对象一定收到结束回调”。</p>
+	 */
+	private final Map<String, Object> roundStates = new ConcurrentHashMap<>();
+	/** 本轮是否已经结束；CAS 保证数据对象只收到一次结束回调。 */
+	private final AtomicBoolean roundEnded = new AtomicBoolean();
+	/** 结束原因，结束后供晚到的调用方查询。 */
+	private volatile RoundEndReason roundEndReason;
 
 	/**
 	 * 本轮的增量收集器。
@@ -271,6 +323,98 @@ public class ToolCallContext {
 	 */
 	public static ToolCallContext create(StreamedAIOutput output, ToolCallHistory history) {
 		return create(null, output, history);
+	}
+
+	/**
+	 * 获取工具此前放进本轮上下文的数据对象。
+	 *
+	 * @param key  数据对象键，通常用“子系统:库id”
+	 * @param <T>  数据类型
+	 * @return 数据对象；没有时返回 null
+	 */
+	@SuppressWarnings("unchecked")
+	public <T> T getRoundState(String key) {
+		return key == null ? null : (T) roundStates.get(key);
+	}
+
+	/**
+	 * 取得（必要时创建）工具自己的本轮数据对象。
+	 * <p>
+	 * 工厂只在首次创建时执行一次；对象实现 {@link RoundState} 时，创建后立即回调
+	 * {@link RoundState#onRoundStart()}。同一 key 的后续调用直接返回同一个对象，因此工具可以
+	 * 在轮次中间随时取回自己的数据。轮次已经结束时不创建、不回调，返回 null。
+	 * </p>
+	 *
+	 * @param key     数据对象键，通常用“子系统:库id”
+	 * @param factory 首次创建用的工厂
+	 * @param <T>     数据类型
+	 * @return 本轮数据对象；轮次已结束或参数无效时返回 null
+	 */
+	@SuppressWarnings("unchecked")
+	public synchronized <T> T computeRoundState(String key, Supplier<T> factory) {
+		if (key == null || factory == null || roundEnded.get()) {
+			return null;
+		}
+		Object existing = roundStates.get(key);
+		if (existing != null) {
+			return (T) existing;
+		}
+		T created = factory.get();
+		if (created == null) {
+			return null;
+		}
+		roundStates.put(key, created);
+		if (created instanceof RoundState) {
+			try {
+				((RoundState) created).onRoundStart();
+			} catch (Throwable t) {
+				t.printStackTrace();
+			}
+		}
+		return created;
+	}
+
+	/** 本轮是否仍在进行（尚未结束）。 */
+	public boolean isRoundActive() {
+		return !roundEnded.get();
+	}
+
+	/** 本轮结束原因；尚未结束时为 null。 */
+	public RoundEndReason getRoundEndReason() {
+		return roundEndReason;
+	}
+
+	/**
+	 * 结束本轮：只生效一次，随后依次回调所有 {@link RoundState} 数据对象的
+	 * {@link RoundState#onRoundEnd(RoundEndReason)}。
+	 * <p>
+	 * 回调在调用线程上同步执行（通常是提供者的生成线程）；回调抛出的异常只打印，
+	 * 不影响其它数据对象，也不影响生成流的收尾。
+	 * </p>
+	 *
+	 * @param reason 结束原因，null 视为 {@link RoundEndReason#NORMAL}
+	 */
+	public void endRound(RoundEndReason reason) {
+		RoundEndReason endReason = reason == null ? RoundEndReason.NORMAL : reason;
+		List<Object> states;
+		synchronized (this) {
+			if (!roundEnded.compareAndSet(false, true)) {
+				return;
+			}
+			roundEndReason = endReason;
+			states = new ArrayList<>(roundStates.values());
+			roundStates.clear();
+		}
+		for (Object state : states) {
+			if (!(state instanceof RoundState)) {
+				continue;
+			}
+			try {
+				((RoundState) state).onRoundEnd(endReason);
+			} catch (Throwable t) {
+				t.printStackTrace();
+			}
+		}
 	}
 
 	/**
@@ -670,12 +814,14 @@ public class ToolCallContext {
 				null, "");
 		final Consumer<ToolProgress> sink = progress -> emitProgress(callId, call, callDisplay, round, index, count,
 				startedAt, finished, progress);
-		// 工具本体放到工具线程池上运行：同批调用因此可以并发执行，不再一个个阻塞等待
+		// 工具本体放到工具线程池上运行：同批调用因此可以并发执行，不再一个个阻塞等待。
+		// 上下文随调用显式传入，需要本轮状态的工具（例如文档库）直接取用即可。
 		CompletableFuture<ToolResult> future;
 		try {
 			future = CompletableFuture.supplyAsync(() -> ToolProgressContext.callWith(sink, () -> {
 				try {
-					return data.tool.run(call.function.arguments, output, manager);
+					String arguments = manager.resolveToolArguments(data, call.function.arguments);
+					return data.tool.run(arguments, output, ToolCallContext.this);
 				} catch (Throwable ex) {
 					throw new CompletionException(ex);
 				}

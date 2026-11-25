@@ -1,15 +1,22 @@
 package com.khjxiaogu.aiwuxia.vision;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.modelproxy.AttachmentFetcher;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelEta;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.ProgressReporter;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.RequestHandler;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.Response;
+import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCodec;
+import com.khjxiaogu.aiwuxia.modelproxy.api.QwenParams;
+import com.khjxiaogu.aiwuxia.modelproxy.cache.LocalModelFileCache;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.tools.TaskPriority;
@@ -47,14 +54,46 @@ public final class QwenLocalModelHandler {
 		return new RequestHandler() {
 			@Override
 			public Response handle(JsonObject request) {
-				return QwenLocalModelHandler.handle(request, effectiveLock, resolvedBaseUrl, ProgressReporter.NOOP);
+				return QwenLocalModelHandler.handle(request, readImages(request), effectiveLock, resolvedBaseUrl,
+						ProgressReporter.NOOP);
 			}
 
 			@Override
 			public Response handle(JsonObject request, ProgressReporter progress) {
-				return QwenLocalModelHandler.handle(request, effectiveLock, resolvedBaseUrl, progress);
+				return QwenLocalModelHandler.handle(request, readImages(request), effectiveLock, resolvedBaseUrl,
+						progress);
+			}
+
+			@Override
+			public Response handle(LocalModelCall<?> call, ProgressReporter progress, AttachmentFetcher fetcher) {
+				return handleTyped(call, effectiveLock, resolvedBaseUrl, progress, fetcher);
 			}
 		};
+	}
+
+	/** 类型化调用：把参考图附件 id 拉回成字节。 */
+	private static Response handleTyped(LocalModelCall<?> call, ResourceLock lock, String baseUrl,
+			ProgressReporter progress, AttachmentFetcher fetcher) {
+		QwenParams params = call.requireParams(QwenParams.class);
+		List<QwenImageApi.InputImage> inputs = new ArrayList<>();
+		for (String id : params.images) {
+			AttachmentRef ref = call.attachment(id);
+			if (ref == null) {
+				throw new IllegalArgumentException("缺少附件：" + id);
+			}
+			if (fetcher == null) {
+				throw new IllegalArgumentException("没有附件拉取器：" + id);
+			}
+			try {
+				byte[] bytes = fetcher.fetch(call.reqid, ref);
+				String filename = ref.filename == null || ref.filename.isEmpty() ? "image.png" : ref.filename;
+				inputs.add(new QwenImageApi.InputImage(bytes, filename));
+			} catch (IOException ex) {
+				throw new RuntimeException(ex);
+			}
+		}
+		JsonObject request = LocalModelCodec.encodeLegacyJson(call);
+		return handle(request, inputs, lock, baseUrl, progress);
 	}
 
 	/** ComfyUI 健康检查，未配置地址时返回 null。 */
@@ -91,8 +130,8 @@ public final class QwenLocalModelHandler {
 	}
 
 	/** 处理一次生成请求：占用资源锁 → 调 ComfyUI → 把图片编码成 JSON。 */
-	private static Response handle(JsonObject request, ResourceLock lock, String baseUrl,
-			ProgressReporter progress) {
+	private static Response handle(JsonObject request, List<QwenImageApi.InputImage> inputs, ResourceLock lock,
+			String baseUrl, ProgressReporter progress) {
 		progress.queued("等待本地模型资源");
 		long queuedAt = System.currentTimeMillis();
 		try (ResourcePermit permit = lock.acquire(RESOURCE_AMOUNT, TaskPriority.HIGH)) {
@@ -121,7 +160,6 @@ public final class QwenLocalModelHandler {
 				int height = JsonConfig.getInt(request, "height", 1024);
 				images = api.textToImage(prompt, negative, width, height, steps, cfg, seed, resolution, fast, true);
 			} else if ("edit".equals(action)) {
-				List<QwenImageApi.InputImage> inputs = readImages(request);
 				if (inputs.isEmpty()) {
 					throw new IllegalArgumentException("missing qwen reference image");
 				}
@@ -177,6 +215,16 @@ public final class QwenLocalModelHandler {
 				bytes = Base64.getDecoder().decode(data);
 			} catch (IllegalArgumentException ex) {
 				throw new IllegalArgumentException("invalid qwen reference image data", ex);
+			}
+			// 输入文件也写入部署侧缓存，下次同一份内容再用时本地已有副本
+			LocalModelFileCache cache = LocalModelFileCache.shared();
+			if (cache != null) {
+				LocalModelFileCache.StoreResult stored = cache.store(bytes);
+				if (stored != null) {
+					System.out.println("[LocalModelCache] 内联输入缓存："
+							+ (stored.created ? "新写入" : "命中已存在") + " key=" + stored.key.substring(0, 12)
+							+ "… 大小=" + bytes.length + "B");
+				}
 			}
 			images.add(new QwenImageApi.InputImage(bytes,
 					filename.isEmpty() ? "image.png" : filename));

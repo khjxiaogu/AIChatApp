@@ -80,6 +80,10 @@ MCP 服务端由 `AIChatService#mcp` 转发到 `/aichat/mcp`（不再在 `AIServ
 除此之外还会注册角色设定查询工具（`list_characters` / `search_characters` /
 `get_character_setting`），见 [2.8](#28-角色设定工具)。
 
+> 工单系统（`ticket_*`）**不在**在线 MCP 端点暴露：它是 agent 工具，通过在
+> `save/config/agents.json` 的 `tools` 中加入 `ticket`（别名 `ticketmcp`）启用，
+> 见 [ticket-system.md](ticket-system.md)。
+
 ### 2.2 协议支持
 
 - 传输：**Streamable HTTP**（`POST /aichat/mcp`，返回 `application/json`；客户端 `Accept` 含 `text/event-stream` 时仍返回 JSON）
@@ -141,13 +145,13 @@ registry.addSource(new McpToolSource() {
 `sdxl_gen_image`、`regional_image`、`image_to_image`，以及配置了角色列表时的 `search_character`），
 与绘画会话使用同一套按用户绑定的本地模型。
 
-图生图 / 分区图生图 / 反推提示词需要把参考图交给本地模型。参考图的发送方式由接管该请求的
-本地模型连接器声明的协议能力标记决定：连接器声明了 `flags=chunked`（表示支持分块/大报文，
-`LocalModelConnectionService` 永远声明）时，服务器直接读取对象存储里的图片文件、以 Base64 放进
-请求报文（大请求由服务器按分块下发）；没有声明该标记的连接（例如 `/aichat/painter-local`
-浏览器接入页）仍然只收到 `/aichat/mcp/media?file_id=...` 或 `/painter/image?image_id=...` 链接。
-读取失败时自动回退成链接，不会让生成直接失败（见 `SDXLMcp#referencePayload` 与
-`LocalModelHandshaker#supportsChunked`）。
+图生图 / 分区图生图 / 反推提示词需要把参考图交给本地模型。参考图是对象存储 id 时，服务器把它
+登记成附件（`attachments[]`，带内容键 `key`），由接管该请求的本地模型连接器按需通过
+`{"type":"attachment.get",...}` 在同一条 WebSocket 上拉取；连接器的部署侧缓存（`LocalModelFileCache`）
+命中同一内容键时直接读本地文件，不再拉取。H3 的首/尾帧与参考视频、Qwen 的参考图使用同一套附件
+机制，不再内联 Base64。不是存储 id 的引用（外部链接）仍然按链接下发；浏览器接入页
+（`/aichat/painter-local`）不使用附件通道，只会收到 `/aichat/mcp/media?file_id=...` 或
+`/painter/image?image_id=...` 链接。
 
 同时注册本地语音工具：
 
@@ -310,6 +314,20 @@ http://127.0.0.1:8999/aichat/mcptoken
 页面把该 URL 参数原样转发到管理接口（请求体不携带），服务端只从请求 URL 读取。
 页面支持创建令牌（明文复制一次）、查看额度/调用次数/过期时间、停用或删除、查看消费记录，
 并给出客户端配置示例。页面文件为 `save/mcptoken.html`。
+
+### 2.7.1 MultiAgent 的独立 MCP 端点
+
+多 agent 架构可以在 `save/config/multi.json` 的 `mcp` 段额外启动一个独立端点（默认
+`http://<host>:8996/mcp`），与网页的 `/aichat/mcp` 分开：
+
+- 每个令牌对应该令牌所属私聊用户（QQ 号 / openid），`tools/list` 返回这个用户私聊 agent 的
+  非 `sessionOnly` 工具（文档库 `doc_*`、工单 `ticket_*` 会包含；`send_image`、
+  `send_emoji_image`、`send_video` 不包含）。
+- 令牌存在 `save/multi/mcp.db`，使用免费模式，不读写网页的 `user_paid_balance`、
+  `paid_usage_record` 等计费表。
+- 只通过 MCP 工具 `mcp_token_create` / `mcp_token_delete` 管理令牌，**不提供管理页面**：
+  `/token`、`/usage`、`/status`、`/tools`、`/whoami` 一律 404，只保留 `/media`。
+- 详细配置和客户端示例见 [multi-agent.md](multi-agent.md) 的「MCP 服务端」。
 
 ### 2.8 角色设定工具
 

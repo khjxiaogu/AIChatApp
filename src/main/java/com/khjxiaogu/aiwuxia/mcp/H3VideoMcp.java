@@ -1,9 +1,7 @@
 package com.khjxiaogu.aiwuxia.mcp;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -11,7 +9,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.AIOutput;
@@ -20,8 +17,11 @@ import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelAttachments;
 import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
-import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
+import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
+import com.khjxiaogu.aiwuxia.modelproxy.api.H3Params;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
 import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
@@ -190,21 +190,21 @@ public class H3VideoMcp implements ToolProvider {
 		ToolData.Builder builder = new ToolData.Builder(effectiveMode.toolName(), description)
 				.putParam("prompt", "视频提示词：描述画面、镜头运动即可，用英文短句。开头是视频风格，中间以[1s-2s]类似的格式表达时间戳和动作，最后是视频统一指导。",
 						"提示词")
-				.putOptionalParam("reference",
-						"参考图对象存储 ID，可留空；1 张=首帧（图生视频），2 张用逗号分隔=首帧+尾帧"
+				.putOptionalUrlParam("reference",
+						"参考图（可留空；1 张=首帧，2 张用逗号分隔=首帧+尾帧）"
 								+ "（尾帧必须与首帧同时给出）。首帧会拉伸到所选画布，建议参考图本身就是目标比例。",
 						"参考图")
-				.putOptionalParam("video",
-						"参考视频对象存储 ID，与 reference 二选一。使用 ComfyUI 的视频生视频工作流："
+				.putOptionalUrlParam("video",
+						"参考视频（与 reference 二选一）。使用 ComfyUI 的视频生视频工作流："
 								+ "1 个视频=取所选片段的末帧作为首帧（延续生成）；2 个用逗号分隔="
 								+ "第一个视频的末帧 + 第二个视频的首帧，作为中段的首/尾帧。",
 						"参考视频")
-				.putOptionalParam("first",
-						"首帧来源：图片或视频对象存储 id 均可（二选一）。与 reference/video 二选一；"
+				.putOptionalUrlParam("first",
+						"首帧来源（图片或视频，二选一）。与 reference/video 二选一；"
 								+ "视频取片段末帧，图片直接作为首帧。",
 						"首帧来源")
-				.putOptionalParam("last",
-						"尾帧来源：图片或视频对象存储 id 均可（二选一）。必须同时提供 first；"
+				.putOptionalUrlParam("last",
+						"尾帧来源（图片或视频，二选一）。必须同时提供 first；"
 								+ "视频取片段首帧，图片直接作为尾帧。",
 						"尾帧来源")
 				.putOptionalParam("resolution",
@@ -251,27 +251,31 @@ public class H3VideoMcp implements ToolProvider {
 							int[] size = dimensions(JsonConfig.getNonBlankString(jo, "resolution", "16:9"),
 									effectiveMode);
 							double seconds = duration(jo, effectiveMode);
-							JsonObject request = new JsonObject();
-							request.addProperty("action", "video");
-							request.addProperty("model", effectiveMode.tier().id());
-							request.addProperty("steps", effectiveMode.steps());
-							request.addProperty("sparse", true);
-							// 全部视频 MCP 禁用音频
-							request.addProperty("audio", false);
-							request.addProperty("prompt", prompt);
-							request.addProperty("width", size[0]);
-							request.addProperty("height", size[1]);
-							request.addProperty("seconds", seconds);
-							request.addProperty("seed", H3VideoApi.randomSeed());
+							String reqid = UUID.randomUUID().toString();
+							List<AttachmentRef> attachments = new ArrayList<>();
+							String firstFrame = null;
+							String lastFrame = null;
+							String firstVideo = null;
+							String lastVideo = null;
 							if (explicitSources) {
-								ToolResult sourceError = addSource(request, "first", firstSource, tos, output);
-								if (sourceError != null) {
-									return sourceError;
+								AttachmentRef first = registerSource(reqid, attachments, firstSource, tos, output);
+								if (first == null) {
+									return ToolResult.text("参数错误：首帧来源" + firstSource + "既不是图片也不是视频，或已清理。");
+								}
+								if (AttachmentRef.KIND_VIDEO.equals(first.kind)) {
+									firstVideo = first.id;
+								} else {
+									firstFrame = first.id;
 								}
 								if (!lastSource.isEmpty()) {
-									sourceError = addSource(request, "last", lastSource, tos, output);
-									if (sourceError != null) {
-										return sourceError;
+									AttachmentRef last = registerSource(reqid, attachments, lastSource, tos, output);
+									if (last == null) {
+										return ToolResult.text("参数错误：尾帧来源" + lastSource + "既不是图片也不是视频，或已清理。");
+									}
+									if (AttachmentRef.KIND_VIDEO.equals(last.kind)) {
+										lastVideo = last.id;
+									} else {
+										lastFrame = last.id;
 									}
 								}
 							} else {
@@ -280,37 +284,34 @@ public class H3VideoMcp implements ToolProvider {
 									if (!tos.exists(id, output == null ? null : output::addUsage)) {
 										return ToolResult.text("参数错误：参考图" + id + "已清理或不存在。");
 									}
-									byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
-									// 视频与图片共用同一套内容哈希 id：视频 id 能通过 exists 检查，
-									// 但作为首帧/尾帧提交会让 ComfyUI 收到非图片数据，这里按内容明确拒绝
-									if (!LocalStorage.detectMimeType(bytes, id).startsWith("image/")) {
-										return ToolResult.text("参数错误：参考图" + id + "不是图片，不能作为视频的首帧/尾帧。");
+									AttachmentRef ref = registerAttachment(reqid, attachments, tos, id,
+											AttachmentRef.KIND_IMAGE, "png", id + ".png", null, output);
+									if (i == 0) {
+										firstFrame = ref.id;
+									} else {
+										lastFrame = ref.id;
 									}
-									JsonObject image = new JsonObject();
-									image.addProperty("filename", id + ".png");
-									image.addProperty("data", Base64.getEncoder().encodeToString(bytes));
-									request.add(i == 0 ? "first_frame" : "last_frame", image);
 								}
 								for (int i = 0; i < referenceVideos.size(); i++) {
 									String id = referenceVideos.get(i);
 									if (!tos.exists(id, output == null ? null : output::addUsage)) {
 										return ToolResult.text("参数错误：参考视频" + id + "已清理或不存在。");
 									}
-									byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
-									if (!LocalStorage.detectMimeType(bytes, id).startsWith("video/")) {
-										return ToolResult.text("参数错误：参考视频" + id + "不是视频文件。");
-									}
-									JsonObject video = new JsonObject();
-									video.addProperty("filename", id + ".mp4");
-									video.addProperty("data", Base64.getEncoder().encodeToString(bytes));
+									AttachmentRef ref = registerAttachment(reqid, attachments, tos, id,
+											AttachmentRef.KIND_VIDEO, "mp4", id + ".mp4", null, output);
 									if (i == 0) {
-										request.add("first_video", video);
+										firstVideo = ref.id;
 									} else {
-										request.add("last_video", video);
+										lastVideo = ref.id;
 									}
 								}
 							}
-							List<H3VideoApi.VideoResult> videos = generate(request);
+							H3Params params = new H3Params("video", prompt, "", effectiveMode.tier().id(),
+									effectiveMode.steps(), true, size[0], size[1],
+									H3VideoApi.snapFrames(seconds), H3VideoApi.randomSeed(), seconds, firstFrame,
+									lastFrame, firstVideo, lastVideo, null, 0, 0, 0, 0, 0, 0d, 0d);
+							List<H3VideoApi.VideoResult> videos = generate(
+									LocalModelCall.h3(reqid, params, attachments));
 							ToolResult result = uploadResults(tos, videos, output, effectiveMode);
 							if (result.isSuccess() && output != null) {
 								// 成功后按估算算力时长计入配额：每 1 小时 1,000,000 配额
@@ -333,36 +334,51 @@ public class H3VideoMcp implements ToolProvider {
 	}
 
 	/**
-	 * 把 first/last 来源（图片或视频）加入生成请求。
+	 * 登记一个首/尾来源（图片或视频），返回附件引用。
+	 * <p>需要先下载一次判断 mime，字节随附件一起保存，避免客户端拉取时重复下载。</p>
 	 *
-	 * @param request 请求 JSON
-	 * @param role    {@code first} / {@code last}
-	 * @param id      对象存储 id
-	 * @param tos     对象存储
-	 * @param output  用量输出，可为 null
-	 * @return 失败结果；成功返回 null
+	 * @param reqid    请求 ID
+	 * @param refs     附件列表
+	 * @param id       对象存储 id
+	 * @param tos      对象存储
+	 * @param output   用量输出，可为 null
+	 * @return 附件引用；不存在或既不是图片也不是视频时返回 null
 	 * @throws IOException 读取失败
 	 */
-	private static ToolResult addSource(JsonObject request, String role, String id, ObjectStorageProvider tos,
-			AIOutput output) throws IOException {
+	private static AttachmentRef registerSource(String reqid, List<AttachmentRef> refs, String id,
+			ObjectStorageProvider tos, AIOutput output) throws IOException {
 		if (!tos.exists(id, output == null ? null : output::addUsage)) {
-			return ToolResult.text("参数错误：首尾来源" + id + "已清理或不存在。");
+			return null;
 		}
 		byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
 		String mime = LocalStorage.detectMimeType(bytes, id);
-		JsonObject media = new JsonObject();
-		media.addProperty("data", Base64.getEncoder().encodeToString(bytes));
 		if (mime.startsWith("image/")) {
-			media.addProperty("filename", id + ".png");
-			request.add(role + "_frame", media);
-			return null;
+			return registerAttachment(reqid, refs, tos, id, AttachmentRef.KIND_IMAGE, "png", id + ".png", bytes,
+					output);
 		}
 		if (mime.startsWith("video/")) {
-			media.addProperty("filename", id + ".mp4");
-			request.add(role + "_video", media);
-			return null;
+			return registerAttachment(reqid, refs, tos, id, AttachmentRef.KIND_VIDEO, "mp4", id + ".mp4", bytes,
+					output);
 		}
-		return ToolResult.text("参数错误：首尾来源" + id + "既不是图片也不是视频。");
+		return null;
+	}
+
+	/** 把对象存储里的媒体登记成附件；{@code prefetched} 不为 null 时直接复用这份字节。 */
+	private static AttachmentRef registerAttachment(String reqid, List<AttachmentRef> refs, ObjectStorageProvider tos,
+			String id, String kind, String format, String filename, byte[] prefetched, AIOutput output) {
+		AttachmentRef ref = LocalModelAttachments.shared().register(reqid, null, kind, format, filename, id,
+				() -> prefetched != null ? prefetched : download(tos, id, output));
+		refs.add(ref);
+		return ref;
+	}
+
+	/** 惰性读取对象存储（附件真正被拉取时才调用）。 */
+	private static byte[] download(ObjectStorageProvider tos, String id, AIOutput output) {
+		try {
+			return tos.download(id, output == null ? null : output::addUsage);
+		} catch (IOException ex) {
+			throw new RuntimeException(ex);
+		}
 	}
 
 	/**
@@ -376,7 +392,7 @@ public class H3VideoMcp implements ToolProvider {
 		ToolData.Builder builder = new ToolData.Builder(TOOL_FOLEY,
 				"给已有视频重新配音效：保留原画面，生成与画面同步的环境音/动作音，并输出带新音轨的视频，提示词必须是英文。"
 						+ "默认整段重配；给 start/length 时只重配该片段，其余保留原音轨（原视频需带音轨）。")
-				.putParam("video", "视频对象存储 id（72 位哈希，可带扩展名）", "视频")
+				.putUrlParam("video", "输入视频", "视频")
 				.putParam("prompt", "想要的音效描述，例如 footsteps on wet asphalt, distant traffic, wind", "音效提示词")
 				.putParam("negative",
 						"不想出现的声音，例如 speech, dialogue, human voice, vocals, music。",
@@ -421,27 +437,16 @@ public class H3VideoMcp implements ToolProvider {
 							if (!tos.exists(videoId, output == null ? null : output::addUsage)) {
 								return ToolResult.text("参数错误：视频" + videoId + "已清理或不存在。");
 							}
-							byte[] videoBytes = tos.download(videoId, output == null ? null : output::addUsage);
-							if (!LocalStorage.detectMimeType(videoBytes, videoId).startsWith("video/")) {
-								return ToolResult.text("参数错误：video 不是视频文件。");
-							}
-							JsonObject video = new JsonObject();
-							video.addProperty("filename", videoId + ".mp4");
-							video.addProperty("data", Base64.getEncoder().encodeToString(videoBytes));
-							JsonObject request = new JsonObject();
-							request.addProperty("action", segment ? "foley_segment" : "foley");
-							request.add("video", video);
-							request.addProperty("prompt", prompt);
-							if (!negative.isEmpty()) {
-								request.addProperty("negative", negative);
-							}
-							if (segment) {
-								request.addProperty("start", start);
-								request.addProperty("length", length);
-							}
+							String reqid = UUID.randomUUID().toString();
+							List<AttachmentRef> attachments = new ArrayList<>();
+							AttachmentRef videoRef = registerAttachment(reqid, attachments, tos, videoId,
+									AttachmentRef.KIND_VIDEO, "mp4", videoId + ".mp4", null, output);
+							H3Params params = new H3Params(segment ? "foley_segment" : "foley", prompt, negative, "",
+									0, false, 0, 0, 0, 0L, 0d, null, null, null, null, videoRef.id, 0, 0, 0, 0, 0,
+									start, length);
 							// 只调用一次 foley；时长由部署端从 foley 图的 PreviewAny(10) 节点读出，
 							// 随结果格式带回，不再额外提交 video_duration 探测任务
-							FoleyGeneration generated = generateFoley(request);
+							FoleyGeneration generated = generateFoley(LocalModelCall.h3(reqid, params, attachments));
 							byte[] result = generated.data;
 							double duration = generated.duration > 0d ? generated.duration
 									: 10d;
@@ -468,23 +473,14 @@ public class H3VideoMcp implements ToolProvider {
 	}
 
 	/** 通过本地模型通道执行 Foley 配音，并带回部署端从时长节点读出的时长。 */
-	static FoleyGeneration generateFoley(JsonObject request) throws Exception {
-		CompletableFuture<ModelGenerationResult> future = LocalModel.require(ModelType.H3,
-				UUID.randomUUID().toString(), request, TimeUnit.MINUTES.toMillis(60));
-		ModelGenerationResult result = future.get(61, TimeUnit.MINUTES);
+	static FoleyGeneration generateFoley(LocalModelCall<H3Params> call) throws Exception {
+		long timeoutMillis = TimeUnit.MINUTES.toMillis(60);
+		ModelGenerationResult result = LocalModel.lhs.send(null, call, timeoutMillis).get(61, TimeUnit.MINUTES);
 		if (result == null || result.bodyData == null || result.bodyData.length == 0) {
 			throw new IllegalStateException("本地模型没有返回配音视频");
 		}
 		String rawFormat = result.format == null ? "" : result.format.trim();
 		String format = rawFormat.toLowerCase();
-		if ("json".equals(format)) {
-			JsonObject response = JsonParser
-					.parseString(new String(result.bodyData, StandardCharsets.UTF_8)).getAsJsonObject();
-			String error = JsonConfig.getNonBlankString(response, "error", "");
-			if (!error.isEmpty()) {
-				throw new IllegalStateException(error);
-			}
-		}
 		double duration = 0d;
 		int marker = format.indexOf("duration=");
 		if (marker >= 0) {
@@ -521,7 +517,7 @@ public class H3VideoMcp implements ToolProvider {
 		ToolData.Builder builder = new ToolData.Builder(TOOL_FRAME,
 				"从视频里截取一帧并保存为图片：0 表示首帧，-1 表示末帧，-2 表示倒数第二帧。"
 						+ "截出的图片可以作为 H3 的首帧/尾帧，或用于图片识别。")
-				.putParam("video", "视频对象存储 id（72 位哈希，可带扩展名）", "视频")
+				.putUrlParam("video", "输入视频", "视频")
 				.putOptionalParam("frame", "帧号，默认 0（首帧）；-1 末帧，-2 倒数第二帧", "帧号")
 				.presenter(ToolCallPresenter.ofArgument("视频截帧", "video"))
 				.tool((data, output, manager) -> {
@@ -538,19 +534,14 @@ public class H3VideoMcp implements ToolProvider {
 							if (!tos.exists(videoId, output == null ? null : output::addUsage)) {
 								return ToolResult.text("参数错误：视频" + videoId + "已清理或不存在。");
 							}
-							byte[] videoBytes = tos.download(videoId, output == null ? null : output::addUsage);
-							if (!LocalStorage.detectMimeType(videoBytes, videoId).startsWith("video/")) {
-								return ToolResult.text("参数错误：video 不是视频文件。");
-							}
 							int frame = JsonConfig.getInt(jo, "frame", 0);
-							JsonObject request = new JsonObject();
-							request.addProperty("action", "extract_frame");
-							request.addProperty("frame", frame);
-							JsonObject video = new JsonObject();
-							video.addProperty("filename", videoId + ".mp4");
-							video.addProperty("data", Base64.getEncoder().encodeToString(videoBytes));
-							request.add("video", video);
-							byte[] imageBytes = extractFrame(request);
+							String reqid = UUID.randomUUID().toString();
+							List<AttachmentRef> attachments = new ArrayList<>();
+							AttachmentRef videoRef = registerAttachment(reqid, attachments, tos, videoId,
+									AttachmentRef.KIND_VIDEO, "mp4", videoId + ".mp4", null, output);
+							H3Params params = new H3Params("extract_frame", "", "", "", 0, false, 0, 0, 0, 0L, 0d,
+									null, null, null, null, videoRef.id, frame, 0, 0, 0, 0, 0d, 0d);
+							byte[] imageBytes = extractFrame(LocalModelCall.h3(reqid, params, attachments));
 							String imageId = tos.uploadIfNotExists(imageBytes, ".png",
 									output == null ? null : output::addUsage);
 							return ToolResult.of("视频帧已截取，图片id为：" + imageId + "。",
@@ -573,27 +564,15 @@ public class H3VideoMcp implements ToolProvider {
 	/**
 	 * 通过本地模型通道执行一次视频截帧。
 	 *
-	 * @param request 请求 JSON（{@code action=extract_frame}）
+	 * @param call 统一调用对象（{@code action=extract_frame} + 视频附件）
 	 * @return png 字节
 	 * @throws Exception 本地模型离线、超时或截帧失败
 	 */
-	static byte[] extractFrame(JsonObject request) throws Exception {
+	static byte[] extractFrame(LocalModelCall<H3Params> call) throws Exception {
 		long timeoutMillis = TimeUnit.MINUTES.toMillis(30);
-		CompletableFuture<ModelGenerationResult> future = LocalModel.require(ModelType.H3,
-				UUID.randomUUID().toString(), request, timeoutMillis);
-		ModelGenerationResult result = future.get(31, TimeUnit.MINUTES);
+		ModelGenerationResult result = LocalModel.lhs.send(null, call, timeoutMillis).get(31, TimeUnit.MINUTES);
 		if (result == null || result.bodyData == null || result.bodyData.length == 0) {
 			throw new IllegalStateException("本地 H3 模型没有返回视频帧");
-		}
-		String format = result.format == null ? "" : result.format.trim().toLowerCase();
-		if ("json".equals(format)) {
-			JsonObject response = JsonParser
-					.parseString(new String(result.bodyData, StandardCharsets.UTF_8))
-					.getAsJsonObject();
-			String error = JsonConfig.getNonBlankString(response, "error", "");
-			if (!error.isEmpty()) {
-				throw new IllegalStateException(error);
-			}
 		}
 		return result.bodyData;
 	}
@@ -705,50 +684,19 @@ public class H3VideoMcp implements ToolProvider {
 	 * @return 生成的视频
 	 * @throws Exception 本地模型离线、超时或生成失败
 	 */
-	static List<H3VideoApi.VideoResult> generate(JsonObject request) throws Exception {
+	static List<H3VideoApi.VideoResult> generate(LocalModelCall<H3Params> call) throws Exception {
 		long timeoutMillis = TimeUnit.MINUTES.toMillis(GENERATE_TIMEOUT_MINUTES);
-		CompletableFuture<ModelGenerationResult> future = LocalModel.require(ModelType.H3,
-				UUID.randomUUID().toString(), request, timeoutMillis);
 		// 本地模型通道内部按 timeoutMillis 等待，这里多留一分钟给回传与解码
-		ModelGenerationResult result = future.get(GENERATE_TIMEOUT_MINUTES + 1, TimeUnit.MINUTES);
+		ModelGenerationResult result = LocalModel.lhs.send(null, call, timeoutMillis)
+				.get(GENERATE_TIMEOUT_MINUTES + 1, TimeUnit.MINUTES);
 		if (result == null || result.bodyData == null || result.bodyData.length == 0) {
 			throw new IllegalStateException("本地 H3 模型没有返回视频");
 		}
-		// 新协议：结果以 mp4 原始字节 + 格式回传
 		String format = result.format == null ? "" : result.format.trim().toLowerCase();
-		if (isVideoFormat(format)) {
-			return List.of(new H3VideoApi.VideoResult("h3.mp4", "video", "output", result.bodyData));
+		if (!isVideoFormat(format)) {
+			throw new IllegalStateException("本地 H3 模型返回了非视频结果：" + format);
 		}
-		// 兼容旧的 JSON 包裹格式（也用于回传参数错误等 error 字段）
-		JsonObject response = JsonParser
-				.parseString(new String(result.bodyData, StandardCharsets.UTF_8))
-				.getAsJsonObject();
-		// 本地模型侧把参数错误、资源锁不足、ComfyUI 失败等放在 error 字段里回传
-		String error = JsonConfig.getNonBlankString(response, "error", "");
-		if (!error.isEmpty()) {
-			throw new IllegalStateException(error);
-		}
-		JsonElement videos = response.get("videos");
-		List<H3VideoApi.VideoResult> results = new ArrayList<>();
-		if (videos == null || !videos.isJsonArray()) {
-			return results;
-		}
-		for (JsonElement item : videos.getAsJsonArray()) {
-			if (!item.isJsonObject()) {
-				continue;
-			}
-			JsonObject video = item.getAsJsonObject();
-			String data = JsonConfig.getNonBlankString(video, "data", "");
-			if (data.isEmpty()) {
-				continue;
-			}
-			results.add(new H3VideoApi.VideoResult(
-					JsonConfig.getNonBlankString(video, "filename", "h3.mp4"),
-					JsonConfig.getNonBlankString(video, "subfolder", "video"),
-					JsonConfig.getNonBlankString(video, "type", "output"),
-					Base64.getDecoder().decode(data)));
-		}
-		return results;
+		return List.of(new H3VideoApi.VideoResult("h3.mp4", "video", "output", result.bodyData));
 	}
 
 	/** 是否是视频格式名（mp4/webm/... 或 video/*）。 */

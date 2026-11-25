@@ -71,7 +71,7 @@ public class SeedreamMcp {
 		JimengImageGenerator jig = new JimengImageGenerator(config);
 		return new ToolData.Builder("jimeng_image",
 				"使用即梦AI生成图片，注意参考图的图片id或名称不会被传递给模型，因此只能用从1开始的顺序索引指代图片。")
-				.putParam("reference", "参考图列表，以英文逗号,分隔后给出，参考图可以是图片id或者系统提供的内置参考图文本，同一个人仅使用一张参考图，参考图数量越少越好。", "参考图")
+				.putUrlParam("reference", "参考图（内置名字或图片，多张用英文逗号分隔）", "参考图")
 				.putParam("prompt", "提示词，使用中文自然语言详细描述整个画面的细节，不包含参考图的人物特征，使用“图一”“图二”等引用参考图，不得包含图片id，必须说明每个参考图的作用，描述人物时请写全名或者图片编号，禁止使用一切其他代称。比如“画面参考图2，图1角色身着图3所示服装。”", "提示词")
 				.async()
 				.tool((data, output, manager) -> {
@@ -232,9 +232,7 @@ public class SeedreamMcp {
 		return new ToolData.Builder("jimeng_video",
 				"使用即梦 Seedance 2.5 生成视频发送。工具会把视频想法交给视频脚本 agent，由它自行挑选并附加内置参考图、写即梦视频脚本并据此生成视频；调用者只需给想法，最多再补充非内置的72位图片id参考图，并可指定 4-15 秒的视频时长。如果脚本 agent 发现想法本身存在严重问题（违法违规、涉及真实人物隐私、需求自相矛盾等），工具会停止生成并直接返回问题原因，此时请把原因转告用户，不要原样重试。")
 				.putParam("prompt", "用简略清晰的语言描述整个视频的内容梗概，无需详细描述动作场景和角色特征，也不要写参考图。", "视频想法")
-				.putParam("reference",
-						"可选：对话里出现、且不在内置参考图中的非内置参考图，只填72位图片id，以英文逗号,分隔。这些图会直接附加为图1开始的参考图；内置参考图不用填，由脚本 agent 自行选用。",
-						"参考图")
+				.putUrlParam("reference", "参考图（非内置参考图，多张用英文逗号分隔）", "参考图")
 				.putParam("duration", "可选：视频时长（秒），4-15 的整数，默认 " + fallbackDuration
 						+ " 秒；这个时长会写进脚本要求并提交给视频接口。", "视频时长")
 				.async()
@@ -397,7 +395,7 @@ public class SeedreamMcp {
 			List<String> links) {
 		return new ToolData.Builder("attach_reference",
 				"把参考图加入本次视频生成的参考图列表。成功返回参考图编号（从1开始，脚本里用“图1”“图2”引用），失败返回原因。已附加的参考图会随视频请求一起发送。")
-				.putParam("reference", "要附加的图片：系统提示词里列出的内置参考图名字，或者72位图片id", "参考图")
+				.putUrlParam("reference", "参考图（内置名字或图片）", "参考图")
 				.putParam("description", "参考图的用途说明", "参考图用途")
 				.maxCalls(MAX_VIDEO_REFERENCE_IMAGES)
 				.toolText((data, output, manager) -> {

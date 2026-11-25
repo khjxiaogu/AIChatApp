@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
+import com.khjxiaogu.aiwuxia.utils.ContentHash;
 
 /**
  * 本地模型请求附件的服务端注册表。
@@ -86,11 +87,33 @@ public final class LocalModelAttachments {
 	 */
 	public AttachmentRef register(String reqid, String uid, String kind, String format, String filename,
 			Supplier<byte[]> source) {
+		return register(reqid, uid, kind, format, filename, null, source);
+	}
+
+	/**
+	 * 登记一个附件，并带上内容键。
+	 * <p>
+	 * 内容键就是对象存储 id（72 位十六进制，可带扩展名）时，接收端可以直接在本地缓存里
+	 * 找到同一份内容，不需要再发 {@code attachment.get}。来源不是按内容寻址的存储时传 null。
+	 * </p>
+	 *
+	 * @param reqid      所属请求
+	 * @param uid        所属用户，可为 null
+	 * @param kind       种类（{@link AttachmentRef#KIND_IMAGE} 等）
+	 * @param format     格式/扩展名
+	 * @param filename   建议文件名
+	 * @param contentKey 内容键，可为 null
+	 * @param source     字节来源（惰性）
+	 * @return 附件引用，供写进调用报文
+	 */
+	public AttachmentRef register(String reqid, String uid, String kind, String format, String filename,
+			String contentKey, Supplier<byte[]> source) {
 		purge();
 		String id = UUID.randomUUID().toString().replace("-", "");
+		String key = ContentHash.normalize(contentKey);
 		Entry entry = new Entry(reqid, uid, kind, format, filename, source, System.currentTimeMillis() + ttlMs);
 		entries.put(key(reqid, id), entry);
-		return new AttachmentRef(id, kind, format, filename, -1L);
+		return new AttachmentRef(id, kind, format, filename, -1L, key);
 	}
 
 	/**

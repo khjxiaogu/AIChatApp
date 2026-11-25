@@ -66,6 +66,10 @@ public final class LocalModelCodec {
 				item.addProperty("format", ref.format);
 				item.addProperty("filename", ref.filename);
 				item.addProperty("size", ref.size);
+				// 内容键可选：接收端据此复用磁盘缓存，跳过附件拉取；旧客户端会忽略该字段
+				if (ref.key != null && !ref.key.isEmpty()) {
+					item.addProperty("key", ref.key);
+				}
 				attachments.add(item);
 			}
 			root.add("attachments", attachments);
@@ -138,7 +142,8 @@ public final class LocalModelCodec {
 				continue;
 			}
 			list.add(new AttachmentRef(id, JsonConfig.getString(item, "kind"), JsonConfig.getString(item, "format"),
-					JsonConfig.getString(item, "filename"), JsonConfig.getLong(item, "size", -1L)));
+					JsonConfig.getString(item, "filename"), JsonConfig.getLong(item, "size", -1L),
+					JsonConfig.getString(item, "key")));
 		}
 		return list;
 	}

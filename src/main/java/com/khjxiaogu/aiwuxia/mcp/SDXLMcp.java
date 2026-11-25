@@ -188,8 +188,10 @@ public class SDXLMcp implements ToolProvider {
 	/** 把对象存储里的图片登记成附件，真正被拉取时才读存储。 */
 	private static AttachmentRef registerImageAttachment(String reqid, String uid, ObjectStorageProvider tos,
 			String storageId, AIOutput output) {
+		// storageId 就是内容键：本地模型部署侧生成过同一张图时，可以直接用它的磁盘缓存，
+		// 不必再走一次附件拉取（见 LocalModelFileCache）
 		return LocalModelAttachments.shared().register(reqid, uid, AttachmentRef.KIND_IMAGE, "png", "reference.png",
-				() -> {
+				storageId, () -> {
 					try {
 						byte[] data = tos.download(storageId, output == null ? null : output::addUsage);
 						if (data == null) {
@@ -820,7 +822,7 @@ public class SDXLMcp implements ToolProvider {
 		}
 
 		tools.add(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
-				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容", "图片ID")
+				.putUrlParam("picture_id", "输入待反推的图片", "图片ID")
 				.presenter(ToolCallPresenter.ofName("反推提示词"))
 				.tool((data, output, manager) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([^\"]+)\"");
@@ -922,7 +924,7 @@ public class SDXLMcp implements ToolProvider {
 				}).build());
 		tools.add(new ToolData.Builder("regional_image",
 				"使用Stable Diffusion XL搭配分区提示词生成图片，不需要包含画质提示词，提示词必须是纯英文，生成后需要使用其他工具发送。")
-				.putParam("picture_id", "如果要使用图生图，务必在这里填上图片ID，否则不填或留空", "图片ID")
+				.putUrlParam("picture_id", "图生图参考图（留空则文生图）", "图片ID")
 				.putParam("strength", "如果不使用图生图，该参数无效。重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。", "重绘幅度")
 				.putParam("common_positive", "共用正面提示词", "共用正面提示词")
 				.putParam("first_positive", "第一区域提示词，必须是纯英文，不需要包含画质提示词。", "第一区域正面提示词")
@@ -1043,7 +1045,7 @@ public class SDXLMcp implements ToolProvider {
 				.putParam("negative", "负面提示词，必须是纯英文。", "负面提示词")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一", "画面比例")
 				.putParam("strength", "重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。", "重绘幅度")
-				.putParam("picture_id", "72位16进制的图片id，只包含图片id本身，不得包含任何其他内容", "图片ID")
+				.putUrlParam("picture_id", "输入待转换的图片", "图片ID")
 
 				.presenter(call->{
 					JsonObject jo=JsonParser.parseString(call.function.arguments).getAsJsonObject();

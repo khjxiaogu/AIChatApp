@@ -1,15 +1,22 @@
 package com.khjxiaogu.aiwuxia.vision;
 
+import java.io.IOException;
 import java.util.Base64;
 import java.util.List;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.khjxiaogu.aiwuxia.modelproxy.AttachmentFetcher;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelEta;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.ProgressReporter;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.RequestHandler;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelClient.Response;
+import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
+import com.khjxiaogu.aiwuxia.modelproxy.api.H3Params;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCodec;
+import com.khjxiaogu.aiwuxia.modelproxy.cache.LocalModelFileCache;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.tools.TaskPriority;
@@ -40,6 +47,20 @@ public final class H3LocalModelHandler {
 	private H3LocalModelHandler() {
 	}
 
+	/** 把请求里的媒体字段解析成 ComfyUI 需要的字节。 */
+	@FunctionalInterface
+	private interface MediaReader {
+		/**
+		 * 读取一个媒体字段。
+		 *
+		 * @param field       字段名（{@code first_frame} / {@code video} 等）
+		 * @param defaultName 没有文件名时使用的默认名
+		 * @return 媒体；字段不存在时返回 null
+		 * @throws IOException 拉取附件失败
+		 */
+		H3VideoApi.InputImage read(String field, String defaultName) throws IOException;
+	}
+
 	/**
 	 * 创建处理器。
 	 *
@@ -53,14 +74,54 @@ public final class H3LocalModelHandler {
 		return new RequestHandler() {
 			@Override
 			public Response handle(JsonObject request) {
-				return H3LocalModelHandler.handle(request, effectiveLock, resolvedBaseUrl, ProgressReporter.NOOP);
+				return H3LocalModelHandler.handle(request, legacyMedia(request), effectiveLock, resolvedBaseUrl,
+						ProgressReporter.NOOP);
 			}
 
 			@Override
 			public Response handle(JsonObject request, ProgressReporter progress) {
-				return H3LocalModelHandler.handle(request, effectiveLock, resolvedBaseUrl, progress);
+				return H3LocalModelHandler.handle(request, legacyMedia(request), effectiveLock, resolvedBaseUrl,
+						progress);
+			}
+
+			@Override
+			public Response handle(LocalModelCall<?> call, ProgressReporter progress, AttachmentFetcher fetcher) {
+				return H3LocalModelHandler.handleTyped(call, effectiveLock, resolvedBaseUrl, progress, fetcher);
 			}
 		};
+	}
+
+	/** 旧报文的媒体解析器：直接读 JSON 里的 Base64。 */
+	private static MediaReader legacyMedia(JsonObject request) {
+		return (field, defaultName) -> readMedia(request, field, defaultName);
+	}
+
+	/** 类型化调用的入口：媒体字段是附件 id，按需向服务端拉取。 */
+	private static Response handleTyped(LocalModelCall<?> call, ResourceLock lock, String baseUrl,
+			ProgressReporter progress, AttachmentFetcher fetcher) {
+		H3Params params = call.requireParams(H3Params.class);
+		JsonObject request = LocalModelCodec.encodeLegacyJson(call);
+		MediaReader media = (field, defaultName) -> readAttachment(call, request, field, defaultName, fetcher);
+		return handle(request, media, lock, baseUrl, progress);
+	}
+
+	/** 类型化调用：把附件 id 解析成媒体字节。 */
+	private static H3VideoApi.InputImage readAttachment(LocalModelCall<?> call, JsonObject request, String field,
+			String defaultName, AttachmentFetcher fetcher) throws IOException {
+		String id = JsonConfig.getString(request, field);
+		if (id == null || id.isEmpty()) {
+			return null;
+		}
+		AttachmentRef ref = call.attachment(id);
+		if (ref == null) {
+			throw new IOException("缺少附件：" + id);
+		}
+		if (fetcher == null) {
+			throw new IOException("没有附件拉取器：" + id);
+		}
+		byte[] data = fetcher.fetch(call.reqid, ref);
+		String filename = ref.filename == null || ref.filename.isEmpty() ? defaultName : ref.filename;
+		return new H3VideoApi.InputImage(data, filename);
 	}
 
 	/** ComfyUI 健康检查（与 Qwen 同一个进程）。 */
@@ -77,7 +138,7 @@ public final class H3LocalModelHandler {
 	 * 便于工具端展示真实原因。
 	 * </p>
 	 */
-	private static Response handle(JsonObject request, ResourceLock lock, String baseUrl,
+	private static Response handle(JsonObject request, MediaReader media, ResourceLock lock, String baseUrl,
 			ProgressReporter progress) {
 		H3VideoApi.ModelTier tier = H3VideoApi.ModelTier.fromString(JsonConfig.getTrimmed(request, "model"));
 		int steps = JsonConfig.getInt(request, "steps", tier.defaultSteps());
@@ -111,7 +172,7 @@ public final class H3LocalModelHandler {
 			}
 			if ("extract_frame".equals(action)) {
 				// 视频截帧：上传视频 → LoadVideo/ImageFromBatch → 返回 png
-				H3VideoApi.InputImage video = readMedia(request, "video", "frame.mp4");
+				H3VideoApi.InputImage video = media.read("video", "frame.mp4");
 				int frame = JsonConfig.getInt(request, "frame", 0);
 				// 截帧与视频生成是不同 API，可分别配置预计耗时
 				progress.running("已下发 ComfyUI", LocalModelEta.resolve(15_000L,
@@ -121,7 +182,7 @@ public final class H3LocalModelHandler {
 			}
 			if ("video_duration".equals(action)) {
 				// 只读视频时长，供视频配音计费；返回 JSON 文本
-				H3VideoApi.InputImage video = readMedia(request, "video", "video.mp4");
+				H3VideoApi.InputImage video = media.read("video", "video.mp4");
 				// 只读时长，通常比生成快得多；单独给 video_duration 留覆盖项
 				progress.running("已下发 ComfyUI", LocalModelEta.resolve(15_000L,
 						LocalModelEta.propertyName("h3", "video_duration"), "h3FrameEtaMs"));
@@ -136,7 +197,7 @@ public final class H3LocalModelHandler {
 				if (foleyPrompt.isEmpty()) {
 					throw new IllegalArgumentException("missing foley prompt");
 				}
-				H3VideoApi.InputImage video = readMedia(request, "video", "video.mp4");
+				H3VideoApi.InputImage video = media.read("video", "video.mp4");
 				String negative = JsonConfig.getTrimmed(request, "negative");
 				// foley / foley_segment 是不同 API：段式配音可能比整段快，可分别配置
 				progress.running("已下发 ComfyUI", LocalModelEta.resolve(300_000L,
@@ -169,10 +230,10 @@ public final class H3LocalModelHandler {
 			double seconds = JsonConfig.getDouble(request, "seconds", 5d);
 			int frames = JsonConfig.getInt(request, "frames", H3VideoApi.snapFrames(seconds));
 			long seed = JsonConfig.getLong(request, "seed", H3VideoApi.randomSeed());
-			H3VideoApi.InputImage firstFrame = readMedia(request, "first_frame", "frame.png");
-			H3VideoApi.InputImage lastFrame = readMedia(request, "last_frame", "frame.png");
-			H3VideoApi.InputImage firstVideo = readMedia(request, "first_video", "first.mp4");
-			H3VideoApi.InputImage lastVideo = readMedia(request, "last_video", "last.mp4");
+			H3VideoApi.InputImage firstFrame = media.read("first_frame", "frame.png");
+			H3VideoApi.InputImage lastFrame = media.read("last_frame", "frame.png");
+			H3VideoApi.InputImage firstVideo = media.read("first_video", "first.mp4");
+			H3VideoApi.InputImage lastVideo = media.read("last_video", "last.mp4");
 			int firstStart = JsonConfig.getInt(request, "first_start", 0);
 			int firstLength = JsonConfig.getInt(request, "first_length", 0);
 			int lastStart = JsonConfig.getInt(request, "last_start", 0);
@@ -263,6 +324,16 @@ public final class H3LocalModelHandler {
 			bytes = Base64.getDecoder().decode(data);
 		} catch (IllegalArgumentException ex) {
 			throw new IllegalArgumentException("invalid h3 " + field + " data", ex);
+		}
+		// 输入文件也写入部署侧缓存（内容寻址，重复内容不会重复写），
+		// 下次再拿到同一份输入时本地就有副本，不必重新落盘
+		LocalModelFileCache cache = LocalModelFileCache.shared();
+		if (cache != null) {
+			LocalModelFileCache.StoreResult stored = cache.store(bytes);
+			if (stored != null) {
+				System.out.println("[LocalModelCache] 内联输入缓存：" + (stored.created ? "新写入" : "命中已存在")
+						+ " key=" + stored.key.substring(0, 12) + "… 大小=" + bytes.length + "B");
+			}
 		}
 		return new H3VideoApi.InputImage(bytes, filename.isEmpty() ? defaultName : filename);
 	}

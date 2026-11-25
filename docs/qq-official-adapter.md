@@ -219,6 +219,57 @@ adapter.recallPrivateMessage(userId, messageId);
 - `count`：撤回最近 1–5 条；
 - 只允许撤回当前会话自己发出的消息，不能借工具删除用户消息。
 
+### 群文件
+
+官方 API v2 **没有**独立的“群文件上传”事件，也**没有**下载群文件的 OpenAPI。群文件只会作为
+群消息附件到达（`content_type=file`，附件自带下载 URL），并且需要机器人开启**群消息全量模式**
+（能收到 `GROUP_MESSAGE_CREATE`）才能看到群里非 @ 消息里的文件；只订阅 `GROUP_AT_MESSAGE_CREATE`
+时，只有 @ 机器人那条消息里的文件附件可见。
+
+适配器与控制器做了这些事：
+
+- 附件归一化成 `IncomingContent.FileBlock`（文件名、大小、下载 URL），不再只是“（文件：xxx）”
+  纯文本占位；纯文件消息也会进入会话上下文，模型看到的是
+  `<file name="..." size="..." messageId="..." />`；
+- 适配器在内存里记录最近 100 个收到的群文件（消息 id、文件名、URL），官方接口没有文件 id，
+  下载时只能靠这些引用定位；附件 URL 有时效，过期后需要重新上传；
+- `qq` 技能启用且协议支持时（`ChatAdapter.supportsGroupFileDownload()`），会话会注册
+  `download_group_file` 工具：
+
+  | 参数 | 说明 |
+  | --- | --- |
+  | `file` | 群文件名、消息 id 或下载链接；优先传消息里的文件名 |
+  | `group_id` | 可选，省略时用当前群 |
+
+  工具下载后写入对象存储（`save/ircimages`，配置了 `save/config/object-storage.json` 时
+  本地+远端组合），返回 72 位内容哈希 id，例如
+  `群文件已保存，文件id：<72位id>（大小：... 字节）`，后续识别/转存/发送等工具可以直接用。
+- 默认下载上限 100MB，可用 `-Dqqbot_group_file_max_bytes=字节数` 调整；超过上限会直接返回失败，
+  避免把大文件读进内存。
+
+> 找不到文件时工具会提示“只能下载最近收到的群文件”；这不是权限问题，而是官方接口没有历史
+> 群文件列表，用户需要重新上传。
+
+### 发送文件（带自定义文件名）
+
+`ChatAdapter` 提供 `supportsFileSend()` / `sendFile(chatId, file, name)` / `sendPrivateFile(userId, file, name)`，
+`name` 是接收者看到的文件名（含扩展名）。`qq` 技能启用且协议支持时，会话注册 `send_file` 工具：
+
+| 参数 | 说明 |
+| --- | --- |
+| `file_id` | 对象存储里的 72 位文件 id（可带扩展名） |
+| `name` | 发送时的文件名，含扩展名，例如 `报告.pdf`；只写文件名，不能带路径 |
+
+QQ 官方协议按 `file_type=4` 上传：
+
+- 文件 ≤5MB：`file_data` + `file_name` 直传；
+- 文件 >5MB（最多 200MB）：走分片上传 —— `POST /v2/{groups|users}/{openid}/upload_prepare`
+  提交文件大小、`md5`、`sha1`、`md5_10m`（前 10002432 字节），拿 `upload_id` 与分片预签名地址；
+  每片 `PUT` 到预签名 URL 后调 `upload_part_finish`（`upload_id` / `part_index` / `block_size` / 分片 `md5`）；
+  全部分片完成后用 `upload_id` + `file_name` 调 `/files` 合并。合并得到 `file_info` 后再以
+  `msg_type=7` 发送。分片失败按 `upload_config.retry_delay` / `retry_timeout` 重试。
+- 来源是 URL 时会先落到临时文件（边下载边校验 200MB 上限），分片逐片读入，避免整文件进内存。
+
 ## 5. 实现要点
 
 - **鉴权**：`POST {api_base}/app/getAppAccessToken`，`Authorization: QQBot {access_token}`；token 缓存，
@@ -241,7 +292,8 @@ adapter.recallPrivateMessage(userId, messageId);
   等不到就关闭连接并继续重试，避免停在“连上了但没鉴权”的半开状态。
 - **接收**：正文、`mentions`、`msg_elements`、`attachments`、`message_scene.ext` 统一成
   `IncomingMessage`；`GROUP_AT_MESSAGE_CREATE` 与 `mentions` 里的 `bot=true` 都会标记
-  `mentionsBot`，控制器据此触发回复。
+  `mentionsBot`，控制器据此触发回复。`attachments` 里的图片进入 `ImageBlock`，语音/视频保留占位
+  文本，其它文件（`content_type=file`）进入 `FileBlock` 并登记到最近群文件缓存。
 - **发送**：`POST /v2/groups/{group_openid}/messages` 或 `POST /v2/users/{user_openid}/messages`；
   富媒体走 `/files` 上传拿 `file_info` 后用 `msg_type=7` 发送。
 - **线程**：HTTP 在独立线程池执行；网关读线程上触发私聊发送时只入队，避免阻塞事件接收。

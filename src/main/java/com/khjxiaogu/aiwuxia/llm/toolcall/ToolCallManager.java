@@ -16,6 +16,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
@@ -101,6 +106,8 @@ public class ToolCallManager {
 	private volatile ToolTaskListener taskListener;
 	/** 工具调用状态监听器（排队/执行中/进度/结束）。 */
 	private volatile ToolCallListener toolCallListener;
+	/** 文件引用解析器：URL → 对象存储 ID，可为 null。 */
+	private volatile ToolFileResolver fileResolver;
 	/** 是否已关闭（关闭后不再登记/通知任务）。 */
 	private volatile boolean closed;
 	/** 异步任务创建提示文本模板。 */
@@ -190,8 +197,9 @@ public class ToolCallManager {
 		ToolRegistration old = registrations.get(tool.name);
 		int oldGroup = old == null ? 0 : old.getGroupId();
 		registrations.put(tool.name, new ToolRegistration(tool, async && !disableAsyncTasks, effectiveMax));
-		// 文档库 / 知识库 / 历史记录检索不计入“工具调用轮次上限”，避免大量读写把模型卡在轮次上限。
-		if (tool.name.startsWith("doc_") || tool.name.startsWith("kb_") || tool.name.startsWith("history_")) {
+		// 文档库 / 知识库 / 工单 / 历史记录检索不计入“工具调用轮次上限”，避免大量读写把模型卡在轮次上限。
+		if (tool.name.startsWith("doc_") || tool.name.startsWith("kb_") || tool.name.startsWith("ticket_")
+				|| tool.name.startsWith("history_")) {
 			roundExemptTools.add(tool.name);
 		}
 		pruneGroup(oldGroup);
@@ -392,9 +400,120 @@ public class ToolCallManager {
 	public Map<String, ToolData> getTools() {
 		Map<String, ToolData> result = new LinkedHashMap<>();
 		for (Map.Entry<String, ToolRegistration> entry : registrations.entrySet()) {
-			result.put(entry.getKey(), entry.getValue().getData());
+			result.put(entry.getKey(), describeTool(entry.getValue().getData()));
 		}
 		return Collections.unmodifiableMap(result);
+	}
+
+	/**
+	 * 设置工具文件引用解析器。
+	 * <p>
+	 * 设置后，工具调用在执行前会把声明为 URL 参数的参数值交给解析器
+	 * （URL/Base64 → 对象存储 ID）；工具说明也会按解析器的上下文
+	 * （对象存储 / URL）生成。
+	 * </p>
+	 *
+	 * @param resolver 解析器，可为 null（不解析，保持对象存储说明）
+	 * @return 本管理器
+	 */
+	public ToolCallManager setFileResolver(ToolFileResolver resolver) {
+		this.fileResolver = resolver;
+		return this;
+	}
+
+	/** @return 当前文件引用解析器，未设置时返回 null */
+	public ToolFileResolver getFileResolver() {
+		return fileResolver;
+	}
+
+	/**
+	 * 按当前上下文返回工具说明。
+	 * <p>
+	 * URL 上下文（MCP 服务端）返回 {@link ToolData#forUrlContext()}，
+	 * 对象存储上下文返回原工具。
+	 * </p>
+	 *
+	 * @param tool 工具
+	 * @return 用于当前上下文的工具定义
+	 */
+	public ToolData describeTool(ToolData tool) {
+		if (tool == null) {
+			return null;
+		}
+		ToolFileResolver resolver = fileResolver;
+		return resolver != null && resolver.isUrlContext() ? tool.forUrlContext() : tool;
+	}
+
+	/**
+	 * 在工具执行前解析 URL 参数。
+	 * <p>
+	 * 只处理 {@link ToolData#urlParams} 声明的参数；参数可以是单个值、JSON 数组或
+	 * 逗号分隔列表。非 URL 值由解析器原样返回，因此原有 72 位 ID 不受影响。
+	 * </p>
+	 *
+	 * @param tool      工具定义
+	 * @param arguments 模型给出的原始参数 JSON
+	 * @return 解析后的参数 JSON；没有需要解析的内容时返回原字符串
+	 */
+	public String resolveToolArguments(ToolData tool, String arguments) {
+		ToolFileResolver resolver = fileResolver;
+		if (resolver == null || tool == null || tool.urlParams.isEmpty()
+				|| arguments == null || arguments.trim().isEmpty()) {
+			return arguments;
+		}
+		JsonElement parsed;
+		try {
+			parsed = JsonParser.parseString(arguments);
+		} catch (RuntimeException ex) {
+			return arguments;
+		}
+		if (parsed == null || !parsed.isJsonObject()) {
+			return arguments;
+		}
+		JsonObject root = parsed.getAsJsonObject();
+		boolean changed = false;
+		for (String key : tool.urlParams.keySet()) {
+			if (!root.has(key)) {
+				continue;
+			}
+			JsonElement value = root.get(key);
+			JsonElement resolved = resolveToolValue(value, resolver);
+			if (resolved != value) {
+				root.add(key, resolved);
+				changed = true;
+			}
+		}
+		return changed ? root.toString() : arguments;
+	}
+
+	/** 递归解析数组与字符串类型的工具参数。 */
+	private static JsonElement resolveToolValue(JsonElement value, ToolFileResolver resolver) {
+		if (value == null || value.isJsonNull()) {
+			return value;
+		}
+		if (value.isJsonArray()) {
+			JsonArray input = value.getAsJsonArray();
+			JsonArray output = new JsonArray();
+			boolean changed = false;
+			for (JsonElement item : input) {
+				JsonElement resolved = resolveToolValue(item, resolver);
+				output.add(resolved);
+				if (resolved != item) {
+					changed = true;
+				}
+			}
+			return changed ? output : value;
+		}
+		if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+			return value;
+		}
+		String raw = value.getAsString();
+		try {
+			String resolved = resolver.resolve(raw);
+			return resolved.equals(raw) ? value : new JsonPrimitive(resolved);
+		} catch (java.io.IOException ex) {
+			throw new RuntimeException("附件 URL 解析失败：" + ex.getMessage(), ex);
+		}
 	}
 
 	/**

@@ -39,14 +39,7 @@ public final class DocRoundManager {
     }
 
     public DocRound begin(DocAgent agent) {
-        DocRound round = begin(agent.id);
-        if (agent.sink != null) {
-            DocNoticeBatch batch = agent.sink.drain();
-            if (batch != null && !batch.isEmpty()) {
-                runtime.injectNotice(agent, batch);
-            }
-        }
-        return round;
+        return begin(agent.id);
     }
 
     public DocRound begin(String agentId) {

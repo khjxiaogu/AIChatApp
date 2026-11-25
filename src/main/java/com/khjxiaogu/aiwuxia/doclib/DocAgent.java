@@ -13,17 +13,18 @@ public final class DocAgent {
     public final List<String> listen;
     public final boolean wakeOnNotify;
     public final AIGroupSession session;
-    public final DocNoticeSink sink;
+    /** 原始事件监听者（通常由 MCP 实现）；不直接注入 agent。 */
+    public final DocEventListener listener;
     public final DocLibraryConfig config;
 
     public DocAgent(String id, String displayName, List<String> listen, boolean wakeOnNotify,
-            AIGroupSession session, DocNoticeSink sink, DocLibraryConfig config) {
+            AIGroupSession session, DocEventListener listener, DocLibraryConfig config) {
         this.id = id;
         this.displayName = displayName == null ? id : displayName;
         this.listen = listen == null ? new ArrayList<String>() : listen;
         this.wakeOnNotify = wakeOnNotify;
         this.session = session;
-        this.sink = sink;
+        this.listener = listener;
         this.config = config;
     }
 

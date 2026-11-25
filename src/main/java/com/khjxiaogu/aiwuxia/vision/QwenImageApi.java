@@ -1,9 +1,6 @@
 package com.khjxiaogu.aiwuxia.vision;
 
-import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -11,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 import com.google.gson.JsonArray;
@@ -20,7 +16,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
-import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 
 /**
@@ -408,46 +403,12 @@ public class QwenImageApi {
 
 	/** 上传参考图（调用方已持有资源锁）。 */
 	private String uploadImageUnlocked(InputImage image) throws IOException {
-		if (image == null || image.data == null || image.data.length == 0) {
+		if (image == null) {
 			throw new IllegalArgumentException("参考图不能为空");
 		}
-		String filename = image.filename == null || image.filename.trim().isEmpty() ? "image.png"
-				: new File(image.filename.trim()).getName();
-		String boundary = "----QwenImageBoundary" + UUID.randomUUID().toString().replace("-", "");
-		HttpURLConnection connection = (HttpURLConnection) new URL(baseUrl + "/upload/image").openConnection();
-		connection.setRequestMethod("POST");
-		connection.setDoOutput(true);
-		connection.setDoInput(true);
-		connection.setConnectTimeout(30000);
-		connection.setReadTimeout(120000);
-		connection.setRequestProperty("Accept", "application/json");
-		connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-		try (OutputStream out = connection.getOutputStream()) {
-			writeFormField(out, boundary, "subfolder", uploadSubfolder);
-			writeFormField(out, boundary, "overwrite", "true");
-			String header = "--" + boundary + "\r\n"
-					+ "Content-Disposition: form-data; name=\"image\"; filename=\"" + filename + "\"\r\n"
-					+ "Content-Type: application/octet-stream\r\n\r\n";
-			out.write(header.getBytes(StandardCharsets.UTF_8));
-			out.write(image.data);
-			out.write("\r\n".getBytes(StandardCharsets.UTF_8));
-			out.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
-		}
-		int code = connection.getResponseCode();
-		String body = readBody(code >= 200 && code < 300 ? connection.getInputStream()
-				: connection.getErrorStream());
-		connection.disconnect();
-		if (code < 200 || code >= 300) {
-			throw new IOException("Qwen Image 上传参考图失败 HTTP " + code + "：" + body);
-		}
-		JsonObject json = parseJsonObject(body, "上传参考图");
-		String name = json.has("name") && !json.get("name").isJsonNull() ? json.get("name").getAsString() : "";
-		String subfolder = json.has("subfolder") && !json.get("subfolder").isJsonNull()
-				? json.get("subfolder").getAsString() : "";
-		if (name.isEmpty()) {
-			throw new IOException("Qwen Image 上传参考图失败：响应缺少 name");
-		}
-		return subfolder.isEmpty() ? name : subfolder + "/" + name;
+		// 相同内容只上传一次；ComfyUI 的 input 目录里已有同一文件时直接复用
+		return ComfyUploadSupport.ensureUploaded(baseUrl, uploadSubfolder, image.data, image.filename,
+				"----QwenImageBoundary");
 	}
 
 	/**
@@ -782,24 +743,6 @@ public class QwenImageApi {
 	private static void release(ResourcePermit permit) {
 		if (permit != null) {
 			permit.release();
-		}
-	}
-
-	private static void writeFormField(OutputStream out, String boundary, String name, String value)
-			throws IOException {
-		String header = "--" + boundary + "\r\n"
-				+ "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n";
-		out.write(header.getBytes(StandardCharsets.UTF_8));
-		out.write((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
-		out.write("\r\n".getBytes(StandardCharsets.UTF_8));
-	}
-
-	private static String readBody(InputStream stream) throws IOException {
-		if (stream == null) {
-			return "";
-		}
-		try (InputStream in = stream) {
-			return new String(FileUtil.readAll(in), StandardCharsets.UTF_8);
 		}
 	}
 

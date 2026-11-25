@@ -48,6 +48,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *    ├─ agents.json             群聊 agent 清单
  *    ├─ crontab.json            定时任务
  *    ├─ deepseek-payment.json   DeepSeek 开放平台充值凭据（cookie / 设备指纹）
+ *    ├─ tencent-docs.json       腾讯文档开放平台凭据（在线表格 API）
+ *    ├─ feishu-bitable.json     飞书多维表格凭据（在线表格 API）
  *    └─ sdxl/                   生图相关
  *       ├─ character-tags.txt   角色 tag 库（提示词关键词）
  *       ├─ loras.json           LoRA 配置
@@ -89,6 +91,12 @@ public final class ConfigPaths {
 	public static final String SVS_VOICES = "svs-voices.json";
 	/** DeepSeek 开放平台充值凭据（cookie、shumei_device_id） */
 	public static final String DEEPSEEK_PAYMENT = "deepseek-payment.json";
+	/** 腾讯文档开放平台凭据（在线表格 API） */
+	public static final String TENCENT_DOCS = "tencent-docs.json";
+	/** 飞书多维表格凭据（在线表格 API） */
+	public static final String FEISHU_BITABLE = "feishu-bitable.json";
+	/** 工单看板在线表格配置 */
+	public static final String TICKET_SHEET = "ticket-sheet.json";
 
 	// ---- 生图（config/sdxl）文件名 ----
 	/** 角色 tag 库（原 {@code save/promptdo.txt}） */
@@ -287,6 +295,51 @@ public final class ConfigPaths {
 	 */
 	public static File deepseekPayment(File dataFolder) {
 		return locate(folder(dataFolder), DEEPSEEK_PAYMENT, dataFolder, DEEPSEEK_PAYMENT);
+	}
+
+	/**
+	 * 腾讯文档开放平台凭据文件。
+	 * <p>
+	 * 供 {@code com.khjxiaogu.aiwuxia.sheet.tencent.TencentSheetApi} 使用，包含应用凭据、
+	 * Access Token / Refresh Token、默认在线表格 ID 等；字段说明与示例见
+	 * {@code TencentSheetConfig}。文件不存在时在线表格功能不可用（可用 {@code -Dtencent_docs_*}
+	 * 启动参数替代）。
+	 * </p>
+	 *
+	 * @param dataFolder 数据目录
+	 * @return {@code config/tencent-docs.json}
+	 */
+	public static File tencentDocs(File dataFolder) {
+		return new File(folder(dataFolder), TENCENT_DOCS);
+	}
+
+	/**
+	 * 飞书多维表格凭据文件。
+	 * <p>
+	 * 供 {@code com.khjxiaogu.aiwuxia.sheet.feishu.FeishuBitableApi} 使用，包含自建应用凭据、
+	 * 多维表格 app_token、默认数据表 ID 等；字段说明与示例见 {@code FeishuBitableConfig}。
+	 * 文件不存在时该功能不可用（可用 {@code -Dfeishu_*} 启动参数替代）。
+	 * </p>
+	 *
+	 * @param dataFolder 数据目录
+	 * @return {@code config/feishu-bitable.json}
+	 */
+	public static File feishuBitable(File dataFolder) {
+		return new File(folder(dataFolder), FEISHU_BITABLE);
+	}
+
+	/**
+	 * 工单看板在线表格配置文件。
+	 * <p>
+	 * 可选；文件不存在时工单看板不同步。存在时字段说明见
+	 * {@code com.khjxiaogu.aiwuxia.ticket.TicketSheetConfig}。
+	 * </p>
+	 *
+	 * @param dataFolder 数据目录
+	 * @return {@code config/ticket-sheet.json}
+	 */
+	public static File ticketSheet(File dataFolder) {
+		return new File(folder(dataFolder), TICKET_SHEET);
 	}
 
 	/**

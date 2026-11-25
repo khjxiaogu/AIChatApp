@@ -55,7 +55,9 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
  *       "enabled": true,
  *       "adminId": ["345678"],
  *       "extraTools": ["codex"],
- *       "codex": { "cwd": "D:\\projects\\project" }
+ *       "codex": { "cwd": "D:\\projects\\project" },
+ *       "docLibrary": { "id": "default", "write": true, "listen": ["*"], "wakeOnNotify": true },
+ *       "ticket": { "libraryId": "tickets", "wakeOnNotify": true }
  *     }
  *   ],
  *   "privateSessions": [
@@ -84,6 +86,8 @@ public final class MultiAgentConfig {
         public final JsonObject codex;
         /** 该会话的 doclib 配置：id / write / listen / wakeOnNotify。 */
         public final JsonObject docLibrary;
+        /** 该会话的工单配置：libraryId / wakeOnNotify。 */
+        public final JsonObject ticket;
         public final List<String> adminIds;
         /** 除自身群外，还要接收哪些群的消息（公屏会话的自身群始终包含）。 */
         public final List<String> contextGroups;
@@ -97,9 +101,9 @@ public final class MultiAgentConfig {
         public final String prompt;
 
         Session(String id, boolean publicSession, boolean enabled, String name, String save,
-                List<String> extraTools, JsonObject codex, JsonObject docLibrary, List<String> adminIds,
-                List<String> contextGroups, List<String> handoverTargets, boolean mentionOnly,
-                String promptFile, String prompt) {
+                List<String> extraTools, JsonObject codex, JsonObject docLibrary, JsonObject ticket,
+                List<String> adminIds, List<String> contextGroups, List<String> handoverTargets,
+                boolean mentionOnly, String promptFile, String prompt) {
             this.id = id;
             this.publicSession = publicSession;
             this.enabled = enabled;
@@ -108,6 +112,7 @@ public final class MultiAgentConfig {
             this.extraTools = extraTools;
             this.codex = codex;
             this.docLibrary = docLibrary;
+            this.ticket = ticket;
             this.adminIds = adminIds;
             this.contextGroups = contextGroups;
             this.handoverTargets = handoverTargets;
@@ -147,6 +152,14 @@ public final class MultiAgentConfig {
     public final String qqbotAppId;
     /** QQ 官方机器人 Secret。 */
     public final String qqbotSecret;
+    /** 是否启用 MultiAgent 自带的 MCP 服务端。 */
+    public final boolean mcpEnabled;
+    /** MCP 服务端监听端口（默认 8996）。 */
+    public final int mcpPort;
+    /** MCP 服务端路径（默认 {@code /mcp}）。 */
+    public final String mcpPath;
+    /** 对外公开的 MCP 地址；为空时按 {@code site.json} + 端口推导。 */
+    public final String mcpPublicUrl;
 
     private MultiAgentConfig(JsonObject json, File dataFolder) {
         this.botId = JsonConfig.getNonBlankString(json, "botId", "");
@@ -168,6 +181,28 @@ public final class MultiAgentConfig {
         this.napcatToken = JsonConfig.getNonBlankString(json, "napcatToken", System.getProperty("napcat_token", ""));
         this.qqbotAppId = JsonConfig.getNonBlankString(json, "qqbotAppId", System.getProperty("qqbot_appid", ""));
         this.qqbotSecret = JsonConfig.getNonBlankString(json, "qqbotSecret", System.getProperty("qqbot_secret", ""));
+        JsonObject mcp = JsonConfig.getObjectOrEmpty(json, "mcp");
+        this.mcpEnabled = !mcp.has("enabled") || mcp.get("enabled").isJsonNull()
+                || mcp.get("enabled").getAsBoolean();
+        int port = JsonConfig.getInt(mcp, "port", 8996);
+        this.mcpPort = port <= 0 || port > 65535 ? 8996 : port;
+        this.mcpPath = normalizeMcpPath(JsonConfig.getNonBlankString(mcp, "path", "/mcp"));
+        this.mcpPublicUrl = JsonConfig.getNonBlankString(mcp, "publicUrl", "");
+    }
+
+    /** 规范化 MCP 路径：补前导斜杠、去掉末尾斜杠。 */
+    private static String normalizeMcpPath(String path) {
+        String value = path == null ? "" : path.trim();
+        if (value.isEmpty()) {
+            return "/mcp";
+        }
+        if (!value.startsWith("/")) {
+            value = "/" + value;
+        }
+        while (value.length() > 1 && value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value;
     }
 
     /** 工具最终列表：默认 + 会话额外，去重保序。 */
@@ -275,8 +310,8 @@ public final class MultiAgentConfig {
             boolean mentionOnly = item.has("mentionOnly") && !item.get("mentionOnly").isJsonNull()
                     && item.get("mentionOnly").isJsonPrimitive() && item.get("mentionOnly").getAsBoolean();
             sessions.add(new Session(id, publicSession, enabled, name, save, extraTools, codex,
-                    object(item, "docLibrary"), admins, contextGroups, handoverTargets, mentionOnly,
-                    promptFile, prompt));
+                    object(item, "docLibrary"), object(item, "ticket"), admins, contextGroups,
+                    handoverTargets, mentionOnly, promptFile, prompt));
         }
         return Collections.unmodifiableList(sessions);
     }

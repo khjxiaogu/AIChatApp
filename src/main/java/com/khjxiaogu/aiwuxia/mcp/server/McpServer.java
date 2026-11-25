@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.mcp.server;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -11,9 +12,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,7 +31,9 @@ import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolFileResolver;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpException;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpJson;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpProtocol;
@@ -112,8 +119,19 @@ public class McpServer {
     private final String serverVersion;
     /** 多媒体 id → 链接解析器，可为 null（不处理多媒体 id）。 */
     private final MediaUrlResolver mediaUrlResolver;
+    /** 工具入参文件引用解析器（URL → 对象存储 ID），可为 null。 */
+    private final ToolFileResolver fileResolver;
     /** task_id → 异步工具任务。 */
     private final Map<String, AsyncTask> asyncTasks = new ConcurrentHashMap<>();
+
+    /** 外部直调轮次的空闲提交时间：20 秒内没有任何交互就结束本轮（提交并按正常结束处理）。 */
+    private static final long ROUND_IDLE_MS = 20_000L;
+
+    /** (令牌用户 | MCP session) → 临时轮次上下文；同组连续的工具调用合并成一轮。 */
+    private final Map<String, DirectRound> directRounds = new ConcurrentHashMap<>();
+
+    /** 空闲轮次清扫线程。 */
+    private final ScheduledExecutorService roundSweeper;
 
     /**
      * 创建协议实现。
@@ -138,14 +156,144 @@ public class McpServer {
      */
     public McpServer(McpToolRegistry registry, McpAccessTokenStore store, String serverName, String serverVersion,
             MediaUrlResolver mediaUrlResolver) {
+        this(registry, store, serverName, serverVersion, mediaUrlResolver, null);
+    }
+
+    /**
+     * 创建协议实现，并指定工具入参的文件引用解析器。
+     *
+     * @param registry        工具注册表
+     * @param store           令牌与计费存储
+     * @param serverName      服务名称，null 时使用 {@code MCP}
+     * @param serverVersion   服务版本，null 时使用 {@code 0.0.1}
+     * @param mediaUrlResolver 多媒体 id → 链接解析器，可为 null
+     * @param fileResolver    工具入参 URL → 对象存储 ID 的解析器，可为 null
+     */
+    public McpServer(McpToolRegistry registry, McpAccessTokenStore store, String serverName, String serverVersion,
+            MediaUrlResolver mediaUrlResolver, ToolFileResolver fileResolver) {
         this.registry = registry == null ? new McpToolRegistry() : registry;
         this.store = store;
         this.serverName = serverName == null ? "MCP" : serverName;
         this.serverVersion = serverVersion == null ? "0.0.1" : serverVersion;
         this.mediaUrlResolver = mediaUrlResolver;
+        this.fileResolver = fileResolver;
         // 通用异步任务查询工具：所有 tool.async == true 的 MCP 工具都会返回 task_id
         this.registry.register(createTaskResultTool());
         this.registry.register(createQuotaTool());
+        // 外部直调没有对话轮次：按 (令牌用户, session) 归组，空闲超时后统一提交
+        this.roundSweeper = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "mcp-round-sweeper");
+            t.setDaemon(true);
+            return t;
+        });
+        this.roundSweeper.scheduleWithFixedDelay(this::sweepDirectRounds, 1L, 1L, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 外部 MCP 直调的一轮。
+     * <p>
+     * 协议本身没有对话轮次，这里按“令牌用户 + {@code Mcp-Session-Id}”归组：同一组连续的工具调用
+     * 共用同一个 {@link ToolCallContext}，工具放进上下文的本轮数据对象（例如文档库草稿）会在
+     * 整组调用结束后统一提交。空闲超过 {@link #ROUND_IDLE_MS} 且没有在执行的调用即提交。
+     * </p>
+     */
+    private static final class DirectRound {
+        final String key;
+        final ToolCallContext context;
+        /** 最后一次交互时间（毫秒）。 */
+        final AtomicLong lastActive = new AtomicLong();
+        /** 正在执行的调用数；大于 0 时清扫不会提交本轮。 */
+        final AtomicInteger inflight = new AtomicInteger();
+
+        DirectRound(String key, ToolFileResolver fileResolver) {
+            this.key = key;
+            ToolCallManager manager = new ToolCallManager();
+            manager.setFileResolver(fileResolver);
+            this.context = ToolCallContext.create(manager, null, null);
+            touch();
+        }
+
+        void touch() {
+            lastActive.set(System.currentTimeMillis());
+        }
+    }
+
+    /** 轮次键：同一令牌用户 + 同一 MCP session 视为同一轮。 */
+    private static String directRoundKey(String sessionId, McpAccessTokenStore.Token token) {
+        String uid = token == null ? "anon" : String.valueOf(token.getUid());
+        return uid + "|" + (sessionId == null ? "" : sessionId);
+    }
+
+    /** 取得（必要时创建）本次直调的轮次；每次工具调用都会刷新空闲计时。 */
+    private DirectRound acquireDirectRound(String sessionId, McpAccessTokenStore.Token token) {
+        DirectRound round = directRounds.computeIfAbsent(directRoundKey(sessionId, token),
+                key -> new DirectRound(key, fileResolver));
+        round.touch();
+        return round;
+    }
+
+    /**
+     * 刷新某个会话的轮次空闲计时；没有轮次时什么都不做。
+     * <p>
+     * 传输层可以把它挂在任意请求上（包括 {@code tools/list}、{@code ping} 等“交互”），
+     * 避免客户端还在活动时被空闲清扫提前提交。
+     * </p>
+     *
+     * @param sessionId MCP session id，可为 null
+     * @param token     已认证令牌，可为 null
+     */
+    public void touchDirectRound(String sessionId, McpAccessTokenStore.Token token) {
+        DirectRound round = directRounds.get(directRoundKey(sessionId, token));
+        if (round != null) {
+            round.touch();
+        }
+    }
+
+    /**
+     * 立即提交并结束某个 MCP session 的轮次（客户端 DELETE 会话时调用）。
+     *
+     * @param sessionId MCP session id
+     */
+    public void closeDirectRounds(String sessionId) {
+        if (sessionId == null || sessionId.isEmpty()) {
+            return;
+        }
+        String suffix = "|" + sessionId;
+        for (DirectRound round : new ArrayList<>(directRounds.values())) {
+            if (round.key.endsWith(suffix) && directRounds.remove(round.key, round)) {
+                finishDirectRound(round);
+            }
+        }
+    }
+
+    /** 空闲清扫：超过 {@link #ROUND_IDLE_MS} 没有交互、且没有在执行的调用就提交本轮。 */
+    private void sweepDirectRounds() {
+        try {
+            long now = System.currentTimeMillis();
+            for (DirectRound round : new ArrayList<>(directRounds.values())) {
+                if (round.inflight.get() > 0) {
+                    continue;
+                }
+                if (now - round.lastActive.get() < ROUND_IDLE_MS) {
+                    continue;
+                }
+                if (directRounds.remove(round.key, round)) {
+                    finishDirectRound(round);
+                }
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    /** 结束一轮：只回调本轮数据对象，异常只打印，不影响其它轮次。 */
+    private void finishDirectRound(DirectRound round) {
+        try {
+            round.context.endRound(ToolCallContext.RoundEndReason.NORMAL);
+            System.out.println("[MCP] 直调轮次已提交 key=" + round.key);
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
     }
 
     /**
@@ -186,6 +334,9 @@ public class McpServer {
     private String quotaText(McpAccessTokenStore.Token token) {
         if (store == null) {
             return "MCP 计费未启用，无法查询配额。";
+        }
+        if (!store.isBillingEnabled()) {
+            return "本 MCP 服务未启用计费，工具调用不消耗配额。";
         }
         if (token == null) {
             return "当前连接没有访问令牌，无法查询配额。";
@@ -325,34 +476,47 @@ public class McpServer {
 
     /** 每次工具调用的固定费用。 */
     public int getCallCost() {
-        return CALL_COST;
+        return effectiveCallCost();
+    }
+
+    /**
+     * 本次服务实际的固定调用费。
+     * <p>
+     * 令牌存储启用计费时为 {@link #CALL_COST}；独立进程（例如 MultiAgent）使用免费令牌库时
+     * 为 0，工具调用不再要求用户有网页余额。
+     * </p>
+     *
+     * @return 实际固定调用费
+     */
+    private int effectiveCallCost() {
+        return store != null && !store.isBillingEnabled() ? 0 : CALL_COST;
     }
 
     /**
      * 旧版默认单次调用价格。
      *
-     * @return 固定调用费 {@link #CALL_COST}
+     * @return 固定调用费
      * @deprecated 计费改为“固定调用费 + 工具内部用量”，请使用 {@link #getCallCost()}
      */
     @Deprecated
     public int getDefaultPrice() {
-        return CALL_COST;
+        return effectiveCallCost();
     }
 
     /**
      * 某个工具的调用价格。
      *
      * @param tool 工具名称（已不参与定价）
-     * @return 固定调用费 {@link #CALL_COST}
+     * @return 固定调用费
      * @deprecated 计费改为“固定调用费 + 工具内部用量”，请使用 {@link #getCallCost()}
      */
     @Deprecated
     public int priceOf(String tool) {
-        return CALL_COST;
+        return effectiveCallCost();
     }
 
     /**
-     * 处理一条 JSON-RPC 请求。
+     * 处理一条 JSON-RPC 请求（没有 session 信息时使用；内部按默认键归组）。
      *
      * @param token     已认证的访问令牌
      * @param request   JSON-RPC 请求对象
@@ -361,6 +525,21 @@ public class McpServer {
      * @throws McpException 请求非法、方法不存在、未授权、配额不足等
      */
     public JsonObject handle(McpAccessTokenStore.Token token, JsonObject request, String clientIp) throws McpException {
+        return handle(token, request, clientIp, null);
+    }
+
+    /**
+     * 处理一条 JSON-RPC 请求。
+     *
+     * @param token     已认证的访问令牌
+     * @param request   JSON-RPC 请求对象
+     * @param clientIp  客户端 IP（写入消费记录，可为 null）
+     * @param sessionId MCP session id（来自 {@code Mcp-Session-Id} 头），可为 null
+     * @return 响应对象；请求是通知（无 id）时返回 null
+     * @throws McpException 请求非法、方法不存在、未授权、配额不足等
+     */
+    public JsonObject handle(McpAccessTokenStore.Token token, JsonObject request, String clientIp, String sessionId)
+            throws McpException {
         if (request == null) {
             throw new McpException(McpProtocol.ERROR_INVALID_REQUEST, "请求为空");
         }
@@ -382,7 +561,7 @@ public class McpServer {
         case McpProtocol.METHOD_TOOLS_LIST:
             return handleToolsList(token);
         case McpProtocol.METHOD_TOOLS_CALL:
-            return handleToolsCall(token, params, request.get("id"), clientIp);
+            return handleToolsCall(token, params, request.get("id"), clientIp, sessionId);
         case McpProtocol.METHOD_RESOURCES_LIST:
         case McpProtocol.METHOD_RESOURCES_TEMPLATES_LIST:
         case McpProtocol.METHOD_PROMPTS_LIST:
@@ -420,9 +599,12 @@ public class McpServer {
         result.addProperty("protocolVersion", McpProtocol.negotiate(requested));
         result.add("capabilities", capabilities);
         result.add("serverInfo", serverInfo);
-        result.addProperty("instructions",
-                "本服务把本程序注册的 ToolData 以 MCP 工具形式提供。每次调用固定扣除 " + CALL_COST
-                        + " 额外配额，工具内部产生的用量（模型调用、图片/视频生成、搜索、存储等）按实际用量另行结算。");
+        int callCost = effectiveCallCost();
+        String charging = callCost <= 0
+                ? "本服务未启用计费，所有工具调用免费。"
+                : "每次调用固定扣除 " + callCost
+                        + " 额外配额，工具内部产生的用量（模型调用、图片/视频生成、搜索、存储等）按实际用量另行结算。";
+        result.addProperty("instructions", "本服务把本程序注册的 ToolData 以 MCP 工具形式提供。" + charging);
         return result;
     }
 
@@ -436,7 +618,8 @@ public class McpServer {
         List<ToolData> tools = registry.list(token == null ? null : token.getUid());
         JsonArray array = new JsonArray();
         for (ToolData tool : tools) {
-            array.add(toMcpTool(tool));
+            ToolData exposed = fileResolver != null && fileResolver.isUrlContext() ? tool.forUrlContext() : tool;
+            array.add(toMcpTool(exposed));
         }
         JsonObject result = new JsonObject();
         result.add("tools", array);
@@ -455,6 +638,26 @@ public class McpServer {
      */
     public JsonObject handleToolsCall(McpAccessTokenStore.Token token, JsonObject params, JsonElement id,
             String clientIp) throws McpException {
+        return handleToolsCall(token, params, id, clientIp, null);
+    }
+
+    /**
+     * 处理 tools/call：查找工具 → 预扣固定调用费 → 执行 → 结算内部用量 / 失败退款。
+     * <p>
+     * 同一次直调会挂在按 (令牌用户, MCP session) 归组的临时轮次上；协议本身没有轮次，
+     * 同一组连续调用共用一轮，空闲 20 秒后由清扫线程统一提交。
+     * </p>
+     *
+     * @param token     已认证令牌
+     * @param params    请求参数（name、arguments）
+     * @param id        请求 ID（写入消费记录）
+     * @param clientIp  客户端 IP
+     * @param sessionId MCP session id（来自 {@code Mcp-Session-Id} 头），可为 null
+     * @return 工具调用结果
+     * @throws McpException 参数错误、工具不存在、固定调用费不足
+     */
+    public JsonObject handleToolsCall(McpAccessTokenStore.Token token, JsonObject params, JsonElement id,
+            String clientIp, String sessionId) throws McpException {
         if (params == null || !params.has("name") || params.get("name").isJsonNull()) {
             throw McpException.invalidParams("缺少工具名称 name");
         }
@@ -469,8 +672,23 @@ public class McpServer {
         if (tool == null || tool.tool == null) {
             throw McpException.invalidParams("工具不存在或当前不可用：" + name);
         }
+        DirectRound round = acquireDirectRound(sessionId, token);
+        // 工具入参里的 URL 在计费/执行之前统一解析成对象存储 ID；
+        // 解析失败不预扣费用，直接返回明确原因。
+        String originalArguments = arguments.toString();
+        try {
+            String resolvedArguments = round.context.getManager().resolveToolArguments(tool, originalArguments);
+            if (!resolvedArguments.equals(originalArguments)) {
+                arguments = JsonParser.parseString(resolvedArguments).getAsJsonObject();
+                System.out.println("[MCP] 附件 URL 已解析 name=" + name + " arguments=" + arguments);
+            }
+        } catch (Throwable ex) {
+            return errorResult("附件 URL 解析失败：" + describe(ex), 0);
+        }
         String requestId = id == null || id.isJsonNull() ? null : id.getAsString();
         System.out.println("[MCP] tools/call name=" + name + " arguments=" + arguments);
+        int callCost = effectiveCallCost();
+        boolean free = callCost <= 0;
         if (QUOTA_TOOL.equals(name)) {
             // 配额查询是免费工具：不预扣、不写消费记录
             boolean available = store != null && token != null;
@@ -480,11 +698,11 @@ public class McpServer {
         }
         McpAccessTokenStore.Charge charge = null;
         if (store != null) {
-            // 先按固定调用费预扣：固定费用都不够时直接拒绝，不执行工具
-            charge = store.charge(token, name, CALL_COST, clientIp, requestId);
+            // 先按固定调用费预扣：固定费用都不够时直接拒绝，不执行工具；免费模式费用为 0
+            charge = store.charge(token, name, callCost, clientIp, requestId);
         }
         long start = System.currentTimeMillis();
-        // 服务端调用没有会话，用一个只收集用量的输出对象和一个空管理器传入；
+        // 服务端调用没有会话，用一个只收集用量的输出对象传入；
         // 工具内部写入的用量在工具执行完成后统一换算成费用。
         AIOutput output = new AIOutput.FilledAIOutput(MessageContents.EMPTY, "", null);
         String text;
@@ -495,21 +713,26 @@ public class McpServer {
             String taskId = UUID.randomUUID().toString();
             AIOutput taskOutput = new AIOutput.FilledAIOutput(MessageContents.EMPTY, "", null);
             CompletableFuture<ToolResult> future;
+            round.inflight.incrementAndGet();
             try {
-                future = tool.tool.run(McpJson.stringifyArguments(arguments), taskOutput, new ToolCallManager());
+                future = tool.tool.run(McpJson.stringifyArguments(arguments), taskOutput, round.context);
             } catch (Throwable ex) {
+                round.inflight.decrementAndGet();
                 ex.printStackTrace();
                 if (store != null && charge != null) {
                     store.refund(charge, ex.toString());
                 }
-                return errorResult("工具执行失败：" + describe(ex), CALL_COST);
+                return errorResult("工具执行失败：" + describe(ex), callCost);
             }
             if (future == null) {
+                round.inflight.decrementAndGet();
                 if (store != null && charge != null) {
                     store.refund(charge, "async tool returned null future");
                 }
-                return errorResult("工具执行失败：异步工具没有返回任务。", CALL_COST);
+                return errorResult("工具执行失败：异步工具没有返回任务。", callCost);
             }
+            // 调用结束只减计数；本轮由空闲清扫统一提交
+            future.whenComplete((ignored, error) -> round.inflight.decrementAndGet());
             // 本地模型未在线时工具通常会立即返回失败 Future，直接失败而不是先返回 task_id
             if (future.isDone()) {
                 ToolResult immediate = null;
@@ -527,14 +750,14 @@ public class McpServer {
                     if (failText == null || failText.isEmpty()) {
                         failText = "本地模型服务不在线或工具不可用。";
                     }
-                    int failUsage = usageCostOf(taskOutput);
+                    int failUsage = free ? 0 : usageCostOf(taskOutput);
                     if (store != null && charge != null) {
                         // 简单失败免基础费，但任务已经产生的用量照常结算
                         store.commit(charge, failUsage, System.currentTimeMillis() - start,
                                 failText.length(), false, false);
                     }
                     Integer failCharged = store == null ? null : Integer.valueOf(failUsage);
-                    Integer failBalance = store == null || token == null ? null
+                    Integer failBalance = store == null || token == null || free ? null
                             : Integer.valueOf(store.getPaidBalance(token.getUid()));
                     return successResult(failText, 0, failUsage, failCharged, failBalance, false);
                 }
@@ -547,8 +770,9 @@ public class McpServer {
             text = "任务已提交，task_id=" + taskId + "。请调用 " + TASK_RESULT_TOOL
                     + " 并传入该 task_id 查询结果；不要重复提交。";
         } else {
+            round.inflight.incrementAndGet();
             try {
-                ToolResult result = tool.tool.run(McpJson.stringifyArguments(arguments), output, new ToolCallManager())
+                ToolResult result = tool.tool.run(McpJson.stringifyArguments(arguments), output, round.context)
                         .join();
                 success = result == null || result.isSuccess();
                 // 固定处理：多媒体内容里的 id 统一通过 TOS 换成可访问链接，不再把内部 id 直接返回给客户端
@@ -562,19 +786,22 @@ public class McpServer {
                 if (store != null && charge != null) {
                     store.refund(charge, ex.toString());
                 }
-                return errorResult("工具执行失败：" + describe(ex), CALL_COST);
+                return errorResult("工具执行失败：" + describe(ex), callCost);
+            } finally {
+                round.inflight.decrementAndGet();
             }
         }
-        int usagePrice = usageCostOf(output);
+        int usagePrice = free ? 0 : usageCostOf(output);
         System.out.println("[MCP] tools/call result name=" + name + " success=" + success + " usagePrice=" + usagePrice
                 + " text=" + (text.length() > 500 ? text.substring(0, 500) + "..." : text));
         if (store != null && charge != null && !deferredCommit) {
             // 简单失败不扣基础调用费，但工具内部已经产生的用量照常扣费
             store.commit(charge, usagePrice, System.currentTimeMillis() - start, text.length(), success, success);
         }
-        int callPrice = success ? CALL_COST : 0;
+        int callPrice = success ? callCost : 0;
         Integer charged = store == null ? null : Integer.valueOf(totalCost(callPrice, usagePrice));
-        Integer balance = store == null || token == null ? null : Integer.valueOf(store.getPaidBalance(token.getUid()));
+        Integer balance = store == null || token == null || free ? null
+                : Integer.valueOf(store.getPaidBalance(token.getUid()));
         return successResult(text, callPrice, usagePrice, charged, balance, success);
     }
 
@@ -780,11 +1007,12 @@ public class McpServer {
         schema.addProperty("additionalProperties", false);
         json.add("inputSchema", schema);
         // 计费方式通过 _meta 暴露，方便客户端在调用前展示
+        int callCost = effectiveCallCost();
         JsonObject meta = new JsonObject();
-        meta.addProperty("price", CALL_COST);
-        meta.addProperty("callPrice", CALL_COST);
+        meta.addProperty("price", callCost);
+        meta.addProperty("callPrice", callCost);
         meta.addProperty("usagePrice", 0);
-        meta.addProperty("charging", "每次调用固定 " + CALL_COST + " + 工具内部实际用量");
+        meta.addProperty("charging", callCost <= 0 ? "免费" : "每次调用固定 " + callCost + " + 工具内部实际用量");
         json.add("_meta", meta);
         return json;
     }

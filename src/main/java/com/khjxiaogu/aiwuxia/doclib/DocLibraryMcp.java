@@ -13,27 +13,39 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext;
 
 /**
  * doclib 的工具集：doc_list / doc_search / doc_read / doc_write / doc_delete / doc_wait_unlock。
- * <p>每个 agent 一套，捕获 agent 身份；不能通过公共 MCP 暴露。</p>
+ * <p>每个 agent 一套，捕获 agent 身份；是否暴露给 MCP 由工具来源（{@code McpToolSource}）决定。</p>
+ * <p>同时作为原始文档事件的监听者：收到 {@link DocEventBatch} 后决定是否通知，
+ * 并拼装普通文档通知文本；meta 事件在这里被忽略（普通文档查询看不到 meta）。</p>
+ * <p>工具本身不接触会话：本轮生命周期通过 {@link ToolCallContext} 取得，通知投递交给
+ * {@link DocNotifySink}。</p>
  */
-public final class DocLibraryMcp implements ToolProvider {
+public final class DocLibraryMcp implements ToolProvider, DocEventListener {
 
     private final DocLibraryRuntime runtime;
-    private final DocAgent agent;
     private final DocLibraryConfig config;
+    private final DocNotifySink notify;
+    private DocAgent agent;
     private final List<ToolData> tools = new ArrayList<>();
 
-    private DocLibraryMcp(DocLibraryRuntime runtime, DocAgent agent, DocLibraryConfig config) {
+    private DocLibraryMcp(DocLibraryRuntime runtime, DocLibraryConfig config, DocNotifySink notify) {
         this.runtime = runtime;
-        this.agent = agent;
         this.config = config;
+        this.notify = notify;
         build();
     }
 
-    public static DocLibraryMcp forAgent(DocLibraryRuntime runtime, DocAgent agent, DocLibraryConfig config) {
-        return new DocLibraryMcp(runtime, agent, config);
+    public static DocLibraryMcp forAgent(DocLibraryRuntime runtime, DocLibraryConfig config,
+            DocNotifySink notify) {
+        return new DocLibraryMcp(runtime, config, notify);
+    }
+
+    /** 注册完成后绑定 agent（工具需要 agent id）。 */
+    public void bindAgent(DocAgent agent) {
+        this.agent = agent;
     }
 
     @Override
@@ -47,29 +59,29 @@ public final class DocLibraryMcp implements ToolProvider {
     }
 
     private void build() {
-        tools.add(new ToolData.Builder("doc_list", "枚举共享文档库里的文档（不返回正文；只读元数据）。")
+        tools.add(new ToolData.Builder("doc_list", "枚举共享文档库里的文档（不返回正文和 meta；标题取正文第一个非空行）。")
                 .putOptionalParam("prefix", "文档 id 前缀；不传列全部。", "前缀")
                 .putOptionalParam("limit", "最多返回条数，默认 50，最大 200。", "条数")
                 .putOptionalParam("offset", "分页偏移，默认 0。", "偏移")
                 .putOptionalParam("include_deleted", "是否包含已删除的 tombstone，默认 false。", "含删除")
-                .sync().orderSensitive().sessionOnly().maxCalls(64)
-                .toolText((params, output, manager) -> safe(() -> doList(json(params))))
+                .sync().orderSensitive().maxCalls(64)
+                .toolText((params, output, context) -> withRound(context, () -> doList(json(params))))
                 .build());
 
         tools.add(new ToolData.Builder("doc_search", "在共享文档库里搜索关键字；只返回摘要，不更新已读版本。")
                 .putParam("keyword", "关键字；多个词用 | 分隔。", "关键字")
                 .putOptionalParam("limit", "最多返回条数，默认 20，最大 50。", "条数")
                 .putOptionalParam("offset", "分页偏移，默认 0。", "偏移")
-                .sync().orderSensitive().sessionOnly().maxCalls(64)
-                .toolText((params, output, manager) -> safe(() -> doSearch(json(params))))
+                .sync().orderSensitive().maxCalls(64)
+                .toolText((params, output, context) -> withRound(context, () -> doSearch(json(params))))
                 .build());
 
         tools.add(new ToolData.Builder("doc_read", "读取共享文档；完整读取后才允许写入。")
                 .putParam("doc_id", "文档 id。", "文档")
                 .putOptionalParam("revision", "读取指定历史修订；不传读当前。", "修订")
                 .putOptionalParam("max_chars", "最多返回字符数；截断后不能写，默认读全。", "最大字符")
-                .sync().orderSensitive().sessionOnly().maxCalls(64)
-                .toolText((params, output, manager) -> safe(() -> doRead(json(params))))
+                .sync().orderSensitive().maxCalls(64)
+                .toolText((params, output, context) -> withRound(context, () -> doRead(json(params))))
                 .build());
 
         if (config.write) {
@@ -77,27 +89,113 @@ public final class DocLibraryMcp implements ToolProvider {
                     .putParam("doc_id", "文档 id。", "文档")
                     .putParam("mode", "overwrite / append / patch。", "模式")
                     .putParam("content", "内容；patch 时放 diff。", "内容")
-                    .putOptionalParam("title", "标题；不传则取首个 Markdown 标题/首行。", "标题")
+                    .putOptionalParam("title", "标题；不传则取正文第一个非空行（不含 meta）。", "标题")
                     .putOptionalParam("base_revision", "期望的当前修订号。", "基础修订")
                     .putOptionalParam("message", "提交说明。", "说明")
-                    .sync().orderSensitive().sessionOnly().maxCalls(64)
-                    .toolText((params, output, manager) -> safe(() -> doWrite(json(params))))
+                    .sync().orderSensitive().maxCalls(64)
+                    .toolText((params, output, context) -> withRound(context, () -> doWrite(json(params))))
                     .build());
 
             tools.add(new ToolData.Builder("doc_delete", "删除共享文档（写 tombstone）；本轮结束提交。")
                     .putParam("doc_id", "文档 id。", "文档")
                     .putOptionalParam("message", "提交说明。", "说明")
-                    .sync().orderSensitive().sessionOnly().maxCalls(32)
-                    .toolText((params, output, manager) -> safe(() -> doDelete(json(params))))
+                    .sync().orderSensitive().maxCalls(32)
+                    .toolText((params, output, context) -> withRound(context, () -> doDelete(json(params))))
                     .build());
         }
 
         tools.add(new ToolData.Builder("doc_wait_unlock", "等待某个文档解锁，最多 10 秒；不拿锁、不更新已读。")
                 .putParam("doc_id", "文档 id。", "文档")
                 .putOptionalParam("timeout_ms", "等待毫秒数，默认/最大 10000。", "超时")
-                .sync().orderSensitive().sessionOnly().maxCalls(32)
-                .toolText((params, output, manager) -> safe(() -> doWait(json(params))))
+                .sync().orderSensitive().maxCalls(32)
+                .toolText((params, output, context) -> withRound(context, () -> doWait(json(params))))
                 .build());
+    }
+
+    @Override
+    public void onEvents(DocEventBatch batch) {
+        if (batch == null || batch.isEmpty()) {
+            if (batch != null) {
+                batch.ack();
+            }
+            return;
+        }
+        java.util.Map<String, DocEvent> content = new java.util.LinkedHashMap<>();
+        for (DocEvent event : batch.getEvents()) {
+            if (!event.hasContent()) {
+                continue;
+            }
+            DocEvent existing = content.get(event.docId);
+            if (existing == null || event.toRevision >= existing.toRevision) {
+                content.put(event.docId, event);
+            }
+        }
+        if (content.isEmpty()) {
+            // 只有 meta 变化：普通文档查询看不到 meta，直接忽略
+            batch.ack();
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("<doc-update library=\"").append(escape(runtime.id())).append("\" count=\"")
+                .append(content.size()).append("\" at=\"")
+                .append(new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX").format(new Date()))
+                .append("\">\n");
+        for (DocEvent event : content.values()) {
+            sb.append("  <doc id=\"").append(escape(event.docId))
+                    .append("\" action=\"").append(escape(event.action))
+                    .append("\" revision=\"").append(event.toRevision)
+                    .append("\" from=\"").append(event.fromRevision)
+                    .append("\" by=\"").append(escape(displayName(event.author))).append("\"");
+            if (!event.summary.isEmpty()) {
+                sb.append(" change=\"").append(escape(event.summary)).append("\"");
+            }
+            sb.append(" />\n");
+        }
+        sb.append("</doc-update>\n");
+        sb.append("这些文档在你上次读取后发生了变化；它们的内容不会被自动注入。修改前请先 doc_read。");
+        inject(sb.toString(), batch);
+    }
+
+    private void inject(String text, DocEventBatch batch) {
+        try {
+            if (notify != null) {
+                // 会话相关操作（入队、唤醒）由宿主在 DocNotifySink 里完成
+                notify.notify(text);
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        } finally {
+            // 无论注入是否成功都消费本批，避免一条失败事件堵住后续事件
+            batch.ack();
+        }
+    }
+
+    private String displayName(String agentId) {
+        DocAgent found = runtime.agent(agentId);
+        return found == null ? agentId : found.displayName;
+    }
+
+    private static String escape(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("&", "&amp;").replace("\"", "&quot;")
+                .replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /**
+     * 工具执行入口：先把本轮数据对象放进工具调用上下文（首次 doc_* 调用开轮），再执行工具本体。
+     * <p>同一轮里后续调用由上下文直接取回同一个 {@link DocRoundBinding}，不会重复开轮；
+     * 不在工具调用上下文中执行时（例如被外部直接调用）不建轮次，写操作会按
+     * “轮次已结束”明确拒绝。</p>
+     *
+     * @param context 本轮工具调用上下文，可为 null
+     * @param body    工具本体
+     * @return 工具结果文本
+     */
+    private String withRound(ToolCallContext context, Supplier<String> body) {
+        runtime.attachRound(context, agent);
+        return safe(body);
     }
 
     private String doList(JsonObject o) {
@@ -123,9 +221,7 @@ public final class DocLibraryMcp implements ToolProvider {
             if (runtime.isStale(agent.id, doc)) {
                 sb.append("  stale=true");
             }
-            if (!doc.title.isEmpty()) {
-                sb.append("  ").append(doc.title);
-            }
+            sb.append("  title=").append(doc.title);
             sb.append('\n');
         }
         return sb.toString().trim();

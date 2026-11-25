@@ -23,26 +23,27 @@
  */
 package com.khjxiaogu.aiwuxia.mcp;
 
-import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.khjxiaogu.aiwuxia.llm.AIOutput;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelAttachments;
 import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
-import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
+import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
+import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
+import com.khjxiaogu.aiwuxia.modelproxy.api.QwenParams;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.utils.JsonConfig;
 import com.khjxiaogu.aiwuxia.vision.QwenImageApi;
@@ -128,19 +129,13 @@ public class QwenLocalModelMcp implements ToolProvider {
 					}
 					boolean fast = JsonConfig.getBool(jo, "fast", false);
 					int[] size = QwenImageMcp.dimensions(JsonConfig.getNonBlankString(jo, "resolution", "3:4"), fast);
-					JsonObject request = new JsonObject();
-					request.addProperty("action", "text2image");
-					request.addProperty("prompt", prompt);
-					request.addProperty("negative", JsonConfig.getNonBlankString(jo, "negative", ""));
-					request.addProperty("width", size[0]);
-					request.addProperty("height", size[1]);
-					request.addProperty("steps",
-							fast ? QwenImageApi.FAST_STEPS : QwenImageApi.DEFAULT_STEPS);
-					request.addProperty("cfg", QwenImageApi.DEFAULT_CFG);
-					request.addProperty("seed", QwenImageApi.randomSeed());
-					request.addProperty("resolution", 1024);
-					request.addProperty("fast", fast);
-					List<QwenImageApi.ImageResult> images = generate(request);
+					String reqid = UUID.randomUUID().toString();
+					QwenParams params = new QwenParams(QwenParams.TEXT2IMAGE, prompt,
+							JsonConfig.getNonBlankString(jo, "negative", ""), size[0], size[1],
+							fast ? QwenImageApi.FAST_STEPS : QwenImageApi.DEFAULT_STEPS, QwenImageApi.DEFAULT_CFG,
+							QwenImageApi.randomSeed(), fast, List.of());
+					List<QwenImageApi.ImageResult> images = generate(
+							LocalModelCall.qwen(reqid, params, null));
 					return QwenImageMcp.uploadResults(tos, images, "图片生成成功", output);
 				} catch (IllegalArgumentException ex) {
 					return ToolResult.text("参数错误：" + ex.getMessage());
@@ -156,9 +151,9 @@ public class QwenLocalModelMcp implements ToolProvider {
 	private ToolData createEditTool() {
 		return new ToolData.Builder(TOOL_EDIT,
 				"使用 Qwen-Image 2.1 对参考图进行改图，或参考多张图生成新图。"
-						+ "参考图用对象存储 ID 传入，最多 10 张，按顺序对应图1、图2…；"
+						+ "参考图最多 10 张，按顺序对应图1、图2…；"
 						+ "生成后需要使用发送图片工具发给用户。")
-				.putParam("reference", "参考图对象存储 ID，多张用英文逗号分隔，最多 10 张。", "参考图")
+				.putUrlParam("reference", "参考图（多张用英文逗号分隔，最多 10 张）", "参考图")
 				.putParam("prompt", "编辑指令或画面提示词，支持中文，例如“把外套换成蓝色”。", "提示词")
 				.putParam("negative", "负面提示词，可留空使用默认中文负面词。", "负面提示词")
 				.putParam("fast", "是否使用 8 步加速 LoRA，默认 false。", "极速草稿")
@@ -183,30 +178,26 @@ public class QwenLocalModelMcp implements ToolProvider {
 						if (tos == null) {
 							return ToolResult.failure("图片存储不可用，无法读取参考图。");
 						}
-						JsonArray images = new JsonArray();
+						String reqid = UUID.randomUUID().toString();
+						List<AttachmentRef> attachments = new ArrayList<>();
+						List<String> imageIds = new ArrayList<>();
 						for (String id : references) {
 							if (!tos.exists(id, output == null ? null : output::addUsage)) {
 								return ToolResult.text("参数错误：参考图" + id + "已清理或不存在。");
 							}
-							byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
-							JsonObject image = new JsonObject();
-							image.addProperty("filename", id + ".png");
-							image.addProperty("data", Base64.getEncoder().encodeToString(bytes));
-							images.add(image);
+							AttachmentRef ref = LocalModelAttachments.shared().register(reqid, null,
+									AttachmentRef.KIND_IMAGE, "png", id + ".png", id,
+									() -> download(tos, id, output));
+							attachments.add(ref);
+							imageIds.add(ref.id);
 						}
 						boolean fast = JsonConfig.getBool(jo, "fast", false);
-						JsonObject request = new JsonObject();
-						request.addProperty("action", "edit");
-						request.addProperty("prompt", prompt);
-						request.addProperty("negative", JsonConfig.getNonBlankString(jo, "negative", ""));
-						request.addProperty("steps",
-								fast ? QwenImageApi.FAST_STEPS : QwenImageApi.DEFAULT_STEPS);
-						request.addProperty("cfg", QwenImageApi.DEFAULT_CFG);
-						request.addProperty("seed", QwenImageApi.randomSeed());
-						request.addProperty("resolution", 1024);
-						request.addProperty("fast", fast);
-						request.add("images", images);
-						List<QwenImageApi.ImageResult> results = generate(request);
+						QwenParams params = new QwenParams(QwenParams.EDIT, prompt,
+								JsonConfig.getNonBlankString(jo, "negative", ""), 1024, 1024,
+								fast ? QwenImageApi.FAST_STEPS : QwenImageApi.DEFAULT_STEPS,
+								QwenImageApi.DEFAULT_CFG, QwenImageApi.randomSeed(), fast, imageIds);
+						List<QwenImageApi.ImageResult> results = generate(
+								LocalModelCall.qwen(reqid, params, attachments));
 						return QwenImageMcp.uploadResults(tos, results, "图片生成成功", output);
 					} catch (IllegalArgumentException ex) {
 						return ToolResult.text("参数错误：" + ex.getMessage());
@@ -220,48 +211,31 @@ public class QwenLocalModelMcp implements ToolProvider {
 	/**
 	 * 通过本地模型通道执行一次 Qwen 请求。
 	 *
-	 * @param request 请求 JSON（见 {@link com.khjxiaogu.aiwuxia.vision.QwenLocalModelHandler}）
+	 * @param call 统一调用对象（参数 + 参考图附件）
 	 * @return 生成的图片
 	 * @throws Exception 本地模型离线、超时或生成失败
 	 */
-	static List<QwenImageApi.ImageResult> generate(JsonObject request) throws Exception {
-		CompletableFuture<ModelGenerationResult> future = LocalModel.require(ModelType.QWEN,
-				UUID.randomUUID().toString(), request);
-		ModelGenerationResult result = future.get(GENERATE_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+	static List<QwenImageApi.ImageResult> generate(LocalModelCall<QwenParams> call) throws Exception {
+		long timeoutMillis = TimeUnit.MINUTES.toMillis(GENERATE_TIMEOUT_MINUTES);
+		ModelGenerationResult result = LocalModel.lhs.send(null, call, timeoutMillis).get(timeoutMillis,
+				TimeUnit.MILLISECONDS);
 		if (result == null || result.bodyData == null || result.bodyData.length == 0) {
 			throw new IllegalStateException("本地 Qwen 模型没有返回图片");
 		}
-		// 新协议：结果以图片原始字节 + 格式回传
 		String format = result.format == null ? "" : result.format.trim().toLowerCase();
-		if (isImageFormat(format)) {
-			return List.of(new QwenImageApi.ImageResult("qwen." + extensionOf(format), "", "output",
-					result.bodyData));
+		if (!isImageFormat(format)) {
+			throw new IllegalStateException("本地 Qwen 模型返回了非图片结果：" + format);
 		}
-		// 兼容旧的 JSON 包裹格式
-		JsonObject response = JsonParser
-				.parseString(new String(result.bodyData, StandardCharsets.UTF_8))
-				.getAsJsonObject();
-		JsonElement images = response.get("images");
-		List<QwenImageApi.ImageResult> results = new ArrayList<>();
-		if (images == null || !images.isJsonArray()) {
-			return results;
+		return List.of(new QwenImageApi.ImageResult("qwen." + extensionOf(format), "", "output", result.bodyData));
+	}
+
+	/** 把对象存储里的文件读成字节，供附件惰性拉取。 */
+	private static byte[] download(ObjectStorageProvider tos, String id, AIOutput output) {
+		try {
+			return tos.download(id, output == null ? null : output::addUsage);
+		} catch (IOException ex) {
+			throw new RuntimeException(ex);
 		}
-		for (JsonElement item : images.getAsJsonArray()) {
-			if (!item.isJsonObject()) {
-				continue;
-			}
-			JsonObject image = item.getAsJsonObject();
-			String data = JsonConfig.getNonBlankString(image, "data", "");
-			if (data.isEmpty()) {
-				continue;
-			}
-			results.add(new QwenImageApi.ImageResult(
-					JsonConfig.getNonBlankString(image, "filename", "qwen.png"),
-					JsonConfig.getNonBlankString(image, "subfolder", ""),
-					JsonConfig.getNonBlankString(image, "type", "output"),
-					Base64.getDecoder().decode(data)));
-		}
-		return results;
 	}
 
 	/** 是否是图片格式名（png/jpeg/... 或 image/*）。 */

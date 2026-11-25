@@ -6,7 +6,7 @@
 | 组成 | 类 | 作用 |
 |---|---|---|
 | 运行时 | `com.khjxiaogu.aiwuxia.codex.CodexService` | 管理一个常驻 `codex app-server` 进程：线程、轮次、事件流、审批、超时、落盘 |
-| MCP 工具集 | `com.khjxiaogu.aiwuxia.mcp.codex.CodexMcp` | 8 个 `codex_*` 工具，给 QQ agent、外部 MCP 客户端或任意 `ToolCallManager` 用 |
+| MCP 工具集 | `com.khjxiaogu.aiwuxia.mcp.CodexMcp` | 10 个 `codex_*` 工具（含对象存储↔项目目录的文件传输），给 QQ agent、外部 MCP 客户端或任意 `ToolCallManager` 用 |
 | agent 应用 | `com.khjxiaogu.aiwuxia.apps.AICodexAgentMain` | 「编排助手」：自己不写代码，调 `codex_*` 把活交给 Codex，再把结果讲给群友 |
 
 三者关系：
@@ -55,7 +55,7 @@ CodexMcp ──► CodexService ──► codex app-server（stdio JSON-RPC）
 
 要点：
 
-- `tools` 里写 `codex` 即启用；连接器启动时会为该群注册 8 个工具，并按
+- `tools` 里写 `codex` 即启用；连接器启动时会为该群注册 10 个工具，并按
   `qq:<botId>:<groupId>` 隔离线程 —— 不同群各聊各的，互不串话。
 - `adminId` 是 Codex 审批的收件人，可以写单个值或数组。NapCat 用 QQ 号，QQ 官方机器人用
   管理员 `user_openid`；多个管理员时审批会私聊发给每个人，**任意一个先回复即生效**；
@@ -195,6 +195,25 @@ Codex 产出的图片有三类来源，都会被识别：
 - 外部 MCP 客户端（同步模式）返回图片元信息（id）但不负责发图；要看图请在 QQ 会话里用。
 - Codex 能不能真的截图取决于它自己的插件/工具（browser、computer-use 等），那是 Codex 配置，不在本连接器范围内。
 
+### 文件传输（对象存储 ↔ 项目固定目录）
+
+两个工具把「对象存储 id」和「Codex 项目里的真实文件」接起来。**AI 不能选择目录**：文件只会落在固定的
+`ai_files/`（相对线程 `cwd`；常量在 `CodexService.TRANSFER_DIR`，换位置只改这一处），名称由 `name` 控制：
+
+| 工具 | 方向 | 参数 | 说明 |
+|---|---|---|---|
+| `codex_pull_file` | 对象存储 → 项目固定目录 | `file_id`、`name`（`thread_id`、`overwrite` 可选） | 写到 `<cwd>/ai_files/<name>`；`name` 只能是纯文件名（可带扩展名，如 `icon.png`）；同名已存在时默认拒绝，`overwrite=true` 才覆盖 |
+| `codex_push_file` | 项目固定目录 → 对象存储 | `name`（`thread_id` 可选） | 读取 `<cwd>/ai_files/<name>`，按内容寻址上传（不带扩展名，72 位 id） |
+
+约束与行为：
+
+- 目录固定为 `ai_files`，AI 不能指定其它目录；`name` 不能带目录、盘符或 `\ / : * ? " < > |` 等字符，也不能是 `.`/`..` 或 Windows 保留名；
+- 对象存储 id 只接受字母/数字/点/下划线/短横线，不接受链接或本地路径；
+- 单文件上限 64MB（对象存储接口按整块读写，避免误传超大文件）；
+- 没有线程时退回该归属键的默认项目目录，不会为了传文件去启动 Codex；`thread_id` 显式给了但不存在则直接报错；
+- `pull` 成功后返回 `relative`（`ai_files/<name>`），agent 应在 `codex_send` 的任务里写它，Codex 才能找到文件；
+- 两个工具都声明了顺序敏感，和同一批里的 `codex_send` 会按模型给出的顺序执行。
+
 ## 3. 挂到 Codex 现有项目（FrostedHeart）
 
 Codex 桌面端里的项目保存在 `CODEX_HOME/state_*.sqlite` 的 `projects` 表（示例：
@@ -251,6 +270,8 @@ app-server 的 `thread/start.projectId` 只接受 id、且在 `experimentalApi` 
 | `codex_feedback` | `task_id` | 审批 `decision=allow/allow_session/deny/cancel`；提问用 `text`/`selected` |
 | `codex_review_approval` | `task_id`、`decision` | 对话 AI 预审：`approve` / `ask_user` / `reject`（`reason` 可选；`ask_user` 时可带 `reviewer` 建议审核人） |
 | `codex_interrupt` | — | 中断当前轮（`turn/interrupt`） |
+| `codex_pull_file` | `file_id`、`name` | 对象存储 → 项目固定目录 `ai_files/<name>`（`name` 只能是纯文件名；`overwrite` 可选，默认不覆盖） |
+| `codex_push_file` | `name` | 项目固定目录 `ai_files/` 里的文件 → 对象存储 id（`name` 只能是纯文件名） |
 
 `codex_latest` 返回的事件 `kind`：
 

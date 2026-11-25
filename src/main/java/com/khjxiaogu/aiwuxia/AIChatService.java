@@ -87,6 +87,7 @@ import com.khjxiaogu.aiwuxia.mcp.server.McpAccessTokenStore;
 import com.khjxiaogu.aiwuxia.mcp.server.McpBuiltinTools;
 import com.khjxiaogu.aiwuxia.mcp.server.McpServer;
 import com.khjxiaogu.aiwuxia.mcp.server.McpServerEndpoint;
+import com.khjxiaogu.aiwuxia.mcp.server.McpUrlAttachmentTool;
 import com.khjxiaogu.aiwuxia.mcp.server.McpToolRegistry;
 import com.khjxiaogu.aiwuxia.mcp.harness.HarnessMcp;
 import com.khjxiaogu.aiwuxia.mcp.harness.HarnessMcpConfig;
@@ -674,8 +675,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 				builder.putParam(param.getKey(), param.getValue(), source.getParamLabel(param.getKey()));
 			}
 		}
-		return builder.tool((data, output, manager) -> {
-			CompletableFuture<ToolResult> future = source.tool.run(data, output, manager);
+		return builder.tool((data, output, context) -> {
+			CompletableFuture<ToolResult> future = source.tool.run(data, output, context);
 			return future == null ? CompletableFuture.completedFuture(null)
 					: future.thenApply(AIChatService::toVideoIdOnlyResult);
 		}).build();
@@ -1042,7 +1043,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		registry.registerAll(new CharacterSettingMcp(path).getTools());
 		// 本地语音合成：列出可用说话人 + 用 VoiceTagger 标注后合成并存入 MCP 统一对象存储
 		registry.registerAll(new LocalVoiceMcp(mcpStorage).getTools());
-		// 本地 SVS（歌声转换）：统一走 LocalModel 的 svs 模型通道，不直接访问 localemp
+		// 本地 SVS（歌声转换）：统一走 LocalModel 的 svs 模型通道，不直接访问 localemp；
+		// audio_url 本身就是要交给 localemp 的链接，不属于需要转存的附件参数。
 		registry.registerAll(new SvsMcp(mcpStorage, ConfigPaths.svsVoices(path)).getTools());
 		// 把 AIChatService 中按用户创建的 SDXL 图片工具暴露给 MCP：
 		// 外部调用与绘画会话使用同一套工具，用户接入自己的本地绘画模型时同样优先使用该用户的模型。
@@ -1079,10 +1081,16 @@ public class AIChatService implements ServiceClass, CommandHandler {
 						if (session == null || !uid.equals(session.user)) {
 							continue;
 						}
+						ObjectStorageProvider sessionStorage = session.getObjectStorage();
+						if (sessionStorage == null) {
+							sessionStorage = mcpStorage;
+						}
 						for (ToolData tool : session.getToolCallManager().getTools().values()) {
 							// 会话专属工具（例如群聊/绘画的发送图片）不暴露给远程 MCP 调用
 							if (!tool.sessionOnly && !result.containsKey(tool.name)) {
-								result.put(tool.name, tool);
+								// 每个会话的媒体存储可能不同：按会话自己的存储转存 URL 附件，
+								// 否则 Qwen/H3 等工具会拿到 mcpStorage 里不存在的 id。
+								result.put(tool.name, McpUrlAttachmentTool.wrap(tool, sessionStorage));
 							}
 						}
 					}

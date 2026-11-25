@@ -36,12 +36,14 @@ import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
 import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
 import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCodec;
+import com.khjxiaogu.aiwuxia.modelproxy.cache.LocalModelFileCache;
 import com.khjxiaogu.aiwuxia.modelproxy.protocol.FileChunkAssembler;
 import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol;
 import com.khjxiaogu.aiwuxia.modelproxy.protocol.LocalModelProtocol.FileChunk;
 import com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransport;
 import com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransportFactory;
 import com.khjxiaogu.aiwuxia.modelproxy.transport.WebSocketTransportFactory;
+import com.khjxiaogu.aiwuxia.utils.ContentHash;
 
 /**
  * 本地模型连接客户端（统一会话管理器）。
@@ -410,6 +412,31 @@ public class LocalModelClient {
 
 	/** 拉取附件的实现。 */
 	private final AttachmentFetcher attachmentFetcher;
+
+	/**
+	 * 部署侧磁盘缓存：成功的生成结果按内容键落盘；拉取输入附件前先查缓存。
+	 * <p>
+	 * 由 {@link com.khjxiaogu.aiwuxia.LocalModelConnectionService} 统一创建并注入，
+	 * 同一进程内的多条部署通道共用一份；null 表示不启用缓存。
+	 * </p>
+	 */
+	private volatile LocalModelFileCache fileCache;
+
+	/**
+	 * 注入磁盘缓存。
+	 *
+	 * @param cache 缓存，null 表示不启用
+	 * @return 本对象，便于链式调用
+	 */
+	public LocalModelClient setFileCache(LocalModelFileCache cache) {
+		this.fileCache = cache;
+		return this;
+	}
+
+	/** 当前使用的磁盘缓存，未启用时返回 null。 */
+	public LocalModelFileCache getFileCache() {
+		return fileCache;
+	}
 
 	/** 读取进度心跳间隔，非法值回退到默认值。 */
 	private static long readProgressInterval() {
@@ -901,12 +928,32 @@ public class LocalModelClient {
 		if (ref == null || ref.id == null || ref.id.isEmpty()) {
 			throw new IOException("缺少附件引用");
 		}
+		LocalModelFileCache cache = fileCache;
+		// 服务端在附件里带了内容键（对象存储 id）时，先看本地有没有同一份内容：
+		// “用上次生成的图片继续图生图/反推”就属于这种情况，能直接省掉一次附件传输
+		String contentKey = ContentHash.normalize(ref.key);
+		if (cache != null) {
+			if (contentKey == null) {
+				System.out.println("[LocalModelCache] 未命中缓存：附件没有内容键，向服务端拉取（reqid=" + reqid
+						+ " id=" + ref.id + "）");
+			} else {
+				byte[] cached = cache.get(contentKey);
+				if (cached != null) {
+					System.out.println("[LocalModelCache] 命中本地缓存：reqid=" + reqid + " key="
+							+ shortKey(contentKey) + " 大小=" + cached.length + "B，跳过附件拉取");
+					return cached;
+				}
+				System.out.println("[LocalModelCache] 未命中本地缓存：reqid=" + reqid + " key="
+						+ shortKey(contentKey) + "，向服务端拉取（id=" + ref.id + "）");
+			}
+		}
 		String key = reqid + "|" + ref.id;
 		CompletableFuture<byte[]> future = new CompletableFuture<>();
 		pendingAttachments.put(key, future);
 		sendReply(LocalModelProtocol.attachmentGet(reqid, ref.id));
+		byte[] data;
 		try {
-			return future.get(ATTACHMENT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+			data = future.get(ATTACHMENT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 		} catch (InterruptedException ex) {
 			Thread.currentThread().interrupt();
 			throw new IOException("拉取附件被中断：" + ref.id, ex);
@@ -920,6 +967,19 @@ public class LocalModelClient {
 			pendingAttachments.remove(key);
 			attachmentAssemblers.remove(key);
 		}
+		if (cache != null && data != null && data.length > 0) {
+			// 输入附件也落盘：同一份文件再次出现时（哪怕换了附件 id）可以直接命中
+			LocalModelFileCache.StoreResult stored = cache.store(data);
+			if (stored != null) {
+				System.out.println("[LocalModelCache] 输入缓存：" + (stored.created ? "新写入" : "命中已存在")
+						+ " reqid=" + reqid + " key=" + shortKey(stored.key) + " 大小=" + data.length + "B");
+				if (contentKey != null && !stored.key.equals(contentKey)) {
+					System.err.println("[LocalModelCache] 附件内容与内容键不一致：声明=" + contentKey + " 实际="
+							+ stored.key + "（reqid=" + reqid + "）");
+				}
+			}
+		}
+		return data;
 	}
 
 	/**
@@ -1131,6 +1191,8 @@ public class LocalModelClient {
 				return;
 			}
 			if (response != null && response.data != null) {
+				// 先落盘再回传：即使回传途中断开/重连，下一次用同一份内容做输入时也能直接命中
+				cacheOutput(reqid, response.data, response.format);
 				// 文件按二进制分块发送，每块内容体最大 5 MiB，不再塞进文本 JSON 的 Base64
 				sendFileChunks(source, reqid, response.format, response.data);
 			} else {
@@ -1145,6 +1207,39 @@ public class LocalModelClient {
 				sendReply(source, LocalModelProtocol.error(reqid, rootMessage(e)));
 			}
 		}
+	}
+
+	/**
+	 * 把成功的结果写入部署侧磁盘缓存。
+	 * <p>
+	 * 只缓存媒体结果：{@code json}（反推提示词、视频时长等）不会作为输入复用。
+	 * 写入失败只记日志，不影响结果回传。
+	 * </p>
+	 *
+	 * @param reqid  请求 ID（日志用）
+	 * @param data   结果字节
+	 * @param format 结果格式
+	 */
+	private void cacheOutput(String reqid, byte[] data, String format) {
+		LocalModelFileCache cache = fileCache;
+		if (cache == null || isJsonFormat(format)) {
+			return;
+		}
+		LocalModelFileCache.StoreResult result = cache.store(data);
+		if (result != null) {
+			System.out.println("[LocalModelCache] 输出缓存：" + (result.created ? "新写入" : "命中已存在")
+					+ " reqid=" + reqid + " key=" + shortKey(result.key) + " 大小=" + data.length + "B");
+		}
+	}
+
+	/** 是否是 JSON 结果（不缓存）。 */
+	private static boolean isJsonFormat(String format) {
+		return format != null && "json".equalsIgnoreCase(format.trim());
+	}
+
+	/** 日志里只显示内容键的前 12 位。 */
+	private static String shortKey(String key) {
+		return key == null || key.length() <= 12 ? key : key.substring(0, 12) + "…";
 	}
 
 	/** 发送一条报文到当前连接（只用于不绑定具体任务的报文）。 */

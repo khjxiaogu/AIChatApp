@@ -26,3 +26,6 @@
 /save/codex-workspace/
 /save/codex-mcp/
 /save/codex-schema/
+
+# 本地模型部署侧磁盘缓存（内容寻址，运行期生成）
+/save/localmodel_cache/

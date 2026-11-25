@@ -53,7 +53,9 @@ import com.khjxiaogu.aiwuxia.state.history.message.MessageContent;
  *       配合 {@code wait_seconds}）读正文、推理摘要、工具活动与错误；</li>
  *   <li>返回值出现 {@code pending} 时：审批用 {@code codex_feedback} 的
  *       {@code decision=allow/allow_session/deny/cancel}，提问用 {@code text}；</li>
- *   <li>需要中止时 {@code codex_interrupt}。</li>
+ *   <li>需要中止时 {@code codex_interrupt}；</li>
+ *   <li>需要把对象存储里的素材放进项目固定目录（只给纯文件名）时 {@code codex_pull_file}，
+ *       需要把固定目录里的文件换成对象存储 id 时 {@code codex_push_file}。</li>
  * </ol>
  * <p>
  * 每个工具都返回 JSON 文本（{@code ok}/{@code error} 字段），方便模型直接消费。
@@ -114,7 +116,7 @@ public class CodexMcp implements ToolProvider {
 
     @Override
     public Collection<ToolData> getTools() {
-        List<ToolData> tools = new ArrayList<>(9);
+        List<ToolData> tools = new ArrayList<>(11);
         tools.add(status());
         tools.add(threads());
         tools.add(start());
@@ -124,6 +126,8 @@ public class CodexMcp implements ToolProvider {
         tools.add(feedback());
         tools.add(reviewApproval());
         tools.add(interrupt());
+        tools.add(pullFile());
+        tools.add(pushFile());
         return tools;
     }
 
@@ -172,7 +176,7 @@ public class CodexMcp implements ToolProvider {
         return new ToolData.Builder("codex_send", description)
                 .putParam("task", "用户原话（去掉 @/引用前缀），不要改写、不要拆成步骤；Codex 会自己理解和拆解。", "任务")
                 .putOptionalParam("thread_id", "目标线程 id；省略用当前默认线程。", "线程")
-                .putOptionalParam("images", "图片 id 列表（逗号分隔），来自用户消息里的 <image id=...>；最多 4 张。", "图片")
+                .putOptionalUrlParam("images", "图片（可多张，逗号分隔，最多 4 张）", "图片")
                 .putOptionalParam("wait_seconds", "同步模式：投递后等待输出的秒数（0-25）；异步模式忽略。", "等待秒数")
                 .async(asyncSend)
                 .tool((arguments, output, manager) -> {
@@ -347,6 +351,58 @@ public class CodexMcp implements ToolProvider {
                 .tool(arguments -> {
                     JsonObject json = json(arguments);
                     return service.interrupt(owner, JsonConfig.getNonBlankString(json, "thread_id")).toString();
+                })
+                .build();
+    }
+
+    /**
+     * 对象存储 → 项目固定目录：把素材放进代码项目的固定接收目录并命名。
+     * <p>
+     * 典型场景：用户说「把这张图放到项目里叫 icon.png」，agent 用消息里的图片 id 调本工具，
+     * 再用 {@code codex_send} 把返回的 {@code relative} 交给 Codex。目录固定，AI 只能控制文件名。
+     * </p>
+     */
+    private ToolData pullFile() {
+        return new ToolData.Builder("codex_pull_file",
+                "把对象存储里的文件下载到 Codex 线程项目的固定接收目录（目录固定，不能选，也不能带路径），"
+                        + "只需给纯文件名 name（例如 icon.png）。file_id 用其它工具返回的对象存储 id。"
+                        + "目标已存在时默认报错，确实要覆盖传 overwrite=true。"
+                        + "下载后如需 Codex 使用，把返回的 relative 写进 codex_send 的任务。")
+                .orderSensitive()
+                .putUrlParam("file_id", "输入要放进项目的文件", "文件ID")
+                .putParam("name", "纯文件名（可带扩展名，例如 icon.png）；不能带目录、盘符或路径分隔符。", "文件名")
+                .putOptionalParam("thread_id", "线程 id；省略用当前默认线程的项目目录（还没有线程时用默认项目目录）。",
+                        "线程")
+                .putOptionalParam("overwrite", "固定目录里已有同名文件时是否覆盖，true/false，默认 false。", "覆盖")
+                .tool(arguments -> {
+                    JsonObject json = json(arguments);
+                    return service.pullFile(owner, JsonConfig.getNonBlankString(json, "thread_id"),
+                            JsonConfig.getNonBlankString(json, "file_id"),
+                            JsonConfig.getNonBlankString(json, "name"),
+                            JsonConfig.getBool(json, "overwrite", false)).toString();
+                })
+                .build();
+    }
+
+    /**
+     * 项目固定目录 → 对象存储：把固定目录里的文件换成对象存储 id。
+     * <p>
+     * 典型场景：把固定目录里的截图、文档、音频发给用户，或作为 {@code send_image} /
+     * {@code codex_send images} 的输入。目录固定，AI 只能指定该目录里的文件名。
+     * </p>
+     */
+    private ToolData pushFile() {
+        return new ToolData.Builder("codex_push_file",
+                "把 Codex 线程项目固定接收目录里的文件上传到对象存储，返回对象存储 id（可交给 send_image 等工具，"
+                        + "或写进 codex_send 的参数）。目录固定，name 只能是该目录里的纯文件名。")
+                .orderSensitive()
+                .putParam("name", "固定接收目录里的纯文件名（例如 screenshot.png）；不能带目录或路径分隔符。", "文件名")
+                .putOptionalParam("thread_id", "线程 id；省略用当前默认线程的项目目录（还没有线程时用默认项目目录）。",
+                        "线程")
+                .tool(arguments -> {
+                    JsonObject json = json(arguments);
+                    return service.pushFile(owner, JsonConfig.getNonBlankString(json, "thread_id"),
+                            JsonConfig.getNonBlankString(json, "name")).toString();
                 })
                 .build();
     }

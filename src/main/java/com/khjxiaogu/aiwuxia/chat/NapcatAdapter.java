@@ -226,6 +226,62 @@ public class NapcatAdapter implements ChatAdapter {
 	}
 
 	@Override
+	public boolean supportsFileSend() {
+		return true;
+	}
+
+	@Override
+	public CompletableFuture<String> sendFile(String chatId, String file, String name) {
+		return uploadFile(chatId, true, file, name);
+	}
+
+	@Override
+	public CompletableFuture<String> sendPrivateFile(String userId, String file, String name) {
+		return uploadFile(userId, false, file, name);
+	}
+
+	/**
+	 * 上传文件并发送。
+	 * <p>
+	 * OneBot v11 的 {@code upload_group_file} / {@code upload_private_file}：{@code file}
+	 * 支持 http(s) 链接、{@code base64://} 与本地路径（由 NapCat 自行下载/解码），
+	 * {@code name} 是上传后显示的文件名。下载与上传都发生在 NapCat 侧，本进程只等回执，
+	 * 大文件不会被先读进内存。
+	 * </p>
+	 */
+	private CompletableFuture<String> uploadFile(String target, boolean group, String file, String name) {
+		if (file == null || file.isEmpty()) {
+			CompletableFuture<String> failed = new CompletableFuture<>();
+			failed.completeExceptionally(new IllegalArgumentException("文件引用为空"));
+			return failed;
+		}
+		final String fileName = name == null || name.trim().isEmpty() ? "file" : name.trim();
+		return CompletableFuture.supplyAsync(() -> {
+			JsonObject action = action(group ? "upload_group_file" : "upload_private_file");
+			JsonObject params = action.getAsJsonObject("params");
+			if (group) {
+				setGroupId(params, target);
+			} else {
+				setUserId(params, target);
+			}
+			params.addProperty("file", normalizeFileRef(file));
+			params.addProperty("name", fileName);
+			return action;
+		}).thenCompose(this::callData).thenApply(data -> (String) null);
+	}
+
+	/** data URL 转成 OneBot 的 {@code base64://}；URL、base64:// 与本地路径原样下发。 */
+	private static String normalizeFileRef(String file) {
+		if (file.startsWith("data:")) {
+			int comma = file.indexOf(',');
+			if (comma > 0) {
+				return "base64://" + file.substring(comma + 1);
+			}
+		}
+		return file;
+	}
+
+	@Override
 	public boolean supportsRecall() {
 		return true;
 	}

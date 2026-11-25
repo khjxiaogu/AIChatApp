@@ -1524,13 +1524,15 @@ async function realUploadVideo(file, conversationId) {
 // 输入上限（与服务端一致）：视频最多 200MB，超过时前端直接提示，避免白等一次上传
 const MAX_UPLOAD_VIDEO_BYTES = 200 * 1024 * 1024;
 
-// 根据图片/视频 ID 生成取用地址。
-// 绘画页与媒体接口由同一个站点提供，这里固定用同源相对地址：既避免 site-config 指向
-// 另一个 host 时 <a download> 被浏览器当成跨域链接而直接打开，也保证下载一定走本站。
+// 根据图片 ID 生成取用地址。
+// 站点前缀来自 site-config.js（aiSiteHttpBase()，未配置时自动跟随当前页面），
+// 这样无论从哪个入口域名打开页面，图片都指向同一个规范地址；查询串只带内容哈希，
+// 地址稳定，浏览器可以直接按 URL 命中 HTTP 缓存。
 function fetchImageById(imageId) {
-    return `/aichat/painter/image?image_id=${encodeURIComponent(imageId)}`;
+    return `${aiSiteHttpBase()}/aichat/painter/image?image_id=${encodeURIComponent(imageId)}`;
 }
 
+// 视频仍走同源相对地址：视频卡片带 <a download>，跨域链接会被浏览器直接打开而不是下载。
 function fetchVideoById(videoId) {
     return `/aichat/painter/video?video_id=${encodeURIComponent(videoId)}`;
 }

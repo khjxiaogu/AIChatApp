@@ -60,6 +60,47 @@ public interface IncomingContent {
 	}
 
 	/**
+	 * 文件块（群文件/普通附件）。
+	 * <p>
+	 * {@code url} 是协议提供的下载地址，可能带有时效；{@code fileName} 是展示/定位用的文件名；
+	 * {@code size} 是协议给出的大小（字节），未知时为 -1。
+	 * </p>
+	 */
+	public static final class FileBlock implements IncomingContent {
+		private final String url;
+		private final String fileName;
+		private final long size;
+
+		public FileBlock(String url, String fileName, long size) {
+			this.url = url == null ? "" : url;
+			this.fileName = fileName == null ? "" : fileName;
+			this.size = size;
+		}
+
+		public String getUrl() {
+			return url;
+		}
+
+		public String getFileName() {
+			return fileName;
+		}
+
+		public long getSize() {
+			return size;
+		}
+
+		/** 展示用摘要：文件名，未知时为“文件”。 */
+		public String getSummary() {
+			return fileName.isEmpty() ? "文件" : fileName;
+		}
+
+		@Override
+		public String toString() {
+			return "<文件:" + getSummary() + ">";
+		}
+	}
+
+	/**
 	 * 引用（回复）块，对应用户在聊天里“回复某条消息”。
 	 */
 	public static final class QuoteBlock implements IncomingContent {

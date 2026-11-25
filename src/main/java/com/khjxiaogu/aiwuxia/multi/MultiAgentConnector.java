@@ -26,6 +26,7 @@ package com.khjxiaogu.aiwuxia.multi;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
@@ -49,9 +50,11 @@ import com.khjxiaogu.aiwuxia.chat.IncomingMessage;
 import com.khjxiaogu.aiwuxia.chat.NapcatAdapter;
 import com.khjxiaogu.aiwuxia.chat.QqOfficialAdapter;
 import com.khjxiaogu.aiwuxia.llm.LLMConnector;
+import com.khjxiaogu.aiwuxia.llm.ToolData;
 import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.mcp.chat.PrivateChatHost;
 import com.khjxiaogu.aiwuxia.mcp.chat.PrivateChatMcp;
+import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
@@ -83,6 +86,8 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
     private final MultiAgentConfig multi;
     private final File dataFolder;
     private final File appFolder;
+    /** MultiAgent 自带的 MCP 服务端，未启用/启动失败时为 null。 */
+    private final MultiAgentMcp mcp;
     /** 私聊路由：`botId:qq` → 接管该用户的 agent（send_private / handover_private 之后自动接管）。 */
     private final Map<String, PrivateRoute> privateRoutes = new ConcurrentHashMap<>();
     /** 私聊防抖缓冲区：连续私聊合并成一次触发。 */
@@ -203,6 +208,13 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         this.appFolder = resolveAppFolder(dataFolder, multi.app);
         this.privateStateFile = new File(new File(dataFolder, "config"), "private-chat.json");
         loadPrivateState();
+        // 先启动 MCP，再确保私聊会话：这样构造期间自动创建的私聊 agent 也能注册令牌工具
+        this.mcp = MultiAgentMcp.start(dataFolder, multi, this);
+        if (mcp != null) {
+            for (AIGroupSession session : getSessions()) {
+                mcp.registerToolsForSession(session);
+            }
+        }
         // 启动时确保所有已配置私聊会话都已创建（不依赖用户先发第一条私聊）
         for (MultiAgentConfig.Session session : multi.privateSessions) {
             if (session.enabled) {
@@ -236,6 +248,7 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         try {
             List<String> extraTools = new ArrayList<>();
             List<String> contextGroups = Collections.emptyList();
+            JsonObject ticket = new JsonObject();
             boolean hasTemplate = false;
             for (MultiAgentConfig.Session template : multi.privateSessions) {
                 for (String tool : template.extraTools) {
@@ -245,13 +258,16 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
                 }
                 if (!hasTemplate) {
                     contextGroups = template.contextGroups;
+                    // 自动创建的私聊沿用第一个模板的工单库/唤醒设置，避免“模板能用、自动建的不监听”
+                    ticket = template.ticket == null ? new JsonObject() : template.ticket.deepCopy();
                     hasTemplate = true;
                 }
             }
             String name = "multi-private-" + id;
             MultiAgentConfig.Session session = new MultiAgentConfig.Session(id, false, true, name, name,
-                    extraTools, multi.defaultCodex.deepCopy(), null, Collections.singletonList(id),
-                    contextGroups, Collections.<String>emptyList(), false, "", "");
+                    extraTools, multi.defaultCodex.deepCopy(), null, ticket,
+                    Collections.singletonList(id), contextGroups, Collections.<String>emptyList(), false,
+                    "", "");
             JsonObject config = baseConfig(multi, session, "private:" + id, name, name,
                     Collections.singletonList(id), multi.toolsFor(session), multi.codexFor(session));
             config.addProperty("explicitSend", true);
@@ -271,6 +287,16 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
             MultiAgentSession agent = newSession(dataFolder, appFolder, config, id, false, id,
                     prompt, bufferFile(dataFolder, "private-" + id));
             getSessions().add(agent);
+            // 自动创建的会话也要有和启动时一致的技能/工具，否则 MCP 只能看到令牌工具
+            try {
+                agent.setObjectStorage(getStorage());
+                registerSkills(agent, dataFolder, config);
+            } catch (Throwable t) {
+                System.out.println("[Multi] 自动创建会话注册工具失败：" + id + "，" + t);
+            }
+            if (mcp != null) {
+                mcp.registerToolsForSession(agent);
+            }
             System.out.println("[Multi] 自动创建私人会话：" + id);
             return agent;
         } catch (Throwable t) {
@@ -1202,6 +1228,12 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
                 } else {
                     text.append("（").append(escape(image.getSummary())).append("）");
                 }
+            } else if (content instanceof IncomingContent.FileBlock) {
+                // 群文件只给引用，下载交给 download_group_file 工具按需进行
+                IncomingContent.FileBlock file = (IncomingContent.FileBlock) content;
+                text.append("<file name=\"").append(escape(file.getFileName())).append("\" size=\"")
+                        .append(file.getSize()).append("\" messageId=\"")
+                        .append(escape(msg.getMessageId())).append("\" />");
             } else if (content instanceof IncomingContent.QuoteBlock) {
                 String quoted = ((IncomingContent.QuoteBlock) content).getText();
                 if (quoted != null && !quoted.trim().isEmpty()) {
@@ -1210,7 +1242,7 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
             }
         }
         String body = text.toString().trim();
-        return body.isEmpty() ? "（图片或媒体消息）" : body;
+        return body.isEmpty() ? "（图片、文件或媒体消息）" : body;
     }
 
     /**
@@ -1374,6 +1406,9 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         if (session != null && session.docLibrary != null && session.docLibrary.size() > 0) {
             config.add("docLibrary", session.docLibrary.deepCopy());
         }
+        if (session != null && session.ticket != null && session.ticket.size() > 0) {
+            config.add("ticket", session.ticket.deepCopy());
+        }
         return config;
     }
 
@@ -1462,6 +1497,73 @@ public class MultiAgentConnector extends NapCatAIConnector implements PrivateCha
         }
         throw new IOException("找不到 app「" + appName + "」，请把 multi.json 的 app 配成现有 app 目录"
                 + (available.length() == 0 ? "（save/apps 下没有可用 app）" : "：" + available));
+    }
+
+    // ==================== MCP ====================
+
+    /**
+     * 对象存储：供 MultiAgent MCP 的 {@code /media} 入口和媒体链接使用。
+     *
+     * @return 对象存储
+     */
+    public ObjectStorageProvider getObjectStorage() {
+        return getStorage();
+    }
+
+    /** MultiAgent 自带的 MCP 服务端，未启用/启动失败时为 null。 */
+    public MultiAgentMcp getMcp() {
+        return mcp;
+    }
+
+    /**
+     * 按用户账号查找私聊 agent。
+     * <p>兼容 {@code private:<uid>} 形式的内部键；找不到返回 null。</p>
+     *
+     * @param uid 用户账号（QQ 号 / openid）
+     * @return 私聊会话，没有返回 null
+     */
+    public AIGroupSession findPrivateAgent(String uid) {
+        if (uid == null) {
+            return null;
+        }
+        String target = uid.trim();
+        if (target.startsWith("private:")) {
+            target = target.substring("private:".length()).trim();
+        }
+        if (target.isEmpty()) {
+            return null;
+        }
+        for (AIGroupSession session : getSessions()) {
+            if (!(session instanceof MultiAgentSession)) {
+                continue;
+            }
+            MultiAgentSession agent = (MultiAgentSession) session;
+            if (!agent.isPublicAgent() && target.equals(agent.getPeer())) {
+                return agent;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 某个用户的私聊 agent 中可以暴露给 MCP 的工具。
+     * <p>过滤掉 {@code sessionOnly}（例如 {@code send_image}：这类工具依赖会话自己的发送通道）；</p>
+     *
+     * @param uid 用户账号（QQ 号 / openid）
+     * @return 工具列表，永不 null
+     */
+    public Collection<ToolData> getPrivateSessionTools(String uid) {
+        AIGroupSession session = findPrivateAgent(uid);
+        if (session == null) {
+            return Collections.emptyList();
+        }
+        List<ToolData> tools = new ArrayList<>();
+        for (ToolData tool : session.getToolCallManager().getTools().values()) {
+            if (tool != null && !tool.sessionOnly) {
+                tools.add(tool);
+            }
+        }
+        return tools;
     }
 
     /**

@@ -48,7 +48,7 @@
 | 无论轮次怎么结束都提交并解锁 | 正常/异常/超时/`close`/崩溃恢复走同一个 finalize 路径；没有 discard 模式 | `DocRoundManager.end(...)` |
 | 文档被修改/创建/删除后，允许监听的 AI 收到通知 | 提交时在同一事务写 outbox；释放租约后由 notifier 批量投递 | `DocNotifier` + `outbox` 表 |
 | 通知在解锁后统一发 | `releaseAll(round)` 之后才 `publish(events)`；同一轮多个文档合并成一条 | `DocRoundManager` |
-| 监听通知可配置唤醒 | 每个监听会话的 `wakeOnNotify`；关闭时只入队，等下一轮 | `DocNoticeSink`、`DocNotifier` |
+| 监听通知可配置唤醒 | 每个监听会话的 `wakeOnNotify`；由 MCP 监听者决定是否唤醒 | `DocEventListener`、`DocNotifier` |
 | 自己修改不触发自己的监听器 | 通知过滤 `event.author == agent.id` 直接跳过 | `DocNotifier.flushAgent(...)` |
 | 监听不绕过监视器 | 通知**不更新** `seen`；收到通知后要写仍必须先 `doc_read` | `DocNotifier` |
 
@@ -95,7 +95,7 @@ DocRoundManager   DocLockManager     DocReadTracker     DocNotifier
              DocStore（SQLite WAL：documents / revisions / seen / outbox + documents/*.txt）
                 ▲
                 │
-          DocNotifier ──► DocNoticeSink（会话命令线程）──► 下一轮上下文
+          DocNotifier ──► DocEventListener（MCP）──► 自行构建通知/注入/唤醒
 ```
 
 - **一个库一个 runtime**：`DocLibraryRegistry` 用 `ConcurrentHashMap<String, DocLibraryRuntime>` 复用；
@@ -225,7 +225,9 @@ CREATE TABLE IF NOT EXISTS outbox (
   to_revision   INTEGER NOT NULL,
   action        TEXT NOT NULL,        -- created / updated / deleted
   author        TEXT NOT NULL,
-  summary       TEXT,                 -- 提交时算好的 +x/-y，避免旧修订被清理后算不出 diff
+  summary       TEXT,                 -- 提交时算好的 +x/-y；meta 事件里放变更明细
+  kind          TEXT NOT NULL DEFAULT 'content', -- content / meta / both
+  detail        TEXT,                 -- meta 变更的具体旧值/新值
   recovered     INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL,
   UNIQUE (round_id, doc_id)           -- 恢复时幂等
@@ -253,6 +255,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 - `documents.revision` 是唯一已提交版本号；`revisions` 保存每个历史版本（含 tombstone）。
 - `documents.file` 指向当前 `documents/*.txt`；`documents.hash` 是该文件内容的 `SHA-256(UTF-8)`。
   `revisions.file` 指向该修订的 `history/*/<rev>.txt` 快照。
+- `hash` 计算的是**文件原文**（meta + 可见正文）；`size` 只统计可见正文的 UTF-8 字节数，
+  因此 meta 不会出现在枚举/读取的 size 里。
 - 提交顺序：**先原子写历史快照和当前 txt，再提交 SQLite 事务**。DB 失败时尽量从历史快照恢复当前文件；
   启动时 `repairFiles()` 会校验 `hash`，不一致就从最新历史快照重写当前 txt。
 - 删除是**一个正常修订**：`documents.deleted=1`、`hash` 指向空串、`size=0`，`revision` 继续递增；
@@ -263,7 +267,35 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 - `leases` 表用于诊断；运行期以内存 `DocLockManager` 为准。轮次结束时**必须全部清空**，不跨轮保留。
 - 草稿正文只存在 `drafts.body`，提交前不是“文档”；提交后才出现在 `documents/`，因此外部看到的所有文档都是 txt。
 
-### 4.4 搜索
+### 4.4 文件开头的 JSON meta（扩展点）
+
+文档文件可以带一个 JSON 扩展头，供基于文档系统的扩展（例如工单系统）保存结构化字段：
+
+```json
+{"kind":"ticket","ticket_id":"T-20261124-095500-A1B2","status":"open","priority":"normal"}
+# 文档标题
+正文……
+```
+
+规则：
+
+- **识别**：文件第一个字符（UTF-8 BOM 除外）就是 `{`，并且从该位置开始的第一个完整 JSON 对象能解析为
+  object 时，该对象是 meta；meta 后紧跟的一个换行不进入正文。其它情况整个文件都是正文，旧文档完全兼容。
+- **不可见**：meta 不进入 `doc_read` 返回的正文、不进入 `doc_list`、不被 `doc_search` / FTS 索引，
+  也不参与标题推导。`doc_read` 里的 `hash` 是文件原文的摘要，`size` 只统计可见正文。
+- **保留**：`doc_write` 的 `overwrite` / `append` / `patch` 都会保留当前 meta，AI 编辑正文不会破坏扩展字段；
+  删除时 meta 会保留在该修订的历史快照里。
+- **写入**：扩展系统通过 `DocLibraryRuntime.writeExternal(...)` 一次性提交正文 + meta，不经过 AI 轮次/草稿，
+  但仍使用文档库的修订号、写锁和通知机制。普通文档工具不提供修改 meta 的参数。
+- **通知**：doclib 只投递原始 `DocEvent`，不拼通知文本、不直接注入 agent。普通文档 MCP
+  （`DocLibraryMcp`）忽略 meta 事件；工单 MCP（`TicketMcp`）读取事件里的 meta 明细并构建自己的
+  通知文本。因此普通文档系统的 meta 变化不会由普通文档 MCP 通知；是否通知、通知什么由 MCP 决定。
+- **标题**：文档标题取可见正文（排除 meta）的**第一个非空行**；`doc_list` 输出 `title=...`。
+  旧文档标题为空时，枚举/读取会按正文惰性补算。
+- **示例扩展**：工单系统（`ticket_*` agent 工具）用 meta 保存状态/优先级/负责人等字段，
+  正文保存标题和描述；见 [ticket-system.md](ticket-system.md)。
+
+### 4.5 搜索
 
 - 中文：FTS5 `trigram` 支持任意 ≥3 字的子串；`keyword` 用 `|` 分隔多个词，生成
   `"词1" OR "词2"` 的 FTS 查询（引号转义）。
@@ -283,7 +315,7 @@ ORDER BY bm25(documents_fts)
 LIMIT ? OFFSET ?;
 ```
 
-### 4.5 枚举
+### 4.6 枚举
 
 ```sql
 SELECT doc_id, title, revision, hash, size, deleted, updated_at, updated_by
@@ -309,7 +341,7 @@ LIMIT ? OFFSET ?;
 | `doc_list` | `prefix` 可选、`limit` 默认 50 / 最大 200、`offset` 默认 0、`include_deleted` 可选 | 枚举文档元数据；返回 `stale` |
 | `doc_search` | `keyword` 必填（`\|` 分隔）、`limit` 默认 20 / 最大 50 | 只返回摘要和片段，不更新 `seen`；不搜 tombstone |
 | `doc_read` | `doc_id` 必填、`revision` 可选（默认当前）、`max_chars` 可选 | 完整读取才更新 `seen`；读到自己的草稿时 `draft="true"`；读到 tombstone 时 `deleted="true"` |
-| `doc_write` | `doc_id`、`mode`（`overwrite` / `append` / `patch`）、`content`、`title` 可选、`base_revision` 可选、`message` 可选 | 只暂存；本轮结束**一定**提交。`patch` 需文档存在且未删除；`overwrite` 可重建 tombstone |
+| `doc_write` | `doc_id`、`mode`（`overwrite` / `append` / `patch`）、`content`、`title` 可选、`base_revision` 可选、`message` 可选 | 只暂存；本轮结束**一定**提交。`patch` 需文档存在且未删除；`overwrite` 可重建 tombstone；不传 `title` 时取正文第一个非空行（meta 除外） |
 | `doc_delete` | `doc_id`、`message` 可选 | 暂存一个 tombstone revision；本轮结束提交并通知监听者 |
 | `doc_wait_unlock` | `doc_id`、`timeout_ms` 可选（默认/最大 10000） | 等待该文档的租约释放；最多 10 秒；不拿锁、不更新 `seen` |
 | `doc_history`（可选） | `doc_id`、`limit` 默认 10 | 查看修订元数据与增删行数，不更新 `seen` |
@@ -321,7 +353,7 @@ new ToolData.Builder("doc_write", "写入共享文档；本轮结束一定提交
     .putParam("doc_id", "文档 id。", "文档")
     .putParam("mode", "overwrite / append / patch。", "模式")
     .putParam("content", "内容；patch 时放 diff。", "内容")
-    .putOptionalParam("title", "标题；不传则取首个 Markdown 标题/首行。", "标题")
+    .putOptionalParam("title", "标题；不传则取正文第一个非空行（不含 meta）。", "标题")
     .putOptionalParam("base_revision", "期望的当前修订号。", "基础修订")
     .putOptionalParam("message", "提交说明。", "说明")
     .sync()                 // 同步执行：保证轮次结束前拿到结果
@@ -408,7 +440,7 @@ new ToolData.Builder("doc_wait_unlock", "等待文档解锁，最多 10 秒。")
 `doc_list` 的一条：
 
 ```
-design/auth  rev=7  size=3210  2026-11-14 14:01  公屏助手  stale=true
+design/auth  rev=7  size=3210  2026-11-14 14:01  公屏助手  stale=true  title=Auth 设计
 ```
 
 ### 5.3 错误码
@@ -773,16 +805,15 @@ public void onGenerateStart() {
 }
 ```
 
-> **为什么需要 `onBeforePrompt`**：`NapCatAIConnector.submitMessage()` 是先 `state.getPrompt()` 再提交
-> `handleSpeech`，`onGenerateStart` 在拿到 prompt 之后才触发。如果只在 `onRoundStart` 注入通知，
-> 本轮 prompt 已经组装完，通知要晚一轮。因此 `AIGroupSession.getPrompt()` 开头先触发
-> `onBeforePrompt`，doclib 在这里 drain 通知并 `addMessage`，保证本轮就能看到。
+> **通知注入不再由 doclib 负责**：doclib 只把原始 `DocEventBatch` 交给 MCP 监听者，
+> 由 MCP 决定何时 `addMessage`、是否唤醒。`onBeforePrompt` 仍保留给其它需要在 prompt 组装前
+> 注入内容的模块，但 doclib 不再使用它。
 
 ```java
 public void onGenComplete() {
     ...
     try {
-        // 在 isGenerating=false 之前结束轮次：notifier 看到“忙”就不会立刻唤醒本 agent
+        // 在 isGenerating=false 之前结束轮次：先提交/解锁，再允许下一轮
         for (SessionLifecycleListener l : lifecycleListeners) {
             try { l.onRoundEnd(this, RoundEndReason.NORMAL); }
             catch (Throwable t) { t.printStackTrace(); }
@@ -805,8 +836,10 @@ public void onGenComplete() {
 
 ```java
 DocLibraryRuntime lib = DocLibraryRegistry.open(dataFolder, cfg);
-DocAgent agent = lib.register(state, cfg, () -> submitMessage(state)); // lifecycle + sink + 唤醒回调
-state.registerTools(DocLibraryMcp.forAgent(lib, agent, cfg));
+DocLibraryMcp mcp = DocLibraryMcp.forAgent(lib, cfg, state, () -> submitMessage(state));
+DocAgent agent = lib.register(state, cfg, mcp); // lifecycle + 原始事件监听
+mcp.bindAgent(agent);
+state.registerTools(mcp);
 recordTools(toolNamesBySkill, "doclib", ...);
 ```
 
@@ -912,12 +945,17 @@ agent 侧（`multi.json` 的会话项，或 `agents.json` 的机器人项）：
 提交事务里写一条：
 
 ```
-outbox(seq, round_id, doc_id, from_revision, to_revision, action, author, summary, recovered, created_at)
+outbox(seq, round_id, doc_id, from_revision, to_revision, action, author, summary, kind, detail, recovered, created_at)
 ```
 
 - `action`：`created` / `updated` / `deleted`。
+- `kind`：`content`（正文）/ `meta`（仅扩展字段）/ `both`（同一修订同时改正文和扩展字段）。
 - `summary`：提交时就算好 `+x/-y` 存在 outbox，避免历史修订被 `retainRevisions` 清理后无法再算 diff。
-- 同一轮同一文档最多一条（`UNIQUE`）。
+- `detail`：doclib 生成的结构化 meta diff，例如
+  `{"status":{"from":"open","to":"closed"}}`；meta 变化总会写事件，是否通知由 MCP 决定
+  （普通文档 MCP 忽略 meta；TicketMcp 只挑 status/priority/assignee/reporter/labels 等字段，
+  sheet_row / sheet_summary / updated_at 等字段被忽略）。
+- 同一轮同一文档最多一条（`UNIQUE`），正文与 meta 同时变化时合并为一条 `both` 事件。
 - 事件在**提交事务内**落库：即使进程在“解锁后、发通知前”崩溃，重启后仍能补发。
 
 ### 9.3 投递时序
@@ -979,73 +1017,41 @@ Agent A                    DocLibraryRuntime                         Agent B
 投递前对每个监听 agent：
 
 1. `event.author == agent.id()` → **无条件跳过**（自己改的不通知自己，即使 `listen` 配了 `*`）；
-2. `seen(agent, doc).revision >= event.to_revision` → 跳过（已经读过新版）；
+2. 纯正文事件且 `seen(agent, doc).revision >= event.to_revision` → 跳过（已经读过新版）；
 3. `listen` 模式不匹配 → 跳过；
-4. 同一批里同一 `doc_id` 只保留最新 revision；
-5. 全部跳过时直接 ack（没有通知要注入），避免每次重新扫描。
+4. 一批里同一文档的多个事件会原样交给 MCP，由 MCP 决定合并方式；
+5. 全部跳过时直接 ack（没有事件要处理），避免每次重新扫描。
 
 ### 9.6 投递通道
 
-`DocNoticeSink` 由连接器注入（类似现有 `setToolTaskCompletionHandler`）：
+doclib **不再直接注入 agent，也不构建通知文本**。`DocNotifier` 只把原始 `DocEvent` 包装成
+`DocEventBatch`，交给 agent 注册的 `DocEventListener`：
 
 ```java
-public interface DocNoticeSink {
-    /** 是否正在生成；true 时只入队，不唤醒。 */
-    boolean isBusy();
-    /** 投递一批通知：只入队/唤醒，不推进游标。 */
-    void deliver(DocNoticeBatch batch);
-    /** 下一轮开始时取走本 agent 的全部待注入通知；没有则返回 null。 */
-    DocNoticeBatch drain();
+public interface DocEventListener {
+    void onEvents(DocEventBatch batch);
+}
+
+public final class DocEventBatch {
+    List<DocEvent> getEvents();
+    String getLibraryId();
+    long getLastSeq();
+    void ack();
 }
 ```
 
-`DocLibraryRuntime` 内部为每个 agent 建一个 Sink（队列是 `ConcurrentLinkedQueue<DocNoticeBatch>`）：
+实现者（通常是 MCP）决定：
 
-```java
-// 运行时内部
-public boolean isBusy() { return session.isGenerating(); }
+- 是否通知；
+- 通知文本的格式与内容（例如 `<doc-update>` / `<ticket-update>`）；
+- 是否唤醒会话（可以让交给连接器，也可以读 `DocAgent.wakeOnNotify`）；
+- 处理完（包括主动忽略）调用 `batch.ack()`，doclib 才推进 `listener_cursor`。
 
-public void deliver(DocNoticeBatch batch) {
-    queue.add(batch);
-    if (batch.isWake() && !isBusy()) {
-        // 先 drain + 注入消息队列，再 submitMessage；否则 getPrompt 已经组装完，通知会晚一轮
-        session.getCommandExec().submit(() -> {
-            if (session.isGenerating()) return;
-            DocNoticeBatch pending = drain();
-            if (pending == null || pending.isEmpty()) return;
-            injectNotice(agent, pending);   // addMessage + notifier.ack
-            submitMessage(state);           // 连接器入口
-        });
-    }
-}
+当前实现：
 
-public DocNoticeBatch drain() {
-    List<DocNoticeBatch> all = new ArrayList<>();
-    for (DocNoticeBatch b; (b = queue.poll()) != null; ) all.add(b);
-    return all.isEmpty() ? null : DocNoticeBatch.merge(all);
-}
-```
-
-`wakeOnNotify=false` 时不提交唤醒任务，Sink 只入队；下一次 `getPrompt()` 前的
-`onBeforePrompt` 会 drain 并注入。
-
-`onBeforePrompt`（由 `AIGroupSession.getPrompt()` 在最开头调用）：
-
-```java
-DocNoticeBatch pending = sink.drain();
-if (pending != null && !pending.isEmpty()) {
-    session.addMessage(Collections.singletonList(
-            () -> new PlainText(pending.toPromptText())), true); // important=true 防止被 trim
-    notifier.ack(agent.id, pending.lastSeq());                 // 注入之后才推进游标
-    // 如果是 wake=true 触发的一轮，submitMessage 紧接着就会 getPrompt，
-    // 因此通知会出现在本轮的 prompt 里，而不是晚一轮。
-}
-```
-
-- 如果 agent 正在生成：通知留在 sink 队列，下一次 `getPrompt` 时注入（`important` 不会被裁剪）。
-- 如果 agent 空闲且 `wakeOnNotify=true`：`deliver` 提交一个命令线程任务，先 drain + 注入，再
-  `submitMessage` 触发新一轮；默认 `false`，只等下一次用户消息/定时任务。
-- 会话关闭时注销 sink；`listener_cursor` 保留，重连后从游标继续补发（上限见 9.7）。
+- `DocLibraryMcp` 是普通文档库的监听者，只拼 `<doc-update>`，忽略纯 meta 事件；
+- `TicketMcp` 是工单库的监听者，拼 `<ticket-update>`，带 `change`（正文摘要）和
+  `changes`（meta 旧值/新值）。
 
 ### 9.7 离线积压与重试
 
@@ -1179,9 +1185,10 @@ mtime 只能回答“变没变”，不能回答“是谁改的、我有没有�
 if (toolSettings.isEnabled("doclib")) {
     DocLibraryConfig cfg = DocLibraryConfig.forAgent(dataFolder, config);
     DocLibraryRuntime lib = DocLibraryRegistry.open(dataFolder, cfg);
-    // 身份、显示名、监听模式、sink；只读也要注册；wake 回调触发下一轮
-    DocAgent agent = lib.register(state, cfg, () -> submitMessage(state));
-    ToolProvider tools = DocLibraryMcp.forAgent(lib, agent, cfg); // write=false 时不生成写/删工具
+    // MCP 自己接收原始事件并决定通知文本；只读也要注册
+    DocLibraryMcp tools = DocLibraryMcp.forAgent(lib, cfg, state, () -> submitMessage(state));
+    DocAgent agent = lib.register(state, cfg, tools);
+    tools.bindAgent(agent);
     state.registerTools(tools);
     recordTools(toolNamesBySkill, "doclib", tools.getTools());
     System.out.println("[DocLib] 已接入：" + agent.displayName
@@ -1297,7 +1304,7 @@ src/main/java/com/khjxiaogu/aiwuxia/doclib/
 ├─ DocLockManager.java        // lease + awaitUnlock（10s）
 ├─ DocReadTracker.java        // seen
 ├─ DocNotifier.java           // outbox 读取、聚合、过滤、投递
-├─ DocNoticeSink.java / DocNoticeBatch.java
+├─ DocEventListener.java / DocEventBatch.java
 ├─ DocWaitResult.java / DocWaitTimeoutException.java / DocLockedException.java
 ├─ DocException.java
 ├─ DocLibraryMcp.java         // ToolProvider：doc_list/search/read/write/delete/wait_unlock

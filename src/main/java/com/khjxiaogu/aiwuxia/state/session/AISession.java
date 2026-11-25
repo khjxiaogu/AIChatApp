@@ -60,6 +60,7 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallEvent;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallManager;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTask;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolTaskListener;
+import com.khjxiaogu.aiwuxia.llm.toolcall.UrlFileResolver;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.ApplicationStage;
 import com.khjxiaogu.aiwuxia.state.ISaveData;
@@ -215,12 +216,15 @@ public class AISession implements ISaveData,AutoCloseable{
 	/**
 	 * 会话轮次生命周期监听器。
 	 * <p>
-	 * 由需要感知“一轮生成开始/结束/会话关闭”的子系统注册，例如共享文档库的轮次锁。
+	 * 由应用层（{@code apps/} 下的应用，或需要感知整轮对话收尾的会话级组件）注册。
+	 * 工具子系统不通过这里感知轮次：工具在调用时向
+	 * {@code com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext} 注册自己的监听器，
+	 * 由工具调用上下文负责开始/结束回调，工具因此不需要接触会话。
 	 * 监听器抛出的异常只会被打印，不能影响生成流程。
 	 * </p>
 	 */
 	public interface SessionLifecycleListener {
-		/** 构造本轮 prompt 之前触发；文档库在这里把待注入的通知放进消息队列。 */
+		/** 构造本轮 prompt 之前触发；应用层可在这里把待注入的内容放进消息队列。 */
 		default void onBeforePrompt(AISession session) {
 		}
 
@@ -1236,7 +1240,7 @@ public class AISession implements ISaveData,AutoCloseable{
 		if (reply != null && reply.getRole() == Role.ASSISTANT)
 			setTokenCost(reply, lastTurnTokens);
 		setUpdated();
-		// 在 isGenerating 置 false 之前结束轮次：监听器（例如文档库）在这个窗口里
+		// 在 isGenerating 置 false 之前结束轮次：应用层监听器在这个窗口里
 		// 还能看到“本会话仍在生成”，不会立刻唤醒自己。
 		for (SessionLifecycleListener listener : lifecycleListeners) {
 			try {
@@ -1579,6 +1583,9 @@ public class AISession implements ISaveData,AutoCloseable{
 	 */
 	public AISession setObjectStorage(ObjectStorageProvider objectStorage) {
 		this.objectStorage = objectStorage;
+		// 内部工具（会话/子 agent）默认使用对象存储上下文：参数说明显示 72 位 id；
+		// 如果模型仍直接给了 URL，管理器也会在真正执行前把它转存成 id。
+		toolCallManager.setFileResolver(objectStorage == null ? null : new UrlFileResolver(objectStorage, false));
 		return this;
 	}
 
@@ -1679,7 +1686,7 @@ public class AISession implements ISaveData,AutoCloseable{
 
 	@Override
 	public void close(){
-		// 先把仍然打开的轮次收尾（例如文档库提交草稿并解锁），再关闭执行器。
+		// 先把仍然打开的轮次收尾（应用层监听器在这里做自己的清理），再关闭执行器。
 		for (SessionLifecycleListener listener : lifecycleListeners) {
 			try {
 				listener.onRoundEnd(this, RoundEndReason.CLOSED);

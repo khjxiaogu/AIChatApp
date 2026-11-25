@@ -217,11 +217,14 @@ save/
 └─ config/
    ├─ object-storage.json        # 对象存储（火山 TOS）凭据：region / endpoint / bucket / accessKey / secretKey
    ├─ image-generation.json      # 图片（Seedream）/视频（Seedance 2.5）生成凭据：accessKey/secretKey + apiKey
+   ├─ tencent-docs.json          # 腾讯文档开放平台凭据（在线表格 API）：file_id / client_id / access_token 等
+   ├─ feishu-bitable.json        # 飞书多维表格凭据与连接标识：app_id / app_secret / access_token / app_token / base_url
    ├─ voice-tags.txt             # 语音标签提示词（按情感切分台词，供语音合成）
    ├─ local-voice.json           # 本地语音模型 bot 映射 {角色名: botid}
    ├─ volcano-voice.json         # 火山语音复刻 bot 映射 {角色名: voice_type}
    ├─ agents.json                # 群聊 agent 清单（name / save / voice / tools / adminId …）
    ├─ crontab.json               # 定时任务
+   ├─ ticket-sheet.json          # 工单看板在线表格（provider / fileId / sheetId / 列）
    └─ sdxl/                      # 生图相关
       ├─ character-tags.txt      #   角色 tag 库（一行一个，生成提示词时按关键词检索）
       ├─ loras.json              #   LoRA 配置 {触发词: {key, weight}}
@@ -812,11 +815,21 @@ SceneSelector selector = builder.build();
   两个方向的分块帧结构相同，只是魔数不同（结果 `LMF1`、请求 `LMR1`）。
   `flags` 是通用的协议能力声明（与 `model_type` 分开：前者说明“支持协议的哪些可选部分”，
   后者说明“能跑什么模型”），将来新增可选能力只需加一个标记，服务器据此自动降级；
-- **SDXL 参考图按连接器能力选择发送方式**：图生图 / 分区图生图 / 反推提示词要把参考图交给本地模型，
-  连接器声明了 `chunked` 时直接把图片文件以 Base64 放进请求报文（大请求按上面的分块下发，
-  连接器与它后面 SD WebUI 不需要能访问服务器的图片链接）；没有声明该标记的连接（例如
-  `/aichat/painter-local` 浏览器接入页）仍然只收到 `/painter/image?image_id=...` 或
-  `/aichat/mcp/media?file_id=...` 链接。图片读不到时自动回退成链接，不会让生成直接失败；
+- **参考图 / 首帧按对象存储 id 传递**：SDXL 图生图 / 分区图生图 / 反推提示词，H3 的首尾帧与
+  参考视频，Qwen 的参考图，都会在对象存储 id 可用时登记成附件（`attachments[]`，带内容键
+  `key`），连接器按需通过 `attachment.get` 在同一条 WebSocket 上拉取；不是存储 id 的引用回退成
+  链接 / Base64。`/aichat/painter-local` 浏览器接入页不使用附件通道，仍然只收到
+  `/painter/image?image_id=...` 或 `/aichat/mcp/media?file_id=...` 链接。图片读不到时自动回退成
+  链接，不会让生成直接失败；
+- **部署侧磁盘缓存**：连接器把每次成功结果按内容哈希写入 `save/localmodel_cache/objects/`，
+  并在拉取输入附件前先查缓存。服务端对象 id 与缓存键是同一套 72 位哈希，所以“用上次生成的图
+  继续图生图 / 反推、用上次生成的视频继续配音 / 截帧”都会直接命中本地文件，不再传输一遍；
+  从服务端拉回来的输入附件也按内容哈希落盘，同一份文件再次出现时直接复用。H3 的首/尾帧、参考
+  视频，以及 Qwen 的参考图都走附件（`LocalModelCall.h3/qwen` + `attachments[]`），不再内联
+  Base64；上传 ComfyUI 前再按“地址 + 子目录 + 内容键”查一次已上传记录，ComfyUI input 目录里
+  已有同一文件时不再上传。命中/未命中都会打印 `[LocalModelCache]` / `[ComfyUpload]` 日志。
+  缓存上限默认 4096 MB，可用 `-DlocalModelCacheMb` 调整（`0` 不限，负数关闭），
+  `-DlocalModelCacheDir` 改目录，`-DlocalModelCache=off` 直接关闭；
 - **结果文件走二进制分块**：连接器把图片/视频/音频原始字节按
   `[LMF1][reqidLen][reqid][formatLen][format][current][total][content]` 的二进制帧发送，
   每块内容体最大 **5 MiB**，超过自动分包；服务端收齐 `1..total` 全部块后才完成任务，

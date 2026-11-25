@@ -7,13 +7,13 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
+import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext;
 import com.khjxiaogu.aiwuxia.state.Role;
 import com.khjxiaogu.aiwuxia.state.session.AIGroupSession;
 import com.khjxiaogu.aiwuxia.state.session.AISession;
+import com.google.gson.JsonObject;
 
 /**
  * 一个库 id 对应的运行时：存储、锁、已读、轮次、通知、agent 注册。
@@ -83,6 +83,11 @@ public final class DocLibraryRuntime implements AutoCloseable {
     private final DocRoundManager rounds;
     private final Map<String, DocAgent> agents = new ConcurrentHashMap<>();
     private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
+    /** 外部系统（如工单 MCP）的直写串行锁。 */
+    private final Object externalLock = new Object();
+    /** 外部直写修订的序号，保证 outbox 的 round_id 唯一。 */
+    private final java.util.concurrent.atomic.AtomicLong externalSequence =
+            new java.util.concurrent.atomic.AtomicLong();
 
     public DocLibraryRuntime(File dataFolder, DocLibraryConfig config) throws Exception {
         this.id = config.id;
@@ -140,47 +145,27 @@ public final class DocLibraryRuntime implements AutoCloseable {
 
     /**
      * 注册一个会话作为文档库 agent。
+     * <p>doclib 只负责轮次锁和把原始 {@link DocEvent} 交给 {@code listener}；
+     * 是否通知、通知文本都由监听者（通常是 MCP）决定。</p>
+     * <p>本方法不再向会话注册轮次监听器：轮次由工具调用上下文驱动，工具在调用时通过
+     * {@link #attachRound(ToolCallContext, DocAgent)} 挂到当前上下文上。</p>
      *
-     * @param session 会话
+     * @param session     会话
      * @param agentConfig 该会话的 doclib 配置
-     * @param wake 通知唤醒回调（通常调用连接器的 submitMessage）
+     * @param listener    原始事件监听者
      * @return agent
      */
-    public DocAgent register(final AIGroupSession session, DocLibraryConfig agentConfig, Runnable wake) {
+    public DocAgent register(final AIGroupSession session, DocLibraryConfig agentConfig,
+            DocEventListener listener) {
         final String agentId = "qq:" + session.botId + ":" + session.groupId;
         DocAgent existing = agents.get(agentId);
         if (existing != null && existing.session == session) {
             return existing;
         }
         final String displayName = session.getRoleName(Role.ASSISTANT);
-        final DocNoticeSink sink = new Sink(session, wake, agentId);
         final DocAgent agent = new DocAgent(agentId, displayName, agentConfig.listen,
-                agentConfig.wakeOnNotify, session, sink, agentConfig);
+                agentConfig.wakeOnNotify, session, listener, agentConfig);
         agents.put(agentId, agent);
-        session.addLifecycleListener(new AISession.SessionLifecycleListener() {
-            @Override
-            public void onBeforePrompt(AISession s) {
-                DocNoticeBatch batch = sink.drain();
-                if (batch != null && !batch.isEmpty()) {
-                    injectNotice(agent, batch);
-                }
-            }
-
-            @Override
-            public void onRoundStart(AISession s) {
-                rounds.begin(agent);
-            }
-
-            @Override
-            public void onRoundEnd(AISession s, AISession.RoundEndReason reason) {
-                rounds.end(agent, reason);
-            }
-
-            @Override
-            public void onSessionClosed(AISession s) {
-                unregister(agent);
-            }
-        });
         notifier.flushSoon();
         System.out.println("[DocLib] agent 已注册：" + agentId + "（" + displayName + "）库=" + id
                 + " listen=" + agentConfig.listen + " wake=" + agentConfig.wakeOnNotify
@@ -188,21 +173,44 @@ public final class DocLibraryRuntime implements AutoCloseable {
         return agent;
     }
 
-    private void unregister(DocAgent agent) {
-        agents.remove(agent.id, agent);
+    /**
+     * 清理已关闭会话的 agent。
+     * <p>轮次改为由工具调用上下文驱动后，文档库不再注册会话关闭监听器；
+     * 会话关闭时执行器已关闭，这里用它判断并移除，避免继续往已关闭的会话投递通知。</p>
+     */
+    public void pruneClosedAgents() {
+        for (DocAgent agent : agents.values()) {
+            if (agent.session != null && agent.session.getCommandExec().isShutdown()) {
+                agents.remove(agent.id, agent);
+            }
+        }
     }
 
-    /** 把通知注入 agent 的下一轮上下文，并在注入后才推进 outbox 游标。 */
-    void injectNotice(DocAgent agent, DocNoticeBatch batch) {
-        if (agent == null || batch == null || batch.isEmpty() || agent.session == null) {
-            return;
+    /**
+     * 把本轮数据对象放进工具调用上下文，并返回它。
+     * <p>本轮第一次 doc_* 工具调用时创建 {@link DocRoundBinding} 并开始轮次；之后同一轮的调用
+     * 直接取回同一个对象。上下文结束时回调该对象，由它提交草稿、解锁并发通知。key 按字段
+     * “库 id + agent id”幂等，不需要额外的监听器表。</p>
+     *
+     * @param context 当前工具调用上下文，可为 null（不在工具调用中时不建轮次）
+     * @param agent   发起工具调用的 agent
+     * @return 本轮数据对象；轮次已结束或不在工具调用中时返回 null
+     */
+    public DocRoundBinding attachRound(ToolCallContext context, DocAgent agent) {
+        if (context == null || agent == null) {
+            return null;
         }
-        final String text = batch.toPromptText();
-        java.util.List<java.util.function.Supplier<com.khjxiaogu.aiwuxia.state.history.message.MessageContent>> content =
-                new ArrayList<>();
-        content.add(() -> new com.khjxiaogu.aiwuxia.state.history.message.PlainText(text));
-        agent.session.addMessage(content, true);
-        notifier.ack(agent.id, batch.lastSeq());
+        DocRoundBinding binding = context.computeRoundState(roundStateKey(agent),
+                () -> new DocRoundBinding(this, agent));
+        if (binding == null) {
+            System.out.println("[DocLib] 轮次已结束，本次工具调用不建轮次：库=" + id + " agent=" + agent.id);
+        }
+        return binding;
+    }
+
+    /** 本轮数据对象在工具调用上下文里的键。 */
+    public String roundStateKey(DocAgent agent) {
+        return "doclib:" + id + ":" + (agent == null ? "" : agent.id);
     }
 
     /**
@@ -290,13 +298,16 @@ public final class DocLibraryRuntime implements AutoCloseable {
             return StageResult.noop(draft);
         }
         String newTitle = resolveTitle(title, draft, cur, newText, op);
-        String hash = DocStore.sha256(newText);
+        // 正文编辑不改变文件开头的 JSON meta；扩展系统（如工单）写入的字段会被原样保留
+        JsonObject meta = DocMeta.copy(draft != null ? draft.meta : (cur == null ? null : cur.meta));
+        String raw = DocMeta.join(meta, newText);
+        String hash = DocStore.sha256(raw);
         int size = DocStore.utf8Size(newText);
         if (draft == null) {
             draft = new DocDraft(round.id, agentId, docId,
                     cur == null ? 0 : cur.revision,
                     cur == null ? null : cur.hash,
-                    newText, hash, size, false, op, message, newTitle);
+                    newText, hash, size, false, op, message, newTitle, meta);
             round.put(draft);
         } else {
             draft.body = newText;
@@ -306,6 +317,7 @@ public final class DocLibraryRuntime implements AutoCloseable {
             draft.lastOp = op;
             draft.message = message == null ? "" : message;
             draft.title = newTitle;
+            draft.meta = meta;
         }
         store.upsertDraft(draft);
         round.incrementWrites();
@@ -365,17 +377,20 @@ public final class DocLibraryRuntime implements AutoCloseable {
         String title = draft != null ? draft.title : (cur == null ? "" : cur.title);
         long baseRevision = draft != null ? draft.baseRevision : (cur == null ? 0 : cur.revision);
         String baseHash = draft != null ? draft.baseHash : (cur == null ? null : cur.hash);
+        JsonObject meta = DocMeta.copy(draft != null ? draft.meta : (cur == null ? null : cur.meta));
+        String emptyHash = DocStore.sha256(DocMeta.join(meta, ""));
         if (draft == null) {
             draft = new DocDraft(round.id, agentId, docId, baseRevision, baseHash,
-                    "", DocStore.sha256(""), 0, true, "delete", message, title);
+                    "", emptyHash, 0, true, "delete", message, title, meta);
             round.put(draft);
         } else {
             draft.body = "";
-            draft.hash = DocStore.sha256("");
+            draft.hash = emptyHash;
             draft.size = 0;
             draft.deleted = true;
             draft.lastOp = "delete";
             draft.message = message == null ? "" : message;
+            draft.meta = meta;
         }
         store.upsertDraft(draft);
         round.incrementWrites();
@@ -392,7 +407,7 @@ public final class DocLibraryRuntime implements AutoCloseable {
         if (revision == null && draft != null) {
             DocRecord rec = new DocRecord(docId, draft.title, draft.body, draft.hash,
                     agentId, draft.roundId, draft.baseRevision, System.currentTimeMillis(),
-                    System.currentTimeMillis(), draft.size, draft.deleted);
+                    System.currentTimeMillis(), draft.size, draft.deleted, draft.meta);
             return new ReadResult(rec, true, true, false);
         }
         DocRecord rec = revision == null ? store.current(docId) : store.revision(docId, revision);
@@ -402,7 +417,7 @@ public final class DocLibraryRuntime implements AutoCloseable {
         boolean truncated = rec.body.length() > cap;
         String body = truncated ? rec.body.substring(0, cap) : rec.body;
         DocRecord view = new DocRecord(rec.docId, rec.title, body, rec.hash, rec.updatedBy,
-                rec.updatedRound, rec.revision, rec.createdAt, rec.updatedAt, rec.size, rec.deleted);
+                rec.updatedRound, rec.revision, rec.createdAt, rec.updatedAt, rec.size, rec.deleted, rec.meta);
         boolean complete = !truncated;
         if (revision == null) {
             reads.markRead(agentId, docId, rec.revision, rec.hash, complete);
@@ -416,6 +431,82 @@ public final class DocLibraryRuntime implements AutoCloseable {
 
     public List<DocStore.SearchHit> search(String keyword, int limit, int offset) {
         return store.search(keyword, limit, offset);
+    }
+
+    /** 外部系统直写结果。 */
+    public static final class ExternalWriteResult {
+        /** 提交后的修订号。 */
+        public final long revision;
+        /** 提交后的文档快照（含 meta，供扩展系统使用）。 */
+        public final DocRecord record;
+
+        ExternalWriteResult(long revision, DocRecord record) {
+            this.revision = revision;
+            this.record = record;
+        }
+    }
+
+    /**
+     * 外部系统直接提交一篇文档（不经过 AI 轮次/草稿）。
+     * <p>
+     * 供基于文档系统的扩展（例如工单 MCP）使用：调用方一次性给出可见正文与 JSON meta，
+     * 方法立即写文件并提交为一个修订，然后触发监听事件。若文档正被某个 AI 轮次锁定则返回
+     * {@code DOC_LOCKED}；若 {@code baseRevision} 与当前修订不一致则返回 {@code DOC_STALE}，
+     * 避免覆盖别人刚提交的内容。
+     * </p>
+     *
+     * @param author       提交者标识（写入 updated_by）
+     * @param docId        文档 id
+     * @param body         可见正文（不含 meta）
+     * @param meta         文件开头的 JSON meta，可为 null
+     * @param title        标题；为空时取正文第一个非空行
+     * @param message      提交说明
+     * @param baseRevision 期望基于的当前修订；null 表示不显式校验
+     * @return 提交结果
+     */
+    public ExternalWriteResult writeExternal(String author, String docId, String body, JsonObject meta,
+            String title, String message, Long baseRevision) {
+        validateDocId(docId);
+        String value = body == null ? "" : body;
+        if (value.length() > config.maxDocChars) {
+            throw new DocException("DOC_TOO_LARGE",
+                    "文档 " + docId + " 超过 " + config.maxDocChars + " 字符上限");
+        }
+        String actor = author == null || author.trim().isEmpty() ? "system" : author.trim();
+        synchronized (externalLock) {
+            DocLease lease = locks.owner(docId);
+            if (lease != null) {
+                throw new DocLockedException(lease);
+            }
+            DocRecord cur = store.current(docId);
+            long base = cur == null ? 0 : cur.revision;
+            if (baseRevision != null && baseRevision.longValue() != base) {
+                throw new DocException("DOC_STALE", "文档 " + docId + " 当前 revision 是 " + base
+                        + "，与请求的 base_revision " + baseRevision + " 不一致");
+            }
+            JsonObject metaCopy = DocMeta.copy(meta);
+            String newTitle = title == null || title.trim().isEmpty()
+                    ? DocStore.deriveTitle(value) : title.trim();
+            String raw = DocMeta.join(metaCopy, value);
+            String hash = DocStore.sha256(raw);
+            int size = DocStore.utf8Size(value);
+            String roundId = "external#" + actor + "#" + System.currentTimeMillis()
+                    + "-" + externalSequence.incrementAndGet();
+            DocDraft draft = new DocDraft(roundId, actor, docId, base,
+                    cur == null ? null : cur.hash, value, hash, size, false, "overwrite",
+                    message == null ? "" : message, newTitle, metaCopy);
+            long revision;
+            try {
+                revision = store.commitDraft(draft);
+            } catch (DocException ex) {
+                throw ex;
+            } catch (RuntimeException ex) {
+                throw new DocException("DOC_INTERNAL", "提交文档失败：" + ex.getMessage(), ex);
+            }
+            store.trimRevisions(docId, config.retainRevisions);
+            notifier.publish();
+            return new ExternalWriteResult(revision, store.current(docId));
+        }
     }
 
     public WaitInfo waitUnlock(String agentId, String docId, long timeoutMs) {
@@ -520,72 +611,5 @@ public final class DocLibraryRuntime implements AutoCloseable {
         rounds.close();
         notifier.close();
         store.close();
-    }
-
-    /** 每个 agent 一个的通知队列；真正注入在轮次开始时。 */
-    private final class Sink implements DocNoticeSink {
-        private final AIGroupSession session;
-        private final Runnable wake;
-        private final String agentId;
-        private final Queue<DocNoticeBatch> queue = new ConcurrentLinkedQueue<>();
-
-        Sink(AIGroupSession session, Runnable wake, String agentId) {
-            this.session = session;
-            this.wake = wake;
-            this.agentId = agentId;
-        }
-
-        @Override
-        public boolean isBusy() {
-            return session != null && session.isGenerating();
-        }
-
-        @Override
-        public void deliver(DocNoticeBatch batch) {
-            if (batch == null || batch.isEmpty()) {
-                return;
-            }
-            queue.add(batch);
-            if (batch.isWake() && !isBusy() && wake != null && session != null) {
-                try {
-                    // 必须在 getPrompt() 之前把通知放进消息队列，否则 submitMessage 拿到的 prompt 不含它。
-                    session.getCommandExec().submit(() -> {
-                        if (session.isGenerating()) {
-                            return; // 已有轮次会通过 begin() 自己 drain
-                        }
-                        DocNoticeBatch pending = drain();
-                        if (pending == null || pending.isEmpty()) {
-                            return;
-                        }
-                        DocAgent agent = agents.get(agentId);
-                        if (agent == null) {
-                            return;
-                        }
-                        injectNotice(agent, pending);
-                        try {
-                            wake.run();
-                        } catch (Throwable t) {
-                            t.printStackTrace();
-                        }
-                    });
-                } catch (Throwable t) {
-                    t.printStackTrace();
-                }
-            }
-        }
-
-        @Override
-        public DocNoticeBatch drain() {
-            List<DocNoticeBatch> all = new ArrayList<>();
-            for (DocNoticeBatch batch; (batch = queue.poll()) != null; ) {
-                all.add(batch);
-            }
-            if (all.isEmpty()) {
-                return null;
-            }
-            DocNoticeBatch merged = DocNoticeBatch.merge(all);
-            merged.setLibraryId(id);
-            return merged;
-        }
     }
 }

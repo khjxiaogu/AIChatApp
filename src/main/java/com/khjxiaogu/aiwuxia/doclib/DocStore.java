@@ -17,6 +17,9 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
+
+import com.google.gson.JsonObject;
 
 /**
  * 文档库持久层：SQLite 存元数据/修订索引/已读/租约/outbox，正文以 UTF-8 {@code .txt} 文件存储在
@@ -135,6 +138,7 @@ public final class DocStore implements AutoCloseable {
                     + "message TEXT,"
                     + "title TEXT NOT NULL DEFAULT '',"
                     + "body TEXT NOT NULL,"
+                    + "meta TEXT,"
                     + "agent_id TEXT NOT NULL,"
                     + "PRIMARY KEY (round_id, doc_id)"
                     + ")");
@@ -147,6 +151,8 @@ public final class DocStore implements AutoCloseable {
                     + "action TEXT NOT NULL,"
                     + "author TEXT NOT NULL,"
                     + "summary TEXT,"
+                    + "kind TEXT NOT NULL DEFAULT 'content',"
+                    + "detail TEXT,"
                     + "recovered INTEGER NOT NULL DEFAULT 0,"
                     + "created_at INTEGER NOT NULL,"
                     + "UNIQUE (round_id, doc_id)"
@@ -157,6 +163,11 @@ public final class DocStore implements AutoCloseable {
                     + ")");
             st.execute("DELETE FROM leases");
         }
+        // 旧库升级：草稿表增加 meta 列（保存文件开头的 JSON 扩展头）
+        addColumnIfMissing("drafts", "meta", "TEXT");
+        // 旧库升级：outbox 区分正文变更与扩展字段（meta）变更
+        addColumnIfMissing("outbox", "kind", "TEXT NOT NULL DEFAULT 'content'");
+        addColumnIfMissing("outbox", "detail", "TEXT");
         try (Statement st = conn.createStatement()) {
             st.execute("CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5("
                     + "doc_id UNINDEXED, title, body, tokenize='trigram')");
@@ -164,6 +175,33 @@ public final class DocStore implements AutoCloseable {
         } catch (SQLException ex) {
             ftsEnabled = false;
             System.out.println("[DocLib] FTS5/trigram 不可用，搜索回退为文件扫描：" + ex.getMessage());
+        }
+    }
+
+    /**
+     * 旧库升级：表里没有该列时用 ALTER TABLE 补上。
+     *
+     * @param table  表名
+     * @param column 列名
+     * @param type   列类型
+     */
+    private void addColumnIfMissing(String table, String column, String type) {
+        try (Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (rs.next()) {
+                if (column.equalsIgnoreCase(rs.getString("name"))) {
+                    return;
+                }
+            }
+        } catch (SQLException ex) {
+            System.out.println("[DocLib] 检查 " + table + "." + column + " 失败：" + ex.getMessage());
+            return;
+        }
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
+            System.out.println("[DocLib] 已升级表 " + table + "：新增列 " + column);
+        } catch (SQLException ex) {
+            System.out.println("[DocLib] 为 " + table + " 增加列 " + column + " 失败：" + ex.getMessage());
         }
     }
 
@@ -235,15 +273,20 @@ public final class DocStore implements AutoCloseable {
                 }
             }
             for (String[] row : rows) {
-                String body = readQuietly(resolve(row[2]));
-                if (body == null) {
+                String raw = readQuietly(resolve(row[2]));
+                if (raw == null) {
                     continue;
+                }
+                DocMeta.Parts parts = DocMeta.split(raw);
+                String title = row[1] == null ? "" : row[1];
+                if (title.isEmpty()) {
+                    title = deriveTitle(parts.body);
                 }
                 try (PreparedStatement ins = conn.prepareStatement(
                         "INSERT INTO documents_fts(doc_id,title,body) VALUES(?,?,?)")) {
                     ins.setString(1, row[0]);
-                    ins.setString(2, row[1]);
-                    ins.setString(3, body);
+                    ins.setString(2, title);
+                    ins.setString(3, parts.body);
                     ins.executeUpdate();
                 }
             }
@@ -278,9 +321,14 @@ public final class DocStore implements AutoCloseable {
                     throw new DocException("DOC_INTERNAL",
                             "文档 " + rs.getString(1) + " 的正文 txt 缺失，且历史快照不可读");
                 }
-                return new DocRecord(rs.getString(1), rs.getString(2), body, rs.getString(5),
+                DocMeta.Parts parts = deleted ? new DocMeta.Parts(null, "", 0) : DocMeta.split(body);
+                String title = rs.getString(2);
+                if ((title == null || title.isEmpty()) && !deleted) {
+                    title = deriveTitle(parts.body);
+                }
+                return new DocRecord(rs.getString(1), title, parts.body, rs.getString(5),
                         rs.getString(9), rs.getString(10), rs.getLong(4), rs.getLong(7), rs.getLong(8),
-                        rs.getInt(6), deleted);
+                        rs.getInt(6), deleted, parts.meta);
             }
         } catch (SQLException ex) {
             throw new DocException("DOC_INTERNAL", "读取文档失败：" + ex.getMessage(), ex);
@@ -300,13 +348,18 @@ public final class DocStore implements AutoCloseable {
                     return null;
                 }
                 boolean deleted = rs.getInt(6) != 0;
-                String body = deleted ? "" : readQuietly(resolve(rs.getString(3)));
-                if (body == null) {
-                    body = "";
+                String raw = deleted ? "" : readQuietly(resolve(rs.getString(3)));
+                if (raw == null) {
+                    raw = "";
                 }
+                DocMeta.Parts parts = DocMeta.split(raw);
                 String title = rs.getString(11) == null ? "" : rs.getString(11);
-                return new DocRecord(rs.getString(1), title, body, rs.getString(4), rs.getString(7),
-                        rs.getString(8), rs.getLong(2), rs.getLong(10), rs.getLong(10), rs.getInt(5), deleted);
+                if (title.isEmpty() && !deleted) {
+                    title = deriveTitle(parts.body);
+                }
+                return new DocRecord(rs.getString(1), title, parts.body, rs.getString(4), rs.getString(7),
+                        rs.getString(8), rs.getLong(2), rs.getLong(10), rs.getLong(10), rs.getInt(5), deleted,
+                        parts.meta);
             }
         } catch (SQLException ex) {
             throw new DocException("DOC_INTERNAL", "读取历史修订失败：" + ex.getMessage(), ex);
@@ -328,9 +381,18 @@ public final class DocStore implements AutoCloseable {
             ps.setInt(4, Math.max(0, offset));
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    out.add(new DocRecord(rs.getString(1), rs.getString(2), "", rs.getString(5),
+                    String title = rs.getString(2);
+                    boolean deleted = rs.getInt(11) != 0;
+                    // 标题取可见正文的第一个非空行；旧文档标题为空时惰性补算
+                    if ((title == null || title.isEmpty()) && !deleted) {
+                        String raw = readQuietly(resolve(rs.getString(3)));
+                        if (raw != null) {
+                            title = deriveTitle(DocMeta.split(raw).body);
+                        }
+                    }
+                    out.add(new DocRecord(rs.getString(1), title, "", rs.getString(5),
                             rs.getString(9), rs.getString(10), rs.getLong(4), rs.getLong(7), rs.getLong(8),
-                            rs.getInt(6), rs.getInt(11) != 0));
+                            rs.getInt(6), deleted));
                 }
             }
         } catch (SQLException ex) {
@@ -393,12 +455,15 @@ public final class DocStore implements AutoCloseable {
         List<SearchHit> out = new ArrayList<>();
         List<DocRecord> all = list("", false, 10000, 0);
         for (DocRecord doc : all) {
-            String body = readQuietly(resolve(fileName(doc.docId)));
-            if (body == null) {
+            String raw = readQuietly(resolve(fileName(doc.docId)));
+            if (raw == null) {
                 continue;
             }
+            // meta 不参与搜索
+            String body = DocMeta.split(raw).body;
+            String title = doc.title.isEmpty() ? deriveTitle(body) : doc.title;
             String lowerBody = body.toLowerCase();
-            String lowerTitle = doc.title.toLowerCase();
+            String lowerTitle = title.toLowerCase();
             String matched = null;
             for (String term : terms) {
                 String t = term.toLowerCase();
@@ -410,7 +475,7 @@ public final class DocStore implements AutoCloseable {
             if (matched != null) {
                 int at = lowerBody.indexOf(matched.toLowerCase());
                 String snippet = snippet(body, Math.max(0, at), matched.length());
-                out.add(new SearchHit(doc.docId, doc.title, doc.revision, snippet));
+                out.add(new SearchHit(doc.docId, title, doc.revision, snippet));
             }
         }
         int from = Math.min(Math.max(0, offset), out.size());
@@ -471,20 +536,29 @@ public final class DocStore implements AutoCloseable {
             }
         }
         boolean already = cur != null && cur.revision == to && cur.hash.equals(d.hash) && cur.deleted == d.deleted;
+        // 正文（含标题）是否变化；meta 是否变化。meta 变化也会产生事件，
+        // 由 MCP 监听者根据事件内容决定是否通知（例如看板行编码/简述事件应被过滤）。
+        boolean bodyChanged = cur == null || d.deleted || cur.deleted
+                || !Objects.equals(cur.body, d.body) || !Objects.equals(cur.title, d.title);
+        boolean metaChanged = !sameMeta(cur == null ? null : cur.meta, d.meta);
+        // doclib 只提供结构化 meta diff；哪些字段需要通知由 MCP 决定
+        String metaDetail = metaChanged && cur != null && !d.deleted
+                ? metaDiff(cur.meta, d.meta) : null;
         String currentFile = fileName(d.docId);
         String historyFile = revisionFile(d.docId, to);
+        String raw = d.raw();
         try {
             if (!already) {
                 // 先写历史快照（不可变），再写当前正文；DB 失败时下面会回滚并恢复当前文件
-                writeAtomic(historyFile, d.body);
+                writeAtomic(historyFile, raw);
                 if (d.deleted) {
                     // 当前文件在 DB 成功后再删
                 } else {
-                    writeAtomic(currentFile, d.body);
+                    writeAtomic(currentFile, raw);
                 }
             } else if (!d.deleted && !Files.isRegularFile(resolve(currentFile))) {
                 // 幂等恢复：DB 已经提交但当前 txt 丢了，补写一份
-                writeAtomic(currentFile, d.body);
+                writeAtomic(currentFile, raw);
             }
         } catch (IOException ex) {
             throw new DocException("DOC_INTERNAL", "写入正文文件失败：" + ex.getMessage(), ex);
@@ -502,10 +576,15 @@ public final class DocStore implements AutoCloseable {
             if (!already) {
                 insertRevision(d, historyFile, to, now);
                 updateFts(d, to);
-                insertOutbox(d, action, oldBody, d.body, to, false);
+                String kind = bodyChanged && metaChanged ? "both"
+                        : bodyChanged ? "content" : metaChanged ? "meta" : null;
+                if (kind != null) {
+                    insertOutbox(d, bodyChanged ? action : "updated",
+                            oldBody, d.body, to, false, kind, metaDetail, d.roundId);
+                }
             } else {
                 // 幂等恢复：确保 outbox 和 seen 也在
-                insertOutbox(d, action, oldBody, d.body, to, true);
+                insertOutbox(d, action, oldBody, d.body, to, true, "content", null, d.roundId);
             }
             putSeen(d.agentId, d.docId, to, d.hash, true, now);
             deleteDraftRow(d.roundId, d.docId);
@@ -611,11 +690,14 @@ public final class DocStore implements AutoCloseable {
     }
 
     private void insertOutbox(DocDraft d, String action, String oldBody, String newBody,
-            long toRevision, boolean recovered) throws SQLException {
+            long toRevision, boolean recovered, String kind, String detail, String roundId)
+            throws SQLException {
         String sql = "INSERT OR IGNORE INTO outbox(round_id,doc_id,from_revision,to_revision,action,author,"
-                + "summary,recovered,created_at) VALUES(?,?,?,?,?,?,?,?,?)";
+                + "summary,kind,detail,recovered,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)";
         String summary;
-        if (d.deleted) {
+        if ("meta".equals(kind)) {
+            summary = null;
+        } else if (d.deleted) {
             summary = "deleted";
         } else if (d.baseRevision == 0) {
             summary = "+" + countLines(newBody);
@@ -623,17 +705,61 @@ public final class DocStore implements AutoCloseable {
             summary = diffSummary(oldBody, newBody);
         }
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, d.roundId);
+            ps.setString(1, roundId);
             ps.setString(2, d.docId);
             ps.setLong(3, d.baseRevision);
             ps.setLong(4, toRevision);
             ps.setString(5, action);
             ps.setString(6, d.agentId);
             ps.setString(7, summary);
-            ps.setInt(8, recovered ? 1 : 0);
-            ps.setLong(9, System.currentTimeMillis());
+            ps.setString(8, kind);
+            ps.setString(9, detail);
+            ps.setInt(10, recovered ? 1 : 0);
+            ps.setLong(11, System.currentTimeMillis());
             ps.executeUpdate();
         }
+    }
+
+    /** 比较两份 meta；null 与空对象视为相同。 */
+    private static boolean sameMeta(JsonObject a, JsonObject b) {
+        if (a == null || a.size() == 0) {
+            return b == null || b.size() == 0;
+        }
+        return a.equals(b);
+    }
+
+    /**
+     * 生成结构化 meta diff：{@code {"status":{"from":"待创建","to":"已修复"},...}}。
+     * <p>doclib 不判断哪些字段重要，MCP 监听者按字段名过滤并构建通知文本。</p>
+     */
+    private static String metaDiff(JsonObject before, JsonObject after) {
+        if (before == null && after == null) {
+            return null;
+        }
+        JsonObject diff = new JsonObject();
+        java.util.Set<String> keys = new java.util.LinkedHashSet<>();
+        if (before != null) {
+            keys.addAll(before.keySet());
+        }
+        if (after != null) {
+            keys.addAll(after.keySet());
+        }
+        for (String key : keys) {
+            com.google.gson.JsonElement oldValue = before == null ? null : before.get(key);
+            com.google.gson.JsonElement newValue = after == null ? null : after.get(key);
+            if (Objects.equals(oldValue, newValue)) {
+                continue;
+            }
+            JsonObject change = new JsonObject();
+            if (oldValue != null) {
+                change.add("from", oldValue);
+            }
+            if (newValue != null) {
+                change.add("to", newValue);
+            }
+            diff.add(key, change);
+        }
+        return diff.size() == 0 ? null : diff.toString();
     }
 
     public synchronized void trimRevisions(String docId, int retain) {
@@ -706,7 +832,7 @@ public final class DocStore implements AutoCloseable {
 
     public synchronized void upsertDraft(DocDraft d) {
         String sql = "INSERT OR REPLACE INTO drafts(round_id,doc_id,base_revision,base_hash,hash,size,deleted,"
-                + "last_op,message,title,body,agent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)";
+                + "last_op,message,title,body,meta,agent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, d.roundId);
             ps.setString(2, d.docId);
@@ -719,7 +845,8 @@ public final class DocStore implements AutoCloseable {
             ps.setString(9, d.message);
             ps.setString(10, d.title);
             ps.setString(11, d.body);
-            ps.setString(12, d.agentId);
+            ps.setString(12, d.meta == null ? null : d.meta.toString());
+            ps.setString(13, d.agentId);
             ps.executeUpdate();
         } catch (SQLException ex) {
             throw new DocException("DOC_INTERNAL", "保存草稿失败：" + ex.getMessage(), ex);
@@ -742,7 +869,7 @@ public final class DocStore implements AutoCloseable {
     }
 
     public synchronized List<DocDraft> draftsForRound(String roundId) {
-        String sql = "SELECT doc_id,base_revision,base_hash,hash,size,deleted,last_op,message,title,body,agent_id"
+        String sql = "SELECT doc_id,base_revision,base_hash,hash,size,deleted,last_op,message,title,body,agent_id,meta"
                 + " FROM drafts WHERE round_id=? ORDER BY doc_id";
         List<DocDraft> out = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -751,7 +878,8 @@ public final class DocStore implements AutoCloseable {
                 while (rs.next()) {
                     out.add(new DocDraft(roundId, rs.getString(11), rs.getString(1), rs.getLong(2),
                             rs.getString(3), rs.getString(10), rs.getString(4), rs.getInt(5),
-                            rs.getInt(6) != 0, rs.getString(7), rs.getString(8), rs.getString(9)));
+                            rs.getInt(6) != 0, rs.getString(7), rs.getString(8), rs.getString(9),
+                            DocMeta.parse(rs.getString(12))));
                 }
             }
         } catch (SQLException ex) {
@@ -829,8 +957,8 @@ public final class DocStore implements AutoCloseable {
     }
 
     public synchronized List<DocEvent> outboxAfter(long seq, int limit) {
-        String sql = "SELECT seq,round_id,doc_id,from_revision,to_revision,action,author,summary,recovered,created_at"
-                + " FROM outbox WHERE seq>? ORDER BY seq LIMIT ?";
+        String sql = "SELECT seq,round_id,doc_id,from_revision,to_revision,action,author,summary,kind,detail,"
+                + "recovered,created_at FROM outbox WHERE seq>? ORDER BY seq LIMIT ?";
         List<DocEvent> out = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, seq);
@@ -839,7 +967,7 @@ public final class DocStore implements AutoCloseable {
                 while (rs.next()) {
                     out.add(new DocEvent(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getLong(4),
                             rs.getLong(5), rs.getString(6), rs.getString(7), rs.getString(8),
-                            rs.getInt(9) != 0, rs.getLong(10)));
+                            rs.getString(9), rs.getString(10), rs.getInt(11) != 0, rs.getLong(12)));
                 }
             }
         } catch (SQLException ex) {
@@ -963,18 +1091,21 @@ public final class DocStore implements AutoCloseable {
         return text == null ? 0 : text.getBytes(StandardCharsets.UTF_8).length;
     }
 
+    /**
+     * 文档标题：可见正文（已去掉 meta）的第一个非空行，最多 120 字符。
+     *
+     * @param body 可见正文
+     * @return 标题；正文为空/全空白时返回空串
+     */
     public static String deriveTitle(String body) {
         if (body == null) {
             return "";
         }
         String[] lines = body.split("\\n", -1);
         for (String line : lines) {
-            String trimmed = line.trim();
+            String trimmed = line.replace("\uFEFF", "").trim();
             if (trimmed.isEmpty()) {
                 continue;
-            }
-            if (trimmed.startsWith("#")) {
-                trimmed = trimmed.replaceFirst("^#+\\s*", "");
             }
             return trimmed.length() > 120 ? trimmed.substring(0, 120) : trimmed;
         }

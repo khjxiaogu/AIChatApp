@@ -11,6 +11,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.khjxiaogu.aiwuxia.llm.ToolData;
+import com.khjxiaogu.aiwuxia.llm.toolcall.UrlFileResolver;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpException;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpJson;
 import com.khjxiaogu.aiwuxia.mcp.protocol.McpProtocol;
@@ -26,7 +27,8 @@ import io.netty.buffer.ByteBuf;
 /**
  * MCP 服务端的 HTTP 传输层（Streamable HTTP）与令牌管理 API。
  * <p>
- * 挂载在 {@code /aichat/mcp} 路径上（由 {@code AIChatService#mcp} 转发），按剩余路径分派：
+ * 通常挂载在 {@code /aichat/mcp}（由 {@code AIChatService#mcp} 转发），也可以直接挂到独立路径
+ * （MultiAgent 的 {@code /mcp}），按剩余路径分派：
  * </p>
  * <ul>
  *   <li>{@code /aichat/mcp}：MCP JSON-RPC 端点。POST 处理请求，GET/DELETE 按协议返回 405/200；</li>
@@ -38,11 +40,15 @@ import io.netty.buffer.ByteBuf;
  * </ul>
  * <p>
  * 鉴权：MCP 请求必须携带 {@code Authorization: Bearer mcp_xxx}（或 {@code X-MCP-Token}），
- * 令牌由 {@link McpAccessTokenStore} 校验；每次工具调用固定扣除 {@link McpServer#CALL_COST}
- * 额外配额，工具内部产生的用量按实际用量另行结算；工具结果中的多媒体 id 会通过
- * {@link McpServer.MediaUrlResolver} 换成可访问链接。
+ * 令牌由 {@link McpAccessTokenStore} 校验；启用计费时每次工具调用固定扣除
+ * {@link McpServer#CALL_COST} 额外配额（免费模式为 0），工具内部产生的用量按实际用量另行结算；
+ * 工具结果中的多媒体 id 会通过 {@link McpServer.MediaUrlResolver} 换成可访问链接。
  * 管理 API 沿用本项目既有的“用户标识即身份”做法，身份只从请求 URL 的查询参数读取（由外部框架注入），
  * 不从请求体读取；不做额外登录校验，部署时请放在反向代理/内网之后，或只监听本机。
+ * </p>
+ * <p>
+ * 构造时可关闭管理 API（{@code adminEnabled=false}）：此时只保留 MCP JSON-RPC 端点与
+ * {@code /media}，令牌只能由 MCP 工具管理，不提供查看/编辑页面（MultiAgent 使用这种模式）。
  * </p>
  */
 public class McpServerEndpoint implements CallBack {
@@ -57,6 +63,14 @@ public class McpServerEndpoint implements CallBack {
     private final String serverName;
     /** MCP 生成内容的统一本地存储，供 {@code /media} 入口下载。 */
     private final ObjectStorageProvider mediaStorage;
+    /**
+     * 是否开放令牌/用量等管理接口。
+     * <p>
+     * 独立进程（例如 MultiAgent）只通过 MCP 工具创建/删除令牌，不提供网页或管理 HTTP 接口，
+     * 此时为 {@code false}，除 {@code /media} 外的管理路径统一返回 404。
+     * </p>
+     */
+    private final boolean adminEnabled;
     /** 日志记录器。 */
     private final SimpleLogger logger = new SimpleLogger("MCP");
 
@@ -70,7 +84,7 @@ public class McpServerEndpoint implements CallBack {
      */
     public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
             String serverVersion) {
-        this(registry, store, serverName, serverVersion, null, null);
+        this(registry, store, serverName, serverVersion, null, null, true);
     }
 
     /**
@@ -84,7 +98,7 @@ public class McpServerEndpoint implements CallBack {
      */
     public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
             String serverVersion, McpServer.MediaUrlResolver mediaUrlResolver) {
-        this(registry, store, serverName, serverVersion, mediaUrlResolver, null);
+        this(registry, store, serverName, serverVersion, mediaUrlResolver, null, true);
     }
 
     /**
@@ -100,11 +114,35 @@ public class McpServerEndpoint implements CallBack {
     public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
             String serverVersion, McpServer.MediaUrlResolver mediaUrlResolver,
             ObjectStorageProvider mediaStorage) {
+        this(registry, store, serverName, serverVersion, mediaUrlResolver, mediaStorage, true);
+    }
+
+    /**
+     * 创建 HTTP 端点，并指定是否开放令牌/用量管理接口。
+     * <p>
+     * {@code adminEnabled=false} 时只保留 MCP JSON-RPC 端点与 {@code /media}，不提供
+     * {@code /token}、{@code /usage}、{@code /status}、{@code /tools}、{@code /whoami}，
+     * 适合 MultiAgent 这类“令牌只由 MCP 工具管理、不开放页面”的独立进程。
+     * </p>
+     *
+     * @param registry        工具注册表
+     * @param store           令牌与计费存储
+     * @param serverName      服务名称
+     * @param serverVersion   服务版本
+     * @param mediaUrlResolver 多媒体 id → 链接解析器，可为 null
+     * @param mediaStorage    统一媒体存储，供 {@code /media?file_id=...} 下载，可为 null
+     * @param adminEnabled    是否开放令牌/用量等管理接口
+     */
+    public McpServerEndpoint(McpToolRegistry registry, McpAccessTokenStore store, String serverName,
+            String serverVersion, McpServer.MediaUrlResolver mediaUrlResolver,
+            ObjectStorageProvider mediaStorage, boolean adminEnabled) {
         this.registry = registry;
         this.store = store;
         this.serverName = serverName == null ? "MCP" : serverName;
         this.mediaStorage = mediaStorage;
-        this.server = new McpServer(registry, store, this.serverName, serverVersion, mediaUrlResolver);
+        this.adminEnabled = adminEnabled;
+        this.server = new McpServer(registry, store, this.serverName, serverVersion, mediaUrlResolver,
+                mediaStorage == null ? null : new UrlFileResolver(mediaStorage, true));
     }
 
     /**
@@ -189,7 +227,8 @@ public class McpServerEndpoint implements CallBack {
             return;
         }
         if ("DELETE".equalsIgnoreCase(method)) {
-            // 会话是无状态的，删除会话只需成功返回
+            // 会话是无状态的，删除会话只需成功返回；顺带提交该 session 遗留的直调轮次
+            server.closeDirectRounds(request.getHeaders().get(McpProtocol.HEADER_SESSION_ID));
             response.setHeader("Cache-Control", "no-store");
             response.write(200);
             return;
@@ -236,7 +275,8 @@ public class McpServerEndpoint implements CallBack {
             return;
         }
         JsonObject requestObject = parsed.getAsJsonObject();
-        JsonObject reply = dispatch(requestObject, token, clientIp);
+        JsonObject reply = dispatch(requestObject, token, clientIp,
+                request.getHeaders().get(McpProtocol.HEADER_SESSION_ID));
         if (reply == null) {
             response.setHeader("Cache-Control", "no-store");
             response.write(202);
@@ -262,7 +302,8 @@ public class McpServerEndpoint implements CallBack {
             if (McpProtocol.METHOD_INITIALIZE.equals(JsonConfig.getString(requestObject, "method"))) {
                 hasInitialize = true;
             }
-            JsonObject reply = dispatch(requestObject, token, clientIp);
+            JsonObject reply = dispatch(requestObject, token, clientIp,
+                    request.getHeaders().get(McpProtocol.HEADER_SESSION_ID));
             if (reply != null) {
                 replies.add(reply);
             }
@@ -281,9 +322,11 @@ public class McpServerEndpoint implements CallBack {
     /**
      * 处理单条 JSON-RPC 消息。
      *
+     * @param sessionId MCP session id，用于把同组直调归到同一轮
      * @return 响应对象；通知返回 null
      */
-    private JsonObject dispatch(JsonObject request, McpAccessTokenStore.Token token, String clientIp) {
+    private JsonObject dispatch(JsonObject request, McpAccessTokenStore.Token token, String clientIp,
+            String sessionId) {
         if (McpProtocol.METHOD_TOOLS_CALL.equals(JsonConfig.getString(request, "method"))) {
             // 调试：确认客户端到底发了什么 tools/call 请求；过长时截断，避免日志被大参数淹没
             String raw = request.toString();
@@ -292,7 +335,9 @@ public class McpServerEndpoint implements CallBack {
         JsonElement id = request.get("id");
         boolean notification = id == null || id.isJsonNull();
         try {
-            JsonObject result = server.handle(token, request, clientIp);
+            // 任意请求都算一次交互：该 session 已有轮次时刷新空闲计时
+            server.touchDirectRound(sessionId, token);
+            JsonObject result = server.handle(token, request, clientIp, sessionId);
             if (notification || result == null) {
                 return null;
             }
@@ -324,6 +369,10 @@ public class McpServerEndpoint implements CallBack {
         try {
             if ("/media".equals(path) || "/file".equals(path)) {
                 media(request, response);
+                return;
+            }
+            if (!adminEnabled) {
+                writeJson(response, 404, failure("此 MCP 服务端未开放管理接口"));
                 return;
             }
             if ("/token".equals(path)) {
@@ -594,14 +643,16 @@ public class McpServerEndpoint implements CallBack {
         String uid = query(request, "uid");
         JsonArray tools = new JsonArray();
         for (ToolData tool : registry.list(uid)) {
+            // 管理页与 tools/list 保持一致：有媒体存储时展示 URL 上下文的参数说明。
+            ToolData exposed = mediaStorage == null ? tool : tool.forUrlContext();
             JsonObject item = new JsonObject();
-            item.addProperty("name", tool.name);
-            item.addProperty("description", tool.description);
+            item.addProperty("name", exposed.name);
+            item.addProperty("description", exposed.description);
             item.addProperty("price", server.getCallCost());
             item.addProperty("callPrice", server.getCallCost());
             JsonObject params = new JsonObject();
-            if (tool.params != null) {
-                for (Map.Entry<String, String> entry : tool.params.entrySet()) {
+            if (exposed.params != null) {
+                for (Map.Entry<String, String> entry : exposed.params.entrySet()) {
                     params.addProperty(entry.getKey(), entry.getValue());
                 }
             }

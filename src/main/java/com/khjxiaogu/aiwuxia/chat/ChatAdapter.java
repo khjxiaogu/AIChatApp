@@ -108,6 +108,42 @@ public interface ChatAdapter {
 	}
 
 	/**
+	 * 是否支持发送文件（普通文件，区别于图片/视频/语音）。
+	 * <p>
+	 * 调用方应先检查该值，再注册“发送文件”工具；协议不支持时不应暴露该工具。
+	 * </p>
+	 *
+	 * @return true 表示 {@link #sendFile}/{@link #sendPrivateFile} 可用
+	 */
+	default boolean supportsFileSend() {
+		return false;
+	}
+
+	/**
+	 * 发送文件。
+	 * <p>
+	 * {@code file} 是适配器能读取的文件引用（http(s) 链接、data URL 或协议内部句柄），
+	 * {@code name} 是接收者看到的文件名（含扩展名）。文件内容与命名都由适配器按协议实现；
+	 * 协议不支持时调用方应先用 {@link #supportsFileSend()} 判断。
+	 * </p>
+	 *
+	 * @param chatId 会话标识
+	 * @param file   文件引用
+	 * @param name   发送时的文件名（含扩展名）
+	 * @return 消息 id future；协议不提供消息 id 时以 null 完成
+	 */
+	default CompletableFuture<String> sendFile(String chatId, String file, String name) {
+		CompletableFuture<String> failed = new CompletableFuture<>();
+		failed.completeExceptionally(new UnsupportedOperationException("当前协议不支持发送文件"));
+		return failed;
+	}
+
+	/** 发私聊文件；默认退回 {@link #sendFile}。 */
+	default CompletableFuture<String> sendPrivateFile(String userId, String file, String name) {
+		return sendFile(userId, file, name);
+	}
+
+	/**
 	 * 发送私聊文本消息（不等待回执）。
 	 * <p>
 	 * 工具审核的问题和结果都通过私聊发给管理员。
@@ -161,6 +197,35 @@ public interface ChatAdapter {
 	 * @throws Exception 读取失败
 	 */
 	byte[] fetchMedia(String ref) throws Exception;
+
+	/**
+	 * 是否支持下载群文件。
+	 * <p>
+	 * 只有协议能给出群文件下载引用（文件名 / 消息 id / 链接）时才返回 true；调用方应先用
+	 * 本方法判断，再注册“下载群文件”工具，避免在不支持的协议上暴露无效工具。
+	 * </p>
+	 *
+	 * @return true 表示 {@link #downloadGroupFile(String, String)} 可用
+	 */
+	default boolean supportsGroupFileDownload() {
+		return false;
+	}
+
+	/**
+	 * 下载群文件。
+	 * <p>
+	 * {@code reference} 由协议解释：可以是文件名、消息 id、文件 id 或下载链接。协议只能识别
+	 * 最近收到的群文件时，应在找不到时给出明确原因，便于模型改用消息里给出的引用。
+	 * </p>
+	 *
+	 * @param chatId    群 id（群会话），可为空
+	 * @param reference 文件引用
+	 * @return 文件字节
+	 * @throws Exception 文件不存在或下载失败
+	 */
+	default byte[] downloadGroupFile(String chatId, String reference) throws Exception {
+		return fetchMedia(reference);
+	}
 
 	/**
 	 * 查询用户的全局昵称。

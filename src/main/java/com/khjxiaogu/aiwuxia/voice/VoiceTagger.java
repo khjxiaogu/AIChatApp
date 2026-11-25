@@ -74,8 +74,8 @@ public class VoiceTagger {
 			prompt.append("**第一人称说话人**\n").append(role).append("\n");
 		prompt.append("**待处理角色话语**\n");
 		prompt.append(lastText);
-		// 语音标注是轻量任务，不指定模型，按 mimo 级别的预算选择最接近的提供商
-		Builder b=AIRequest.builder("voiceTagger").taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192).budget(ModelBudget.MIMO);
+		// 语音标注固定用 MiMo：它支持 JSON 输出，标记结构更稳定；MiMo 未配置时路由会按预算回退。
+		Builder b=AIRequest.builder("voiceTagger").modelHint("mimo").taskType(TaskType.STORY).format(ResponseFormat.JSON).strength(ReasoningStrength.WEAK).temperature(0.2f).maxTokens(8192).budget(ModelBudget.MIMO);
 		b.addHistoryItem(Role.SYSTEM, sysprompt);
 
 		b.addHistoryItem(Role.USER, prompt.toString());
@@ -95,20 +95,34 @@ public class VoiceTagger {
 						System.out.println(speech);
 						JsonElement jex=JsonParser.parseString(speech);
 						JsonArray ja;
-						if(jex.isJsonArray())
+						if(jex.isJsonArray()) {
 							ja=jex.getAsJsonArray();
-						else
-							ja=jex.getAsJsonObject().get("data").getAsJsonArray();
+						}else if(jex.isJsonObject()) {
+							JsonObject obj=jex.getAsJsonObject();
+							JsonElement data=obj.get("data");
+							if(data!=null&&data.isJsonArray()) {
+								ja=data.getAsJsonArray();
+							}else if(obj.has("text")&&obj.has("emotion")) {
+								// 模型偶尔只返回单个片段对象：包成单元素数组，避免整次朗读失败
+								ja=new JsonArray();
+								ja.add(obj);
+							}else {
+								throw new JsonSyntaxException("no data array found.");
+							}
+						}else {
+							throw new JsonSyntaxException("not a json array or object.");
+						}
 						for(JsonElement je:ja) {
 							if(je.isJsonObject()) {
 								JsonObject jo=je.getAsJsonObject();
-								if(!jo.has("text"))
+								JsonElement textElement=jo.get("text");
+								JsonElement emotionElement=jo.get("emotion");
+								if(textElement==null||!textElement.isJsonPrimitive())
 									throw new JsonSyntaxException("no text found.");
-								if(!jo.has("emotion"))
+								if(emotionElement==null||!emotionElement.isJsonPrimitive())
 									throw new JsonSyntaxException("no emotion found.");
-								if(!emotions.contains(jo.get("emotion").getAsString()))
-									throw new JsonSyntaxException("Illegal emotion "+jo.get("emotion").getAsString());
-									
+								if(!emotions.contains(emotionElement.getAsString()))
+									throw new JsonSyntaxException("Illegal emotion "+emotionElement.getAsString());
 							}
 						}
 						if(ja.size()==0&&TextCounter.countWords(unifiedLastText)>3)

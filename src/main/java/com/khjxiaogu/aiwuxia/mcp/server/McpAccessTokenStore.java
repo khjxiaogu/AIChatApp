@@ -374,20 +374,52 @@ public class McpAccessTokenStore {
     private final Connection database;
     /** 默认用量类型（写入 {@code paid_usage_record.usage_type}）。 */
     private final String usageType;
+    /**
+     * 是否启用计费。
+     * <p>
+     * 为 {@code false} 时只校验令牌、记录调用明细，不读写 {@code user_paid_balance}、
+     * {@code paid_usage_record} 等网页计费表，适合没有网页账户体系的独立进程
+     * （例如 MultiAgent）。
+     * </p>
+     */
+    private final boolean billingEnabled;
     /** 令牌随机源。 */
     private final SecureRandom random = new SecureRandom();
 
     /**
-     * 创建存储并初始化所需的表。
+     * 创建启用计费的存储并初始化所需的表。
      *
      * @param database  SQLite 连接（由调用方负责关闭）
      * @param usageType 写入现有消费统计时使用的用量类型，null 时使用 {@link #DEFAULT_USAGE_TYPE}
      * @throws SQLException 建表失败
      */
     public McpAccessTokenStore(Connection database, String usageType) throws SQLException {
+        this(database, usageType, true);
+    }
+
+    /**
+     * 创建存储并初始化所需的表。
+     *
+     * @param database       SQLite 连接（由调用方负责关闭）
+     * @param usageType      写入现有消费统计时使用的用量类型，null 时使用 {@link #DEFAULT_USAGE_TYPE}
+     * @param billingEnabled 是否启用计费；{@code false} 表示免费模式，不依赖网页的余额表
+     * @throws SQLException 建表失败
+     */
+    public McpAccessTokenStore(Connection database, String usageType, boolean billingEnabled)
+            throws SQLException {
         this.database = database;
         this.usageType = usageType == null || usageType.trim().isEmpty() ? DEFAULT_USAGE_TYPE : usageType;
+        this.billingEnabled = billingEnabled;
         initTables();
+    }
+
+    /**
+     * 是否启用计费。
+     *
+     * @return 免费模式返回 false
+     */
+    public boolean isBillingEnabled() {
+        return billingEnabled;
     }
 
     /** 建表（幂等）。 */
@@ -615,6 +647,10 @@ public class McpAccessTokenStore {
      * @return 余额，用户不存在或查询失败返回 0
      */
     public synchronized int getPaidBalance(String uid) {
+        if (!billingEnabled) {
+            // 免费模式没有网页余额表可查
+            return 0;
+        }
         if (uid == null || uid.trim().isEmpty()) {
             return 0;
         }
@@ -653,6 +689,26 @@ public class McpAccessTokenStore {
         long now = System.currentTimeMillis();
         if (token == null || !token.isUsable(now)) {
             throw McpException.unauthorized("访问令牌已失效或已过期");
+        }
+        if (!billingEnabled) {
+            // 免费模式：只校验令牌可用性、累加调用次数并写消费记录，不碰网页的余额/额度表
+            boolean updated;
+            try (PreparedStatement ps = database.prepareStatement(
+                    "UPDATE mcp_access_token SET call_count = call_count + 1, last_used_at = ?"
+                            + " WHERE id = ? AND enabled = 1"
+                            + " AND (expires_at IS NULL OR expires_at > ?)")) {
+                ps.setLong(1, now);
+                ps.setLong(2, token.getId());
+                ps.setLong(3, now);
+                updated = ps.executeUpdate() == 1;
+            } catch (SQLException ex) {
+                throw new McpException(McpProtocol.ERROR_INTERNAL, "更新令牌调用次数失败", ex);
+            }
+            if (!updated) {
+                throw McpException.unauthorized("访问令牌已失效或已过期");
+            }
+            long logId = insertLog(token, tool, 0, clientIp, requestId, now);
+            return new Charge(token.getId(), token.getUid(), 0, logId, now);
         }
         int price = Math.max(0, cost);
         // 1. 先扣用户额外配额（条件更新保证并发下不会透支）
@@ -746,6 +802,21 @@ public class McpAccessTokenStore {
         if (charge == null) {
             return;
         }
+        if (!billingEnabled) {
+            // 免费模式：只把调用明细标记为完成，不扣余额、不写用量统计表
+            try (PreparedStatement ps = database.prepareStatement(
+                    "UPDATE mcp_tool_call_log SET ok = ?, cost = 0, call_cost = 0, usage_cost = 0,"
+                            + " duration_ms = ?, result_chars = ? WHERE id = ?")) {
+                ps.setInt(1, success ? 1 : 0);
+                ps.setLong(2, durationMs);
+                ps.setInt(3, resultChars);
+                ps.setLong(4, charge.getLogId());
+                ps.executeUpdate();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+            return;
+        }
         int extra = Math.max(0, usageCost);
         int callCost = chargeCallCost ? Math.max(0, charge.getCost()) : 0;
         int refundCall = Math.max(0, charge.getCost() - callCost);
@@ -826,6 +897,20 @@ public class McpAccessTokenStore {
      */
     public synchronized void refund(Charge charge, String error) {
         if (charge == null) {
+            return;
+        }
+        if (!billingEnabled) {
+            // 免费模式：没有预扣费用可退，只把调用明细标记为失败
+            try (PreparedStatement ps = database.prepareStatement(
+                    "UPDATE mcp_tool_call_log SET ok = 0, cost = 0, call_cost = 0, usage_cost = 0,"
+                            + " error = ?, duration_ms = ? WHERE id = ?")) {
+                ps.setString(1, error == null ? "未知错误" : error);
+                ps.setLong(2, Math.max(0, System.currentTimeMillis() - charge.getStartTime()));
+                ps.setLong(3, charge.getLogId());
+                ps.executeUpdate();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
             return;
         }
         if (charge.getCost() > 0) {

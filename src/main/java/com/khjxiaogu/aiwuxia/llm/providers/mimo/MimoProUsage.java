@@ -6,6 +6,6 @@ public class MimoProUsage extends MimoUsage{
 		return "Mimo 专业";
 	}
 	public double getEquivantTokens() {
-		return completion_tokens * 3d + prompt_cache_hit_tokens * .0125d + prompt_cache_miss_tokens * 1.5d;
+		return completion_tokens * 3d + cacheHitTokens() * .0125d + cacheMissTokens() * 1.5d;
 	}
 }

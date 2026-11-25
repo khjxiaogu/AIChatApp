@@ -56,7 +56,9 @@
       "groupId": "789012",
       "enabled": true,
       "adminId": ["345678"],
-      "extraTools": ["codex"]
+      "extraTools": ["codex"],
+      "docLibrary": { "id": "default", "write": true, "listen": ["*"], "wakeOnNotify": true },
+      "ticket": { "libraryId": "tickets", "wakeOnNotify": true }
     }
   ],
   "privateSessions": [
@@ -71,7 +73,13 @@
   "napcatUrl": "ws://127.0.0.1:3001",
   "napcatToken": "",
   "qqbotAppId": "",
-  "qqbotSecret": ""
+  "qqbotSecret": "",
+  "mcp": {
+    "enabled": true,
+    "port": 8996,
+    "path": "/mcp",
+    "publicUrl": "https://example.com/mcp"
+  }
 }
 ```
 
@@ -90,6 +98,7 @@
 | `privateSessions` | 私聊会话数组，每项可单独配置 `userId`、`enabled`、`adminId`、`extraTools`、`codex`、`name`/`save`、`promptFile`；`adminId` 默认就是该用户 |
 | `napcatUrl` / `napcatToken` | NapCat WebSocket 地址/token；为空时用 `-Dnapcat_url` / `-Dnapcat_token` |
 | `qqbotAppId` / `qqbotSecret` | QQ 官方机器人 AppID/AppSecret；为空时用 `-Dqqbot_appid` / `-Dqqbot_secret`。配了就走官方适配器 |
+| `mcp` | 可选的 MCP 服务端配置，见下方“MCP 服务端” |
 
 会话公共字段：
 
@@ -102,8 +111,61 @@
 | `contextGroups` | 除自身群外还要接收哪些群的消息；公屏自己的群始终包含，私聊按此配置接收 |
 | `handoverTargets` | 可以把信息交给哪些 agent；`["*"]` 表示任意可接手 agent，空数组表示不能向外移交 |
 | `mentionOnly` | 公屏会话是否只有被 @ 才触发回复；`true` 时普通消息只记上下文、不触发 AI |
+| `docLibrary` | 文档库工具配置：`id` / `write` / `listen` / `wakeOnNotify`，见 [agent-doc-library.md](agent-doc-library.md) |
+| `ticket` | 工单库配置：`libraryId`（默认 `tickets`）/ `wakeOnNotify`（默认 `false`）；每个带 `ticket` 工具的会话都会注册工单变更监听 |
 | `name` / `save` | 会话名和存档名；不写自动生成 |
 | `promptFile` | 提示词文件，相对 `promptDir`；不写则用默认文件 |
+
+## MCP 服务端
+
+MultiAgent 进程可以额外启动一个 MCP 服务端（与网页进程的 `/aichat/mcp` 相互独立），
+让每个私聊用户用自己的令牌调用**本人 agent** 的工具：
+
+```json
+"mcp": {
+  "enabled": true,
+  "port": 8996,
+  "path": "/mcp",
+  "publicUrl": "https://example.com/mcp"
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `enabled` | 是否启动，默认 `true` |
+| `port` | 监听端口，默认 `8996`（避开网页 8999、本机模型回调 8998 与模型网关 8997） |
+| `path` | MCP 路径，默认 `/mcp` |
+| `publicUrl` | 对外公开地址；不写时按 `site.json` 的 `host` + `port` 推导为 `http://host:port/mcp`。需要 HTTPS/反向代理时显式配置 |
+
+- 令牌库：`save/multi/mcp.db`，使用**免费模式**，不依赖网页的补充配额，也不写网页用量统计。
+- `tools/list` 只返回令牌所属私聊用户的工具；`sessionOnly` 工具（`send_image`、`send_emoji_image`、
+  `send_video`）不会暴露，避免绕过会话自己的发送通道。
+- 文档库 `doc_*` 和工单 `ticket_*` 不再是 `sessionOnly`，会出现在 MCP 工具列表里。
+- 内置 `mcp_echo`、`mcp_server_time`、`mcp_quota`、`mcp_task_result` 对所有令牌可见。
+- 不提供查看/编辑页面：`/token`、`/usage`、`/status`、`/tools`、`/whoami` 一律 404；
+  只保留 `/media` 用于把工具生成的图片/语音/视频换成可访问链接。
+- 令牌只由下面两个工具管理（公屏 agent 不注册，令牌只属于私聊用户）：
+
+| 工具 | 说明 |
+|---|---|
+| `mcp_token_create` | 为当前用户创建令牌。参数 `name`（备注，可选）、`expires_in_days`（有效天数，可选）；返回一次性明文、`id`、服务地址和连接方式 |
+| `mcp_token_delete` | 删除当前用户的令牌。参数 `id` 或 `token`（二选一）；删除后无法恢复 |
+
+客户端配置示例（Streamable HTTP）：
+
+```json
+{
+  "mcpServers": {
+    "multiagent": {
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer mcp_xxxxxxxx" }
+    }
+  }
+}
+```
+
+> 令牌明文只在创建时返回一次。可以私聊让 agent 调用 `mcp_token_create`，也可以直接在当前令牌的
+> MCP 客户端里调用它；拿到的令牌只能调用该用户本人的工具。
 
 ## 群上下文
 

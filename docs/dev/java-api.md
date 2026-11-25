@@ -626,7 +626,8 @@ localemp.py 的实际 HTTP 调用在模型侧完成，分两层：
 | 会话 | `modelproxy.LocalModelClient` | 一条连接 + “模型类型 → 处理器”表：按请求的 `type` 分发、进度心跳、重连、按类型健康检查 |
 | 模型调用 | `vision.SvsApi` / `SvsLocalModelHandler`、`vision.SDXLApi` / `SDXLLocalModelHandler` / `QwenLocalModelHandler` / `H3LocalModelHandler`、`voice.AudioLocalModelHandler` | 只把请求翻译成 SD WebUI / localemp / ComfyUI / TTS 调用；`SDXLApi` 负责 SDXL 的路径、采样器、分区参数与结果还原，`SvsApi` 负责 localemp 的请求拼装与回调等待，服务器只下发 `action` + 语义参数 |
 | 请求对象 | `modelproxy.api.LocalModelCall` + `LocalModelCodec` | 统一信封：`type` + `reqid` + 各 API 独立参数对象（`SdxlParams` / `AudioParams` / `SvsParams` / `QwenParams` / `H3Params`，彼此无继承）+ `attachments[]`；服务端只构造对象，客户端只解析对象 |
-| 附件 | `LocalModelAttachments` / `AttachmentFetcher` | 附件只登记字节来源、按 `reqid` 作用域保存；客户端在**同一条 WebSocket** 上发 `{"type":"attachment.get",...}`，服务器按 `LMA1` 二进制分块回传；请求结束自动释放，不走 HTTP、不内联 Base64 |
+| 附件 | `LocalModelAttachments` / `AttachmentFetcher` | 附件只登记字节来源、按 `reqid` 作用域保存；客户端在**同一条 WebSocket** 上发 `{"type":"attachment.get",...}`，服务器按 `LMA1` 二进制分块回传；请求结束自动释放，不走 HTTP、不内联 Base64。服务端知道内容哈希时会在附件里带上内容键（`key`，即对象存储 id），供部署侧直接命中磁盘缓存 |
+| 部署侧缓存 | `modelproxy.cache.LocalModelFileCache` / `vision.ComfyUploadSupport` | 连接器把成功结果按内容键落盘；拉取输入附件前先查缓存。输出与输入共用 `save/localmodel_cache`，服务端对象 id 与缓存键是同一套 72 位哈希，所以“用上次生成的图继续图生图/反推”不需要再传一遍文件。上传 ComfyUI 前再查一次上传记录，同内容只上传一次 |
 
 - 各处理器由 `LocalModelConnectionService.createHandlers()` 统一注册，不再各自建连接；
   配置了 `-DttsUrl` 时才注册 `audio`；
@@ -644,8 +645,19 @@ localemp.py 的实际 HTTP 调用在模型侧完成，分两层：
   `-DlocalModelRequestChunkSize`（默认 1 MiB）的请求拆成 `LMR1` 分块下发，连接器收齐再按普通
   请求处理；`LocalModelHandshaker#supportsChunked(uid, modelType)`（或通用的
   `supportsFlag(uid, modelType, flag)`）可查询“这次会落到哪个连接器、它声明了哪些能力”。
-  SDXL 的图生图 / 分区图生图 / 反推提示词据此选择参考图的发送方式：支持分块时直接把图片文件
-  以 Base64 放进请求报文，否则只传链接；读图失败时回退链接（见 `SDXLMcp#referencePayload`）；
+  SDXL 的图生图 / 分区图生图 / 反推提示词把参考图交给连接器：参考图是对象存储 id 时登记为附件
+  （连接器按需拉取，见下一条），不是存储 id 的引用才回退链接 / Base64；读图失败时回退链接
+  （见 `SDXLMcp#referencePayload`）；
+- **部署侧磁盘缓存**：连接器把每个成功结果按内容哈希写入 `save/localmodel_cache/objects/`
+  （`-DlocalModelCacheDir` 改目录，`-DlocalModelCacheMb` 改上限，默认 4096 MB，`0` 不限，
+  负数或 `-DlocalModelCache=off` 关闭；超出上限按最后访问时间淘汰）。服务端登记附件时带上内容键
+  （`AttachmentRef#key`，就是对象存储 id），连接器拉取前先查缓存：命中就直接用本地文件，不再发
+  `attachment.get`。因此“用上次生成的图片继续图生图/反推、用上次生成的视频继续配音/截帧”不会再传
+  一遍文件；从服务端拉回来的输入附件同样按内容哈希落盘，同一份文件再次出现时可以直接命中。
+  H3 的首/尾帧与参考视频、Qwen 的参考图都改成附件（`LocalModelCall.h3/qwen` + `attachments[]`，
+  不再内联 Base64）；上传 ComfyUI 前再按“地址 + 子目录 + 内容键”查已上传记录
+  （`vision.ComfyUploadSupport`），ComfyUI input 目录里已有同一文件时直接复用、不再上传。
+  附件缓存与上传缓存命中/未命中都会打印 `[LocalModelCache]` / `[ComfyUpload]` 日志。
 - 进度协商：处理器用 `ProgressReporter` 上报状态，语义固定——`queued` = 正在等待本地资源锁
   （排队），`running` = 请求已经正式下发给对应的本地软件（SD WebUI / localemp / ComfyUI / TTS，
   执行中），另有可选的进度比例和预计总耗时 `eta`。连接器在状态/进度**变化时立即上报**；

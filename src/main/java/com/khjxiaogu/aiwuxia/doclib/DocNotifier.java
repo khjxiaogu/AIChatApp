@@ -10,10 +10,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 文档变更通知：从 outbox 读取事件，按监听者过滤、合并，再交给 {@link DocNoticeSink}。
+ * 文档变更事件：从 outbox 读取原始事件，按监听者过滤后交给 {@link DocEventListener}。
  * <p>
+ * doclib 不再拼通知文本或直接注入 agent；是否通知、通知什么由 MCP 监听者决定。
  * 关键规则：作者本人永远收不到自己改动的通知；通知不更新 {@code seen}；
- * 游标在 {@link DocRoundManager#begin} 真正把通知注入上下文后才推进。
+ * 游标在监听者调用 {@link DocEventBatch#ack()} 后才推进。
  * </p>
  */
 public final class DocNotifier {
@@ -64,15 +65,17 @@ public final class DocNotifier {
         if (closed) {
             return;
         }
+        // 会话关闭后不再向它投递：文档库不再注册会话关闭监听器，这里按执行器状态清理
+        runtime.pruneClosedAgents();
         List<DocAgent> agents = new ArrayList<>(runtime.agents());
         for (DocAgent agent : agents) {
-            if (agent.sink == null || agent.listen.isEmpty() || !agent.config.isListenerAllowed(agent.id)) {
+            if (agent.listener == null || agent.listen.isEmpty() || !agent.config.isListenerAllowed(agent.id)) {
                 continue;
             }
             try {
                 flushAgent(agent);
             } catch (Throwable t) {
-                System.out.println("[DocLib] 投递通知失败：" + agent.id + " " + t.getMessage());
+                System.out.println("[DocLib] 投递事件失败：" + agent.id + " " + t.getMessage());
             }
         }
     }
@@ -84,13 +87,11 @@ public final class DocNotifier {
         if (rows.isEmpty()) {
             return;
         }
-        DocNoticeBatch batch = new DocNoticeBatch();
-        batch.setLibraryId(runtime.id());
-        batch.setWake(agent.wakeOnNotify && !agent.sink.isBusy());
+        List<DocEvent> events = new ArrayList<>();
         long lastSeq = cursor;
         int maxDocs = runtime.config().maxDocsPerNotice;
         for (DocEvent row : rows) {
-            if (batch.size() >= maxDocs) {
+            if (events.size() >= maxDocs) {
                 // 剩余事件留到下一次 flush，不能把 lastSeq 推过未处理的记录
                 break;
             }
@@ -110,37 +111,37 @@ public final class DocNotifier {
             }
             lastSeq = Math.max(lastSeq, row.seq);
             DocSeen seen = runtime.reads().get(agent.id, row.docId);
-            if (seen != null && seen.revision >= row.toRevision) {
+            // 纯正文事件：已经读过该 revision 就不必再提示。
+            // 含 meta 的事件例外：doc_read 看不到 meta，不能用“已读 revision”推断它已经知道字段变化。
+            if (!row.hasMeta() && seen != null && seen.revision >= row.toRevision) {
                 continue;
             }
-            batch.add(new DocNoticeBatch.Item(row.docId, row.action, row.toRevision,
-                    row.fromRevision, displayName(row.author), row.summary), row.seq);
+            events.add(row);
         }
-        if (batch.isEmpty()) {
+        if (events.isEmpty()) {
             ack(agent.id, lastSeq);
             return;
         }
         inflight.put(agent.id, lastSeq);
+        final long ackSeq = lastSeq;
+        DocEventBatch batch = new DocEventBatch(runtime.id(), events, ackSeq,
+                () -> ack(agent.id, ackSeq));
         try {
-            agent.sink.deliver(batch);
+            // doclib 只交原始事件；是否通知、通知文本由 MCP 监听者决定
+            agent.listener.onEvents(batch);
         } catch (Throwable t) {
             inflight.remove(agent.id);
             throw t;
         }
     }
 
-    /** 通知真正注入会话上下文后调用。 */
+    /** 监听者处理完事件（包括主动忽略）后调用。 */
     public void ack(String agentId, long seq) {
         runtime.store().setCursor(agentId, seq);
         Long current = inflight.get(agentId);
         if (current == null || current <= seq) {
             inflight.remove(agentId);
         }
-    }
-
-    private String displayName(String agentId) {
-        DocAgent agent = runtime.agent(agentId);
-        return agent == null ? agentId : agent.displayName;
     }
 
     public void close() {

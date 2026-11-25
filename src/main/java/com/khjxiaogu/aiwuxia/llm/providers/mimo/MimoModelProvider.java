@@ -44,16 +44,62 @@ import com.khjxiaogu.aiwuxia.llm.scheme.Choice;
 import com.khjxiaogu.aiwuxia.llm.scheme.RespScheme;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallContext;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallHistory;
+import com.khjxiaogu.aiwuxia.state.history.message.AudioContent;
+import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.state.history.message.PlainText;
+import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
 import com.khjxiaogu.aiwuxia.utils.JsonBuilder;
 import com.khjxiaogu.webserver.loging.SimpleLogger;
 
 public class MimoModelProvider implements ModelProvider{
 	SimpleLogger logger=new SimpleLogger("Mimo");
+
+	/**
+	 * MiMo 的多模态内容项序列化，格式以小米官方 Chat Completions 文档为准。
+	 * <ul>
+	 *   <li>图片：{@code {"type":"image_url","image_url":{"url":...}}}；</li>
+	 *   <li>视频：{@code {"type":"video_url","video_url":{"url":...}}}。官方还接受内容项顶层的
+	 *       {@code fps}（默认 2）与 {@code media_resolution}（默认 default），这里不设置；</li>
+	 *   <li>音频：{@code {"type":"input_audio","input_audio":{"data":...}}}，{@code data} 同时
+	 *       接受公网 URL 与 {@code data:{mime};base64,...}。</li>
+	 * </ul>
+	 * <p>
+	 * 视频/音频是 MiMo 特有的写法，因此由本提供者自己维护，不放进公共的消息构造器。
+	 * </p>
+	 */
+	static final HistoryRequestBuilder.MediaPartSerializer MEDIA_PARTS = (content, resolver) -> {
+		if (content instanceof ImageContent) {
+			JsonObject part = new JsonObject();
+			part.addProperty("type", "image_url");
+			JsonObject image = new JsonObject();
+			image.addProperty("url", resolver.resolveUrl(((ImageContent) content).getImageUrl()));
+			part.add("image_url", image);
+			return part;
+		}
+		if (content instanceof VideoContent) {
+			JsonObject part = new JsonObject();
+			part.addProperty("type", "video_url");
+			JsonObject video = new JsonObject();
+			video.addProperty("url", resolver.resolveUrl(((VideoContent) content).getVideoUrl()));
+			part.add("video_url", video);
+			return part;
+		}
+		if (content instanceof AudioContent) {
+			JsonObject part = new JsonObject();
+			part.addProperty("type", "input_audio");
+			JsonObject audio = new JsonObject();
+			audio.addProperty("data", resolver.resolveUrl(((AudioContent) content).getAudioUrl()));
+			part.add("input_audio", audio);
+			return part;
+		}
+		return null;
+	};
 	@Override
 	public boolean supports(AIRequest request) {
+		// 视频/音频由 HistoryRequestBuilder 按官方 Chat Completions 的 video_url / input_audio 序列化；
+		// 图片模态故意不声明：没有模型提示的图片请求按既定路由交给火山方舟，避免改变现有看图链路
 		return request.multimodal.canSupport(true, false, true, true);
 	}
 
@@ -112,7 +158,7 @@ public class MimoModelProvider implements ModelProvider{
 			
 		JsonObject jo=new JsonObject();
 		
-		jo.add("messages", HistoryRequestBuilder.createRequest(request));
+		jo.add("messages", HistoryRequestBuilder.createRequest(request, false, MEDIA_PARTS));
 		if(request.hasModelProperty("pro"))
 			jo.addProperty("model", "mimo-v2.6-pro");
 		else
@@ -157,6 +203,8 @@ public class MimoModelProvider implements ModelProvider{
 		// 工具调用的收集、次数限制、权限、许可与执行统一交给 ToolCallManager
 		ToolCallContext toolContext=ToolCallContext.create(request.getToolCallManager(), readable, ToolCallHistory.of(ja));
 		exec.submit(()->{
+			// 本轮工具调用上下文是否以失败收尾；由 endRound 交给需要感知轮次的工具子系统
+			boolean failed=false;
 			try {
 				AtomicBoolean shouldContinueRequest =new AtomicBoolean(true);
 				while(shouldContinueRequest.get()) {
@@ -215,6 +263,7 @@ public class MimoModelProvider implements ModelProvider{
 					usage.add(crnusage);
 				}
 			} catch (Exception e) {
+				failed=true;
 				e.printStackTrace();
 				if(e instanceof IOException)
 					readable.exception((IOException)e);
@@ -227,6 +276,11 @@ public class MimoModelProvider implements ModelProvider{
 			try {
 				readable.addUsage(usage);
 			} finally {
+				// 本轮工具调用结束：先回调轮次监听器（文档库在这里提交草稿并解锁），再关闭输出流
+				toolContext.endRound(readable.isInterrupted()
+						? ToolCallContext.RoundEndReason.INTERRUPTED
+						: failed ? ToolCallContext.RoundEndReason.ERROR
+								: ToolCallContext.RoundEndReason.NORMAL);
 				readable.endContent();
 			}
 		});

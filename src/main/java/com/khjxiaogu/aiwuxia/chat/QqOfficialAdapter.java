@@ -1,19 +1,26 @@
 package com.khjxiaogu.aiwuxia.chat;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,6 +65,10 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
  *   <li>接收：{@code GROUP_AT_MESSAGE_CREATE}、{@code GROUP_MESSAGE_CREATE}、
  *       {@code C2C_MESSAGE_CREATE}，把正文、@ 列表、引用（{@code ref_msg_idx}）、附件统一成
  *       {@link IncomingMessage}；</li>
+ *   <li>群文件：官方接口没有独立的“群文件上传”事件，也没有下载群文件的 OpenAPI。群文件会作为
+ *       群消息附件到达（{@code content_type=file}，需要机器人开启群消息全量模式），附件自带
+ *       下载 URL；这里把它归一化成 {@link IncomingContent.FileBlock} 并记录最近收到的文件，
+ *       供 {@code download_group_file} 工具按文件名/消息 id/链接下载；</li>
  *   <li>发送：{@code POST /v2/groups/{group_openid}/messages} 与
  *       {@code POST /v2/users/{user_openid}/messages}，被动回复自动带上触发消息的
  *       {@code msg_id} 并递增 {@code msg_seq}；图片/视频/语音先上传
@@ -113,8 +124,14 @@ public class QqOfficialAdapter implements ChatAdapter {
 	public static final int FILE_TYPE_VOICE = 3;
 	/** 文件类型：普通文件。 */
 	public static final int FILE_TYPE_FILE = 4;
+	/** 分片上传的文件硬上限（官方文档：文件 200MB）。 */
+	private static final long MAX_CHUNKED_UPLOAD_BYTES = 200L * 1024 * 1024;
+	/** 预上传的 {@code md5_10m} 取文件前约 10MB（官方固定值 10002432 字节）。 */
+	private static final long MD5_10M_BYTES = 10_002_432L;
 	/** 网关鉴权等待上限。 */
 	private static final long READY_TIMEOUT_SECONDS = 30L;
+	/** 最近记录多少个收到的群文件，供下载工具定位。 */
+	private static final int MAX_TRACKED_GROUP_FILES = 100;
 
 	private final String appId;
 	private final String clientSecret;
@@ -165,6 +182,8 @@ public class QqOfficialAdapter implements ChatAdapter {
 	private volatile boolean memberInfoDenied;
 	/** 群信息接口没有权限时置位，避免反复请求。 */
 	private volatile boolean groupInfoDenied;
+	/** 最近收到的群文件，按到达顺序保存；官方接口不提供文件 id，只能靠消息 id/文件名/URL 定位。 */
+	private final Deque<IncomingGroupFile> incomingFiles = new ArrayDeque<>();
 	/** 已处理过的消息 id：官方文档说明同一 msg_id 可能重复推送。 */
 	private final Set<String> seenMessageIds = ConcurrentHashMap.newKeySet();
 	private final Deque<String> seenMessageOrder = new ArrayDeque<>();
@@ -474,13 +493,35 @@ public class QqOfficialAdapter implements ChatAdapter {
 		return sendPrivateMedia(userId, FILE_TYPE_VOICE, file, null);
 	}
 
+	@Override
+	public boolean supportsFileSend() {
+		return true;
+	}
+
+	@Override
+	public CompletableFuture<String> sendFile(String chatId, String file, String name) {
+		if (chatId == null || chatId.isEmpty()) {
+			return failedFuture(new IllegalArgumentException("chatId 为空"));
+		}
+		return sendMediaInternal(chatId, isGroupChat(chatId), FILE_TYPE_FILE, file, null, name);
+	}
+
+	@Override
+	public CompletableFuture<String> sendPrivateFile(String userId, String file, String name) {
+		if (userId == null || userId.isEmpty()) {
+			return failedFuture(new IllegalArgumentException("userId 为空"));
+		}
+		userChats.add(userId);
+		return sendMediaInternal(userId, false, FILE_TYPE_FILE, file, null, name);
+	}
+
 	private CompletableFuture<String> sendPrivateMedia(String userId, int fileType, String file,
 			String caption) {
 		if (userId == null || userId.isEmpty()) {
 			return failedFuture(new IllegalArgumentException("userId 为空"));
 		}
 		userChats.add(userId);
-		return sendMediaInternal(userId, false, fileType, file, caption);
+		return sendMediaInternal(userId, false, fileType, file, caption, null);
 	}
 
 	/**
@@ -494,17 +535,17 @@ public class QqOfficialAdapter implements ChatAdapter {
 		if (chatId == null || chatId.isEmpty()) {
 			return failedFuture(new IllegalArgumentException("chatId 为空"));
 		}
-		return sendMediaInternal(chatId, isGroupChat(chatId), fileType, file, caption);
+		return sendMediaInternal(chatId, isGroupChat(chatId), fileType, file, caption, null);
 	}
 
 	private CompletableFuture<String> sendMediaInternal(String chatId, boolean group, int fileType, String file,
-			String caption) {
+			String caption, String fileName) {
 		final PassiveTicket mediaTicket = reservePassive(chatId, group);
 		final boolean hasCaption = caption != null && !caption.isEmpty();
 		final PassiveTicket captionTicket = hasCaption ? reservePassive(chatId, group) : null;
 		return CompletableFuture.supplyAsync(() -> {
 			try {
-				String fileInfo = uploadMediaSync(chatId, group, fileType, file);
+				String fileInfo = uploadMediaSync(chatId, group, fileType, file, fileName);
 				JsonObject body = new JsonObject();
 				body.addProperty("msg_type", 7);
 				JsonObject media = new JsonObject();
@@ -712,6 +753,122 @@ public class QqOfficialAdapter implements ChatAdapter {
 	@Override
 	public byte[] fetchMedia(String ref) throws Exception {
 		return readMedia(ref);
+	}
+
+	@Override
+	public boolean supportsGroupFileDownload() {
+		return true;
+	}
+
+	/**
+	 * 下载群文件。
+	 * <p>
+	 * 官方接口没有下载群文件的 OpenAPI，只能用群消息附件自带的 URL。{@code reference} 依次按
+	 * 下载链接、消息 id、文件名（精确匹配，再退回包含匹配）在最近收到的群文件里定位；
+	 * 文件只在最近 {@link #MAX_TRACKED_GROUP_FILES} 条内可查，超出后需要用户重新上传。
+	 * </p>
+	 *
+	 * @param chatId    群 openid / 单聊用户 openid，可为空
+	 * @param reference 文件名、消息 id 或下载链接
+	 * @return 文件字节
+	 * @throws IOException 找不到文件、超过大小上限或下载失败
+	 */
+	@Override
+	public byte[] downloadGroupFile(String chatId, String reference) throws IOException {
+		String ref = reference == null ? "" : reference.trim();
+		if (ref.isEmpty()) {
+			throw new IOException("文件引用为空：请传入群文件名、消息 id 或下载链接");
+		}
+		long maxBytes = Long.getLong("qqbot_group_file_max_bytes", 100L * 1024 * 1024);
+		if (ref.startsWith("http://") || ref.startsWith("https://") || ref.startsWith("data:")) {
+			byte[] data = readMedia(ref);
+			if (maxBytes > 0 && data.length > maxBytes) {
+				throw new IOException("文件实际大小 " + data.length + " 字节，超过下载上限 " + maxBytes
+						+ " 字节（可用 -Dqqbot_group_file_max_bytes 调整）");
+			}
+			return data;
+		}
+		IncomingGroupFile file = resolveIncomingFile(chatId, ref);
+		if (file == null) {
+			throw new IOException("没有找到对应的群文件「" + describe(ref)
+					+ "」：请传入群文件名、消息 id 或下载链接；QQ 官方接口只能下载最近收到的群文件，"
+					+ "需要重新上传后才能获取");
+		}
+		if (maxBytes > 0 && file.size > maxBytes) {
+			throw new IOException("群文件「" + file.fileName + "」大小 " + file.size
+					+ " 字节，超过下载上限 " + maxBytes + " 字节（可用 -Dqqbot_group_file_max_bytes 调整）");
+		}
+		byte[] data = readMedia(file.url);
+		if (maxBytes > 0 && data.length > maxBytes) {
+			throw new IOException("群文件「" + file.fileName + "」实际大小 " + data.length
+					+ " 字节，超过下载上限 " + maxBytes + " 字节");
+		}
+		return data;
+	}
+
+	/** 在最近收到的群文件里定位：链接/消息 id 精确匹配，再按文件名精确、包含匹配。 */
+	private IncomingGroupFile resolveIncomingFile(String chatId, String reference) {
+		synchronized (refsLock) {
+			for (Iterator<IncomingGroupFile> it = incomingFiles.descendingIterator(); it.hasNext();) {
+				IncomingGroupFile file = it.next();
+				if (!sameChat(chatId, file.chatId)) {
+					continue;
+				}
+				if (reference.equals(file.url) || reference.equals(file.messageId)) {
+					return file;
+				}
+			}
+			for (Iterator<IncomingGroupFile> it = incomingFiles.descendingIterator(); it.hasNext();) {
+				IncomingGroupFile file = it.next();
+				if (sameChat(chatId, file.chatId) && reference.equalsIgnoreCase(file.fileName)) {
+					return file;
+				}
+			}
+			for (Iterator<IncomingGroupFile> it = incomingFiles.descendingIterator(); it.hasNext();) {
+				IncomingGroupFile file = it.next();
+				if (sameChat(chatId, file.chatId) && !file.fileName.isEmpty()
+						&& file.fileName.toLowerCase(java.util.Locale.ROOT)
+								.contains(reference.toLowerCase(java.util.Locale.ROOT))) {
+					return file;
+				}
+			}
+		}
+		return null;
+	}
+
+	private static boolean sameChat(String chatId, String fileChatId) {
+		return chatId == null || chatId.isEmpty() || fileChatId == null || fileChatId.isEmpty()
+				|| chatId.equals(fileChatId);
+	}
+
+	/** 记录一条收到的群文件，供下载工具定位；只保留最近的文件。 */
+	private void rememberIncomingFile(String chatId, String messageId, String fileName, String url, long size) {
+		if (url == null || url.isEmpty()) {
+			return;
+		}
+		synchronized (refsLock) {
+			incomingFiles.addLast(new IncomingGroupFile(chatId, messageId, fileName, url, size));
+			while (incomingFiles.size() > MAX_TRACKED_GROUP_FILES) {
+				incomingFiles.pollFirst();
+			}
+		}
+	}
+
+	/** 一条收到过的群文件。 */
+	private static final class IncomingGroupFile {
+		final String chatId;
+		final String messageId;
+		final String fileName;
+		final String url;
+		final long size;
+
+		IncomingGroupFile(String chatId, String messageId, String fileName, String url, long size) {
+			this.chatId = chatId == null ? "" : chatId;
+			this.messageId = messageId == null ? "" : messageId;
+			this.fileName = fileName == null ? "" : fileName;
+			this.url = url;
+			this.size = size;
+		}
 	}
 
 	// ==================== 用户资料 ====================
@@ -957,25 +1114,33 @@ public class QqOfficialAdapter implements ChatAdapter {
 	 * 优先使用原始类型；类型不匹配或超过软限制时退回普通文件（file_type=4）。
 	 * </p>
 	 */
-	private String uploadMediaSync(String chatId, boolean group, int fileType, String file) throws IOException {
+	private String uploadMediaSync(String chatId, boolean group, int fileType, String file, String fileName)
+			throws IOException {
 		try {
-			return uploadOnce(chatId, group, fileType, file);
+			return uploadOnce(chatId, group, fileType, file, fileName);
 		} catch (IOException e) {
 			if (fileType == FILE_TYPE_FILE) {
 				throw e;
 			}
 			System.out.println("[QQ官方] 媒体按类型 " + fileType + " 上传失败，改用文件类型重试：" + e.getMessage());
-			return uploadOnce(chatId, group, FILE_TYPE_FILE, file);
+			return uploadOnce(chatId, group, FILE_TYPE_FILE, file, fileName);
 		}
 	}
 
-	private String uploadOnce(String chatId, boolean group, int fileType, String file) throws IOException {
+	private String uploadOnce(String chatId, boolean group, int fileType, String file, String fileName)
+			throws IOException {
+		// 带自定义文件名的普通文件（send_file）走分片上传：官方只在分片/二进制上传时保证 file_name
+		if (fileType == FILE_TYPE_FILE && fileName != null && !fileName.trim().isEmpty()) {
+			return chunkedUpload(chatId, group, file, fileName.trim());
+		}
 		JsonObject body = new JsonObject();
 		body.addProperty("file_type", fileType);
 		body.addProperty("srv_send_msg", false);
 		boolean isUrl = file != null && (file.startsWith("http://") || file.startsWith("https://"));
 		if (isUrl) {
 			body.addProperty("url", file);
+			// 官方文档只在分片/二进制上传时要求 file_name；URL 上传时一并带上，平台支持便可保留自定义名
+			addFileName(body, fileName);
 		} else {
 			byte[] data = readMedia(file);
 			String hostedUrl = null;
@@ -989,9 +1154,11 @@ public class QqOfficialAdapter implements ChatAdapter {
 			}
 			if (hostedUrl != null) {
 				body.addProperty("url", hostedUrl);
+				addFileName(body, fileName);
 			} else {
 				body.addProperty("file_data", Base64.getEncoder().encodeToString(data));
-				body.addProperty("file_name", fileNameFor(file, fileType));
+				body.addProperty("file_name", fileName == null || fileName.trim().isEmpty()
+						? fileNameFor(file, fileType) : fileName.trim());
 			}
 		}
 		String url = apiBase + (group ? "/v2/groups/" : "/v2/users/") + encodePath(chatId) + "/files";
@@ -1001,6 +1168,339 @@ public class QqOfficialAdapter implements ChatAdapter {
 			throw new IOException("上传媒体没有返回 file_info：" + response);
 		}
 		return fileInfo;
+	}
+
+	/** 显式文件名只在非空时写入请求体。 */
+	private static void addFileName(JsonObject body, String fileName) {
+		if (fileName != null && !fileName.trim().isEmpty()) {
+			body.addProperty("file_name", fileName.trim());
+		}
+	}
+
+	/**
+	 * 分片上传：预上传 → 逐片 PUT 到预签名地址并通知完成 → 用 {@code upload_id} 合并。
+	 * <p>
+	 * 官方文档只在分片/二进制上传时保证 {@code file_name}，因此需要“特定文件名”的发送文件一律走这条
+	 * 路径。文件先落到临时文件（URL 来源边下载边校验 200MB 上限），再按服务端下发的分片逐片上传，
+	 * 避免把整个大文件读进内存。
+	 * </p>
+	 *
+	 * @param chatId   群 openid / 用户 openid
+	 * @param group    是否群聊
+	 * @param file     文件引用（http(s) 链接、data URL 或本地路径）
+	 * @param fileName 自定义文件名
+	 * @return 合并后得到的 {@code file_info}
+	 */
+	private String chunkedUpload(String chatId, boolean group, String file, String fileName) throws IOException {
+		UploadSource source = prepareUploadSource(file);
+		try {
+			long size = source.file.length();
+			if (size <= 0) {
+				throw new IOException("文件内容为空：" + describe(file));
+			}
+			if (size > MAX_CHUNKED_UPLOAD_BYTES) {
+				throw new IOException("文件超过 QQ 官方接口 200MB 上限：" + size + " 字节");
+			}
+			FileHashes hashes = hashFile(source.file);
+			JsonObject prepare = prepareUpload(chatId, group, size, fileName, hashes);
+			String uploadId = JsonConfig.getStringOrEmpty(prepare, "upload_id");
+			if (uploadId.isEmpty()) {
+				throw new IOException("预上传没有返回 upload_id：" + prepare);
+			}
+			long defaultBlock = parseSize(JsonConfig.getStringOrEmpty(prepare, "block_size"),
+					5L * 1024 * 1024);
+			JsonArray parts = prepare.has("parts") && prepare.get("parts").isJsonArray()
+					? prepare.getAsJsonArray("parts") : new JsonArray();
+			if (parts.size() == 0) {
+				throw new IOException("预上传没有返回分片：" + prepare);
+			}
+			List<JsonObject> ordered = new ArrayList<>(parts.size());
+			for (JsonElement element : parts) {
+				if (element != null && element.isJsonObject()) {
+					ordered.add(element.getAsJsonObject());
+				}
+			}
+			ordered.sort(Comparator.comparingInt(part -> JsonConfig.getInt(part, "index", 0)));
+			final long retryDelayMs = retryDelayMs(prepare);
+			final long retryTimeoutMs = retryTimeoutMs(prepare);
+			long offset = 0;
+			try (RandomAccessFile raf = new RandomAccessFile(source.file, "r")) {
+				for (JsonObject part : ordered) {
+					int index = JsonConfig.getInt(part, "index", 0);
+					String presigned = JsonConfig.getStringOrEmpty(part, "presigned_url");
+					if (presigned.isEmpty()) {
+						throw new IOException("分片 " + index + " 缺少预签名地址");
+					}
+					long partSize = parseSize(JsonConfig.getStringOrEmpty(part, "block_size"), defaultBlock);
+					partSize = Math.min(partSize, size - offset);
+					if (partSize <= 0) {
+						break;
+					}
+					byte[] data = new byte[(int) partSize];
+					raf.seek(offset);
+					raf.readFully(data);
+					uploadPartWithRetry(chatId, group, uploadId, index, presigned, data, retryDelayMs,
+							retryTimeoutMs);
+					offset += partSize;
+				}
+			}
+			if (offset < size) {
+				throw new IOException("预上传分片未覆盖整个文件：已上传 " + offset + "/" + size + " 字节");
+			}
+			return mergeChunks(chatId, group, uploadId, fileName);
+		} finally {
+			if (source.temporary) {
+				source.file.delete();
+			}
+		}
+	}
+
+	/** 预上传：提交文件大小与三个校验值，拿 upload_id 和分片预签名地址。 */
+	private JsonObject prepareUpload(String chatId, boolean group, long fileSize, String fileName, FileHashes hashes)
+			throws IOException {
+		JsonObject body = new JsonObject();
+		body.addProperty("file_type", FILE_TYPE_FILE);
+		body.addProperty("file_size", String.valueOf(fileSize));
+		body.addProperty("file_name", fileName);
+		body.addProperty("md5", hashes.md5);
+		body.addProperty("sha1", hashes.sha1);
+		body.addProperty("md5_10m", hashes.md5_10m);
+		return postJson(chatApiUrl(chatId, group, "/upload_prepare"), accessToken(), body);
+	}
+
+	/** 通知服务端某个分片已上传完成。 */
+	private void finishPart(String chatId, boolean group, String uploadId, int index, int size, String md5)
+			throws IOException {
+		JsonObject body = new JsonObject();
+		body.addProperty("upload_id", uploadId);
+		body.addProperty("part_index", index);
+		body.addProperty("block_size", String.valueOf(size));
+		body.addProperty("md5", md5);
+		postJson(chatApiUrl(chatId, group, "/upload_part_finish"), accessToken(), body);
+	}
+
+	/** 全部分片完成后用 upload_id 合并，返回 file_info。 */
+	private String mergeChunks(String chatId, boolean group, String uploadId, String fileName) throws IOException {
+		JsonObject body = new JsonObject();
+		body.addProperty("file_type", FILE_TYPE_FILE);
+		body.addProperty("srv_send_msg", false);
+		body.addProperty("file_name", fileName);
+		body.addProperty("upload_id", uploadId);
+		JsonObject response = postJson(chatApiUrl(chatId, group, "/files"), accessToken(), body);
+		String fileInfo = JsonConfig.getStringOrEmpty(response, "file_info");
+		if (fileInfo.isEmpty()) {
+			throw new IOException("分片合并没有返回 file_info：" + response);
+		}
+		return fileInfo;
+	}
+
+	/** 按 chatId 拼出群/单聊的 OpenAPI 地址。 */
+	private String chatApiUrl(String chatId, boolean group, String suffix) {
+		return apiBase + (group ? "/v2/groups/" : "/v2/users/") + encodePath(chatId) + suffix;
+	}
+
+	/**
+	 * 把任意文件引用落到本地临时文件：URL 边下载边校验 200MB 上限；data URL 解码后写盘；
+	 * 本地路径直接使用。
+	 */
+	private static UploadSource prepareUploadSource(String file) throws IOException {
+		if (file == null || file.isEmpty()) {
+			throw new IOException("文件引用为空");
+		}
+		if (file.startsWith("data:")) {
+			byte[] data = readMedia(file);
+			File temp = File.createTempFile("qqbot-upload-", ".bin");
+			try (OutputStream out = new FileOutputStream(temp)) {
+				out.write(data);
+			} catch (IOException | RuntimeException e) {
+				temp.delete();
+				throw e;
+			}
+			return new UploadSource(temp, true);
+		}
+		if (file.startsWith("http://") || file.startsWith("https://")) {
+			return new UploadSource(downloadToTemp(file), true);
+		}
+		File local = new File(file);
+		if (local.isFile()) {
+			return new UploadSource(local, false);
+		}
+		throw new IOException("无法读取文件：" + describe(file));
+	}
+
+	/** 下载到临时文件，超过 200MB 上限立即失败并删除半成品。 */
+	private static File downloadToTemp(String url) throws IOException {
+		File temp = File.createTempFile("qqbot-upload-", ".bin");
+		long total = 0;
+		try (InputStream in = FileUtil.fetch(url); OutputStream out = new FileOutputStream(temp)) {
+			byte[] buffer = new byte[64 * 1024];
+			int read;
+			while ((read = in.read(buffer)) != -1) {
+				total += read;
+				if (total > MAX_CHUNKED_UPLOAD_BYTES) {
+					throw new IOException("文件超过 QQ 官方接口 200MB 上限");
+				}
+				out.write(buffer, 0, read);
+			}
+		} catch (IOException | RuntimeException e) {
+			temp.delete();
+			throw e;
+		}
+		return temp;
+	}
+
+	/**
+	 * 上传一个分片并通知完成；失败时按官方 {@code upload_config} 的重试参数重试。
+	 * <p>
+	 * PUT 是幂等的（同一分片重复写会覆盖），因此 PUT 成功但 finish 失败时重试整个分片是安全的。
+	 * </p>
+	 */
+	private void uploadPartWithRetry(String chatId, boolean group, String uploadId, int index, String presigned,
+			byte[] data, long retryDelayMs, long retryTimeoutMs) throws IOException {
+		String md5 = md5Hex(data);
+		long startedAt = System.currentTimeMillis();
+		while (true) {
+			try {
+				uploadPart(presigned, data);
+				finishPart(chatId, group, uploadId, index, data.length, md5);
+				return;
+			} catch (IOException e) {
+				if (System.currentTimeMillis() - startedAt >= retryTimeoutMs) {
+					throw e;
+				}
+				System.out.println("[QQ官方] 分片 " + index + " 上传失败，稍后重试：" + e.getMessage());
+				try {
+					Thread.sleep(retryDelayMs);
+				} catch (InterruptedException interrupted) {
+					Thread.currentThread().interrupt();
+					throw new IOException("分片上传被中断", interrupted);
+				}
+			}
+		}
+	}
+
+	/** 官方下发的分片重试延迟（毫秒），默认 1 秒；下限 200ms 避免异常配置把重试打成忙等。 */
+	private static long retryDelayMs(JsonObject prepare) {
+		JsonObject config = JsonConfig.getObjectOrEmpty(prepare, "upload_config");
+		return Math.max(200L, JsonConfig.getLong(config, "retry_delay", 1L) * 1000L);
+	}
+
+	/** 官方下发的分片重试总超时（毫秒），默认 5 分钟。 */
+	private static long retryTimeoutMs(JsonObject prepare) {
+		JsonObject config = JsonConfig.getObjectOrEmpty(prepare, "upload_config");
+		long seconds = JsonConfig.getLong(config, "retry_timeout", 300L);
+		return Math.max(1000L, seconds * 1000L);
+	}
+
+	/** 一次 PUT 一个分片到预签名地址（预签名 URL 自带鉴权，不能再加 Authorization 头）。 */
+	private static void uploadPart(String presignedUrl, byte[] data) throws IOException {
+		HttpURLConnection connection = (HttpURLConnection) new URL(presignedUrl).openConnection();
+		try {
+			connection.setRequestMethod("PUT");
+			connection.setDoOutput(true);
+			connection.setConnectTimeout(30000);
+			connection.setReadTimeout(120000);
+			connection.setFixedLengthStreamingMode(data.length);
+			connection.setRequestProperty("Content-Type", "application/octet-stream");
+			try (OutputStream out = connection.getOutputStream()) {
+				out.write(data);
+			}
+			int status = connection.getResponseCode();
+			if (status < 200 || status >= 300) {
+				String text = "";
+				InputStream error = connection.getErrorStream();
+				if (error != null) {
+					try (InputStream in = error) {
+						text = new String(FileUtil.readAll(in), StandardCharsets.UTF_8);
+					}
+				}
+				throw new IOException("分片上传失败 HTTP " + status + "：" + describe(text));
+			}
+		} finally {
+			connection.disconnect();
+		}
+	}
+
+	/** 计算整个文件的 md5 / sha1 与前 10MB 的 md5。 */
+	private static FileHashes hashFile(File file) throws IOException {
+		try {
+			MessageDigest md5 = MessageDigest.getInstance("MD5");
+			MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
+			MessageDigest md5_10m = MessageDigest.getInstance("MD5");
+			long left = MD5_10M_BYTES;
+			try (InputStream in = new FileInputStream(file)) {
+				byte[] buffer = new byte[64 * 1024];
+				int read;
+				while ((read = in.read(buffer)) != -1) {
+					md5.update(buffer, 0, read);
+					sha1.update(buffer, 0, read);
+					if (left > 0) {
+						int take = (int) Math.min(left, read);
+						md5_10m.update(buffer, 0, take);
+						left -= take;
+					}
+				}
+			}
+			return new FileHashes(hex(md5.digest()), hex(sha1.digest()), hex(md5_10m.digest()));
+		} catch (NoSuchAlgorithmException e) {
+			throw new IOException("缺少哈希算法", e);
+		}
+	}
+
+	/** 单个分片的 MD5。 */
+	private static String md5Hex(byte[] data) throws IOException {
+		try {
+			return hex(MessageDigest.getInstance("MD5").digest(data));
+		} catch (NoSuchAlgorithmException e) {
+			throw new IOException("缺少 MD5 算法", e);
+		}
+	}
+
+	/** 字节转小写十六进制。 */
+	private static String hex(byte[] bytes) {
+		char[] digits = "0123456789abcdef".toCharArray();
+		StringBuilder builder = new StringBuilder(bytes.length * 2);
+		for (byte b : bytes) {
+			builder.append(digits[(b >> 4) & 0xF]).append(digits[b & 0xF]);
+		}
+		return builder.toString();
+	}
+
+	/** 解析服务端下发的大小字符串（字节），非法时用默认值。 */
+	private static long parseSize(String raw, long fallback) {
+		if (raw == null || raw.trim().isEmpty()) {
+			return fallback;
+		}
+		try {
+			long value = Long.parseLong(raw.trim());
+			return value > 0 ? value : fallback;
+		} catch (NumberFormatException e) {
+			return fallback;
+		}
+	}
+
+	/** 分片上传的源文件：{@code temporary} 表示用完需要删除。 */
+	private static final class UploadSource {
+		final File file;
+		final boolean temporary;
+
+		UploadSource(File file, boolean temporary) {
+			this.file = file;
+			this.temporary = temporary;
+		}
+	}
+
+	/** 预上传需要的三个校验值。 */
+	private static final class FileHashes {
+		final String md5;
+		final String sha1;
+		final String md5_10m;
+
+		FileHashes(String md5, String sha1, String md5_10m) {
+			this.md5 = md5;
+			this.sha1 = sha1;
+			this.md5_10m = md5_10m;
+		}
 	}
 
 	/**
@@ -1420,11 +1920,20 @@ public class QqOfficialAdapter implements ChatAdapter {
 		}
 		JsonArray attachments = JsonConfig.getArray(data, "attachments");
 		if (attachments != null) {
+			String chatId = JsonConfig.getStringOrEmpty(data, "group_openid");
+			if (chatId.isEmpty()) {
+				JsonObject author = JsonConfig.getObjectOrEmpty(data, "author");
+				chatId = JsonConfig.getStringOrEmpty(author, "user_openid");
+				if (chatId.isEmpty()) {
+					chatId = JsonConfig.getStringOrEmpty(author, "id");
+				}
+			}
+			String messageId = JsonConfig.getStringOrEmpty(data, "id");
 			for (JsonElement element : attachments) {
 				if (element == null || !element.isJsonObject()) {
 					continue;
 				}
-				IncomingContent attachment = attachmentContent(element.getAsJsonObject());
+				IncomingContent attachment = attachmentContent(element.getAsJsonObject(), chatId, messageId);
 				if (attachment != null) {
 					contents.add(attachment);
 				}
@@ -1441,11 +1950,15 @@ public class QqOfficialAdapter implements ChatAdapter {
 		return contents;
 	}
 
-	/** 附件 → 内容块：图片进入图片块，语音/视频/文件用占位文本保留信息。 */
-	private static IncomingContent attachmentContent(JsonObject attachment) {
+	/**
+	 * 附件 → 内容块：图片进入图片块；语音/视频保留占位文本；其它文件（{@code content_type=file}
+	 * 或普通 MIME）进入文件块并记录，供下载工具按文件名/消息 id 定位。
+	 */
+	private IncomingContent attachmentContent(JsonObject attachment, String chatId, String messageId) {
 		String contentType = JsonConfig.getStringOrEmpty(attachment, "content_type");
 		String url = JsonConfig.getStringOrEmpty(attachment, "url");
 		String filename = JsonConfig.getStringOrEmpty(attachment, "filename");
+		long size = JsonConfig.getLong(attachment, "size", -1L);
 		if (contentType.startsWith("image/") || "image".equals(contentType) || "picture".equals(contentType)) {
 			return new IncomingContent.ImageBlock(url, filename);
 		}
@@ -1461,7 +1974,10 @@ public class QqOfficialAdapter implements ChatAdapter {
 		if (contentType.startsWith("video/")) {
 			return new IncomingContent.TextBlock("（视频：" + (filename.isEmpty() ? "视频" : filename) + "）");
 		}
-		return new IncomingContent.TextBlock("（文件：" + (filename.isEmpty() ? "文件" : filename) + "）");
+		rememberIncomingFile(chatId, messageId, filename, url, size);
+		System.out.println("[QQ官方] 收到群文件：" + (filename.isEmpty() ? "未命名" : filename)
+				+ (size >= 0 ? "（" + size + " 字节）" : "") + (url.isEmpty() ? "（没有下载地址）" : ""));
+		return new IncomingContent.FileBlock(url, filename, size);
 	}
 
 	/**

@@ -158,9 +158,9 @@ public class QwenImageMcp implements ToolProvider {
 	private ToolData createEditTool() {
 		return new ToolData.Builder(TOOL_EDIT,
 				"使用 Qwen-Image 2.1 对参考图进行改图，或参考多张图生成新图。"
-						+ "参考图用对象存储 ID 传入，最多 10 张，按顺序对应图1、图2…；"
+						+ "参考图最多 10 张，按顺序对应图1、图2…；"
 						+ "生成后需要使用发送图片工具发给用户。")
-				.putParam("reference", "参考图对象存储 ID，多张用英文逗号分隔，最多 10 张。", "参考图")
+				.putUrlParam("reference", "参考图（多张用英文逗号分隔，最多 10 张）", "参考图")
 				.putParam("prompt", "编辑指令或画面提示词，支持中文，例如“把外套换成蓝色”。", "提示词")
 				.putParam("negative", "负面提示词，可留空使用默认中文负面词。", "负面提示词")
 				.putParam("fast", "是否使用 8 步加速 LoRA，默认 false。", "极速草稿")

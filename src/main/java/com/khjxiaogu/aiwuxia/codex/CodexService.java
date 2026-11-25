@@ -2106,6 +2106,254 @@ public final class CodexService implements Closeable {
         return result;
     }
 
+    // ==================== 文件传输（对象存储 ↔ 项目工作目录） ====================
+
+    /** 单次文件传输的字节上限：对象存储接口按整块读写，避免误传超大文件撑爆内存。 */
+    private static final long MAX_TRANSFER_BYTES = 64L * 1024 * 1024;
+    /** 对象存储 id 允许的字符：内容哈希、UUID 或带扩展名的键；不允许路径分隔符，防止越出存储目录。 */
+    private static final java.util.regex.Pattern STORAGE_FILE_ID = java.util.regex.Pattern
+            .compile("[A-Za-z0-9._-]{1,200}");
+    /**
+     * 文件传输的固定目录（相对线程工作目录）。
+     * <p>
+     * AI 不能选目录，只能在这个目录下放文件；需要换位置时改这一行常量。
+     * </p>
+     */
+    private static final String TRANSFER_DIR = "ai_files";
+    /** 文件名里不允许的字符：路径分隔符、Windows 保留字符与控制字符。 */
+    private static final java.util.regex.Pattern INVALID_FILE_NAME = java.util.regex.Pattern
+            .compile("[\\\\/:*?\"<>|\\x00-\\x1F]");
+    /** Windows 保留设备名，不能用作文件名。 */
+    private static final java.util.regex.Pattern RESERVED_FILE_NAME = java.util.regex.Pattern
+            .compile("(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\\..*)?$");
+
+    /**
+     * 从对象存储取文件，写到 Codex 线程固定接收目录 {@value #TRANSFER_DIR} 下。
+     * <p>
+     * 目录由代码固定，AI 只能给纯文件名（不能带目录）；这样既不会覆盖项目源码，也不会越出项目。
+     * 目标文件已存在时默认报错，确实要覆盖传 {@code overwrite=true}。
+     * </p>
+     *
+     * @param owner     归属键（QQ 会话或 MCP 用户）
+     * @param threadId  线程 id，可为空（用该归属键的默认线程；还没有线程时用默认项目目录）
+     * @param fileId    对象存储文件 id（不能是链接或本地路径）
+     * @param fileName  目标文件名（纯文件名，例如 icon.png；不能带目录）
+     * @param overwrite 目标已存在时是否覆盖
+     * @return {@code {ok, file_id, path, relative, bytes, overwritten}} 或 {@code {ok:false, error}}
+     */
+    public JsonObject pullFile(String owner, String threadId, String fileId, String fileName, boolean overwrite) {
+        try {
+            String id = fileId == null ? "" : fileId.trim();
+            if (id.isEmpty()) {
+                return error("缺少 file_id（对象存储文件 id）");
+            }
+            if (!STORAGE_FILE_ID.matcher(id).matches()) {
+                return error("file_id 只能是对象存储 id（字母、数字、点、下划线、短横线），"
+                        + "不要传链接、本地路径或带目录的键");
+            }
+            String name = checkFileName(fileName);
+            ObjectStorageProvider store = storage;
+            if (store == null) {
+                return error("没有可用的对象存储，无法取文件（检查 MCP/QQ 的对象存储配置）");
+            }
+            File dir = transferDir(fileBaseDir(owner, threadId));
+            File target = transferTarget(dir, name);
+            boolean existed = target.exists();
+            if (existed && !overwrite) {
+                return error("固定目录里已有同名文件：" + target.getPath() + "；确实要覆盖请传 overwrite=true");
+            }
+            byte[] data;
+            try {
+                data = store.download(id, null);
+            } catch (Throwable t) {
+                return error("对象存储下载失败：" + describe(t)
+                        + "（确认 file_id 正确、文件仍然存在；图片/视频 id 通常是 72 位哈希）");
+            }
+            if (data == null || data.length == 0) {
+                return error("对象存储返回了空文件：" + id);
+            }
+            if (data.length > MAX_TRANSFER_BYTES) {
+                return error("文件过大：" + data.length + " 字节，单次上限 " + MAX_TRANSFER_BYTES + " 字节");
+            }
+            FileUtil.transfer(data, target);
+            JsonObject json = new JsonObject();
+            json.addProperty("ok", true);
+            json.addProperty("file_id", id);
+            json.addProperty("path", target.getAbsolutePath());
+            json.addProperty("relative", TRANSFER_DIR + "/" + name);
+            json.addProperty("bytes", data.length);
+            json.addProperty("overwritten", existed);
+            json.addProperty("next", "文件已就位；如需让 Codex 使用，请在 codex_send 的任务里写相对路径 "
+                    + TRANSFER_DIR + "/" + name);
+            log("已从对象存储取文件 " + shorten(id, 80) + " → " + target.getPath());
+            return json;
+        } catch (Throwable t) {
+            return failure(t);
+        }
+    }
+
+    /**
+     * 把固定接收目录 {@value #TRANSFER_DIR} 里的文件上传到对象存储，返回可供其它工具使用的文件 id。
+     * <p>
+     * 目录由代码固定，AI 只能给纯文件名；项目其它位置的文件不能通过本工具外传。
+     * 上传不带扩展名，键与现有图片/媒体 id 约定一致（72 位内容哈希）。
+     * </p>
+     *
+     * @param owner    归属键
+     * @param threadId 线程 id，可为空（用该线程的默认目录）
+     * @param fileName 固定目录里的文件名（纯文件名，不能带目录）
+     * @return {@code {ok, file_id, path, relative, bytes}} 或 {@code {ok:false, error}}
+     */
+    public JsonObject pushFile(String owner, String threadId, String fileName) {
+        try {
+            String name = checkFileName(fileName);
+            ObjectStorageProvider store = storage;
+            if (store == null) {
+                return error("没有可用的对象存储，无法上传文件");
+            }
+            File dir = transferDir(fileBaseDir(owner, threadId));
+            File source = transferTarget(dir, name);
+            if (!source.isFile()) {
+                return error("固定目录里没有这个文件：" + source.getPath() + "（目录：" + TRANSFER_DIR + "）");
+            }
+            long length = source.length();
+            if (length <= 0) {
+                return error("文件是空的，无法上传：" + source.getPath());
+            }
+            if (length > MAX_TRANSFER_BYTES) {
+                return error("文件过大：" + length + " 字节，单次上限 " + MAX_TRANSFER_BYTES + " 字节");
+            }
+            byte[] data = java.nio.file.Files.readAllBytes(source.toPath());
+            // 不带扩展名：与其它工具一致，id 就是 72 位内容哈希
+            String id = store.uploadIfNotExists(data, null, null);
+            if (id == null || id.isEmpty()) {
+                return error("上传对象存储后没有返回文件 id");
+            }
+            JsonObject json = new JsonObject();
+            json.addProperty("ok", true);
+            json.addProperty("file_id", id);
+            json.addProperty("path", source.getAbsolutePath());
+            json.addProperty("relative", TRANSFER_DIR + "/" + name);
+            json.addProperty("bytes", data.length);
+            log("已把固定目录文件上传到对象存储：" + source.getPath() + " → " + shorten(id, 80));
+            return json;
+        } catch (Throwable t) {
+            return failure(t);
+        }
+    }
+
+    /**
+     * 文件传输的基准目录：优先使用指定线程/默认线程的 {@code cwd}；
+     * 还没有线程时退回该归属键的默认项目目录（不为了传文件去启动 Codex）。
+     *
+     * @param owner    归属键
+     * @param threadId 线程 id，可为空
+     * @return 规范化后的项目目录
+     * @throws IOException 目录不存在或线程不属于当前归属键
+     */
+    private File fileBaseDir(String owner, String threadId) throws IOException {
+        CodexThreadState state;
+        if (threadId != null && !threadId.trim().isEmpty()) {
+            String id = threadId.trim();
+            state = threadOf(id);
+            if (state == null) {
+                throw new IOException("未知线程：" + id + "（可用 codex_threads 查看）");
+            }
+            if (owner != null && !owner.equals(state.owner)) {
+                throw new IOException("线程不属于当前会话：" + id);
+            }
+        } else {
+            String current;
+            synchronized (this) {
+                current = ownerDefault.get(owner);
+            }
+            state = current == null ? null : threadOf(current);
+        }
+        File base = state != null ? new File(state.cwd) : resolveOwnerCwd(owner, null);
+        if (!base.isDirectory()) {
+            throw new IOException("项目工作目录不存在：" + base.getPath());
+        }
+        return base.getCanonicalFile();
+    }
+
+    /**
+     * 固定接收目录：{@code <项目cwd>/ai_files}，不存在时自动创建。
+     * <p>
+     * 目录名由常量 {@link #TRANSFER_DIR} 固定，AI 无法指定其它目录。
+     * </p>
+     *
+     * @param base 项目工作目录（已规范化）
+     * @return 已创建的固定目录
+     * @throws IOException 无法创建或目录越出项目
+     */
+    private static File transferDir(File base) throws IOException {
+        File dir = new File(base, TRANSFER_DIR).getCanonicalFile();
+        java.nio.file.Path basePath = base.toPath();
+        java.nio.file.Path dirPath = dir.toPath();
+        if (dirPath.equals(basePath) || !dirPath.startsWith(basePath)) {
+            throw new IOException("固定接收目录越出了项目工作目录：" + dir);
+        }
+        if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) {
+            throw new IOException("无法创建固定接收目录：" + dir.getPath());
+        }
+        return dir;
+    }
+
+    /**
+     * 解析固定目录里的目标文件，并挡住通过软链指向目录外的文件。
+     *
+     * @param dir  固定接收目录（已规范化）
+     * @param name 已校验的纯文件名
+     * @return 规范化后的目标文件（可能不存在）
+     * @throws IOException 目标越出固定目录
+     */
+    private static File transferTarget(File dir, String name) throws IOException {
+        File target = new File(dir, name).getCanonicalFile();
+        if (!dir.equals(target.getParentFile())) {
+            throw new IOException("目标文件越出了固定接收目录：" + name);
+        }
+        return target;
+    }
+
+    /**
+     * 校验调用方给的文件名：只允许纯文件名，不能带目录、盘符或 Windows 保留字符。
+     *
+     * @param fileName 文件名
+     * @return 去掉首尾空白后的文件名
+     * @throws IOException 文件名不合法
+     */
+    private static String checkFileName(String fileName) throws IOException {
+        String name = fileName == null ? "" : fileName.trim();
+        if (name.isEmpty()) {
+            throw new IOException("缺少 name（文件名，例如 icon.png）");
+        }
+        if (".".equals(name) || "..".equals(name)) {
+            throw new IOException("name 不能是 . 或 ..");
+        }
+        if (name.length() > 120) {
+            throw new IOException("name 太长（最多 120 个字符）");
+        }
+        if (INVALID_FILE_NAME.matcher(name).find()) {
+            throw new IOException("name 只能是纯文件名，不能带目录或这些字符：\\ / : * ? \" < > |");
+        }
+        if (name.endsWith(".") || name.endsWith(" ")) {
+            throw new IOException("name 不能以点或空格结尾");
+        }
+        if (RESERVED_FILE_NAME.matcher(name).matches()) {
+            throw new IOException("name 是系统保留名，请换一个：" + name);
+        }
+        return name;
+    }
+
+    /** 异常转一行可读文本，供工具结果使用。 */
+    private static String describe(Throwable t) {
+        if (t == null) {
+            return "未知错误";
+        }
+        String message = t.getMessage();
+        return message == null || message.trim().isEmpty() ? t.getClass().getSimpleName() : message;
+    }
+
     /** 读取本地图片字节；失败或过大返回 null。 */
     private byte[] readImageBytes(String path) {
         if (path == null || path.isEmpty()) {

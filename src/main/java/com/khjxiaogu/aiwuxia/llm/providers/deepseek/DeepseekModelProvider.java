@@ -300,6 +300,8 @@ public class DeepseekModelProvider implements ModelProvider{
 		// 工具调用的收集、次数限制、权限、许可与执行统一交给 ToolCallManager
 		ToolCallContext toolContext=ToolCallContext.create(request.getToolCallManager(), readable, ToolCallHistory.of(ja));
 		exec.submit(()->{
+			// 本轮工具调用上下文是否以失败收尾；由 endRound 交给需要感知轮次的工具子系统
+			boolean failed=false;
 			try {
 				AtomicBoolean shouldContinueRequest =new AtomicBoolean(true);
 				while(shouldContinueRequest.get()) {
@@ -396,6 +398,7 @@ public class DeepseekModelProvider implements ModelProvider{
 					DeepseekApiError streamFailure=streamError.get();
 					if(streamFailure!=null) {
 						// 流内错误：停止生成并把原因交给输出流，已经产出的内容保留
+						failed=true;
 						readable.exception(logApiError(streamFailure,requestJson));
 						break;
 					}
@@ -404,6 +407,7 @@ public class DeepseekModelProvider implements ModelProvider{
 				}
 			} catch (Exception e) {
 				// 统一转换为携带服务端错误信息的 IOException：非 IO 异常同样要让调用方拿到失败原因
+				failed=true;
 				readable.exception(logApiError(e,PHASE_STREAM,gs.toJson(jo)));
 			}
 			logger.info("=================Usage===============\n");
@@ -412,6 +416,11 @@ public class DeepseekModelProvider implements ModelProvider{
 			try {
 				readable.addUsage(usage);
 			}finally {
+				// 本轮工具调用结束：先回调轮次监听器（文档库在这里提交草稿并解锁），再关闭输出流
+				toolContext.endRound(readable.isInterrupted()
+						? ToolCallContext.RoundEndReason.INTERRUPTED
+						: failed ? ToolCallContext.RoundEndReason.ERROR
+								: ToolCallContext.RoundEndReason.NORMAL);
 				readable.endContent();
 			}
 		});
