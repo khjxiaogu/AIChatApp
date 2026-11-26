@@ -17,16 +17,16 @@ import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
-import com.khjxiaogu.aiwuxia.modelproxy.LocalModelAttachments;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelReferences;
 import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
 import com.khjxiaogu.aiwuxia.modelproxy.api.H3Params;
 import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
-import com.khjxiaogu.aiwuxia.objectstorage.LocalStorage;
 import com.khjxiaogu.aiwuxia.objectstorage.ObjectStorageProvider;
 import com.khjxiaogu.aiwuxia.state.history.message.ImageContent;
 import com.khjxiaogu.aiwuxia.state.history.message.VideoContent;
 import com.khjxiaogu.aiwuxia.utils.JsonConfig;
+import com.khjxiaogu.aiwuxia.utils.RemoteUrl;
 import com.khjxiaogu.aiwuxia.vision.FoleyVideoUsage;
 import com.khjxiaogu.aiwuxia.vision.H3VideoApi;
 import com.khjxiaogu.aiwuxia.vision.H3VideoUsage;
@@ -190,20 +190,20 @@ public class H3VideoMcp implements ToolProvider {
 		ToolData.Builder builder = new ToolData.Builder(effectiveMode.toolName(), description)
 				.putParam("prompt", "视频提示词：描述画面、镜头运动即可，用英文短句。开头是视频风格，中间以[1s-2s]类似的格式表达时间戳和动作，最后是视频统一指导。",
 						"提示词")
-				.putOptionalUrlParam("reference",
+				.putOptionalDeferredUrlParam("reference",
 						"参考图（可留空；1 张=首帧，2 张用逗号分隔=首帧+尾帧）"
 								+ "（尾帧必须与首帧同时给出）。首帧会拉伸到所选画布，建议参考图本身就是目标比例。",
 						"参考图")
-				.putOptionalUrlParam("video",
+				.putOptionalDeferredUrlParam("video",
 						"参考视频（与 reference 二选一）。使用 ComfyUI 的视频生视频工作流："
 								+ "1 个视频=取所选片段的末帧作为首帧（延续生成）；2 个用逗号分隔="
 								+ "第一个视频的末帧 + 第二个视频的首帧，作为中段的首/尾帧。",
 						"参考视频")
-				.putOptionalUrlParam("first",
+				.putOptionalDeferredUrlParam("first",
 						"首帧来源（图片或视频，二选一）。与 reference/video 二选一；"
 								+ "视频取片段末帧，图片直接作为首帧。",
 						"首帧来源")
-				.putOptionalUrlParam("last",
+				.putOptionalDeferredUrlParam("last",
 						"尾帧来源（图片或视频，二选一）。必须同时提供 first；"
 								+ "视频取片段首帧，图片直接作为尾帧。",
 						"尾帧来源")
@@ -281,11 +281,11 @@ public class H3VideoMcp implements ToolProvider {
 							} else {
 								for (int i = 0; i < references.size(); i++) {
 									String id = references.get(i);
-									if (!tos.exists(id, output == null ? null : output::addUsage)) {
+									AttachmentRef ref = registerAttachment(reqid, attachments, tos, id,
+											AttachmentRef.KIND_IMAGE, "png", null, output);
+									if (ref == null) {
 										return ToolResult.text("参数错误：参考图" + id + "已清理或不存在。");
 									}
-									AttachmentRef ref = registerAttachment(reqid, attachments, tos, id,
-											AttachmentRef.KIND_IMAGE, "png", id + ".png", null, output);
 									if (i == 0) {
 										firstFrame = ref.id;
 									} else {
@@ -294,11 +294,11 @@ public class H3VideoMcp implements ToolProvider {
 								}
 								for (int i = 0; i < referenceVideos.size(); i++) {
 									String id = referenceVideos.get(i);
-									if (!tos.exists(id, output == null ? null : output::addUsage)) {
+									AttachmentRef ref = registerAttachment(reqid, attachments, tos, id,
+											AttachmentRef.KIND_VIDEO, "mp4", null, output);
+									if (ref == null) {
 										return ToolResult.text("参数错误：参考视频" + id + "已清理或不存在。");
 									}
-									AttachmentRef ref = registerAttachment(reqid, attachments, tos, id,
-											AttachmentRef.KIND_VIDEO, "mp4", id + ".mp4", null, output);
 									if (i == 0) {
 										firstVideo = ref.id;
 									} else {
@@ -335,47 +335,100 @@ public class H3VideoMcp implements ToolProvider {
 
 	/**
 	 * 登记一个首/尾来源（图片或视频），返回附件引用。
-	 * <p>需要先下载一次判断 mime，字节随附件一起保存，避免客户端拉取时重复下载。</p>
+	 * <p>
+	 * 类型判断不再为了拿 MIME 下载整个文件：对象 id 走 {@link ObjectStorageProvider#contentType(String, java.util.function.Consumer)}
+	 * （本地存储只读文件头、远端存储按扩展名/HEAD 查询），URL 走扩展名或 HEAD 探测。
+	 * 外部 URL 只登记成 URL 附件，由本地模型客户端下载，服务端不转存。
+	 * </p>
 	 *
 	 * @param reqid    请求 ID
 	 * @param refs     附件列表
-	 * @param id       对象存储 id
+	 * @param source   引用：对象 id、项目链接或外部 URL
 	 * @param tos      对象存储
 	 * @param output   用量输出，可为 null
 	 * @return 附件引用；不存在或既不是图片也不是视频时返回 null
-	 * @throws IOException 读取失败
 	 */
-	private static AttachmentRef registerSource(String reqid, List<AttachmentRef> refs, String id,
-			ObjectStorageProvider tos, AIOutput output) throws IOException {
-		if (!tos.exists(id, output == null ? null : output::addUsage)) {
+	private static AttachmentRef registerSource(String reqid, List<AttachmentRef> refs, String source,
+			ObjectStorageProvider tos, AIOutput output) {
+		if (source == null || source.trim().isEmpty()) {
 			return null;
 		}
-		byte[] bytes = tos.download(id, output == null ? null : output::addUsage);
-		String mime = LocalStorage.detectMimeType(bytes, id);
+		String text = source.trim();
+		java.util.function.Consumer<com.khjxiaogu.aiwuxia.llm.scheme.UsageIntf<?>> usage = output == null ? null
+				: output::addUsage;
+		String mime = "";
+		String objectId = RemoteUrl.objectIdOf(text);
+		try {
+			if (objectId != null && tos != null && tos.exists(objectId, usage)) {
+				mime = tos.contentType(objectId, usage);
+			}
+		} catch (IOException ex) {
+			System.err.println("[H3] 读取对象类型失败，改用链接/扩展名判断：" + objectId + " 错误=" + ex.getMessage());
+		}
+		if (!mime.startsWith("image/") && !mime.startsWith("video/") && RemoteUrl.isHttp(text)) {
+			mime = RemoteUrl.probeContentType(text);
+		}
+		if (!mime.startsWith("image/") && !mime.startsWith("video/") && RemoteUrl.isDataUrl(text)) {
+			mime = RemoteUrl.mimeOfDataUrl(text);
+		}
+		if (!mime.startsWith("image/") && !mime.startsWith("video/")) {
+			mime = RemoteUrl.mimeOfExtension(RemoteUrl.extensionOf(text));
+		}
 		if (mime.startsWith("image/")) {
-			return registerAttachment(reqid, refs, tos, id, AttachmentRef.KIND_IMAGE, "png", id + ".png", bytes,
-					output);
+			AttachmentRef ref = registerAttachment(reqid, refs, tos, text, AttachmentRef.KIND_IMAGE,
+					formatForMime(mime, "png"), null, output);
+			return ref;
 		}
 		if (mime.startsWith("video/")) {
-			return registerAttachment(reqid, refs, tos, id, AttachmentRef.KIND_VIDEO, "mp4", id + ".mp4", bytes,
-					output);
+			AttachmentRef ref = registerAttachment(reqid, refs, tos, text, AttachmentRef.KIND_VIDEO,
+					formatForMime(mime, "mp4"), null, output);
+			return ref;
 		}
 		return null;
 	}
 
-	/** 把对象存储里的媒体登记成附件；{@code prefetched} 不为 null 时直接复用这份字节。 */
-	private static AttachmentRef registerAttachment(String reqid, List<AttachmentRef> refs, ObjectStorageProvider tos,
-			String id, String kind, String format, String filename, byte[] prefetched, AIOutput output) {
-		AttachmentRef ref = LocalModelAttachments.shared().register(reqid, null, kind, format, filename, id,
-				() -> prefetched != null ? prefetched : download(tos, id, output));
-		refs.add(ref);
-		return ref;
+	/** MIME → 扩展名；识别不出时使用默认值。 */
+	private static String formatForMime(String mime, String fallback) {
+		String type = mime == null ? "" : mime.toLowerCase(java.util.Locale.ROOT);
+		if (type.startsWith("image/")) {
+			String subtype = type.substring("image/".length());
+			if ("jpeg".equals(subtype)) {
+				return "jpg";
+			}
+			if ("svg+xml".equals(subtype)) {
+				return "svg";
+			}
+			return subtype.isEmpty() ? fallback : subtype;
+		}
+		if (type.startsWith("video/")) {
+			String subtype = type.substring("video/".length());
+			if ("quicktime".equals(subtype)) {
+				return "mov";
+			}
+			if (subtype.startsWith("x-")) {
+				subtype = subtype.substring(2);
+			}
+			return subtype.isEmpty() ? fallback : subtype;
+		}
+		return fallback;
 	}
 
-	/** 惰性读取对象存储（附件真正被拉取时才调用）。 */
-	private static byte[] download(ObjectStorageProvider tos, String id, AIOutput output) {
+	/**
+	 * 把媒体引用登记成附件。
+	 * <p>
+	 * 对象 id 走内容键（客户端可命中本地缓存）；项目链接保留 URL 并带上内容键；外部 URL 只带 URL。
+	 * 服务端不再为了登记附件下载/转存文件。
+	 * </p>
+	 */
+	private static AttachmentRef registerAttachment(String reqid, List<AttachmentRef> refs, ObjectStorageProvider tos,
+			String reference, String kind, String format, String filename, AIOutput output) {
 		try {
-			return tos.download(id, output == null ? null : output::addUsage);
+			AttachmentRef ref = LocalModelReferences.register(tos, reqid, null, reference, kind, format, filename,
+					output == null ? null : output::addUsage);
+			if (ref != null) {
+				refs.add(ref);
+			}
+			return ref;
 		} catch (IOException ex) {
 			throw new RuntimeException(ex);
 		}
@@ -392,7 +445,7 @@ public class H3VideoMcp implements ToolProvider {
 		ToolData.Builder builder = new ToolData.Builder(TOOL_FOLEY,
 				"给已有视频重新配音效：保留原画面，生成与画面同步的环境音/动作音，并输出带新音轨的视频，提示词必须是英文。"
 						+ "默认整段重配；给 start/length 时只重配该片段，其余保留原音轨（原视频需带音轨）。")
-				.putUrlParam("video", "输入视频", "视频")
+				.putDeferredUrlParam("video", "输入视频", "视频")
 				.putParam("prompt", "想要的音效描述，例如 footsteps on wet asphalt, distant traffic, wind", "音效提示词")
 				.putParam("negative",
 						"不想出现的声音，例如 speech, dialogue, human voice, vocals, music。",
@@ -434,13 +487,13 @@ public class H3VideoMcp implements ToolProvider {
 							if (tos == null) {
 								return ToolResult.failure("视频存储不可用，无法读取视频。");
 							}
-							if (!tos.exists(videoId, output == null ? null : output::addUsage)) {
-								return ToolResult.text("参数错误：视频" + videoId + "已清理或不存在。");
-							}
 							String reqid = UUID.randomUUID().toString();
 							List<AttachmentRef> attachments = new ArrayList<>();
 							AttachmentRef videoRef = registerAttachment(reqid, attachments, tos, videoId,
-									AttachmentRef.KIND_VIDEO, "mp4", videoId + ".mp4", null, output);
+									AttachmentRef.KIND_VIDEO, "mp4", null, output);
+							if (videoRef == null) {
+								return ToolResult.text("参数错误：视频" + videoId + "已清理或不存在。");
+							}
 							H3Params params = new H3Params(segment ? "foley_segment" : "foley", prompt, negative, "",
 									0, false, 0, 0, 0, 0L, 0d, null, null, null, null, videoRef.id, 0, 0, 0, 0, 0,
 									start, length);
@@ -517,7 +570,7 @@ public class H3VideoMcp implements ToolProvider {
 		ToolData.Builder builder = new ToolData.Builder(TOOL_FRAME,
 				"从视频里截取一帧并保存为图片：0 表示首帧，-1 表示末帧，-2 表示倒数第二帧。"
 						+ "截出的图片可以作为 H3 的首帧/尾帧，或用于图片识别。")
-				.putUrlParam("video", "输入视频", "视频")
+				.putDeferredUrlParam("video", "输入视频", "视频")
 				.putOptionalParam("frame", "帧号，默认 0（首帧）；-1 末帧，-2 倒数第二帧", "帧号")
 				.presenter(ToolCallPresenter.ofArgument("视频截帧", "video"))
 				.tool((data, output, manager) -> {
@@ -531,14 +584,14 @@ public class H3VideoMcp implements ToolProvider {
 							if (tos == null) {
 								return ToolResult.failure("视频存储不可用，无法读取视频。");
 							}
-							if (!tos.exists(videoId, output == null ? null : output::addUsage)) {
-								return ToolResult.text("参数错误：视频" + videoId + "已清理或不存在。");
-							}
 							int frame = JsonConfig.getInt(jo, "frame", 0);
 							String reqid = UUID.randomUUID().toString();
 							List<AttachmentRef> attachments = new ArrayList<>();
 							AttachmentRef videoRef = registerAttachment(reqid, attachments, tos, videoId,
-									AttachmentRef.KIND_VIDEO, "mp4", videoId + ".mp4", null, output);
+									AttachmentRef.KIND_VIDEO, "mp4", null, output);
+							if (videoRef == null) {
+								return ToolResult.text("参数错误：视频" + videoId + "已清理或不存在。");
+							}
 							H3Params params = new H3Params("extract_frame", "", "", "", 0, false, 0, 0, 0, 0L, 0d,
 									null, null, null, null, videoRef.id, frame, 0, 0, 0, 0, 0d, 0d);
 							byte[] imageBytes = extractFrame(LocalModelCall.h3(reqid, params, attachments));

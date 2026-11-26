@@ -70,6 +70,10 @@ public final class LocalModelCodec {
 				if (ref.key != null && !ref.key.isEmpty()) {
 					item.addProperty("key", ref.key);
 				}
+				// URL 可选：有 URL 时接收端直接下载，服务端不再预先下载转存；旧客户端会忽略该字段
+				if (ref.url != null && !ref.url.isEmpty()) {
+					item.addProperty("url", ref.url);
+				}
 				attachments.add(item);
 			}
 			root.add("attachments", attachments);
@@ -143,7 +147,7 @@ public final class LocalModelCodec {
 			}
 			list.add(new AttachmentRef(id, JsonConfig.getString(item, "kind"), JsonConfig.getString(item, "format"),
 					JsonConfig.getString(item, "filename"), JsonConfig.getLong(item, "size", -1L),
-					JsonConfig.getString(item, "key")));
+					JsonConfig.getString(item, "key"), JsonConfig.getString(item, "url")));
 		}
 		return list;
 	}

@@ -56,10 +56,21 @@ public class ToolData {
 	 * <ul>
 	 *   <li>对象存储上下文（内部 AI 工具）显示“基础说明，内容为72位id”；</li>
 	 *   <li>URL 上下文（MCP 服务端）显示“基础说明，内容为http或者https链接”；</li>
-	 *   <li>MCP 服务端执行前会把该参数的 URL 下载并转存成对象存储 ID。</li>
+	 *   <li>MCP 服务端 / 会话执行前会把该参数的 URL 下载并转存成对象存储 ID。</li>
 	 * </ul>
 	 */
 	public final Map<String, String> urlParams;
+	/**
+	 * 交给接收端下载的 URL 参数名集合（{@link #urlParams} 的子集）。
+	 * <p>
+	 * 通过 {@link Builder#putDeferredUrlParam(String, String)} 声明。这些参数的值不会在
+	 * 服务端下载转存，而是保持原样交给工具执行；工具把它们登记成本地模型附件后，由部署侧的
+	 * 本地模型客户端直接下载 URL（项目对象存储链接会先按内容键查本地缓存）。
+	 * 适用于最终把文件交给本地模型处理的工具，例如 Qwen 改图、SDXL 图生图、H3 视频参考图。
+	 * 需要服务端字节的工具（发送图片、Codex、云端 API、服务器直连 ComfyUI）不要使用。
+	 * </p>
+	 */
+	public final Set<String> deferredUrlParams;
 	/**
 	 * 工具调用显示转换器：把原始调用信息转换为用户友好的简述与具体内容。
 	 * <p>默认转换器随工具一起创建：简述为工具名称、具体内容为空。</p>
@@ -132,6 +143,17 @@ public class ToolData {
 	public ToolData(Tool tool, String name, String description, Map<String, String> params,
 			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive,
 			Map<String, String> paramLabels, Set<String> optionalParams, Map<String, String> urlParams) {
+		this(tool, name, description, params, presenter, async, maxCalls, sessionOnly, orderSensitive, paramLabels,
+				optionalParams, urlParams, Collections.emptySet());
+	}
+
+	/**
+	 * @param deferredUrlParams 交给接收端下载的 URL 参数名，可为 null
+	 */
+	public ToolData(Tool tool, String name, String description, Map<String, String> params,
+			ToolCallPresenter presenter, boolean async, int maxCalls, boolean sessionOnly, boolean orderSensitive,
+			Map<String, String> paramLabels, Set<String> optionalParams, Map<String, String> urlParams,
+			Set<String> deferredUrlParams) {
 		super();
 		this.tool = tool;
 		this.name = name;
@@ -142,6 +164,8 @@ public class ToolData {
 				: Collections.unmodifiableSet(new HashSet<>(optionalParams));
 		this.urlParams = urlParams == null ? Collections.emptyMap()
 				: Collections.unmodifiableMap(new HashMap<>(urlParams));
+		this.deferredUrlParams = deferredUrlParams == null ? Collections.emptySet()
+				: Collections.unmodifiableSet(new HashSet<>(deferredUrlParams));
 		this.presenter = presenter == null ? ToolCallPresenter.defaults() : presenter;
 		this.async = async;
 		this.maxCalls = maxCalls;
@@ -189,6 +213,16 @@ public class ToolData {
 	}
 
 	/**
+	 * 判断某个 URL 参数是否交给接收端下载。
+	 *
+	 * @param paramName 参数名
+	 * @return true 表示服务端不下载、URL 原样交给工具执行
+	 */
+	public boolean isDeferredUrlParam(String paramName) {
+		return paramName != null && deferredUrlParams.contains(paramName);
+	}
+
+	/**
 	 * 返回 URL 上下文使用的工具副本：URL 参数说明改为“内容为http或者https链接”。
 	 * <p>
 	 * 对象存储上下文继续使用当前实例（“内容为72位id”）。副本与原工具共享执行函数，
@@ -204,10 +238,12 @@ public class ToolData {
 		Map<String, String> urlDescriptions = new HashMap<>(params == null ? Collections.emptyMap() : params);
 		for (Map.Entry<String, String> entry : urlParams.entrySet()) {
 			String base = entry.getValue() == null ? "" : entry.getValue();
-			urlDescriptions.put(entry.getKey(), base + "，内容为http或者https链接");
+			urlDescriptions.put(entry.getKey(), deferredUrlParams.contains(entry.getKey())
+					? base + "，内容为http或者https链接或72位id"
+					: base + "，内容为http或者https链接");
 		}
 		return new ToolData(tool, name, description, urlDescriptions, presenter, async, maxCalls, sessionOnly,
-				orderSensitive, paramLabels, optionalParams, urlParams);
+				orderSensitive, paramLabels, optionalParams, urlParams, deferredUrlParams);
 	}
 
 	/**
@@ -302,6 +338,7 @@ public class ToolData {
 		private Map<String, String> paramLabels = new HashMap<>();
 		private Set<String> optionalParams = new HashSet<>();
 		private Map<String, String> urlParams = new HashMap<>();
+		private Set<String> deferredUrlParams = new HashSet<>();
 		private ToolCallPresenter presenter;
 		private boolean async;
 		private int maxCalls = -1;
@@ -486,6 +523,7 @@ public class ToolData {
 		public Builder putParam(String key, String value, String label) {
 			this.params.put(key, value);
 			this.urlParams.remove(key);
+			this.deferredUrlParams.remove(key);
 			this.optionalParams.remove(key);
 			if (label != null && !label.trim().isEmpty()) {
 				this.paramLabels.put(key, label.trim());
@@ -517,6 +555,7 @@ public class ToolData {
 		public Builder putOptionalParam(String key, String value, String label) {
 			this.params.put(key, value);
 			this.urlParams.remove(key);
+			this.deferredUrlParams.remove(key);
 			this.optionalParams.add(key);
 			if (label != null && !label.trim().isEmpty()) {
 				this.paramLabels.put(key, label.trim());
@@ -579,11 +618,81 @@ public class ToolData {
 			return this;
 		}
 
+		/**
+		 * 添加一个由本地模型接收端下载的 URL 参数。
+		 * <p>
+		 * 与 {@link #putUrlParam(String, String)} 的区别：服务端不会下载这个 URL，
+		 * 而是把值原样交给工具执行；工具把它登记成本地模型附件后，部署侧会直接下载 URL
+		 * （项目对象存储链接会先按内容键查本地缓存）。适用于最终把文件交给本地模型的工具。
+		 * </p>
+		 *
+		 * @param key         参数名（给模型看的 JSON 字段名）
+		 * @param description 基础说明，例如“参考图”
+		 * @return 当前 Builder
+		 */
+		public Builder putDeferredUrlParam(String key, String description) {
+			return putDeferredUrlParam(key, description, null);
+		}
+
+		/**
+		 * 添加一个由本地模型接收端下载的 URL 参数，并声明人可读名称。
+		 *
+		 * @param key         参数名
+		 * @param description 基础说明，例如“参考图”
+		 * @param label       人可读名称；为 null 或空时回退为参数名
+		 * @return 当前 Builder
+		 */
+		public Builder putDeferredUrlParam(String key, String description, String label) {
+			putDeferredUrlParamInternal(key, description, label, false);
+			return this;
+		}
+
+		/**
+		 * 添加一个可选的、由本地模型接收端下载的 URL 参数。
+		 *
+		 * @param key         参数名
+		 * @param description 基础说明，例如“参考图”
+		 * @return 当前 Builder
+		 */
+		public Builder putOptionalDeferredUrlParam(String key, String description) {
+			return putOptionalDeferredUrlParam(key, description, null);
+		}
+
+		/**
+		 * 添加一个可选的、由本地模型接收端下载的 URL 参数，并声明人可读名称。
+		 *
+		 * @param key         参数名
+		 * @param description 基础说明，例如“参考图”
+		 * @param label       人可读名称；为 null 或空时回退为参数名
+		 * @return 当前 Builder
+		 */
+		public Builder putOptionalDeferredUrlParam(String key, String description, String label) {
+			putDeferredUrlParamInternal(key, description, label, true);
+			return this;
+		}
+
+		/** 延迟下载 URL 参数：值可以是链接或 id，服务端两种都原样保留。 */
+		private void putDeferredUrlParamInternal(String key, String description, String label, boolean optional) {
+			String base = description == null ? "" : description.trim();
+			setUrlParam(key, base + "，内容为http或者https链接或72位id", base, label, optional, true);
+		}
+
 		/** URL 参数统一写入：对象存储上下文的默认说明 + 可选标记。 */
 		private void putUrlParamInternal(String key, String description, String label, boolean optional) {
 			String base = description == null ? "" : description.trim();
-			this.params.put(key, base + "，内容为72位id");
+			setUrlParam(key, base + "，内容为72位id", base, label, optional, false);
+		}
+
+		/** URL 参数的公共写入逻辑。 */
+		private void setUrlParam(String key, String storageDescription, String base, String label, boolean optional,
+				boolean deferred) {
+			this.params.put(key, storageDescription);
 			this.urlParams.put(key, base);
+			if (deferred) {
+				this.deferredUrlParams.add(key);
+			} else {
+				this.deferredUrlParams.remove(key);
+			}
 			if (optional) {
 				this.optionalParams.add(key);
 			} else {
@@ -601,6 +710,7 @@ public class ToolData {
 			if (params != null) {
 				for (String key : params.keySet()) {
 					this.urlParams.remove(key);
+					this.deferredUrlParams.remove(key);
 				}
 				this.params.putAll(params);
 			}
@@ -613,8 +723,9 @@ public class ToolData {
 			Map<String, String> immutableLabels = new HashMap<>(paramLabels);
 			Set<String> immutableOptional = new HashSet<>(optionalParams);
 			Map<String, String> immutableUrlParams = new HashMap<>(urlParams);
+			Set<String> immutableDeferredUrlParams = new HashSet<>(deferredUrlParams);
 			return new ToolData(tool, name, description, immutableParams, presenter, async, maxCalls, sessionOnly,
-					orderSensitive, immutableLabels, immutableOptional, immutableUrlParams);
+					orderSensitive, immutableLabels, immutableOptional, immutableUrlParams, immutableDeferredUrlParams);
 		}
 
 		public Builder(String name, String description) {

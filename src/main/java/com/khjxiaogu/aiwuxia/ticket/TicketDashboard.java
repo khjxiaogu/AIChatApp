@@ -315,7 +315,7 @@ public final class TicketDashboard {
                 if (entry.getValue() || ticket.summary.isEmpty()) {
                     // 正文变化才调用一次非推理摘要器；结果写回 meta。
                     // 这次 meta 变化会产生 doclib 事件，TicketMcp 只挑工单字段，忽略 sheet_summary。
-                    String summary = TicketSummaryAgent.summarize(ticket.title, ticket.body);
+                    String summary = TicketSummaryAgent.summarize(ticket.title, ticket.body, ticket.summary);
                     if (!summary.isEmpty()) {
                         ticket = service.setSheetSummary(ticket.docId, summary);
                     }

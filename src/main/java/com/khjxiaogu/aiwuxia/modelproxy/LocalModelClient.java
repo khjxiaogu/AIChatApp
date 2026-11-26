@@ -44,6 +44,7 @@ import com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransport;
 import com.khjxiaogu.aiwuxia.modelproxy.transport.LocalModelTransportFactory;
 import com.khjxiaogu.aiwuxia.modelproxy.transport.WebSocketTransportFactory;
 import com.khjxiaogu.aiwuxia.utils.ContentHash;
+import com.khjxiaogu.aiwuxia.utils.RemoteUrl;
 
 /**
  * 本地模型连接客户端（统一会话管理器）。
@@ -906,6 +907,25 @@ public class LocalModelClient {
 
 	/** 附件拉取等待上限：60 秒。 */
 	private static final long ATTACHMENT_TIMEOUT_MS = 60_000L;
+	/** URL 直下的大小上限（MB）：默认 256；可用 {@code -DlocalModelUrlMaxMb} 覆盖。 */
+	private static final long URL_MAX_BYTES = resolveUrlMaxBytes();
+
+	/** 读取 URL 直下大小上限：{@code -DlocalModelUrlMaxMb}，未配置时回退旧参数。 */
+	private static long resolveUrlMaxBytes() {
+		String raw = System.getProperty("localModelUrlMaxMb", "").trim();
+		if (raw.isEmpty()) {
+			raw = System.getProperty("toolUrlAttachmentMaxMb", "").trim();
+		}
+		long mb = 256L;
+		if (!raw.isEmpty()) {
+			try {
+				mb = Long.parseLong(raw);
+			} catch (NumberFormatException ignored) {
+				// 配置非法时使用默认值
+			}
+		}
+		return mb <= 0 ? 0 : mb * 1024L * 1024L;
+	}
 
 	/** 等待中的附件拉取，key = reqid + "|" + 附件 id。 */
 	private final Map<String, CompletableFuture<byte[]>> pendingAttachments = new ConcurrentHashMap<>();
@@ -913,10 +933,19 @@ public class LocalModelClient {
 	private final Map<String, FileChunkAssembler> attachmentAssemblers = new ConcurrentHashMap<>();
 
 	/**
-	 * 通过 WebSocket 按需拉取附件。
+	 * 按需获取附件字节。
 	 * <p>
-	 * 发送 {@code {"type":"attachment.get","reqid":..,"id":..}}，服务器按 {@code LMA1} 分块
-	 * 回传；这里同步等待拼装完成。附件字节不会出现在模型请求报文里。
+	 * 获取顺序（每一步命中都直接返回，不再向服务端发 {@code attachment.get}）：
+	 * </p>
+	 * <ol>
+	 *   <li>附件自带内容键 / 从项目 URL 能解析出对象 id 时，查本地内容缓存；</li>
+	 *   <li>同一个 URL 之前下载过，查 URL 索引指向的缓存；</li>
+	 *   <li>附件带 URL 时直接下载（服务端不预先下载转存），下载成功后写入内容缓存并记录 URL 映射；</li>
+	 *   <li>以上都没有或 URL 下载失败时，才向服务端发 {@code attachment.get} 拉取字节。</li>
+	 * </ol>
+	 * <p>
+	 * 这样外部 URL 由部署侧自己下载，项目自身的对象存储链接先按内容键查本地缓存，
+	 * 已有同一份文件时不再下载。
 	 * </p>
 	 *
 	 * @param reqid 请求 ID
@@ -929,24 +958,67 @@ public class LocalModelClient {
 			throw new IOException("缺少附件引用");
 		}
 		LocalModelFileCache cache = fileCache;
-		// 服务端在附件里带了内容键（对象存储 id）时，先看本地有没有同一份内容：
-		// “用上次生成的图片继续图生图/反推”就属于这种情况，能直接省掉一次附件传输
+		String url = RemoteUrl.isHttp(ref.url) ? ref.url.trim() : null;
 		String contentKey = ContentHash.normalize(ref.key);
-		if (cache != null) {
-			if (contentKey == null) {
-				System.out.println("[LocalModelCache] 未命中缓存：附件没有内容键，向服务端拉取（reqid=" + reqid
-						+ " id=" + ref.id + "）");
-			} else {
-				byte[] cached = cache.get(contentKey);
+		if (contentKey == null && url != null) {
+			contentKey = ContentHash.normalize(RemoteUrl.objectIdOf(url));
+		}
+		// 1. 内容键直接命中：项目对象存储链接也能从 URL 里解析出内容键
+		if (cache != null && contentKey != null) {
+			byte[] cached = cache.get(contentKey);
+			if (cached != null) {
+				System.out.println("[LocalModelCache] 命中本地缓存：reqid=" + reqid + " key="
+						+ shortKey(contentKey) + " 大小=" + cached.length + "B，跳过附件拉取");
+				return cached;
+			}
+			System.out.println("[LocalModelCache] 未命中本地缓存：reqid=" + reqid + " key="
+					+ shortKey(contentKey) + (url == null ? "，向服务端拉取（id=" + ref.id + "）"
+							: "，尝试直接下载 URL"));
+		}
+		// 2. 同一个 URL 之前下载过
+		if (cache != null && url != null) {
+			String mapped = cache.keyForUrl(url);
+			if (mapped != null) {
+				byte[] cached = cache.get(mapped);
 				if (cached != null) {
-					System.out.println("[LocalModelCache] 命中本地缓存：reqid=" + reqid + " key="
-							+ shortKey(contentKey) + " 大小=" + cached.length + "B，跳过附件拉取");
+					System.out.println("[LocalModelCache] 命中 URL 映射缓存：reqid=" + reqid + " key="
+							+ shortKey(mapped) + " 大小=" + cached.length + "B，跳过下载 url="
+							+ RemoteUrl.shortUrl(url));
 					return cached;
 				}
-				System.out.println("[LocalModelCache] 未命中本地缓存：reqid=" + reqid + " key="
-						+ shortKey(contentKey) + "，向服务端拉取（id=" + ref.id + "）");
 			}
 		}
+		// 3. 直接下载 URL：服务端不再预先下载/转存
+		if (url != null) {
+			System.out.println("[LocalModelCache] 直接下载附件 URL：reqid=" + reqid + " id=" + ref.id + " url="
+					+ RemoteUrl.shortUrl(url));
+			byte[] data;
+			try {
+				data = RemoteUrl.download(url, URL_MAX_BYTES);
+			} catch (IOException ex) {
+				System.err.println("[LocalModelCache] URL 下载失败，回退向服务端拉取：reqid=" + reqid + " id="
+						+ ref.id + " url=" + RemoteUrl.shortUrl(url) + " 错误=" + ex.getMessage());
+				data = null;
+			}
+			if (data != null) {
+				if (cache != null && data.length > 0) {
+					LocalModelFileCache.StoreResult stored = cache.store(data);
+					if (stored != null) {
+						cache.rememberUrl(url, stored.key);
+						System.out.println("[LocalModelCache] URL 下载完成并缓存：reqid=" + reqid + " key="
+								+ shortKey(stored.key) + " 大小=" + data.length + "B url="
+								+ RemoteUrl.shortUrl(url));
+						if (contentKey != null && !stored.key.equals(contentKey)) {
+							System.err.println("[LocalModelCache] 附件内容与内容键不一致：声明=" + contentKey
+									+ " 实际=" + stored.key + "（reqid=" + reqid + "）");
+						}
+					}
+				}
+				return data;
+			}
+			// 下载失败：继续走 attachment.get，服务端可能登记了兜底字节来源
+		}
+		// 4. 向服务端拉取
 		String key = reqid + "|" + ref.id;
 		CompletableFuture<byte[]> future = new CompletableFuture<>();
 		pendingAttachments.put(key, future);

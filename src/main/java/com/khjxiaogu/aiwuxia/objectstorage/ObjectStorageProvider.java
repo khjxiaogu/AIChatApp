@@ -113,6 +113,22 @@ public interface ObjectStorageProvider {
 		return FileUtil.readAll(FileUtil.fetch(url));
 		
 	}
+	/**
+	 * 对象内容的 MIME 类型。
+	 * <p>
+	 * 供需要“只看类型、不下载整个文件”的调用方使用（例如 H3 判断首/尾帧来源是图片还是视频）。
+	 * 默认实现会完整下载内容再按文件头识别；本地存储与远端存储分别覆盖为“只读文件头”和
+	 * “按扩展名/HEAD 查询”，避免为了判断类型付出一次大文件下载。
+	 * </p>
+	 *
+	 * @param fn       对象存储键
+	 * @param addUsage 用量回调，可为 null
+	 * @return 小写 MIME；无法判断时返回 {@code application/octet-stream}
+	 * @throws IOException 读取失败
+	 */
+	default String contentType(String fn,Consumer<UsageIntf<?>> addUsage) throws IOException {
+		return LocalStorage.detectMimeType(download(fn, addUsage), fn);
+	}
 	public static MessageDigest getSha256Digest() throws NoSuchAlgorithmException {
 		return MessageDigest.getInstance("SHA-256");
 	}

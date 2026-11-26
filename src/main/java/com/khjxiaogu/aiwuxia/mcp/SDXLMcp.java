@@ -2,7 +2,6 @@ package com.khjxiaogu.aiwuxia.mcp;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -44,6 +43,7 @@ import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallDisplay;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModelAttachments;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelReferences;
 import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.modelproxy.ModelType;
 import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
@@ -57,6 +57,7 @@ import com.khjxiaogu.aiwuxia.state.history.message.MutableMessageContents;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock;
 import com.khjxiaogu.aiwuxia.tools.ResourceLock.ResourcePermit;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
+import com.khjxiaogu.aiwuxia.utils.RemoteUrl;
 import com.khjxiaogu.aiwuxia.vision.LocalSDXLUsage;
 import com.khjxiaogu.aiwuxia.vision.SDXLApi;
 
@@ -175,11 +176,14 @@ public class SDXLMcp implements ToolProvider {
 		String reqid = UUID.randomUUID().toString();
 		List<AttachmentRef> attachments = new ArrayList<>();
 		String image = imageId;
-		String storageId = storageIdOf(imageId);
-		if (storageId != null && tos != null) {
-			AttachmentRef ref = registerImageAttachment(reqid, null, tos, storageId, output);
-			attachments.add(ref);
-			image = ref.id;
+		if (LocalModelReferences.isSupportedReference(imageId) && tos != null) {
+			AttachmentRef ref = LocalModelReferences.register(tos, reqid, null, imageId,
+					AttachmentRef.KIND_IMAGE, "png", "reference.png",
+					output == null ? null : output::addUsage);
+			if (ref != null) {
+				attachments.add(ref);
+				image = ref.id;
+			}
 		}
 		SdxlParams params = new SdxlParams(SdxlAction.INTERROGATE, "", "", 1, 64, 64, image, 0, false, "");
 		return parseJson(remoteChannel(null).send(LocalModelCall.sdxl(reqid, params, attachments)));
@@ -215,7 +219,20 @@ public class SDXLMcp implements ToolProvider {
 		String image = null;
 		if (imageRef != null && !imageRef.isEmpty()) {
 			String storageId = storageIdOf(imageRef);
-			if (storageId != null && tos != null) {
+			if ((RemoteUrl.isHttp(imageRef) || RemoteUrl.isDataUrl(imageRef)) && tos != null) {
+				// 链接（包括项目自己的图片链接）直接交给本地模型客户端下载；
+				// 链接里能解析出内容键时，客户端会先查本地缓存，命中就不再下载。
+				// data URL 只能由服务端解码后入库。
+				AttachmentRef ref = LocalModelReferences.register(tos, reqid, connectorUid, imageRef,
+						AttachmentRef.KIND_IMAGE, "png", "reference.png",
+						output == null ? null : output::addUsage);
+				if (ref != null) {
+					attachments.add(ref);
+					image = ref.id;
+				} else {
+					image = referencePayload(imageRef, output);
+				}
+			} else if (storageId != null && tos != null) {
 				AttachmentRef ref = registerImageAttachment(reqid, connectorUid, tos, storageId, output);
 				attachments.add(ref);
 				image = ref.id;
@@ -576,53 +593,19 @@ public class SDXLMcp implements ToolProvider {
 		}
 	}
 
-	/** 对象存储 id：72 位十六进制内容哈希，可带扩展名。 */
-	private static final Pattern STORAGE_ID_PATTERN = Pattern.compile("[0-9a-fA-F]{72}(?:\\.[0-9A-Za-z]{1,16})?");
-	/** 参考图链接里的对象存储 id 参数名。 */
-	private static final String[] STORAGE_ID_PARAMS = { "file_id=", "image_id=" };
-
 	/**
 	 * 从图片引用里取出对象存储 id。
 	 * <p>
 	 * 既接受裸 id（72 位十六进制，可带扩展名），也接受本程序的图片链接：
 	 * {@code /painter/image?image_id=...}、{@code /aichat/mcp/media?file_id=...}。
+	 * 规则与本地模型附件解析共用 {@link RemoteUrl#objectIdOf(String)}，避免两处不一致。
 	 * </p>
 	 *
 	 * @param reference 图片引用，可为 null
 	 * @return 对象存储 id；无法识别时返回 null
 	 */
 	public static String storageIdOf(String reference) {
-		if (reference == null) {
-			return null;
-		}
-		String value = reference.trim();
-		if (value.isEmpty()) {
-			return null;
-		}
-		if (STORAGE_ID_PATTERN.matcher(value).matches()) {
-			return value;
-		}
-		for (String param : STORAGE_ID_PARAMS) {
-			int index = value.indexOf(param);
-			if (index < 0) {
-				continue;
-			}
-			String id = value.substring(index + param.length());
-			int amp = id.indexOf('&');
-			if (amp >= 0) {
-				id = id.substring(0, amp);
-			}
-			try {
-				id = URLDecoder.decode(id, "UTF-8");
-			} catch (java.io.UnsupportedEncodingException ex) {
-				// UTF-8 一定可用；保留原值
-			}
-			id = id.trim();
-			if (STORAGE_ID_PATTERN.matcher(id).matches()) {
-				return id;
-			}
-		}
-		return null;
+		return RemoteUrl.objectIdOf(reference);
 	}
 	/**
 	 * 从字符串列表中搜索同时包含所有搜索关键词的字符串。
@@ -822,7 +805,7 @@ public class SDXLMcp implements ToolProvider {
 		}
 
 		tools.add(new ToolData.Builder("image_interrogate", "通过WD1.4模型反推图片的所有可能提示词按可能性从大到小排列，需要结合图片描述功能把错误的提示词排除。")
-				.putUrlParam("picture_id", "输入待反推的图片", "图片ID")
+				.putDeferredUrlParam("picture_id", "输入待反推的图片", "图片ID")
 				.presenter(ToolCallPresenter.ofName("反推提示词"))
 				.tool((data, output, manager) -> {
 					Pattern patt = Pattern.compile("\"picture_id\"\\s*:\\s*\"([^\"]+)\"");
@@ -924,7 +907,7 @@ public class SDXLMcp implements ToolProvider {
 				}).build());
 		tools.add(new ToolData.Builder("regional_image",
 				"使用Stable Diffusion XL搭配分区提示词生成图片，不需要包含画质提示词，提示词必须是纯英文，生成后需要使用其他工具发送。")
-				.putUrlParam("picture_id", "图生图参考图（留空则文生图）", "图片ID")
+				.putDeferredUrlParam("picture_id", "图生图参考图（留空则文生图）", "图片ID")
 				.putParam("strength", "如果不使用图生图，该参数无效。重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。", "重绘幅度")
 				.putParam("common_positive", "共用正面提示词", "共用正面提示词")
 				.putParam("first_positive", "第一区域提示词，必须是纯英文，不需要包含画质提示词。", "第一区域正面提示词")
@@ -1045,7 +1028,7 @@ public class SDXLMcp implements ToolProvider {
 				.putParam("negative", "负面提示词，必须是纯英文。", "负面提示词")
 				.putParam("resolution", "画面比例，必须是16:9/9:16/4:3/3:4之一", "画面比例")
 				.putParam("strength", "重绘幅度，介于0与1.5之间，该重绘幅度并非sdxl的参数。0为微调图片细节，1为重绘图片，需要输入字符串。", "重绘幅度")
-				.putUrlParam("picture_id", "输入待转换的图片", "图片ID")
+				.putDeferredUrlParam("picture_id", "输入待转换的图片", "图片ID")
 
 				.presenter(call->{
 					JsonObject jo=JsonParser.parseString(call.function.arguments).getAsJsonObject();

@@ -1,12 +1,20 @@
 package com.khjxiaogu.aiwuxia.modelproxy.cache;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.khjxiaogu.aiwuxia.utils.ContentHash;
@@ -23,6 +31,8 @@ import com.khjxiaogu.aiwuxia.utils.FileUtil;
  *       带上这个键，部署侧就能直接读本地文件，不必再走一次附件拉取；</li>
  *   <li><b>输入</b>：从服务端拉回来的附件同样按内容键落盘。同一份文件再次出现（哪怕换了一次请求、
  *       换了一个附件 id）时可以直接命中，不再下载。</li>
+ *   <li><b>URL</b>：本地模型客户端直接下载的附件 URL 也会记录映射（{@code urls.index}，
+ *       只保存 URL 的哈希）。同一个链接再次出现时按映射直接命中文件，不再重复下载。</li>
  * </ul>
  * <p>
  * 缓存目录默认是 {@code save/localmodel_cache}，可用 {@code -DlocalModelCacheDir} 覆盖；上限默认
@@ -43,6 +53,10 @@ public final class LocalModelFileCache {
 	public static final long DEFAULT_MAX_MB = 4096L;
 	/** 缓存内容存放的子目录。 */
 	private static final String OBJECTS_DIR = "objects";
+	/** URL → 内容键索引文件名（只保存 URL 的哈希，避免把带签名的长链接写进磁盘）。 */
+	private static final String URL_INDEX_FILE = "urls.index";
+	/** 索引条目超过该值时重写索引文件，丢掉已被淘汰的映射。 */
+	private static final int URL_INDEX_COMPACT_THRESHOLD = 4096;
 
 	/** 当前部署进程使用的缓存实例；没有安装时为空。 */
 	private static volatile LocalModelFileCache shared;
@@ -119,6 +133,12 @@ public final class LocalModelFileCache {
 	private final AtomicLong misses = new AtomicLong();
 	/** 新写入次数。 */
 	private final AtomicLong stores = new AtomicLong();
+	/** URL 索引：URL 哈希 → 内容键。 */
+	private final Map<String, String> urlIndex = new ConcurrentHashMap<>();
+	/** URL 索引文件（与内容文件一起位于缓存根目录）。 */
+	private final File urlIndexFile;
+	/** 索引写入锁。 */
+	private final Object urlIndexLock = new Object();
 
 	/**
 	 * 打开或创建缓存目录。
@@ -129,11 +149,13 @@ public final class LocalModelFileCache {
 	public LocalModelFileCache(File root, long maxBytes) {
 		this.directory = root;
 		this.objects = new File(root, OBJECTS_DIR);
+		this.urlIndexFile = new File(root, URL_INDEX_FILE);
 		this.maxBytes = maxBytes;
 		if (!objects.exists() && !objects.mkdirs() && !objects.isDirectory()) {
 			System.err.println("[LocalModelCache] 无法创建缓存目录：" + objects);
 		}
 		this.totalBytes.set(scanBytes());
+		loadUrlIndex();
 		pruneIfNeeded();
 	}
 
@@ -183,6 +205,143 @@ public final class LocalModelFileCache {
 	public boolean contains(String key) {
 		String normalized = ContentHash.normalize(key);
 		return normalized != null && new File(objects, normalized).isFile();
+	}
+
+	/**
+	 * 按 URL 查缓存键。
+	 * <p>
+	 * 用于“同一个链接第二次出现”时跳过下载。映射里指向的内容如果已经被淘汰，会顺手清掉该条映射。
+	 * </p>
+	 *
+	 * @param url 下载地址
+	 * @return 内容键；没有映射或内容已不存在时返回 null
+	 */
+	public String keyForUrl(String url) {
+		if (url == null || url.isEmpty()) {
+			return null;
+		}
+		String hash = urlHash(url);
+		String key = urlIndex.get(hash);
+		if (key == null) {
+			return null;
+		}
+		if (!contains(key)) {
+			urlIndex.remove(hash, key);
+			return null;
+		}
+		return key;
+	}
+
+	/**
+	 * 记录 URL 与内容键的对应关系，并持久化到 {@code urls.index}。
+	 * <p>
+	 * 只保存 URL 的哈希：链接里可能带签名/令牌，不能原样落盘。
+	 * </p>
+	 *
+	 * @param url 下载地址
+	 * @param key 内容键（72 位十六进制，可带扩展名）
+	 */
+	public void rememberUrl(String url, String key) {
+		String normalized = ContentHash.normalize(key);
+		if (url == null || url.isEmpty() || normalized == null) {
+			return;
+		}
+		String hash = urlHash(url);
+		String previous = urlIndex.put(hash, normalized);
+		if (normalized.equals(previous)) {
+			return;
+		}
+		synchronized (urlIndexLock) {
+			appendUrlIndex(hash, normalized);
+			if (urlIndex.size() > URL_INDEX_COMPACT_THRESHOLD) {
+				rewriteUrlIndex();
+			}
+		}
+	}
+
+	/** URL 的索引键：SHA-256(URL) + 长度，与内容键同样的 72 位十六进制。 */
+	private static String urlHash(String url) {
+		return ContentHash.keyOf(url.getBytes(StandardCharsets.UTF_8));
+	}
+
+	/** 启动时读取索引，丢掉已经失效的映射。 */
+	private void loadUrlIndex() {
+		if (!urlIndexFile.isFile()) {
+			return;
+		}
+		int loaded = 0;
+		int dropped = 0;
+		try (BufferedReader reader = new BufferedReader(
+				new InputStreamReader(new FileInputStream(urlIndexFile), StandardCharsets.UTF_8))) {
+			String line;
+			while ((line = reader.readLine()) != null) {
+				int tab = line.indexOf('\t');
+				if (tab <= 0) {
+					continue;
+				}
+				String hash = line.substring(0, tab).trim();
+				String key = ContentHash.normalize(line.substring(tab + 1));
+				if (hash.length() != ContentHash.KEY_LENGTH || key == null) {
+					dropped++;
+					continue;
+				}
+				if (!contains(key)) {
+					dropped++;
+					continue;
+				}
+				urlIndex.put(hash, key);
+				loaded++;
+			}
+		} catch (IOException ex) {
+			System.err.println("[LocalModelCache] 读取 URL 索引失败：" + ex);
+			return;
+		}
+		System.out.println("[LocalModelCache] URL 索引已加载：可用 " + loaded + " 条，丢弃 " + dropped + " 条");
+		if (dropped > 0) {
+			synchronized (urlIndexLock) {
+				rewriteUrlIndex();
+			}
+		}
+	}
+
+	/** 追加一条 URL 映射。 */
+	private void appendUrlIndex(String hash, String key) {
+		try (FileOutputStream out = new FileOutputStream(urlIndexFile, true)) {
+			out.write((hash + "\t" + key + "\n").getBytes(StandardCharsets.UTF_8));
+		} catch (IOException ex) {
+			System.err.println("[LocalModelCache] 写入 URL 索引失败：" + ex);
+		}
+	}
+
+	/** 重写 URL 索引（先写临时文件再原子替换）。 */
+	private void rewriteUrlIndex() {
+		File temp = new File(directory, URL_INDEX_FILE + ".tmp");
+		List<String> lines = new ArrayList<>(urlIndex.size());
+		for (Map.Entry<String, String> entry : urlIndex.entrySet()) {
+			if (contains(entry.getValue())) {
+				lines.add(entry.getKey() + "\t" + entry.getValue());
+			}
+		}
+		try (FileOutputStream out = new FileOutputStream(temp)) {
+			for (String line : lines) {
+				out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+			}
+		} catch (IOException ex) {
+			temp.delete();
+			System.err.println("[LocalModelCache] 重写 URL 索引失败：" + ex);
+			return;
+		}
+		try {
+			Files.move(temp.toPath(), urlIndexFile.toPath(), StandardCopyOption.REPLACE_EXISTING,
+					StandardCopyOption.ATOMIC_MOVE);
+		} catch (IOException atomicFailed) {
+			try {
+				Files.move(temp.toPath(), urlIndexFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+			} catch (IOException ex) {
+				temp.delete();
+				System.err.println("[LocalModelCache] 替换 URL 索引失败：" + ex);
+			}
+		}
 	}
 
 	/**
@@ -314,7 +473,7 @@ public final class LocalModelFileCache {
 	 */
 	public String summary() {
 		return "目录=" + directory + " 占用=" + totalBytes.get() + "B 命中=" + hits.get() + " 未命中="
-				+ misses.get() + " 写入=" + stores.get();
+				+ misses.get() + " 写入=" + stores.get() + " URL映射=" + urlIndex.size();
 	}
 
 	@Override

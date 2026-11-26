@@ -449,6 +449,8 @@ public class ToolCallManager {
 	 * <p>
 	 * 只处理 {@link ToolData#urlParams} 声明的参数；参数可以是单个值、JSON 数组或
 	 * 逗号分隔列表。非 URL 值由解析器原样返回，因此原有 72 位 ID 不受影响。
+	 * 声明为“本地模型侧下载”（{@link ToolData#deferredUrlParams}）的参数完全不经过这里，
+	 * 由工具把 URL 原样登记成附件，交给本地模型客户端下载。
 	 * </p>
 	 *
 	 * @param tool      工具定义
@@ -473,7 +475,7 @@ public class ToolCallManager {
 		JsonObject root = parsed.getAsJsonObject();
 		boolean changed = false;
 		for (String key : tool.urlParams.keySet()) {
-			if (!root.has(key)) {
+			if (!root.has(key) || tool.isDeferredUrlParam(key)) {
 				continue;
 			}
 			JsonElement value = root.get(key);

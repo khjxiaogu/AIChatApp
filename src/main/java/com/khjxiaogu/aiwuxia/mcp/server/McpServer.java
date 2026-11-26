@@ -85,8 +85,14 @@ public class McpServer {
     public static final String TASK_RESULT_TOOL = "mcp_task_result";
     /** 当前配额查询工具名。 */
     public static final String QUOTA_TOOL = "mcp_quota";
-    /** 异步任务保留时间：30 分钟。 */
-    private static final long TASK_TTL_MS = 30L * 60L * 1000L;
+    /**
+     * 已完成的异步任务在内存中的保留时间：30 分钟。
+     * <p>
+     * 只用于清理“已经结算完成、但客户端一直没来取结果”的任务；<b>未完成</b>的任务
+     * （例如长视频生成还在跑）不设过期时间，永久保留，直到任务完成并结算。
+     * </p>
+     */
+    private static final long FINISHED_TASK_TTL_MS = 30L * 60L * 1000L;
     /** 单次查询异步任务最多等待时间，避免 MCP 客户端超时。 */
     private static final long TASK_WAIT_SECONDS = 20L;
 
@@ -416,6 +422,9 @@ public class McpServer {
         }
         task.resultText = text;
         task.success = success;
+        // 记录完成时间：保留期从“完成”开始算，而不是从提交开始算，
+        // 否则耗时超过保留期的长任务一完成就会被立刻清掉。
+        task.finishedAt = System.currentTimeMillis();
         if (task.settled.compareAndSet(false, true)) {
             int usagePrice = usageCostOf(task.output);
             if (store != null && task.charge != null) {
@@ -430,19 +439,27 @@ public class McpServer {
         task.processed.complete(null);
     }
 
-    /** 清理超过 30 分钟仍未完成或未被取走的任务。 */
+    /**
+     * 清理已经完成并结算、但完成后超过保留期仍未被客户端取走的异步任务。
+     * <p>
+     * 未完成的任务（{@link AsyncTask#settled} 仍为 false）永久保留：既不按时间退款，也不从
+     * {@link #asyncTasks} 移除，避免长视频生成这类耗时超过保留期的任务被误判为过期而丢失结果。
+     * 任务完成后由 {@link #finishTask} 正常结算，之后从完成时间起算 {@link #FINISHED_TASK_TTL_MS} 再清理。
+     * </p>
+     */
     private void cleanupAsyncTasks() {
         long now = System.currentTimeMillis();
         Iterator<Entry<String, AsyncTask>> iterator = asyncTasks.entrySet().iterator();
         while (iterator.hasNext()) {
             Entry<String, AsyncTask> entry = iterator.next();
             AsyncTask task = entry.getValue();
-            if (now - task.createdAt <= TASK_TTL_MS) {
+            if (!task.settled.get()) {
+                // 未完成的任务永久保留，等待它真正结束；只有已完成的任务才按保留期回收
                 continue;
             }
-            if (task.settled.compareAndSet(false, true) && store != null && task.charge != null) {
-                // 任务超时未完成：退回预扣的基础调用费，任务内部未结算的用量不再收费
-                store.refund(task.charge, "async task expired");
+            long finishedAt = task.finishedAt;
+            if (finishedAt <= 0 || now - finishedAt <= FINISHED_TASK_TTL_MS) {
+                continue;
             }
             iterator.remove();
             task.processed.complete(null);
@@ -455,7 +472,8 @@ public class McpServer {
         private final AIOutput output;
         private final McpAccessTokenStore.Charge charge;
         private final long startedAt;
-        private final long createdAt = System.currentTimeMillis();
+        /** 任务完成时间（由 {@link #finishTask} 写入）；0 表示还没完成。 */
+        private volatile long finishedAt;
         private final AtomicBoolean settled = new AtomicBoolean(false);
         private volatile ToolResult result;
         private volatile String resultText = "";

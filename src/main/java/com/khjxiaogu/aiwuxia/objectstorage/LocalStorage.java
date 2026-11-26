@@ -94,6 +94,26 @@ public class LocalStorage implements ObjectStorageProvider {
 	}
 
 	/**
+	 * 只读文件头判断 MIME，避免为了判断图片/视频类型把整个文件读进内存。
+	 */
+	@Override
+	public String contentType(String fn, Consumer<UsageIntf<?>> addUsage) throws IOException {
+		File file = fileFor(fn);
+		if (!file.isFile()) {
+			return mimeFromExtension(fn);
+		}
+		byte[] head = new byte[512];
+		int length;
+		try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+			length = in.read(head);
+		}
+		if (length <= 0) {
+			return mimeFromExtension(fn);
+		}
+		return detectMimeType(java.util.Arrays.copyOf(head, length), fn);
+	}
+
+	/**
 	 * 查找实际文件：优先无媒体后缀的新键，再退回带后缀的旧键。
 	 *
 	 * @param fn 对象键

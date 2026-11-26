@@ -155,6 +155,11 @@
     line-height: 1.5;
   }
   .endpoint { word-break: break-all; }
+  .tts-try { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .tts-try textarea { width: 100%; min-height: 72px; resize: vertical; }
+  .tts-try select { min-width: 160px; max-width: 100%; }
+  .tts-try audio { width: 100%; }
+  .tts-hint { color: var(--muted); font-size: 12px; }
   @media (max-width: 720px) {
     body { padding: 14px; }
     .card { padding: 12px; }
@@ -260,6 +265,77 @@
   </div>
 
   <div class="card">
+    <h2>TTS 接口（OpenAI 兼容）</h2>
+    <p class="muted">
+      同一枚 MCP 令牌即可调用语音合成接口，客户端按 OpenAI 的写法填 <span class="mono">base_url</span>
+      就能直接使用。语音由本机语音模型生成，默认先做分句与情感标注再合成（会额外调用一次 LLM，
+      模型不可用时返回 503）；<span class="mono">voice</span> 必须填本地语音配置里的<strong>角色名</strong>，
+      不是 alloy 之类的预设名。调用按<strong>固定调用费 + 实际用量</strong>从额外配额扣除（与 MCP 工具一致），
+      余额或令牌额度不足时返回 429。
+    </p>
+    <p class="muted">
+      base_url：<span class="mono endpoint" id="ttsBase">加载中…</span><br>
+      鉴权：<span class="mono">Authorization: Bearer &lt;令牌&gt;</span>
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">POST</td><td class="mono endpoint">/audio/speech</td><td>文本转语音，返回音频（默认 mp3）</td></tr>
+          <tr><td class="mono">GET</td><td class="mono endpoint">/audio/voices</td><td>可用音色（本地语音角色名）</td></tr>
+          <tr><td class="mono">GET</td><td class="mono endpoint">/models</td><td>模型列表（gptsovits / tts-1 等别名）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>curl</h3>
+    <pre class="code" id="ttsCurl">加载中…</pre>
+    <h3>OpenAI Python SDK</h3>
+    <pre class="code" id="ttsPython">加载中…</pre>
+    <h3>OpenAI Node SDK</h3>
+    <pre class="code" id="ttsJs">加载中…</pre>
+
+    <details>
+      <summary>请求字段与行为说明</summary>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>必填</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">model</td><td>否</td><td>默认 <span class="mono">gptsovits</span>；也接受 tts-1 / tts-1-hd / gpt-4o-mini-tts</td></tr>
+            <tr><td class="mono">input</td><td>是</td><td>要朗读的文本，默认上限 4096 字符</td></tr>
+            <tr><td class="mono">voice</td><td>是</td><td>本地语音配置里的角色名，否则返回 400</td></tr>
+            <tr><td class="mono">response_format</td><td>否</td><td>mp3（默认）/ wav；不做转码</td></tr>
+            <tr><td class="mono">speed</td><td>否</td><td>0.25–4.0，仅校验，不改变语速</td></tr>
+            <tr><td class="mono">instructions</td><td>否</td><td>朗读风格提示，拼进情感标注的提示词，只影响情感/语气，不保证效果</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:10px">
+        成功时返回 200 + 音频流（chunked）。情感标注阶段失败会返回标准错误 JSON
+        （如 400 / 401 / 429 / 503 / 504）；进入合成阶段后响应头已发出，失败只能表现为空音频，
+        原因记录在服务端 <span class="mono">latest.log</span> 的 <span class="mono">[TTS]</span> 日志。
+        每次调用按固定调用费（默认 100）+ 实际用量从额外配额扣除，记录会出现在下方“消费记录”里。
+      </p>
+    </details>
+
+    <h3>直接试听</h3>
+    <p class="tts-hint">粘贴一枚令牌后加载音色。若刚刚在本页创建了令牌，会自动填入。</p>
+    <div class="tts-try">
+      <div class="row">
+        <input id="ttsToken" class="mono" placeholder="mcp_...（令牌明文）" style="flex:1;min-width:220px">
+        <button id="ttsLoadVoices">加载音色</button>
+      </div>
+      <div class="row">
+        <select id="ttsVoice"><option value="">先加载音色</option></select>
+        <button id="ttsSpeak" class="primary">生成试听</button>
+      </div>
+      <textarea id="ttsText" placeholder="输入要朗读的文本">你好，欢迎来到江湖。</textarea>
+      <audio id="ttsPlayer" controls style="display:none"></audio>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>我的令牌</h2>
     <div id="tokens"></div>
   </div>
@@ -281,6 +357,7 @@
 (function () {
   var PAGE_BASE = location.pathname.replace(/\/mcptoken\/?$/, '');
   var API = PAGE_BASE + '/mcp';
+  var TTS_BASE = location.origin + PAGE_BASE + '/tts/v1';
   // 创建令牌后自动填入下面的配置示例；未创建时使用占位符
   var currentToken = 'mcp_xxxxxxxx';
 
@@ -335,6 +412,33 @@
     }, null, 2);
   }
 
+  function renderTtsDocs() {
+    var base = TTS_BASE;
+    var token = currentToken;
+    document.getElementById('ttsBase').textContent = base;
+    document.getElementById('ttsCurl').textContent =
+      'curl -X POST "' + base + '/audio/speech" \\\n' +
+      '  -H "Authorization: Bearer ' + token + '" \\\n' +
+      '  -H "Content-Type: application/json" \\\n' +
+      '  -d \'{"model":"gptsovits","input":"你好，欢迎来到江湖。","voice":"角色名","response_format":"mp3"}\' \\\n' +
+      '  --output speech.mp3';
+    document.getElementById('ttsPython').textContent =
+      'from openai import OpenAI\n\n' +
+      'client = OpenAI(base_url="' + base + '", api_key="' + token + '")\n' +
+      'with client.audio.speech.with_streaming_response.create(\n' +
+      '    model="gptsovits", voice="角色名", input="你好，欢迎来到江湖。",\n' +
+      ') as response:\n' +
+      '    response.stream_to_file("speech.mp3")';
+    document.getElementById('ttsJs').textContent =
+      'import OpenAI from "openai";\n' +
+      'import fs from "node:fs";\n\n' +
+      'const client = new OpenAI({ baseURL: "' + base + '", apiKey: "' + token + '" });\n' +
+      'const speech = await client.audio.speech.create({\n' +
+      '  model: "gptsovits", voice: "角色名", input: "你好，欢迎来到江湖。",\n' +
+      '});\n' +
+      'fs.writeFileSync("speech.mp3", Buffer.from(await speech.arrayBuffer()));';
+  }
+
   function buildAgentPrompt(token) {
     var endpoint = location.origin + API;
     return [
@@ -356,6 +460,114 @@
       '请先调用 mcp_echo 确认连接正常；调用时请携带上面的令牌。',
       '注意：每次工具调用会扣除额外配额，工具内部产生的用量按实际用量结算；令牌是敏感信息，不要发给无关方。'
     ].join('\n');
+  }
+
+  function ttsTokenValue() {
+    var value = document.getElementById('ttsToken').value.trim();
+    return value || (currentToken !== 'mcp_xxxxxxxx' ? currentToken : '');
+  }
+
+  async function readJson(response) {
+    var text = await response.text();
+    var json = null;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch (ignored) {
+      json = null;
+    }
+    if (!response.ok) {
+      var message = (json && json.error && json.error.message) || ('HTTP ' + response.status);
+      throw new Error(message);
+    }
+    return json || {};
+  }
+
+  async function loadTtsVoices(silent) {
+    showError('');
+    var token = ttsTokenValue();
+    if (!token) {
+      showError('请先粘贴令牌，或在上方创建一枚令牌。');
+      return;
+    }
+    try {
+      var response = await fetch(TTS_BASE + '/audio/voices', {
+        headers: { Authorization: 'Bearer ' + token }
+      });
+      var data = await readJson(response);
+      var voices = (data.data || []).map(function (item) { return item.id; });
+      var select = document.getElementById('ttsVoice');
+      select.innerHTML = voices.length
+        ? voices.map(function (name) {
+          return '<option value="' + esc(name) + '">' + esc(name) + '</option>';
+        }).join('')
+        : '<option value="">没有可用音色</option>';
+      if (!voices.length) {
+        showError('没有可用音色：请确认已配置本地语音角色且服务在线。');
+      }
+    } catch (ex) {
+      if (!silent) {
+        showError(ex.message);
+      }
+    }
+  }
+
+  async function speakTts() {
+    showError('');
+    var token = ttsTokenValue();
+    var voice = document.getElementById('ttsVoice').value;
+    var text = document.getElementById('ttsText').value;
+    if (!token) {
+      showError('请先粘贴令牌。');
+      return;
+    }
+    if (!voice) {
+      showError('请先加载并选择音色。');
+      return;
+    }
+    if (!text.trim()) {
+      showError('请输入要朗读的文本。');
+      return;
+    }
+    var button = document.getElementById('ttsSpeak');
+    button.disabled = true;
+    button.textContent = '生成中…';
+    try {
+      var response = await fetch(TTS_BASE + '/audio/speech', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'gptsovits', voice: voice, input: text })
+      });
+      if (!response.ok) {
+        var message = 'HTTP ' + response.status;
+        try {
+          var error = await response.json();
+          if (error && error.error && error.error.message) {
+            message = error.error.message;
+          }
+        } catch (ignored) {
+          // 非 JSON 错误体：保留状态码
+        }
+        throw new Error(message);
+      }
+      var blob = await response.blob();
+      if (!blob.size) {
+        throw new Error('服务端返回了空音频：可能是情感标注或本地合成失败，请查看服务端 latest.log 的 [TTS] 日志。');
+      }
+      var player = document.getElementById('ttsPlayer');
+      if (player.dataset.url) {
+        URL.revokeObjectURL(player.dataset.url);
+      }
+      var url = URL.createObjectURL(blob);
+      player.dataset.url = url;
+      player.src = url;
+      player.style.display = 'block';
+      player.play().catch(function () {});
+    } catch (ex) {
+      showError(ex.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = '生成试听';
+    }
   }
 
   async function api(path, options) {
@@ -475,6 +687,9 @@
       document.getElementById('created').style.display = 'block';
       currentToken = data.token;
       renderMcpConfig();
+      renderTtsDocs();
+      document.getElementById('ttsToken').value = data.token;
+      loadTtsVoices(true).catch(function () {});
       document.getElementById('agentPrompt').value = buildAgentPrompt(data.token);
       document.getElementById('exampleBox').textContent = JSON.stringify({
         mcpServers: {
@@ -492,6 +707,10 @@
   }
 
   document.getElementById('create').addEventListener('click', createToken);
+  document.getElementById('ttsLoadVoices').addEventListener('click', function () {
+    loadTtsVoices(false);
+  });
+  document.getElementById('ttsSpeak').addEventListener('click', speakTts);
   document.getElementById('refreshUsage').addEventListener('click', function () {
     loadTokens().catch(function (ex) { showError(ex.message); });
   });
@@ -522,6 +741,7 @@
 
   document.getElementById('quotaLink').href = withPageQuery(PAGE_BASE + '/usage');
   renderMcpConfig();
+  renderTtsDocs();
   loadTokens().catch(function (ex) { showError(ex.message); });
 })();
 </script>

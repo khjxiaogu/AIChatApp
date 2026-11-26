@@ -44,6 +44,23 @@ public class VoiceTagger {
 		emotions.add("厌恶");
 	}
 	public CompletableFuture<JsonArray> extractTalkContent(String role,String text,Consumer<UsageIntf<?>> state) {
+		return extractTalkContent(role, text, null, state);
+	}
+
+	/**
+	 * 分句 + 情感标注，可携带一段朗读风格提示。
+	 * <p>
+	 * 风格提示来自 OpenAI 兼容接口的 {@code instructions}：它只参与“选择情感与语气”的推理，
+	 * 不改变要朗读的文本；输出仍然会被校验为固定情感集合，避免自由文本影响标注结构。
+	 * </p>
+	 *
+	 * @param role      第一人称说话人，可为 null
+	 * @param text      要朗读的话语
+	 * @param styleHint 朗读风格提示，可为 null 或空白
+	 * @param state     用量接收方
+	 * @return 带情感标注的分段数组
+	 */
+	public CompletableFuture<JsonArray> extractTalkContent(String role,String text,String styleHint,Consumer<UsageIntf<?>> state) {
 		//Iterator<HistoryItem> revit=hist.reverseIterator();
 		String lastText=text;
 		//ArrayList<String> foreWords=new ArrayList<>();
@@ -72,6 +89,9 @@ public class VoiceTagger {
 			prompt.append(s);*/
 		if(role!=null)
 			prompt.append("**第一人称说话人**\n").append(role).append("\n");
+		if(styleHint!=null&&!styleHint.trim().isEmpty())
+			prompt.append("**朗读风格要求（仅用于选择情感与语气，不得改变朗读内容）**\n").append(styleHint.trim())
+					.append("\n");
 		prompt.append("**待处理角色话语**\n");
 		prompt.append(lastText);
 		// 语音标注固定用 MiMo：它支持 JSON 输出，标记结构更稳定；MiMo 未配置时路由会按预算回退。

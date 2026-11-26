@@ -1,5 +1,6 @@
 package com.khjxiaogu.aiwuxia.modelproxy;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -10,6 +11,7 @@ import java.util.function.Supplier;
 
 import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
 import com.khjxiaogu.aiwuxia.utils.ContentHash;
+import com.khjxiaogu.aiwuxia.utils.RemoteUrl;
 
 /**
  * 本地模型请求附件的服务端注册表。
@@ -19,18 +21,26 @@ import com.khjxiaogu.aiwuxia.utils.ContentHash;
  * {@code {"type":"attachment.get","reqid":..,"id":..}}，服务器按 {@code LMA1} 二进制分块回传。
  * </p>
  * <p>
+ * 登记时也可以只给一个 URL（见 {@link #registerUrl}）：报文里带上 {@code url}，客户端直接下载，
+ * 服务端完全不必先把文件下载/转存一遍。URL 附件同时可以带内容键，客户端据此先查自己的磁盘缓存。
+ * </p>
+ * <p>
  * 安全与生命周期：
  * </p>
  * <ul>
  *   <li>id 是随机 UUID，作用域是“请求 + id”，两者都对不上时读不到；调用报文只有收到它的客户端能看到；</li>
  *   <li>附件在请求完成后 {@link #release(String)} 释放，未释放的按 TTL（默认 10 分钟）自动过期；</li>
- *   <li>字节来源是惰性求值的 {@link Supplier}，只有真正被拉取时才读对象存储/文件。</li>
+ *   <li>字节来源是惰性求值的 {@link Supplier}，只有真正被拉取时才读对象存储/文件；</li>
+ *   <li>只有 URL、没有字节来源的附件不会在服务端下载；服务端直连模型（{@code localChannel}）
+ *       需要字节时才会退回按 URL 下载一次。</li>
  * </ul>
  */
 public final class LocalModelAttachments {
 
 	/** 默认有效期：10 分钟。 */
 	private static final long DEFAULT_TTL_MS = 10 * 60 * 1000L;
+	/** 服务端直连模型时按 URL 兜底下载的大小上限：256 MiB。 */
+	private static final long FALLBACK_URL_MAX_BYTES = 256L * 1024 * 1024;
 
 	private static final LocalModelAttachments SHARED = new LocalModelAttachments(DEFAULT_TTL_MS);
 
@@ -46,16 +56,18 @@ public final class LocalModelAttachments {
 		final String kind;
 		final String format;
 		final String filename;
+		final String url;
 		final Supplier<byte[]> source;
 		final long expiresAt;
 
-		Entry(String reqid, String uid, String kind, String format, String filename, Supplier<byte[]> source,
-				long expiresAt) {
+		Entry(String reqid, String uid, String kind, String format, String filename, String url,
+				Supplier<byte[]> source, long expiresAt) {
 			this.reqid = reqid;
 			this.uid = uid;
 			this.kind = kind;
 			this.format = format;
 			this.filename = filename;
+			this.url = url;
 			this.source = source;
 			this.expiresAt = expiresAt;
 		}
@@ -108,20 +120,48 @@ public final class LocalModelAttachments {
 	 */
 	public AttachmentRef register(String reqid, String uid, String kind, String format, String filename,
 			String contentKey, Supplier<byte[]> source) {
+		return registerInternal(reqid, uid, kind, format, filename, contentKey, null, source);
+	}
+
+	/**
+	 * 登记一个“只给 URL”的附件：接收端直接下载 URL，服务端不预先下载转存。
+	 *
+	 * @param reqid      所属请求
+	 * @param uid        所属用户，可为 null
+	 * @param kind       种类（{@link AttachmentRef#KIND_IMAGE} 等）
+	 * @param format     格式/扩展名
+	 * @param filename   建议文件名
+	 * @param url        可下载地址（http(s)）
+	 * @param contentKey 内容键（能从 URL 解析出对象 id 时传入），可为 null
+	 * @param fallback   服务端兜底字节来源；客户端 URL 下载失败、改用 {@code attachment.get} 时才会用到，可为 null
+	 * @return 附件引用，供写进调用报文
+	 */
+	public AttachmentRef registerUrl(String reqid, String uid, String kind, String format, String filename,
+			String url, String contentKey, Supplier<byte[]> fallback) {
+		return registerInternal(reqid, uid, kind, format, filename, contentKey, url, fallback);
+	}
+
+	private AttachmentRef registerInternal(String reqid, String uid, String kind, String format, String filename,
+			String contentKey, String url, Supplier<byte[]> source) {
 		purge();
 		String id = UUID.randomUUID().toString().replace("-", "");
 		String key = ContentHash.normalize(contentKey);
-		Entry entry = new Entry(reqid, uid, kind, format, filename, source, System.currentTimeMillis() + ttlMs);
+		Entry entry = new Entry(reqid, uid, kind, format, filename, url, source,
+				System.currentTimeMillis() + ttlMs);
 		entries.put(key(reqid, id), entry);
-		return new AttachmentRef(id, kind, format, filename, -1L, key);
+		return new AttachmentRef(id, kind, format, filename, -1L, key, url);
 	}
 
 	/**
 	 * 读取附件字节（完整内容）。
+	 * <p>
+	 * 只有 URL、没有字节来源的附件（服务端直连模型时）会按 URL 下载一次；这也是客户端
+	 * 下载失败后改用 {@code attachment.get} 的兜底路径。
+	 * </p>
 	 *
 	 * @param reqid 所属请求
 	 * @param id    附件 id
-	 * @return 字节；不存在/已过期时返回 null
+	 * @return 字节；不存在/已过期/下载失败时返回 null
 	 */
 	public byte[] read(String reqid, String id) {
 		purge();
@@ -130,7 +170,18 @@ public final class LocalModelAttachments {
 			return null;
 		}
 		try {
-			return entry.source.get();
+			if (entry.source != null) {
+				return entry.source.get();
+			}
+			if (entry.url != null && !entry.url.isEmpty()) {
+				System.out.println("[LocalModel] 附件没有本地字节来源，按 URL 兜底下载：reqid=" + reqid
+						+ " id=" + id + " url=" + RemoteUrl.shortUrl(entry.url));
+				return RemoteUrl.download(entry.url, FALLBACK_URL_MAX_BYTES);
+			}
+			return null;
+		} catch (IOException ex) {
+			System.err.println("[LocalModel] 按 URL 下载附件失败：reqid=" + reqid + " id=" + id + " 错误=" + ex);
+			return null;
 		} catch (RuntimeException ex) {
 			System.err.println("[LocalModel] 读取附件失败：reqid=" + reqid + " id=" + id + " 错误=" + ex);
 			return null;

@@ -5,10 +5,12 @@ import java.io.IOException;
 import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
 
 /**
- * 客户端附件拉取器：本地模型接收端按需把附件字节从服务器取回来。
+ * 客户端附件拉取器：本地模型接收端按需把附件字节取回来。
  * <p>
  * 调用参数里只带附件 id，不内联 Base64；处理器在真正需要字节时调用
- * {@link #fetch(String, AttachmentRef)}，实现类负责缓存与重试。
+ * {@link #fetch(String, AttachmentRef)}，实现类负责缓存与重试。附件本身可能带 {@code url}
+ * （例如外部图片链接），此时接收端直接下载 URL，不必再向服务端拉取；项目自身的对象存储
+ * 链接会先按内容键查本地缓存。
  * </p>
  */
 @FunctionalInterface

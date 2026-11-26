@@ -63,4 +63,13 @@ public class DelegatingStorage implements ObjectStorageProvider {
 		}
 		return remote.download(fn,addUsage);
 	}
+
+	/** 本地有副本就本地判断类型，否则交给远端（远端实现只做扩展名/HEAD 查询）。 */
+	@Override
+	public String contentType(String fn, Consumer<UsageIntf<?>> addUsage) throws IOException {
+		if (local.exists(fn, addUsage)) {
+			return local.contentType(fn, addUsage);
+		}
+		return remote.contentType(fn, addUsage);
+	}
 }

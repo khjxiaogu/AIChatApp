@@ -112,6 +112,7 @@ import com.khjxiaogu.aiwuxia.state.session.ChatIdentity;
 import com.khjxiaogu.aiwuxia.state.session.PainterSession;
 import com.khjxiaogu.aiwuxia.state.session.WebSocketAISession;
 import com.khjxiaogu.aiwuxia.tools.NameTranslator;
+import com.khjxiaogu.aiwuxia.tts.TtsApiEndpoint;
 import com.khjxiaogu.aiwuxia.utils.ConfigPaths;
 import com.khjxiaogu.aiwuxia.utils.FileUtil;
 import com.khjxiaogu.aiwuxia.utils.HttpRequestBuilder;
@@ -284,6 +285,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 	private McpClientManager mcpClients;
 	/** MCP 访问令牌与计费存储 */
 	private McpAccessTokenStore mcpTokenStore;
+	/** OpenAI 兼容 TTS 接口套件（挂在 /aichat/tts 上，令牌延迟取自 mcpTokenStore） */
+	private final TtsApiEndpoint ttsApi = new TtsApiEndpoint(() -> mcpTokenStore);
 	// 默认每个用户每天的免费token额度
 	private static final int DEFAULT_FREE_DAILY_LIMIT = 500_000;
 	/** 每日签到一次可获得的补充额度（token） */
@@ -1046,6 +1049,11 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		// 本地 SVS（歌声转换）：统一走 LocalModel 的 svs 模型通道，不直接访问 localemp；
 		// audio_url 本身就是要交给 localemp 的链接，不属于需要转存的附件参数。
 		registry.registerAll(new SvsMcp(mcpStorage, ConfigPaths.svsVoices(path)).getTools());
+		// 本地 H3 视频：生成、简单动图、视频截帧、视频配音直接暴露给 MCP 服务端。
+		// 不包含 h3_video_agent 子 agent（它需要会话/子 agent 上下文，不适合外部直调）。
+		// 生成类工具是异步的：MCP 端返回 task_id，由 mcp_task_result 查询；结果视频写入
+		// mcpStorage，文本里的“视频id为：...”会被 MCP 服务端统一转换成 /mcp/media 链接。
+		registry.registerAll(new H3VideoMcp(mcpStorage).getTools());
 		// 把 AIChatService 中按用户创建的 SDXL 图片工具暴露给 MCP：
 		// 外部调用与绘画会话使用同一套工具，用户接入自己的本地绘画模型时同样优先使用该用户的模型。
 		registry.addSource(new McpToolSource() {
@@ -1101,7 +1109,8 @@ public class AIChatService implements ServiceClass, CommandHandler {
 		mcpEndpoint = new McpServerEndpoint(registry, mcpTokenStore, "MCP", "0.0.1",
 				this::resolveMcpMediaUrl, mcpStorage);
 		logger.info("MCP 服务端已启用：/aichat/mcp，固定调用费 " + McpServer.CALL_COST + " 额外配额 + 工具内部用量"
-				+ "，已暴露 SDXL 图片工具与本地语音工具" + (exposeSessionTools ? "，并暴露在线会话工具" : ""));
+				+ "，已暴露 SDXL 图片工具、本地语音工具与 H3 视频工具"
+				+ (exposeSessionTools ? "，并暴露在线会话工具" : ""));
 	}
 
 	/**
@@ -1884,6 +1893,22 @@ public class AIChatService implements ServiceClass, CommandHandler {
 			return;
 		}
 		mcpEndpoint.call(req, res);
+	}
+
+	/**
+	 * HTTP端点：把 {@code /aichat/tts} 及其子路径转发给 OpenAI 兼容 TTS 接口套件。
+	 * <p>
+	 * 对外路径与 OpenAI 官方一致（{@code /v1/audio/speech}、{@code /v1/audio/voices}、
+	 * {@code /v1/models}），客户端的 {@code base_url} 填
+	 * {@code http://<host>:8999/aichat/tts/v1}；鉴权复用 MCP 访问令牌。
+	 * </p>
+	 *
+	 * @param req 请求对象
+	 * @param res 响应对象
+	 */
+	@HttpPath("/tts")
+	public void tts(Request req, Response res) {
+		ttsApi.call(req, res);
 	}
 	@HttpMethod("GET")
 	@HttpPath("/ptrpg")

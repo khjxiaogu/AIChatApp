@@ -23,7 +23,6 @@
  */
 package com.khjxiaogu.aiwuxia.mcp;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -39,7 +38,7 @@ import com.khjxiaogu.aiwuxia.llm.ToolProvider;
 import com.khjxiaogu.aiwuxia.llm.ToolResult;
 import com.khjxiaogu.aiwuxia.llm.toolcall.ToolCallPresenter;
 import com.khjxiaogu.aiwuxia.modelproxy.LocalModel;
-import com.khjxiaogu.aiwuxia.modelproxy.LocalModelAttachments;
+import com.khjxiaogu.aiwuxia.modelproxy.LocalModelReferences;
 import com.khjxiaogu.aiwuxia.modelproxy.ModelGenerationResult;
 import com.khjxiaogu.aiwuxia.modelproxy.api.AttachmentRef;
 import com.khjxiaogu.aiwuxia.modelproxy.api.LocalModelCall;
@@ -153,7 +152,7 @@ public class QwenLocalModelMcp implements ToolProvider {
 				"使用 Qwen-Image 2.1 对参考图进行改图，或参考多张图生成新图。"
 						+ "参考图最多 10 张，按顺序对应图1、图2…；"
 						+ "生成后需要使用发送图片工具发给用户。")
-				.putUrlParam("reference", "参考图（多张用英文逗号分隔，最多 10 张）", "参考图")
+				.putDeferredUrlParam("reference", "参考图（多张用英文逗号分隔，最多 10 张）", "参考图")
 				.putParam("prompt", "编辑指令或画面提示词，支持中文，例如“把外套换成蓝色”。", "提示词")
 				.putParam("negative", "负面提示词，可留空使用默认中文负面词。", "负面提示词")
 				.putParam("fast", "是否使用 8 步加速 LoRA，默认 false。", "极速草稿")
@@ -182,12 +181,14 @@ public class QwenLocalModelMcp implements ToolProvider {
 						List<AttachmentRef> attachments = new ArrayList<>();
 						List<String> imageIds = new ArrayList<>();
 						for (String id : references) {
-							if (!tos.exists(id, output == null ? null : output::addUsage)) {
+							// 参考图可以是对象存储 id、项目媒体链接或外部 URL：
+							// 外部 URL 不再由服务端下载，直接交给本地模型客户端
+							AttachmentRef ref = LocalModelReferences.register(tos, reqid, null, id,
+									AttachmentRef.KIND_IMAGE, "png", null,
+									output == null ? null : output::addUsage);
+							if (ref == null) {
 								return ToolResult.text("参数错误：参考图" + id + "已清理或不存在。");
 							}
-							AttachmentRef ref = LocalModelAttachments.shared().register(reqid, null,
-									AttachmentRef.KIND_IMAGE, "png", id + ".png", id,
-									() -> download(tos, id, output));
 							attachments.add(ref);
 							imageIds.add(ref.id);
 						}
@@ -227,15 +228,6 @@ public class QwenLocalModelMcp implements ToolProvider {
 			throw new IllegalStateException("本地 Qwen 模型返回了非图片结果：" + format);
 		}
 		return List.of(new QwenImageApi.ImageResult("qwen." + extensionOf(format), "", "output", result.bodyData));
-	}
-
-	/** 把对象存储里的文件读成字节，供附件惰性拉取。 */
-	private static byte[] download(ObjectStorageProvider tos, String id, AIOutput output) {
-		try {
-			return tos.download(id, output == null ? null : output::addUsage);
-		} catch (IOException ex) {
-			throw new RuntimeException(ex);
-		}
 	}
 
 	/** 是否是图片格式名（png/jpeg/... 或 image/*）。 */

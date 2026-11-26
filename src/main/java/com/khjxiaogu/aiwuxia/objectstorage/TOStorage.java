@@ -91,4 +91,39 @@ public class TOStorage implements ObjectStorageProvider {
 		return "https://" + cfg.bucket + "." + cfg.endpoint + "/" + fn;
 	}
 
+	/**
+	 * 优先按对象键扩展名判断；没有扩展名时用 HEAD 只读取 Content-Type，不下载对象内容。
+	 */
+	@Override
+	public String contentType(String fn, Consumer<UsageIntf<?>> addUsage) throws IOException {
+		String byExtension = LocalStorage.detectMimeType(null, fn);
+		if (!"application/octet-stream".equals(byExtension)) {
+			return byExtension;
+		}
+		HttpURLConnection connection = null;
+		try {
+			connection = (HttpURLConnection) new URL(getHttpUrl(fn, addUsage)).openConnection();
+			connection.setRequestMethod("HEAD");
+			connection.setConnectTimeout(5000);
+			connection.setReadTimeout(5000);
+			connection.setInstanceFollowRedirects(true);
+			String type = connection.getContentType();
+			if (type != null && !type.trim().isEmpty()) {
+				String mime = type.trim().toLowerCase(java.util.Locale.ROOT);
+				int semicolon = mime.indexOf(';');
+				if (semicolon >= 0) {
+					mime = mime.substring(0, semicolon).trim();
+				}
+				return mime;
+			}
+		} catch (Exception ex) {
+			// 类型探测失败不影响调用方：返回通用类型，由内容识别兜底
+		} finally {
+			if (connection != null) {
+				connection.disconnect();
+			}
+		}
+		return "application/octet-stream";
+	}
+
 }
